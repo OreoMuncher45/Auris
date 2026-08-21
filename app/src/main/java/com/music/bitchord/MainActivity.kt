@@ -65,13 +65,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.SearchFilter
@@ -85,7 +89,6 @@ import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
-import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
@@ -116,6 +119,7 @@ import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.screens.DetailScreen
+import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.SearchScreen
@@ -151,13 +155,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel()) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var showLogin by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
-    var showSources by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -238,7 +242,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     LaunchedEffect(showSettings) {
         if (!showSettings) {
             showAccountScrobbling = false
-            showSources = false
         }
     }
 
@@ -310,7 +313,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val libraryPull = rememberPullToRefreshState()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val currentFeed = when {
-        showSettings || showAccountScrobbling || showSources || detail != null -> null
+        showSettings || showAccountScrobbling || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
         selectedTab == TAB_EXPLORE -> MainViewModel.Feed.EXPLORE
         selectedTab == TAB_LIBRARY -> MainViewModel.Feed.LIBRARY
@@ -557,21 +560,18 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     ) {
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
-        BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources) { viewModel.closeDetail() }
+        BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling) { viewModel.closeDetail() }
         BackHandler(enabled = showAccountScrobbling) {
             showAccountScrobbling = false
-        }
-        BackHandler(enabled = showSources) {
-            showSources = false
         }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources) {
+        BackHandler(enabled = showSettings && !showAccountScrobbling) {
             showSettings = false
             if (detail == null) selectedTab = TAB_HOME
         }
-        BackHandler(enabled = detail == null && !showSettings && !showAccountScrobbling && !showSources && selectedTab != TAB_HOME) {
+        BackHandler(enabled = detail == null && !showSettings && !showAccountScrobbling && selectedTab != TAB_HOME) {
             selectedTab = TAB_HOME
         }
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
@@ -581,7 +581,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         AnimatedContent(
             targetState = when {
                 showAccountScrobbling -> "account_scrobbling"
-                showSources -> "sources"
                 showSettings -> "settings"
                 detail != null -> detail.browseId
                 else -> "tab:$selectedTab"
@@ -590,7 +589,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             modifier = Modifier.hazeSource(hazeState),
             label = "content",
         ) { key ->
-            val page = detailStack.lastOrNull()?.takeIf { it.browseId == key && key != "settings" && key != "account_scrobbling" && key != "sources" }
+            val page = detailStack.lastOrNull()?.takeIf { it.browseId == key && key != "settings" && key != "account_scrobbling" }
             if (key == "account_scrobbling") {
                 AccountAndScrobblingScreen(
                     signedIn = signedIn,
@@ -605,8 +604,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     onOpenLastfmLogin = { showLastfmLogin = true },
                     contentPadding = listPadding,
                 )
-            } else if (key == "sources") {
-                SourcesScreen(contentPadding = listPadding)
             } else if (key == "settings") {
                 SettingsScreen(
                     signedIn = signedIn,
@@ -617,8 +614,21 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     },
                     onSignOut = { viewModel.signOut() },
                     onAccountScrobbling = { showAccountScrobbling = true },
-                    onSources = { showSources = true },
                     onLyricsSources = { showLyricsSources = true },
+                    contentPadding = listPadding,
+                )
+            } else if (page != null && page.browseId == "local:all") {
+                // Local Music folder — show the tabbed Songs / Artists / Albums view.
+                val localSongs = (page.songs as? com.music.bitchord.data.model.UiState.Success)?.data.orEmpty()
+                LocalMusicScreen(
+                    songs = localSongs,
+                    onSongClick = play,
+                    onSongLongPress = { songActions = it },
+                    onSongSwipe = addToQueue,
+                    onShuffle = { songs ->
+                        QueueShuffle.enableForNextQueue()
+                        play(songs, songs.indices.random())
+                    },
                     contentPadding = listPadding,
                 )
             } else if (page != null) {
@@ -791,7 +801,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         // A detail page's artwork runs up under the status bar, so the bar
         // there is a fade rather than a pane — see [TopFadeBlur]. Drawn before
         // the bar so the bar's own content sits on top of it.
-        val isDetailVisible = detail != null && !showSettings && !showAccountScrobbling && !showSources
+        val isDetailVisible = detail != null && !showSettings && !showAccountScrobbling
         if (isDetailVisible) {
             TopFadeBlur(
                 hazeState = hazeState,
@@ -803,7 +813,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         FrostedTopBar(
             title = when {
                 showAccountScrobbling -> "Account & scrobbling"
-                showSources -> "Sources"
                 showSettings -> "Settings"
                 detail != null -> detail.title
                 else -> tabs[selectedTab].let {
@@ -815,7 +824,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             // Search has no large in-list header to hand the title back to —
             // the field takes that space — so its bar title is always up.
             scrolled = when {
-                showSettings || showAccountScrobbling || showSources -> true
+                showSettings || showAccountScrobbling -> true
                 detail != null -> detailScrolled
                 else -> scrolled || selectedTab == TAB_SEARCH
             },
@@ -823,7 +832,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             pullFraction = { currentPull?.distanceFraction ?: 0f },
             onBack = when {
                 showAccountScrobbling -> ({ showAccountScrobbling = false })
-                showSources -> ({ showSources = false })
                 showSettings -> ({ showSettings = false })
                 detail != null -> ({ viewModel.closeDetail(); Unit })
                 else -> null
@@ -832,7 +840,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             actions = {
                 // Only worth surfacing where there's room for it and it won't
                 // be mistaken for a per-page action — Home, at rest.
-                if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
+                if (!showSettings && !showAccountScrobbling && detail == null && selectedTab == TAB_HOME) {
                     updateNotice?.let { update ->
                         IconButton(onClick = {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
@@ -845,7 +853,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         }
                     }
                 }
-                if (!showSettings && !showAccountScrobbling && !showSources) IconButton(onClick = { showSettings = true }) {
+                if (!showSettings && !showAccountScrobbling) IconButton(onClick = { showSettings = true }) {
                     Icon(
                         Icons.Rounded.Settings,
                         contentDescription = "Settings",
@@ -904,7 +912,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     viewModel.clearDetail()
                     showSettings = false
                     showAccountScrobbling = false
-                    showSources = false
                     selectedTab = index
                 },
             )
@@ -1118,6 +1125,26 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     resolvingLinks = fromPlayer && linksLoading,
                     showSleepTimer = fromPlayer,
                     onShare = share.takeIf { fromPlayer },
+                    onCopyLog = if (fromPlayer) {
+                        {
+                            songActions = null
+                            scope.launch {
+                                val text = TrackLog.forTrack(song, NerdStats.current.value)
+                                clipboard.setText(AnnotatedString(text))
+                                // The line count, not just "copied": it is the
+                                // one thing the system's own paste confirmation
+                                // doesn't say, and an empty log is a real
+                                // outcome worth seeing rather than a silent one.
+                                Toast.makeText(
+                                    context,
+                                    "Log copied · ${text.lineSequence().count()} lines",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }

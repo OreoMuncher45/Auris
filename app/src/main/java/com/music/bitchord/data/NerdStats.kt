@@ -54,11 +54,26 @@ object NerdStats {
          * figure the Now Playing screen's "Lossless" badge is gated on, not
          * just what a source promised. [claimed] alone would let a source
          * that said "FLAC" and quietly served Opus still light the badge.
+         *
+         * Which is exactly what it did, because this was written as
+         * `claimed?.isLossless == true || …` — the claim on its own, the very
+         * thing the paragraph above says it must not be. Observed: an upgrade
+         * to a Tidal FLAC was served, recorded as the declared format, and
+         * then died on `ERROR_CODE_IO_BAD_HTTP_STATUS`; playback recovered
+         * onto YouTube's Opus and the badge went on reading "Lossless" over
+         * it, because the claim outlived the stream that made it.
+         *
+         * So the decoder gets the last word whenever it has said anything.
+         * The claim is only consulted before the renderer has been
+         * configured — the gap between a source answering and the first audio
+         * frame — where it is the only evidence there is, and where a wrong
+         * answer lasts a second rather than a song.
          */
         val isLossless: Boolean
-            get() = claimed?.isLossless == true ||
-                mimeType?.endsWith("flac") == true ||
-                mimeType?.endsWith("alac") == true
+            get() = when {
+                mimeType != null -> LOSSLESS_CODEC_SUFFIXES.any { mimeType.endsWith(it) }
+                else -> claimed?.isLossless == true
+            }
 
         /**
          * Whether this is better than CD quality — the line Tidal, Lossless and
@@ -70,7 +85,42 @@ object NerdStats {
          */
         val isHiRes: Boolean
             get() = isLossless && ((bitDepth ?: 0) > 16 || (sampleRateHz ?: 0) > 48_000)
+
+        /**
+         * Whether this is lossy, but at the top of what lossy gets — a 320kbps
+         * AAC or MP3 from a module's HIGH tier, rather than YouTube's 160kbps
+         * Opus.
+         *
+         * Worth naming on screen because it is the honest answer often enough
+         * to matter: plenty of catalogues simply have no lossless copy of a
+         * track, and a badge with only two states — "Lossless" or nothing —
+         * makes a good stream and a mediocre one look identical. Not called
+         * lossless anywhere, because it isn't.
+         *
+         * Decided on the bitrate rather than on which source served it: a
+         * 256kbps stream is a 256kbps stream wherever it came from.
+         */
+        val isHiQuality: Boolean
+            get() = !isLossless && (bitrateKbps ?: claimed?.kbps ?: 0) >= HI_QUALITY_KBPS
     }
+
+    /**
+     * What the renderer's input mime type looks like when the bytes behind it
+     * are bit-exact.
+     *
+     * `audio/raw` is here because that is how Media3 names PCM — a WAV stream
+     * reaches the renderer as raw samples, not as `audio/wav`.
+     */
+    private val LOSSLESS_CODEC_SUFFIXES = listOf("flac", "alac", "raw")
+
+    /**
+     * The bitrate a lossy stream has to reach to be worth calling out.
+     *
+     * At 256 an Apple-style AAC counts and YouTube's Opus, which tops out
+     * around 160, does not — which is the distinction the label exists to
+     * draw.
+     */
+    private const val HI_QUALITY_KBPS = 256
 
     val current = MutableStateFlow<Snapshot?>(null)
 
@@ -78,8 +128,9 @@ object NerdStats {
      * YouTube video ids with a module lookup racing YouTube's own resolve
      * for the stream to actually play — see
      * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s
-     * resolving data source. The module is the one being waited on — YouTube
-     * resolves alongside it only so that a miss costs nothing extra — so this
+     * resolving data source. Both start together and whichever answers first
+     * plays; the module is the one still worth hearing about, because a
+     * YouTube win only means the search continues under the music — so this
      * is what the UI shows "looking for a better copy" from. A track leaves
      * the set the moment its own lookup settles either way, never on a timer.
      */
@@ -120,6 +171,20 @@ object NerdStats {
     }
 
     fun pickedBitrateKbps(videoId: String?): Int? = videoId?.let { picked[it] }
+
+    /**
+     * Undoes [onSourceStream] for [trackId].
+     *
+     * For when a swap to a claimed-better stream doesn't pan out and the
+     * player falls back to what it had — see
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s
+     * upgrade revert. Without this the claim from the abandoned stream keeps
+     * describing the one that's actually playing, which is how a reverted
+     * FLAC swap leaves the "Lossless" badge lit over plain Opus.
+     */
+    fun clearDeclared(trackId: String?) {
+        if (trackId != null) declared.remove(trackId)
+    }
 
     /**
      * @param mediaId the queue's id for the track, which for a source-backed

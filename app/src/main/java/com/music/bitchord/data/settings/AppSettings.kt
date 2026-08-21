@@ -62,7 +62,7 @@ object AppSettings {
      * because a capped connection is a budget, and a preference should not
      * quietly overspend one.
      */
-    val losslessAudio = MutableStateFlow(false)
+    val losslessAudio = MutableStateFlow(true)
 
     val crossfadeSeconds = MutableStateFlow(0)
     val skipSilence = MutableStateFlow(false)
@@ -89,6 +89,9 @@ object AppSettings {
 
     /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
     val reduceAnimation = MutableStateFlow(false)
+
+    /** Stop playback when the app is swiped away from the recent apps screen. */
+    val stopOnTaskRemoved = MutableStateFlow(false)
 
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
@@ -151,7 +154,7 @@ object AppSettings {
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
-        losslessAudio.value = prefs.getBoolean(KEY_LOSSLESS, false)
+        losslessAudio.value = prefs.getBoolean(KEY_LOSSLESS, true)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
@@ -162,6 +165,7 @@ object AppSettings {
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
+        stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
@@ -284,6 +288,11 @@ object AppSettings {
     fun setReduceAnimation(value: Boolean) {
         reduceAnimation.value = value
         prefs.edit().putBoolean(KEY_REDUCE_ANIMATION, value).apply()
+    }
+
+    fun setStopOnTaskRemoved(value: Boolean) {
+        stopOnTaskRemoved.value = value
+        prefs.edit().putBoolean(KEY_STOP_ON_TASK_REMOVED, value).apply()
     }
 
     fun setReduceDynamicBlur(value: Boolean) {
@@ -409,6 +418,7 @@ object AppSettings {
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
+    private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"

@@ -1,8 +1,10 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import org.junit.Assert.assertEquals
@@ -63,6 +65,43 @@ class SourcesTest {
         assertEquals("MP3 · 44.1 kHz · 320 kbps", lossy.summary)
 
         assertEquals("Unknown format", StreamFormat().summary)
+    }
+
+    /**
+     * The badge tiers. "Hi-Quality" exists to separate a module's 320kbps
+     * stream from YouTube's 160kbps Opus, which the screen otherwise renders
+     * identically — as nothing at all.
+     */
+    @Test
+    fun `names a high-bitrate lossy stream without calling it lossless`() {
+        val aac320 = NerdStats.Snapshot(mimeType = "audio/mp4a-latm", bitrateKbps = 320, sampleRateHz = 44_100, channels = 2)
+        assertFalse(aac320.isLossless)
+        assertTrue(aac320.isHiQuality)
+
+        val opus160 = NerdStats.Snapshot(mimeType = "audio/opus", bitrateKbps = 160, sampleRateHz = 48_000, channels = 2)
+        assertFalse(opus160.isHiQuality)
+
+        // Lossless is its own badge and never doubles as this one, however
+        // large the bitrate a FLAC reports.
+        val flac = NerdStats.Snapshot(mimeType = "audio/flac", bitrateKbps = 1411, sampleRateHz = 44_100, channels = 2)
+        assertTrue(flac.isLossless)
+        assertFalse(flac.isHiQuality)
+    }
+
+    /** With no measured bitrate, what the source said it was sending will do. */
+    @Test
+    fun `falls back to the declared bitrate for the quality tier`() {
+        val claimed = NerdStats.Snapshot(
+            mimeType = "audio/mp4a-latm",
+            bitrateKbps = null,
+            sampleRateHz = 44_100,
+            channels = 2,
+            claimed = StreamFormat(codec = "aac", kbps = 320),
+        )
+        assertTrue(claimed.isHiQuality)
+
+        val silent = NerdStats.Snapshot(mimeType = "audio/mp4a-latm", bitrateKbps = null, sampleRateHz = null, channels = null)
+        assertFalse(silent.isHiQuality)
     }
 
     // ---- Cross-source matching ---------------------------------------------
@@ -185,6 +224,61 @@ class SourcesTest {
         )
     }
 
+    /**
+     * Film catalogues credit from opposite ends: YouTube Music files this
+     * under the composer, every store under the singer, and the two credits
+     * share nothing at all. An exact runtime is what says they are the same
+     * master anyway.
+     */
+    @Test
+    fun `accepts a composer credit against a singer credit on an exact runtime`() {
+        assertTrue(
+            matches(
+                song("Jhak Maar Ke", "Neeraj Shridhar", duration = "3:53"),
+                title = "Jhak Maar Ke",
+                artist = "Pritam",
+                durationSec = 233,
+            ),
+        )
+        // The remix and the acoustic cover from the same result set are the
+        // reason this is safe: neither agrees on length.
+        assertFalse(
+            matches(
+                song("Jhak Maar Ke", "Leo Lz Mix", duration = "4:01"),
+                title = "Jhak Maar Ke",
+                artist = "Pritam",
+                durationSec = 233,
+            ),
+        )
+    }
+
+    /**
+     * The runtime may only stand in for a credit when there *is* a runtime.
+     * Without one there is nothing corroborating anything, and an unrelated
+     * song sharing a title must still lose.
+     */
+    @Test
+    fun `will not waive the credit check without a runtime to back it`() {
+        assertFalse(matches(song("Jhak Maar Ke", "Neeraj Shridhar"), "Jhak Maar Ke", "Pritam"))
+        assertFalse(
+            matches(
+                song("Jhak Maar Ke", "Neeraj Shridhar", duration = "3:53"),
+                title = "Jhak Maar Ke",
+                artist = "Pritam",
+                durationSec = null,
+            ),
+        )
+    }
+
+    /** A properly credited copy always outranks one the runtime merely vouched for. */
+    @Test
+    fun `prefers a credited match over a runtime-vouched one`() {
+        val target = TrackMatcher.Target("Jhak Maar Ke", "Pritam, Neeraj Shridhar", durationSec = 233)
+        val vouched = song("Jhak Maar Ke", "Some Uploader", duration = "3:53")
+        val credited = song("Jhak Maar Ke", "Neeraj Shridhar", duration = "3:53")
+        assertEquals(credited, TrackMatcher.best(listOf(vouched, credited), target))
+    }
+
     /** A name inside another name is not a shared credit. */
     @Test
     fun `refuses an artist whose name merely contains the one asked for`() {
@@ -201,6 +295,16 @@ class SourcesTest {
         assertFalse(matches(song("Shape of You", "Ed Sheeran"), "Shape of You (Acoustic)", "Ed Sheeran"))
         assertFalse(matches(song("Creep (Live)", "Radiohead"), "Creep", "Radiohead"))
         assertFalse(matches(song("Faded", "Alan Walker"), "Faded (Slowed + Reverb)", "Alan Walker"))
+        // A stem carries the right title and the right artist and is not the
+        // song — this one was one candidate away from playing.
+        assertFalse(
+            matches(
+                song("Apna Bana Le - Arijit Singh Vocals Only", "Arijit Singh, Sachin-Jigar"),
+                title = "Apna Bana Le (From \"Bhediya\")",
+                artist = "Arijit Singh",
+            ),
+        )
+        assertFalse(matches(song("Kesariya (Instrumental)", "Arijit Singh"), "Kesariya", "Arijit Singh"))
         // Both sides saying the same thing is still a match.
         assertTrue(matches(song("Creep (Live)", "Radiohead"), "Creep [Live]", "Radiohead"))
     }
@@ -255,6 +359,103 @@ class SourcesTest {
         assertEquals(right, TrackMatcher.best(listOf(wrongLength, right), target))
     }
 
+    /**
+     * A declared tier is a reason to prefer one copy of a recording over
+     * another. It is not a reason to play a different recording — the DJ edit
+     * on a compilation carries the right title and the right artist, and only
+     * its runtime gives it away.
+     */
+    @Test
+    fun `refuses to let a lossless label outrank the right runtime`() {
+        val target = TrackMatcher.Target("Sakhiyaan", "Maninder Buttar", durationSec = 180)
+        val djEdit = song("Sakhiyaan", "Maninder Buttar", duration = "3:05")
+            .copy(albumName = "Punjabi Dj Holi songs", sourceQuality = "LOSSLESS")
+        val albumCut = song("Sakhiyaan", "Maninder Buttar", duration = "3:00")
+            .copy(albumName = "Sakhiyaan")
+        // Both are acceptable matches on title and artist alone...
+        assertTrue(TrackMatcher.matches(djEdit, target.title, target.artist))
+        // ...and the runtime is the only thing that separates them.
+        assertEquals(albumCut, TrackMatcher.best(listOf(djEdit, albumCut), target))
+        // Including when lossless is being asked for and only the wrong cut
+        // claims to have it, which is the case that actually shipped broken.
+        assertEquals(
+            listOf(albumCut),
+            SourceResolver.preferred(listOf(djEdit, albumCut), target, wantsLossless = true),
+        )
+    }
+
+    /** With no runtime to separate them, the declared tier is the tiebreak again. */
+    @Test
+    fun `prefers the lossless copy when nothing separates the recordings`() {
+        val target = TrackMatcher.Target("Sakhiyaan", "Maninder Buttar", durationSec = 180)
+        val plain = song("Sakhiyaan", "Maninder Buttar", duration = "3:00")
+        val lossless = song("Sakhiyaan", "Maninder Buttar", duration = "3:00")
+            .copy(sourceQuality = "LOSSLESS")
+        assertEquals(
+            listOf(lossless, plain),
+            SourceResolver.preferred(listOf(plain, lossless), target, wantsLossless = true),
+        )
+    }
+
+    // ---- Deciding whether an upgrade is worth the seam -----------------------
+
+    /**
+     * Lossless is always worth it — it is what was asked for, and the reason
+     * the second look happens at all.
+     */
+    @Test
+    fun `always swaps to lossless`() {
+        val youtube = StreamFormat(codec = "opus", kbps = 160)
+        assertTrue(SourceResolver.worthSwapping(StreamFormat(codec = "flac"), youtube))
+        // Even against a lossy stream that is nominally the higher bitrate.
+        assertTrue(
+            SourceResolver.worthSwapping(StreamFormat(codec = "flac"), StreamFormat(codec = "aac", kbps = 320)),
+        )
+    }
+
+    /**
+     * The Shaayraana case: no catalogue had a lossless copy, one had a 320kbps
+     * AAC, and the track played on YouTube's 160kbps Opus because the only
+     * question being asked was "is this lossless".
+     */
+    @Test
+    fun `swaps to a lossy stream that is clearly better than what is playing`() {
+        val youtube = StreamFormat(codec = "opus", kbps = 160)
+        assertTrue(SourceResolver.worthSwapping(StreamFormat(codec = "aac", kbps = 320), youtube))
+    }
+
+    /** A margin too narrow to hear does not earn a break in the audio. */
+    @Test
+    fun `refuses a lossy swap that gains little`() {
+        assertFalse(
+            SourceResolver.worthSwapping(
+                StreamFormat(codec = "mp3", kbps = 192),
+                StreamFormat(codec = "aac", kbps = 128),
+            ),
+        )
+        // And never a downgrade, however the codecs compare.
+        assertFalse(
+            SourceResolver.worthSwapping(
+                StreamFormat(codec = "mp3", kbps = 128),
+                StreamFormat(codec = "opus", kbps = 160),
+            ),
+        )
+    }
+
+    /**
+     * An unstated bitrate on either side is not evidence of an improvement.
+     * Swapping on one would be gambling the listener's audio on a guess.
+     */
+    @Test
+    fun `refuses a lossy swap it cannot measure`() {
+        val playing = StreamFormat(codec = "opus", kbps = 160)
+        assertFalse(SourceResolver.worthSwapping(StreamFormat(codec = "aac"), playing))
+        assertFalse(SourceResolver.worthSwapping(StreamFormat(codec = "aac", kbps = 320), null))
+        assertFalse(
+            SourceResolver.worthSwapping(StreamFormat(codec = "aac", kbps = 320), StreamFormat(codec = "opus")),
+        )
+    }
+
     @Test
     fun `has nothing to offer when no candidate is the recording`() {
         val target = TrackMatcher.Target("Paniyon Sa", "Atif Aslam")
@@ -290,6 +491,32 @@ class SourcesTest {
     @Test
     fun `has nothing to ask for without a title`() {
         assertTrue(TrackMatcher.queries(TrackMatcher.Target("", "Atif Aslam")).isEmpty())
+    }
+
+    // ---- The mid-track swap guard ------------------------------------------
+
+    /**
+     * The check standing between a listener and having their audio cut for a
+     * different recording. Stricter than ordinary matching on purpose, and it
+     * refuses anything it cannot actually check.
+     */
+    @Test
+    fun `only swaps in a copy of demonstrably the same length`() {
+        val playing = TrackMatcher.Target("Jo Tere Sang", "Jeet Gannguli", durationSec = 306)
+        assertTrue(TrackMatcher.withinSeconds(song("Jo Tere Sang", "x", "5:06"), playing, 2))
+        assertTrue(TrackMatcher.withinSeconds(song("Jo Tere Sang", "x", "5:04"), playing, 2))
+        assertFalse(TrackMatcher.withinSeconds(song("Jo Tere Sang", "x", "5:12"), playing, 2))
+        // A candidate that never said how long it is cannot be checked, and an
+        // unverifiable swap is not worth making.
+        assertFalse(TrackMatcher.withinSeconds(song("Jo Tere Sang", "x"), playing, 2))
+        // Neither is one where nothing is playing to compare against.
+        assertFalse(
+            TrackMatcher.withinSeconds(
+                song("Jo Tere Sang", "x", "5:06"),
+                TrackMatcher.Target("Jo Tere Sang", "Jeet Gannguli"),
+                2,
+            ),
+        )
     }
 
     // ---- Quality tiers -----------------------------------------------------

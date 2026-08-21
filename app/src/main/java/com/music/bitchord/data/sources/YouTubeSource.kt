@@ -40,7 +40,8 @@ class YouTubeSource(
      */
     override suspend fun health(): SourceHealth = SourceHealth.Ok()
 
-    override suspend fun search(query: String, limit: Int): List<Song> =
+    /** [waitForAll] is moot: there is one endpoint here, and it is always waited for. */
+    override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> =
         YtMusicRepository.search(query, SearchFilter.SONGS)
             .getOrDefault(emptyList())
             .filterIsInstance<SearchResult.Track>()

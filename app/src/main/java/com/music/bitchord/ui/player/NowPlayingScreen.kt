@@ -587,6 +587,11 @@ fun NowPlayingScreen(
             // ---- Top and centre: artwork, then the credits ----
             // Everything that changes between the artwork and the queue lives
             // in this one weighted box, so the controls below it never move.
+            // Read up here rather than down by the scrubber: the stats-for-nerds
+            // line now lives inside the sleeve itself, so the art Box below
+            // needs these before the seek bar does.
+            val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
+            val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
             BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
@@ -699,6 +704,29 @@ fun NowPlayingScreen(
                             isPlaying = isPlaying,
                             modifier = Modifier.fillMaxSize(),
                         )
+                    }
+
+                    // Measured stats, pinned to the sleeve's own bottom-centre
+                    // rather than squeezed under the seek bar with the
+                    // "Lossless" badge — the badge is a claim, this is the
+                    // evidence, and the two no longer swap for each other on a
+                    // tap. Fades out with the sleeve as it collapses to a
+                    // thumbnail, where there's no room to read it anyway.
+                    if (showNerdStats && p < 0.5f) {
+                        nerdStats?.describe()?.let { stats ->
+                            Text(
+                                text = stats,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.65f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                                    .graphicsLayer { alpha = 1f - p * 2f },
+                            )
+                        }
                     }
                 }
 
@@ -893,8 +921,6 @@ fun NowPlayingScreen(
                     scrubbing = false
                 },
             )
-            val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
-            val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
             val losslessOn by AppSettings.losslessAudio.collectAsStateWithLifecycle()
             val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
             val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
@@ -946,7 +972,6 @@ fun NowPlayingScreen(
                     stillRacing = stillRacing,
                     losslessRequested = losslessRequested,
                     nerdStats = nerdStats,
-                    showNerdStats = showNerdStats,
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(horizontal = 8.dp),
@@ -2376,14 +2401,11 @@ private fun formatTime(ms: Long): String {
 }
 
 /**
- * The gap between the two timestamps under the seek bar: the "Lossless"
- * badge when one applies, the raw stats-for-nerds line otherwise.
- *
- * The badge is shown independent of [showNerdStats] — whether a track is
- * genuinely lossless is not a debug detail, it's the thing the whole
- * lossless setting exists to deliver on. [showNerdStats] only gates the tap:
- * with it on, tapping the badge swaps in the measured line for three seconds
- * so the two can be compared without leaving them both on screen at once.
+ * The gap between the two timestamps under the seek bar: just the "Lossless"
+ * badge when one applies, and nothing otherwise. The measured stats line
+ * that used to fall back to lives inside the sleeve now (see the bottom-centre
+ * overlay on the artwork Box above), so there is no tap here to swap it in —
+ * the badge is a claim, the sleeve is where the evidence is.
  */
 @Composable
 private fun LosslessOrStats(
@@ -2391,7 +2413,6 @@ private fun LosslessOrStats(
     stillRacing: Boolean,
     losslessRequested: Boolean,
     nerdStats: NerdStats.Snapshot?,
-    showNerdStats: Boolean,
     modifier: Modifier = Modifier,
 ) {
     when {
@@ -2407,55 +2428,33 @@ private fun LosslessOrStats(
         // off. Gating this on it left the badge blank through the wait and
         // then jumped straight to "Hi-Res Lossless".
         (stillRacing || (isLoading && losslessRequested)) && nerdStats?.isLossless != true -> LosslessLabel(
-            text = "Loading lossless",
+            text = "Upgrading Quality",
             animated = false,
             modifier = modifier,
         )
-        nerdStats?.isLossless == true -> {
-            var revealStats by remember(nerdStats) { mutableStateOf(false) }
-            LaunchedEffect(revealStats) {
-                if (revealStats) {
-                    delay(3_000)
-                    revealStats = false
-                }
-            }
-            if (revealStats) {
-                Text(
-                    text = nerdStats.describe() ?: "Lossless",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.4f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = modifier,
-                )
-            } else {
-                LosslessLabel(
-                    // Same line Tidal, Lossless and Apple Music draw it at — see
-                    // [NerdStats.Snapshot.isHiRes].
-                    text = if (nerdStats.isHiRes) "Hi-Res Lossless" else "Lossless",
-                    animated = true,
-                    modifier = modifier.then(
-                        if (showNerdStats) Modifier.clickable { revealStats = true } else Modifier,
-                    ),
-                )
-            }
-        }
-        else -> nerdStats?.describe()?.takeIf { showNerdStats }?.let { stats ->
-            Text(
-                text = stats,
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White.copy(alpha = 0.4f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = modifier,
-            )
-        }
+        nerdStats?.isLossless == true -> LosslessLabel(
+            // Same line Tidal, Lossless and Apple Music draw it at — see
+            // [NerdStats.Snapshot.isHiRes].
+            text = if (nerdStats.isHiRes) "Hi-Res Lossless" else "Lossless",
+            // Shimmer is reserved for the thing that was asked for and
+            // confirmed. It is what makes the badge read as an achievement
+            // rather than a label, which only one of these two is.
+            animated = true,
+            modifier = modifier,
+        )
+        // Lossy, but the good end of lossy — a module's 320kbps tier, which
+        // for a great many tracks is the best copy that exists anywhere the
+        // app can reach. See [NerdStats.Snapshot.isHiQuality].
+        nerdStats?.isHiQuality == true -> LosslessLabel(
+            text = "Hi-Quality",
+            animated = false,
+            modifier = modifier,
+        )
+        else -> {}
     }
 }
 
-/** A headphone glyph ahead of either "Loading lossless" or the shimmering "Lossless" tag. */
+/** A headphone glyph ahead of the quality tag — "Upgrading Quality", "Hi-Quality", "Lossless". */
 @Composable
 private fun LosslessLabel(text: String, animated: Boolean, modifier: Modifier = Modifier) {
     Row(
@@ -2475,7 +2474,9 @@ private fun LosslessLabel(text: String, animated: Boolean, modifier: Modifier = 
         } else {
             Text(
                 text = text,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
+                ),
                 color = Color.White.copy(alpha = 0.45f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -2519,7 +2520,11 @@ private fun ShimmerText(text: String) {
     }
     Text(
         text = text,
-        style = MaterialTheme.typography.labelMedium.copy(brush = brush, fontWeight = FontWeight.SemiBold),
+        style = MaterialTheme.typography.labelMedium.copy(
+            brush = brush,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
+        ),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = Modifier.onSizeChanged { widthPx = it.width },

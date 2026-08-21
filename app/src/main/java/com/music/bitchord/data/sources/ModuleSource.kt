@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources
 
 import android.util.Log
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.module.ModuleManager
 import com.music.bitchord.data.sources.module.ModuleSearchResult
@@ -56,7 +57,7 @@ class ModuleSource(
                 else -> SourceHealth.Ok("${modules.size} module${if (modules.size == 1) "" else "s"}")
             }
         } catch (e: Exception) {
-            Log.w(TAG, "module index fetch failed for ${config.displayName}: ${e.message}")
+            TrackLog.w(TAG, "module index fetch failed for ${config.displayName}: ${e.message}")
             SourceHealth.Unreachable(e.message ?: "Could not reach the module index")
         }
     }
@@ -90,14 +91,14 @@ class ModuleSource(
      * which rows are the recording and [SourceResolver] decides which of those
      * to open. This only has to be complete enough to contain the right one.
      */
-    override suspend fun search(query: String, limit: Int): List<Song> =
+    override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> =
         withContext(Dispatchers.IO) {
             if (query.isBlank()) return@withContext emptyList()
             val indexUrl = config.baseUrl
             val baseUrl = indexUrl.substringBeforeLast("/")
 
             val modules = manager.fetchIndex(indexUrl).getOrElse { e ->
-                Log.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
+                TrackLog.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
                 return@withContext emptyList()
             }
 
@@ -119,8 +120,12 @@ class ModuleSource(
                 // opposite mistake: the fast module is not reliably the one
                 // holding the best copy, and the grace period is what buys the
                 // chance to compare them.
-                withTimeoutOrNull(SEARCH_BUDGET_MS) { first.await() }
-                withTimeoutOrNull(SEARCH_GRACE_MS) { jobs.joinAll() }
+                if (waitForAll) {
+                    withTimeoutOrNull(SEARCH_PATIENT_MS) { jobs.joinAll() }
+                } else {
+                    withTimeoutOrNull(SEARCH_BUDGET_MS) { first.await() }
+                    withTimeoutOrNull(SEARCH_GRACE_MS) { jobs.joinAll() }
+                }
                 jobs.forEach { it.cancel() }
                 answers.filterNotNull()
             }
@@ -135,11 +140,11 @@ class ModuleSource(
         baseUrl: String,
     ): List<Song> {
         val loaded = manager.loadModule(module) { baseUrl }.getOrElse { e ->
-            Log.w(TAG, "${config.displayName}: load failed for ${module.id} — ${e.message}")
+            TrackLog.w(TAG, "${config.displayName}: load failed for ${module.id} — ${e.message}")
             return emptyList()
         }
         val searchResponse = manager.searchTracks(loaded, query, limit).getOrElse { e ->
-            Log.w(TAG, "${config.displayName}: search failed for ${module.id} — ${e.message}")
+            TrackLog.w(TAG, "${config.displayName}: search failed for ${module.id} — ${e.message}")
             return emptyList()
         }
         return searchResponse.tracks.map { track ->
@@ -194,7 +199,7 @@ class ModuleSource(
             // trackId is "<moduleId>::<upstreamId>"
             val cut = trackId.indexOf(MOD_SEPARATOR)
             if (cut < 0) {
-                Log.w(TAG, "${config.displayName}: malformed trackId '$trackId'")
+                TrackLog.w(TAG, "${config.displayName}: malformed trackId '$trackId'")
                 return@withContext null
             }
             val moduleId = trackId.substring(0, cut)
@@ -203,16 +208,16 @@ class ModuleSource(
             // Find the module in the index, load it (cache hit after search),
             // then ask for the stream URL.
             val modules = manager.fetchIndex(config.baseUrl).getOrElse { e ->
-                Log.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
+                TrackLog.w(TAG, "${config.displayName}: index fetch failed — ${e.message}")
                 return@withContext null
             }
             val module = modules.firstOrNull { it.id == moduleId } ?: run {
-                Log.w(TAG, "${config.displayName}: module '$moduleId' not found in index")
+                TrackLog.w(TAG, "${config.displayName}: module '$moduleId' not found in index")
                 return@withContext null
             }
             val baseUrl = config.baseUrl.substringBeforeLast("/")
             val loaded = manager.loadModule(module) { baseUrl }.getOrElse { e ->
-                Log.w(TAG, "${config.displayName}: load failed for $moduleId — ${e.message}")
+                TrackLog.w(TAG, "${config.displayName}: load failed for $moduleId — ${e.message}")
                 return@withContext null
             }
             val streamResponse = manager.getStreamUrl(
@@ -221,11 +226,11 @@ class ModuleSource(
                 quality = request.tier,
                 settings = settingsFor(request),
             ).getOrElse { e ->
-                Log.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
+                TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
                 return@withContext null
             }
             val url = streamResponse.streamUrl.ifBlank { null } ?: run {
-                Log.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")
+                TrackLog.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")
                 return@withContext null
             }
 
@@ -366,6 +371,14 @@ class ModuleSource(
          */
         const val SEARCH_BUDGET_MS = 8_000L
         const val SEARCH_GRACE_MS = 2_500L
+
+        /**
+         * The budget for the background pass, which runs while a track is
+         * already playing and is therefore allowed to be slow. This is where
+         * the module dropped at [SEARCH_GRACE_MS] gets its hearing — and it is
+         * routinely the one holding the lossless copy.
+         */
+        const val SEARCH_PATIENT_MS = 25_000L
 
         /**
          * Delimiter between the module id and the upstream track id inside

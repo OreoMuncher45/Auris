@@ -126,10 +126,47 @@ object TrackMatcher {
         // the album cut.
         if (wanted.versions != got.versions) return null
 
-        val artist = artistScore(target.artist, candidate.artist) ?: return null
         val duration = durationScore(target.durationSec, secondsOf(candidate.durationText))
             ?: return null
+        val artist = artistScore(target.artist, candidate.artist)
+            // The credits don't merely differ in spelling, they name different
+            // people — and sometimes that is because they are describing the
+            // same recording from different ends of it. Film catalogues are
+            // full of this: YouTube Music files "Jhak Maar Ke" under Pritam,
+            // who *wrote* it, while every store files it under Neeraj
+            // Shridhar, who *sang* it. Neither is wrong and nothing in either
+            // credit hints at the other, so a matcher that insists on an
+            // overlap refuses the correct track every time.
+            //
+            // What breaks the tie is length. Two recordings that share an
+            // exact title and agree on their runtime to the second are the
+            // same master; a cover, a remix or a re-recording essentially
+            // never lands there — of the four candidates for that track, the
+            // remix ran 241s and the acoustic cover 66s against the 233s being
+            // played. So an exact runtime is allowed to stand in for a shared
+            // credit, and *only* an exact one: with no runtime on either side
+            // there is nothing corroborating anything, and the strict refusal
+            // stands. The match still scores below a genuine credit match, so
+            // it never wins where a properly-credited copy exists.
+            ?: CREDITS_DISAGREE.takeIf { withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC) }
+            ?: return null
         return BASE + artist + duration + contextScore(wanted, got)
+    }
+
+    /**
+     * Whether [candidate] states a runtime, and one within [seconds] of
+     * [target]'s.
+     *
+     * Both halves are requirements. A candidate that doesn't say how long it
+     * is fails this — for the callers that ask, an unstated runtime is not a
+     * near miss, it is a candidate that cannot be checked, and the whole
+     * reason to ask is that the check is the last thing standing between a
+     * listener and the wrong recording.
+     */
+    fun withinSeconds(candidate: Song, target: Target, seconds: Int): Boolean {
+        val wanted = target.durationSec ?: return false
+        val got = secondsOf(candidate.durationText) ?: return false
+        return abs(wanted - got) <= seconds
     }
 
     /**
@@ -351,6 +388,21 @@ object TrackMatcher {
     private const val BASE = 100
     private const val ARTIST_EXACT = 25
     private const val ARTIST_SHARED = 10
+
+    /**
+     * Carried by a match the runtime vouched for rather than the credit. A
+     * penalty, not a pass: any candidate whose credit genuinely agrees beats
+     * it by at least 25, so this only ever decides what plays when nothing
+     * properly credited exists.
+     */
+    private const val CREDITS_DISAGREE = -15
+
+    /**
+     * How exactly two runtimes must agree before that is allowed to stand in
+     * for a shared credit. To the second, near enough — this is the only
+     * evidence there is in that case, so it has to be the strong kind.
+     */
+    private const val CREDIT_OVERRIDE_SEC = 2
     private const val DURATION_TIGHT = 40
     private const val DURATION_LOOSE = 15
     private const val CONTEXT_SHARED = 20
@@ -384,6 +436,10 @@ object TrackMatcher {
     private val VERSION_WORDS = setOf(
         "remix", "remixes", "rmx", "refix", "flip", "bootleg", "mashup", "medley",
         "live", "concert", "unplugged", "acoustic", "instrumental", "karaoke",
+        // A stem is not the song. "Vocals Only", "Acapella", "Backing Track"
+        // and friends carry the right title and the right artist and are not
+        // remotely the recording anybody asked for.
+        "vocals", "vocal", "acapella", "acappella", "backing", "stems", "stem",
         "cover", "demo", "reprise", "remake", "rework", "extended", "edit",
         "version", "mix", "dub", "vip", "session", "sessions",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",

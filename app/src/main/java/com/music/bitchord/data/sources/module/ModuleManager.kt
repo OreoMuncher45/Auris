@@ -1,7 +1,9 @@
 package com.music.bitchord.data.sources.module
 
 import android.util.Log
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -78,11 +80,11 @@ class ModuleManager {
                 if (cached != null &&
                     System.currentTimeMillis() - cached.fetchedAtMs < INDEX_TTL_MS
                 ) {
-                    Log.d(TAG, "▶ fetchIndex($sourceUrl) — CACHE HIT (${cached.modules.size} modules)")
+                    TrackLog.d(TAG, "▶ fetchIndex($sourceUrl) — CACHE HIT (${cached.modules.size} modules)")
                     return@withContext Result.success(cached.modules)
                 }
 
-                Log.d(TAG, "▶ fetchIndex($sourceUrl)")
+                TrackLog.d(TAG, "▶ fetchIndex($sourceUrl)")
                 runCatching {
                     val request = Request.Builder().url(sourceUrl).build()
                     Http.client.newCall(request).execute().use { resp ->
@@ -91,18 +93,18 @@ class ModuleManager {
                         }
                         val body = resp.body?.string()
                             ?: throw Exception("Empty body from $sourceUrl")
-                        Log.d(TAG, "  Index body: ${body.length} chars")
+                        TrackLog.d(TAG, "  Index body: ${body.length} chars")
                         val modules = ModuleIndex.parseModules(json, body)
-                        Log.d(TAG, "  Parsed ${modules.size} modules")
+                        TrackLog.d(TAG, "  Parsed ${modules.size} modules")
                         for (m in modules) {
-                            Log.d(TAG, "    • [${m.id}] ${m.name} v${m.version} tags=${m.tags} download=${m.download}")
+                            TrackLog.d(TAG, "    • [${m.id}] ${m.name} v${m.version} tags=${m.tags} download=${m.download}")
                         }
                         modules
                     }
                 }.onSuccess {
                     indexCache[sourceUrl] = CachedIndex(it, System.currentTimeMillis())
                 }.onFailure {
-                    Log.e(TAG, "  ✗ fetchIndex FAILED for $sourceUrl: ${it.message}", it)
+                    TrackLog.e(TAG, "  ✗ fetchIndex FAILED for $sourceUrl: ${it.message}", it)
                 }
             }
         }
@@ -123,11 +125,11 @@ class ModuleManager {
     ): Result<LoadedModule> = withContext(Dispatchers.IO) {
         val cached = loadedModules[module.id]
         if (cached != null) {
-            Log.d(TAG, "▶ loadModule(${module.id}) — CACHE HIT")
+            TrackLog.d(TAG, "▶ loadModule(${module.id}) — CACHE HIT")
             return@withContext Result.success(cached)
         }
 
-        Log.d(TAG, "▶ loadModule(${module.id}) download=${module.download}")
+        TrackLog.d(TAG, "▶ loadModule(${module.id}) download=${module.download}")
         runCatching {
             val downloadUrl = if (module.download.startsWith("http")) {
                 module.download
@@ -136,7 +138,7 @@ class ModuleManager {
                 "$base/${module.download}"
             }
 
-            Log.d(TAG, "  Resolved download URL: $downloadUrl")
+            TrackLog.d(TAG, "  Resolved download URL: $downloadUrl")
             val request = Request.Builder().url(downloadUrl).build()
             val jsCode = Http.client.newCall(request).execute().use { resp ->
                 if (!resp.isSuccessful) {
@@ -150,10 +152,10 @@ class ModuleManager {
 
             val loaded = LoadedModule(module = module, jsCode = jsCode, baseUrl = baseUrl)
             loadedModules[module.id] = loaded
-            Log.d(TAG, "  ✓ Loaded module ${module.id}: ${jsCode.length} chars, baseUrl=$baseUrl")
+            TrackLog.d(TAG, "  ✓ Loaded module ${module.id}: ${jsCode.length} chars, baseUrl=$baseUrl")
             loaded
         }.onFailure {
-            Log.e(TAG, "  ✗ loadModule FAILED for ${module.id}: ${it.message}", it)
+            TrackLog.e(TAG, "  ✗ loadModule FAILED for ${module.id}: ${it.message}", it)
         }
     }
 
@@ -166,7 +168,7 @@ class ModuleManager {
         settings: Map<String, String> = emptyMap(),
     ): Result<ModuleSearchResponse> = withContext(Dispatchers.IO) {
         val contextArg = contextArg(settings)
-        Log.d(TAG, "▶ searchTracks() module=${loaded.module.id} query=\"$query\" limit=$limit")
+        TrackLog.d(TAG, "▶ searchTracks() module=${loaded.module.id} query=\"$query\" limit=$limit")
         runCatching {
             val result = QuickJsExecutor.callExport(
                 moduleId = loaded.module.id,
@@ -174,10 +176,10 @@ class ModuleManager {
                 args = listOf("\"$query\"", limit.toString(), contextArg),
             ).getOrThrow()
             json.decodeFromString<ModuleSearchResponse>(result).also {
-                Log.d(TAG, "  ✓ Parsed ${it.tracks.size} tracks (total=${it.total})")
+                TrackLog.d(TAG, "  ✓ Parsed ${it.tracks.size} tracks (total=${it.total})")
             }
-        }.onFailure {
-            Log.e(TAG, "  ✗ searchTracks FAILED for ${loaded.module.id} query='$query': ${it.message}", it)
+        }.onCancellation().onFailure {
+            TrackLog.e(TAG, "  ✗ searchTracks FAILED for ${loaded.module.id} query='$query': ${it.message}", it)
         }
     }
 
@@ -200,7 +202,7 @@ class ModuleManager {
         settings: Map<String, String> = emptyMap(),
     ): Result<ModuleStreamResponse> = withContext(Dispatchers.IO) {
         val contextArg = contextArg(settings)
-        Log.d(TAG, "▶ getStreamUrl() module=${loaded.module.id} trackId=$trackId quality=$quality")
+        TrackLog.d(TAG, "▶ getStreamUrl() module=${loaded.module.id} trackId=$trackId quality=$quality")
         runCatching {
             val result = QuickJsExecutor.callExport(
                 moduleId = loaded.module.id,
@@ -208,11 +210,29 @@ class ModuleManager {
                 args = listOf("\"$trackId\"", "\"$quality\"", contextArg),
             ).getOrThrow()
             json.decodeFromString<ModuleStreamResponse>(result).also {
-                Log.d(TAG, "  ✓ streamUrl=${it.streamUrl.take(100)} quality=${it.track?.audioQuality}")
+                TrackLog.d(TAG, "  ✓ streamUrl=${it.streamUrl.take(100)} quality=${it.track?.audioQuality}")
             }
-        }.onFailure {
-            Log.e(TAG, "  ✗ getStreamUrl FAILED for ${loaded.module.id} trackId=$trackId: ${it.message}", it)
+        }.onCancellation().onFailure {
+            TrackLog.e(TAG, "  ✗ getStreamUrl FAILED for ${loaded.module.id} trackId=$trackId: ${it.message}", it)
         }
+    }
+
+    // ── Failure handling ──────────────────────────────────────────────────
+
+    /**
+     * Re-throws a cancellation that [runCatching] caught.
+     *
+     * `runCatching` catches `Throwable`, which includes the
+     * `CancellationException` a coroutine is cancelled with — so a caller
+     * giving up on a lookup came back through here as a *module failure*,
+     * logged with a stack trace as though somebody's server had misbehaved.
+     * It sent debugging in the wrong direction more than once: a lookup
+     * abandoned 66ms short of its answer reads identically to one the server
+     * refused. Worse, it lets the rest of the block carry on doing work for a
+     * coroutine that is already dead.
+     */
+    private fun <T> Result<T>.onCancellation(): Result<T> = also {
+        (exceptionOrNull() as? CancellationException)?.let { throw it }
     }
 
     // ── Context ───────────────────────────────────────────────────────────

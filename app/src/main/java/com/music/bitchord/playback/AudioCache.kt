@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
+import com.music.bitchord.data.TrackLog
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
@@ -162,20 +163,72 @@ object AudioCache {
     }
 
     /**
+     * Throws away everything held for the track [uri] plays, so the next open
+     * fetches it again from the top.
+     *
+     * For when what is on disk is the problem rather than the network: a
+     * half-written entry, or one filled from two different files and now
+     * unreadable at the seam. Nothing here can tell which of those it is
+     * looking at, so every rendition of the track goes — the `#alt` and
+     * `#hifi` siblings as well as the entry named — and the cost is a
+     * re-download rather than a track that cannot be played at all.
+     *
+     * A key still locked by a live reader can't be removed; that throw is
+     * caught rather than prevented, because the alternative is holding a lock
+     * of our own across the player's teardown.
+     *
+     * Runs on the caller's thread rather than off in [scope], so that a caller
+     * about to re-open the track can be sure the old bytes are gone first.
+     * Call it off the main thread.
+     */
+    fun discard(uri: Uri) {
+        val exact = keyFactory.buildCacheKey(DataSpec(uri))
+        val family = uri.getQueryParameter("v")?.let { videoId ->
+            cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
+        } ?: emptyList()
+        (family + exact).distinct().forEach { key ->
+            runCatching { cache.removeResource(key) }
+                .onSuccess { TrackLog.d(TAG, "discarded cache entry $key") }
+                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}") }
+        }
+    }
+
+    /**
      * The videoId behind a request. Playback asks through the custom scheme;
      * read-ahead builds the same URI, so both land on one cache entry.
      */
     private val keyFactory = CacheKeyFactory { spec ->
         spec.uri.getQueryParameter("v")
-            // A YouTube id can name two different recordings on disk: the Opus
-            // rendition YouTube serves, and whatever a source ranked above it
-            // hands over instead — see [SourceResolver.substituteForYouTube].
-            // Sharing one entry between them survives neither a reorder nor a
-            // half-cached track: the next play would serve a FLAC prefix and
-            // then stream Opus into the middle of it. The two get separate
-            // entries, and a reorder costs a re-download rather than a corrupt
-            // one.
-            ?.let { if (SourceResolver.canSubstituteForYouTube()) "$it#alt" else it }
+            // A YouTube id can name several different recordings on disk: the
+            // Opus rendition YouTube serves, whatever a source ranked above it
+            // hands over instead — see [SourceResolver.substituteForYouTube] —
+            // and the better copy that replaces *that* mid-track when one
+            // turns up, see [QualityUpgrade]. Sharing one entry between them
+            // survives neither a reorder nor a half-cached track: the next
+            // play would serve a FLAC prefix and then stream Opus into the
+            // middle of it. Each gets its own entry, and the duplication costs
+            // a re-download rather than a corrupt file.
+            //
+            // Written as a `when` rather than a chain of `?.let`: the previous
+            // form ended `cacheTag(...)?.let { return@let "$videoId#$it" }`,
+            // where `return@let` binds to the *inner* lambda, not the outer
+            // one it was meant for. The upgraded key was built, discarded as
+            // an unused expression, and every upgraded track fell through to
+            // the `#alt` entry belonging to the stream it had just replaced —
+            // so a 320kbps AAC was written into the middle of a half-cached
+            // WebM, which is the exact corruption the paragraph above exists
+            // to prevent. It cost `IllegalStateException: No valid varint
+            // length mask found` at the seam, and eight-second stalls before
+            // that, when the swap blocked on a cache lock the outgoing reader
+            // still held.
+            ?.let { videoId ->
+                val rendition = QualityUpgrade.cacheTag(spec.uri)
+                when {
+                    rendition != null -> "$videoId#$rendition"
+                    SourceResolver.canSubstituteForYouTube() -> "$videoId#alt"
+                    else -> videoId
+                }
+            }
             // A source-backed track keys on the source and its track id alone.
             // The full URI would work but carries the title and artist used
             // for cross-source matching, and the same track queued from a row
@@ -282,30 +335,38 @@ object AudioCache {
         // read-ahead for those is a separate job, and their servers are
         // typically a good deal closer than googlevideo anyway.
         //
-        // The substitution case drops out entirely. Read-ahead builds its own
-        // spec below from an id alone, and carries none of the title and
-        // artist a substitution is matched on — so it resolves to YouTube and
-        // would write Opus bytes into the very entry playback is about to fill
-        // from a higher-ranked source, under the same key, at whatever offset
-        // each of them happened to reach. Reading ahead for a track and then
-        // corrupting it is worse than not reading ahead at all.
-        val videoIds = if (SourceResolver.canSubstituteForYouTube()) {
-            emptyList()
-        } else {
-            mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
-        }
+        val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
+        // With substitution possible, only the *bytes* half drops out. Read-
+        // ahead builds its own spec below from an id alone and carries none of
+        // the title and artist a substitution is matched on — so it resolves
+        // to YouTube and would write Opus bytes into the very entry playback
+        // is about to fill from a higher-ranked source, under the same key, at
+        // whatever offset each of them happened to reach. Reading ahead for a
+        // track and then corrupting it is worse than not reading ahead at all.
+        //
+        // The URL half is a different matter and was thrown out with it, at
+        // real cost. Warming [StreamResolver]'s own cache writes nothing to
+        // disk and cannot corrupt anything, and it is the difference between
+        // the fallback starting instantly and starting with a full client walk
+        // — measured at 7.9s. Since the fallback now races the module lookup
+        // rather than waiting behind it, that walk is what a track waits on
+        // whenever the modules are slow, and warming it here is what makes the
+        // race worth running at all.
+        val cacheBytes = !SourceResolver.canSubstituteForYouTube()
         job = videoIds.firstOrNull()?.let { next ->
             scope.launch {
-                launch {
-                    delay(PREFETCH_DELAY_MS)
-                    fetch(next, 0, PRELOAD_BYTES)
-                    fetchWhole(next)
+                if (cacheBytes) {
+                    launch {
+                        delay(PREFETCH_DELAY_MS)
+                        fetch(next, 0, PRELOAD_BYTES)
+                        fetchWhole(next)
+                    }
                 }
                 launch {
                     delay(PREFETCH_DELAY_MS)
-                    for (id in videoIds.drop(1).take(QUEUE_LOOKAHEAD)) {
+                    for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
                         runCatching { StreamResolver.resolve(id) }
-                            .onFailure { Log.d(TAG, "queue warm-up skipped $id: ${it.message}") }
+                            .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}") }
                         delay(QUEUE_RESOLVE_STAGGER_MS)
                     }
                 }
@@ -337,7 +398,7 @@ object AudioCache {
             if (cacheWholeOnce(videoId)) return
             delay(RETRY_DELAY_MS)
         }
-        Log.d(TAG, "stopped short of caching $videoId in full")
+        TrackLog.d(TAG, "stopped short of caching $videoId in full")
     }
 
     /** @return true once every range of [videoId] is on disk. */
@@ -374,7 +435,7 @@ object AudioCache {
         // nothing in the log said so. Bracketing it is what makes the overlap
         // between "reading ahead" and "waiting for sound" readable at all.
         val fetchStart = SystemClock.elapsedRealtime()
-        Log.d(TAG, "read-ahead fetching $videoId [$position, ${position + length})")
+        TrackLog.d(TAG, "read-ahead fetching $videoId [$position, ${position + length})")
 
         val source = cacheFactory(upstream).createDataSource()
         val spec = DataSpec.Builder()
@@ -397,9 +458,9 @@ object AudioCache {
             }
         }.onFailure {
             // Expected on a skip, and never worth failing playback over.
-            Log.d(TAG, "read-ahead stopped for $videoId: ${it.message}")
+            TrackLog.d(TAG, "read-ahead stopped for $videoId: ${it.message}")
         }.onSuccess {
-            Log.d(
+            TrackLog.d(
                 TAG,
                 "read-ahead fetched $videoId [$position, ${position + length}) in " +
                     "${SystemClock.elapsedRealtime() - fetchStart}ms",

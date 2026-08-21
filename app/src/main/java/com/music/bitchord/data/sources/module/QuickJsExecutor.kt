@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources.module
 
 import android.util.Log
+import com.music.bitchord.data.TrackLog
 import com.dokar.quickjs.QuickJs
 import com.dokar.quickjs.binding.AsyncFunctionBinding
 import com.dokar.quickjs.binding.FunctionBinding
@@ -50,17 +51,17 @@ internal object QuickJsExecutor {
     suspend fun loadModule(moduleId: String, jsCode: String, fetchBase: String = ""): Result<Unit> {
         synchronized(engineLock) {
             if (engines.containsKey(moduleId)) {
-                Log.d(TAG, "QuickJsExecutor.loadModule($moduleId) — ENGINE CACHE HIT")
+                TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) — ENGINE CACHE HIT")
                 return Result.success(Unit)
             }
             while (engines.size >= MAX_CONCURRENT) {
                 val lruId = engines.keys.firstOrNull() ?: break
-                Log.d(TAG, "  Evicting LRU module engine: $lruId")
+                TrackLog.d(TAG, "  Evicting LRU module engine: $lruId")
                 engines.remove(lruId)?.close()
             }
         }
 
-        Log.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
+        TrackLog.d(TAG, "QuickJsExecutor.loadModule($moduleId) fetchBase=$fetchBase jsCodeLength=${jsCode.length}")
         return withContext(Dispatchers.Default) {
             val qjs = QuickJs.create(Dispatchers.Default)
             qjs.maxStackSize = 512 * 1024L
@@ -68,14 +69,14 @@ internal object QuickJsExecutor {
                 bindConsole(qjs)
                 bindAsyncFetch(qjs, fetchBase)
 
-                Log.d(TAG, "  Evaluating polyfills…")
+                TrackLog.d(TAG, "  Evaluating polyfills…")
                 qjs.evaluate<String>(POLYFILLS)
-                Log.d(TAG, "  ✓ Polyfills loaded")
+                TrackLog.d(TAG, "  ✓ Polyfills loaded")
 
                 val cleanCode = preprocessModuleCode(jsCode)
-                Log.d(TAG, "  Preprocessed code: ${jsCode.length} → ${cleanCode.length} chars")
+                TrackLog.d(TAG, "  Preprocessed code: ${jsCode.length} → ${cleanCode.length} chars")
 
-                Log.d(TAG, "  Evaluating IIFE wrapper…")
+                TrackLog.d(TAG, "  Evaluating IIFE wrapper…")
                 val iifeResult = qjs.evaluate<String>(
                     """
                     var __spine_iife_error = null;
@@ -97,18 +98,18 @@ internal object QuickJsExecutor {
                     'ok'
                     """.trimIndent()
                 )
-                Log.d(TAG, "  IIFE result: $iifeResult")
+                TrackLog.d(TAG, "  IIFE result: $iifeResult")
 
                 val iifeError = qjs.evaluate<String>("__spine_iife_error || 'none'")
                 if (iifeError != "none") throw IllegalStateException("Module init error: $iifeError")
-                Log.d(TAG, "  ✓ IIFE no errors")
+                TrackLog.d(TAG, "  ✓ IIFE no errors")
 
                 val keys = qjs.evaluate<String>("Object.keys(__spine_mod).join(', ')")
-                Log.d(TAG, "  Module exports: [$keys]")
+                TrackLog.d(TAG, "  Module exports: [$keys]")
             }.onSuccess {
                 synchronized(engineLock) { engines[moduleId] = qjs }
             }.onFailure {
-                Log.e(TAG, "  ✗ loadModule FAILED for $moduleId: ${it.message}", it)
+                TrackLog.e(TAG, "  ✗ loadModule FAILED for $moduleId: ${it.message}", it)
                 qjs.close()
             }.map { }
         }
@@ -120,7 +121,7 @@ internal object QuickJsExecutor {
         val qjs = synchronized(engineLock) { engines[moduleId] }
             ?: return Result.failure(IllegalStateException("Module $moduleId is not loaded"))
 
-        Log.d(TAG, "QuickJsExecutor.callExport($moduleId, $functionName) args=$args")
+        TrackLog.d(TAG, "QuickJsExecutor.callExport($moduleId, $functionName) args=$args")
         return withContext(Dispatchers.Default) {
             runCatching {
                 val hasFn = qjs.evaluate<String>("typeof __spine_mod['$functionName']")
@@ -153,10 +154,10 @@ internal object QuickJsExecutor {
                 )
 
                 val rawResult = qjs.evaluate<String>("__spine_resolved_json")
-                Log.d(TAG, "  callExport result (${rawResult.length} chars): ${rawResult.take(500)}")
+                TrackLog.d(TAG, "  callExport result (${rawResult.length} chars): ${rawResult.take(500)}")
                 rawResult
             }.onFailure {
-                Log.e(TAG, "  ✗ callExport FAILED for $moduleId.$functionName: ${it.message}", it)
+                TrackLog.e(TAG, "  ✗ callExport FAILED for $moduleId.$functionName: ${it.message}", it)
             }
         }
     }
@@ -165,7 +166,7 @@ internal object QuickJsExecutor {
 
     fun unload(moduleId: String) {
         synchronized(engineLock) { engines.remove(moduleId) }?.close()
-        Log.d(TAG, "QuickJsExecutor.unload($moduleId)")
+        TrackLog.d(TAG, "QuickJsExecutor.unload($moduleId)")
     }
 
     fun unloadAll() {
@@ -175,7 +176,7 @@ internal object QuickJsExecutor {
             values
         }
         all.forEach { it.close() }
-        Log.d(TAG, "QuickJsExecutor.unloadAll()")
+        TrackLog.d(TAG, "QuickJsExecutor.unloadAll()")
     }
 
     // ── Code pre-processing ──────────────────────────────────────────────
@@ -193,19 +194,19 @@ internal object QuickJsExecutor {
         val exportPattern = Regex("""^export\s+const\s+\w+\s*=\s*`""")
         val exportMatch = exportPattern.find(code)
         if (exportMatch != null) {
-            Log.d(TAG, "  Detected template literal export, extracting content…")
+            TrackLog.d(TAG, "  Detected template literal export, extracting content…")
             val contentStart = exportMatch.range.last + 1
             var i = contentStart
             while (i < code.length) {
                 if (code[i] == '\\' && i + 1 < code.length) { i += 2; continue }
                 if (code[i] == '`') {
                     val extracted = code.substring(contentStart, i).trim()
-                    Log.d(TAG, "  ✓ Extracted template literal: ${extracted.length} chars")
+                    TrackLog.d(TAG, "  ✓ Extracted template literal: ${extracted.length} chars")
                     return extracted
                 }
                 i++
             }
-            Log.w(TAG, "  Template literal not closed, falling through to regex preprocess")
+            TrackLog.w(TAG, "  Template literal not closed, falling through to regex preprocess")
         }
 
         var result = code
@@ -221,22 +222,22 @@ internal object QuickJsExecutor {
         qjs.define("console") {
             function("log", object : FunctionBinding<Unit> {
                 override fun invoke(args: Array<Any?>) {
-                    Log.d(TAG, "[JS] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
+                    TrackLog.d(TAG, "[JS] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
                 }
             })
             function("error", object : FunctionBinding<Unit> {
                 override fun invoke(args: Array<Any?>) {
-                    Log.e(TAG, "[JS-ERR] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
+                    TrackLog.e(TAG, "[JS-ERR] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
                 }
             })
             function("warn", object : FunctionBinding<Unit> {
                 override fun invoke(args: Array<Any?>) {
-                    Log.w(TAG, "[JS-WARN] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
+                    TrackLog.w(TAG, "[JS-WARN] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
                 }
             })
             function("info", object : FunctionBinding<Unit> {
                 override fun invoke(args: Array<Any?>) {
-                    Log.i(TAG, "[JS-INFO] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
+                    TrackLog.i(TAG, "[JS-INFO] ${args.joinToString(" ") { it?.toString() ?: "null" }}")
                 }
             })
         }
@@ -255,9 +256,9 @@ internal object QuickJsExecutor {
                     val body = args[3]?.toString()
                     val url = resolveUrl(rawUrl, fetchBase)
 
-                    Log.d(TAG, "  → fetch $method $url")
+                    TrackLog.d(TAG, "  → fetch $method $url")
                     val (statusCode, responseBody) = fetchUrlSync(url, method, headersJson, body)
-                    Log.d(TAG, "    HTTP $statusCode (${responseBody.length} bytes)")
+                    TrackLog.d(TAG, "    HTTP $statusCode (${responseBody.length} bytes)")
 
                     val respObj = JSONObject().apply {
                         put("status", statusCode)

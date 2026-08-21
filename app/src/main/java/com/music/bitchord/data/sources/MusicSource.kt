@@ -58,6 +58,31 @@ data class SourceStream(
     val url: String,
     val format: StreamFormat = StreamFormat(),
     val headers: Map<String, String> = emptyMap(),
+    /**
+     * Whether this is less than was asked for, taken because nothing better
+     * turned up in time.
+     *
+     * Playing it is the right call — a track that plays at 128kbps beats a
+     * track that doesn't play — but it is worth knowing, because the reason is
+     * usually a catalogue that was slow rather than a catalogue that was
+     * missing, and the same question asked again during playback gets a better
+     * answer often enough to be worth asking. See
+     * [QualityUpgrade][com.music.bitchord.playback.QualityUpgrade].
+     */
+    val belowRequest: Boolean = false,
+    /**
+     * How long the catalogue says this recording is, when it says.
+     *
+     * Carried so that a stream found for a track that is *already playing* can
+     * be checked against the length the decoder reports before it is cut in —
+     * see [QualityUpgrade][com.music.bitchord.playback.QualityUpgrade.lookAgain].
+     * The match that produced this stream was made on a duration claimed by
+     * whoever queued the track, which is not the same evidence: measured here,
+     * a 163s track was matched to a 189s cut of the same song under the same
+     * title, and the only place that was catchable before the audio broke was
+     * against the runtime being played.
+     */
+    val durationSec: Int? = null,
 )
 
 /**
@@ -131,8 +156,14 @@ interface MusicSource {
     /**
      * Tracks matching [query], as [Song]s already tagged with this source's id
      * so that playing one comes back here — see [SourceRegistry.trackUri].
+     *
+     * @param waitForAll whether every backend this source fans out to is worth
+     *   waiting for. False while someone is staring at a paused player, where
+     *   a straggler costs more than the rows it would have added; true for the
+     *   background pass that runs *during* playback and can afford the slow
+     *   catalogue that turns out to be the one holding the FLAC.
      */
-    suspend fun search(query: String, limit: Int = 25): List<Song>
+    suspend fun search(query: String, limit: Int = 25, waitForAll: Boolean = false): List<Song>
 
     /**
      * @param trackId this source's own id for the track, as issued by [search].

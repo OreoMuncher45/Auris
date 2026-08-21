@@ -1,4 +1,5 @@
 import java.util.Properties
+import java.io.FileInputStream
 
 plugins {
     id("com.android.application")
@@ -18,6 +19,17 @@ val signing = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
+/**
+ * Module index URL for lossless/HQ audio sourcing.
+ * Set MODULE_INDEX_URL in local.properties to enable it.
+ * If absent, the app builds fine — Settings will show a warning.
+ */
+val localProps = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val moduleIndexUrl: String = localProps.getProperty("MODULE_INDEX_URL", "")
+
 android {
     namespace = "com.music.bitchord"
     compileSdk = 36
@@ -32,6 +44,9 @@ android {
         versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Lossless/HQ module index URL — empty string if not configured.
+        buildConfigField("String", "MODULE_INDEX_URL", "\"${moduleIndexUrl}\"")
     }
 
     // applicationId can only be overridden per flavor, not per build type, so a

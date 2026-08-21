@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
+import com.music.bitchord.BuildConfig
+import com.music.bitchord.data.TrackLog
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -85,7 +87,7 @@ object SourceRegistry {
             // Same degradation as AuthStore: a handful of OEM builds cannot
             // init the keystore, and refusing to run at all is worse than
             // storing this the way every other setting in the app is stored.
-            Log.w(TAG, "EncryptedSharedPreferences unavailable for sources: ${it.message}")
+            TrackLog.w(TAG, "EncryptedSharedPreferences unavailable for sources: ${it.message}")
             context.getSharedPreferences("bitchord_sources_plain", Context.MODE_PRIVATE)
         }
 
@@ -97,7 +99,28 @@ object SourceRegistry {
             .filter { kind -> stored.none { it.kind == kind } }
             .map { SourceConfig(kind = it, enabled = true) }
 
-        publish(seeded, persist = seeded != stored)
+        // If a module index URL was baked in at build time, ensure it is the
+        // one stored — add the module source if missing, or silently update its
+        // URL if it changed. The toggle’s enabled state is always preserved so
+        // the user’s on/off choice survives an app update.
+        val envUrl = BuildConfig.MODULE_INDEX_URL.trim()
+        val after = if (envUrl.isNotEmpty()) {
+            val existingModule = seeded.firstOrNull { it.kind == SourceKind.MODULE }
+            if (existingModule == null) {
+                seeded + SourceConfig(kind = SourceKind.MODULE, baseUrl = envUrl, enabled = true)
+            } else if (existingModule.baseUrl != envUrl) {
+                seeded.map { if (it.kind == SourceKind.MODULE) it.copy(baseUrl = envUrl) else it }
+            } else {
+                seeded
+            }
+        } else {
+            // No env URL: keep whatever the user had stored, but ensure there
+            // is no leftover env-managed module config lying around from a
+            // previous build that did have one.
+            seeded
+        }
+
+        publish(after, persist = after != stored)
     }
 
     /**
@@ -113,7 +136,7 @@ object SourceRegistry {
             .getOrElse { return emptyList() }
         return elements.mapNotNull { element ->
             runCatching { json.decodeFromJsonElement(SourceConfig.serializer(), element) }
-                .onFailure { Log.w(TAG, "dropping unreadable stored source: ${it.message}") }
+                .onFailure { TrackLog.w(TAG, "dropping unreadable stored source: ${it.message}") }
                 .getOrNull()
         }
     }
@@ -144,6 +167,12 @@ object SourceRegistry {
 
     fun setEnabled(configId: String, enabled: Boolean) =
         publish(configs.value.map { if (it.id == configId) it.copy(enabled = enabled) else it })
+
+    /** Toggle the MODULE source on or off by its config id. */
+    fun setModuleEnabled(enabled: Boolean) {
+        val module = configs.value.firstOrNull { it.kind == SourceKind.MODULE } ?: return
+        setEnabled(module.id, enabled)
+    }
 
     private fun publish(next: List<SourceConfig>, persist: Boolean = true) {
         configs.value = next

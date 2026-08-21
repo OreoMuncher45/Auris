@@ -38,6 +38,7 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.SignalCellularAlt
@@ -91,8 +92,10 @@ import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.data.model.Account
+import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.ThemeMode
@@ -116,7 +119,6 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
-    onSources: () -> Unit,
     onLyricsSources: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -143,18 +145,12 @@ fun SettingsScreen(
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
+    val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
 
-    // "3 enabled · Lossless" — the row's own summary, so the state of the
-    // feature is legible without opening it.
-    val sourcesSummary = remember(sourceConfigs, lossless) {
-        val enabled = sourceConfigs.count { it.enabled && it.isComplete }
-        val losslessReady = lossless &&
-            sourceConfigs.any { it.enabled && it.isComplete && it.kind.canServeLossless }
-        listOfNotNull(
-            "$enabled enabled",
-            "Lossless".takeIf { losslessReady },
-        ).joinToString(" · ")
-    }
+    // Whether the module index URL is baked into this build.
+    val losslessConfigured = BuildConfig.MODULE_INDEX_URL.trim().isNotEmpty()
+    // Whether the module source is currently enabled (toggle state).
+    val moduleEnabled = sourceConfigs.any { it.kind == SourceKind.MODULE && it.enabled && it.isComplete }
 
     // Scrobbling states
     val lastfmEnabled by AppSettings.lastfmEnabled.collectAsStateWithLifecycle()
@@ -203,7 +199,7 @@ fun SettingsScreen(
         SettingsGroup {
             SettingsRow(
                 icon = Icons.Rounded.Person,
-                title = "Account & scrobbling",
+                title = "Account & integrations",
                 subtitle = account?.email?.takeIf { it.isNotBlank() }
                     ?: if (signedIn) "Signed in" else "Not signed in",
                 onClick = onAccountScrobbling,
@@ -218,10 +214,42 @@ fun SettingsScreen(
                 "source, and outranks the lossless preference.",
         ) {
             SettingsRow(
-                icon = Icons.Rounded.Dns,
-                title = "Sources",
-                subtitle = sourcesSummary,
-                onClick = onSources,
+                icon = Icons.Rounded.GraphicEq,
+                title = "Lossless / HQ Audio",
+                subtitle = if (!losslessConfigured) null else
+                    if (moduleEnabled) "Turn off if its playing a different version of the song or another song. Restart Required!"
+                    else "Turn on to experience lossless music quality. Restart Required!",
+                subtitleContent = if (!losslessConfigured) {
+                    {
+                        Text(
+                            text = "Lossless is not working — make sure the app is downloaded from the official source",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else null,
+                trailing = {
+                    Switch(
+                        checked = moduleEnabled && losslessConfigured,
+                        onCheckedChange = {
+                            if (losslessConfigured) {
+                                SourceRegistry.setModuleEnabled(it)
+                                AudioCache.clear {}
+                            }
+                        },
+                        enabled = losslessConfigured,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = {
+                    if (losslessConfigured) {
+                        SourceRegistry.setModuleEnabled(!moduleEnabled)
+                        AudioCache.clear {}
+                    }
+                },
             )
             RowDivider()
             SettingsRow(
@@ -477,6 +505,28 @@ fun SettingsScreen(
             )
         }
 
+        SettingsGroup(
+            header = "Miscellaneous",
+            footer = "When enabled, closing the app from the recent apps screen will also stop music playback.",
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.MusicOff,
+                title = "Stop music on close from recents",
+                subtitle = "Stops playback when swiped away from recent apps",
+                trailing = {
+                    Switch(
+                        checked = stopOnTaskRemoved,
+                        onCheckedChange = AppSettings::setStopOnTaskRemoved,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setStopOnTaskRemoved(!stopOnTaskRemoved) },
+            )
+        }
+
         Text(
             text = buildAnnotatedString {
                 append("BitChord $version  ")
@@ -492,6 +542,10 @@ fun SettingsScreen(
                 append("  ")
                 withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx", linkStyles)) {
                     append("Developer")
+                }
+                append("  ")
+                withLink(LinkAnnotation.Url("https://discord.gg/pDdKfrdHY6", linkStyles)) {
+                    append("Discord")
                 }
                 append("\n~YouTube Music Backend")
             },
@@ -901,6 +955,7 @@ internal fun SettingsRow(
     icon: ImageVector,
     title: String,
     subtitle: String? = null,
+    subtitleContent: (@Composable () -> Unit)? = null,
     value: String? = null,
     badge: String? = null,
     enabled: Boolean = true,
@@ -937,12 +992,14 @@ internal fun SettingsRow(
                     Badge(badge)
                 }
             }
-            if (subtitle != null) {
+            if (subtitleContent != null) {
+                subtitleContent()
+            } else if (subtitle != null) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 3,
                 )
             }
         }
