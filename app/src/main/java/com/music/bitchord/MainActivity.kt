@@ -74,13 +74,18 @@ import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.SearchFilter
+import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ThemeMode
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
+import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
@@ -152,6 +157,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     var showLogin by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
+    var showSources by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -229,7 +235,12 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // selected. A pushed album/artist page (from the player, search, etc.)
     // should surface above it rather than being hidden behind it.
     LaunchedEffect(detail) { if (detail != null) showSettings = false }
-    LaunchedEffect(showSettings) { if (!showSettings) showAccountScrobbling = false }
+    LaunchedEffect(showSettings) {
+        if (!showSettings) {
+            showAccountScrobbling = false
+            showSources = false
+        }
+    }
 
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
@@ -245,13 +256,17 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // added the moment repeat-all is turned on.
     var autoplaySeed by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(autoplay, player.queueIndex, player.queue.size, player.song?.videoId, player.repeatMode) {
-        val current = player.song?.videoId
-        if (!autoplay || current == null) return@LaunchedEffect
+        val song = player.song
+        val current = song?.videoId
+        if (!autoplay || song == null || current == null) return@LaunchedEffect
         if (player.repeatMode == Player.REPEAT_MODE_ALL) return@LaunchedEffect
         if (player.queueIndex < player.queue.lastIndex) return@LaunchedEffect
         if (autoplaySeed == current) return@LaunchedEffect
         autoplaySeed = current
-        YtMusicRepository.radio(current).onSuccess { related ->
+        // Radio is YouTube's, and only YouTube's — a module track's id means
+        // nothing to it. See [youtubeSeedFor].
+        val seed = youtubeSeedFor(song) ?: return@LaunchedEffect
+        YtMusicRepository.radio(seed).onSuccess { related ->
             val extra = QueueBuilder.extend(player.queue, related, RADIO_BATCH)
             if (extra.isNotEmpty()) {
                 // Swapped for the catalogue audio track before it ever
@@ -295,7 +310,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val libraryPull = rememberPullToRefreshState()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val currentFeed = when {
-        showSettings || showAccountScrobbling || detail != null -> null
+        showSettings || showAccountScrobbling || showSources || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
         selectedTab == TAB_EXPLORE -> MainViewModel.Feed.EXPLORE
         selectedTab == TAB_LIBRARY -> MainViewModel.Feed.LIBRARY
@@ -404,7 +419,9 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             autoplaySeed = resolved.videoId
             controller?.playSongs(listOf(resolved), 0)
             showNowPlaying = true
-            YtMusicRepository.radio(resolved.videoId).onSuccess { related ->
+            // Radio is YouTube's, and only YouTube's — see [youtubeSeedFor].
+            val seed = youtubeSeedFor(resolved) ?: return@launch
+            YtMusicRepository.radio(seed).onSuccess { related ->
                 // The user may have moved on while the mix was loading.
                 if (controller?.currentMediaItem?.mediaId != resolved.videoId) return@onSuccess
                 val extra = QueueBuilder.extend(listOf(resolved), related, RADIO_BATCH)
@@ -540,18 +557,21 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     ) {
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
-        BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling) { viewModel.closeDetail() }
+        BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources) { viewModel.closeDetail() }
         BackHandler(enabled = showAccountScrobbling) {
             showAccountScrobbling = false
+        }
+        BackHandler(enabled = showSources) {
+            showSources = false
         }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showAccountScrobbling) {
+        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources) {
             showSettings = false
             if (detail == null) selectedTab = TAB_HOME
         }
-        BackHandler(enabled = detail == null && !showSettings && !showAccountScrobbling && selectedTab != TAB_HOME) {
+        BackHandler(enabled = detail == null && !showSettings && !showAccountScrobbling && !showSources && selectedTab != TAB_HOME) {
             selectedTab = TAB_HOME
         }
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
@@ -561,6 +581,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         AnimatedContent(
             targetState = when {
                 showAccountScrobbling -> "account_scrobbling"
+                showSources -> "sources"
                 showSettings -> "settings"
                 detail != null -> detail.browseId
                 else -> "tab:$selectedTab"
@@ -569,7 +590,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             modifier = Modifier.hazeSource(hazeState),
             label = "content",
         ) { key ->
-            val page = detailStack.lastOrNull()?.takeIf { it.browseId == key && key != "settings" && key != "account_scrobbling" }
+            val page = detailStack.lastOrNull()?.takeIf { it.browseId == key && key != "settings" && key != "account_scrobbling" && key != "sources" }
             if (key == "account_scrobbling") {
                 AccountAndScrobblingScreen(
                     signedIn = signedIn,
@@ -584,6 +605,8 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     onOpenLastfmLogin = { showLastfmLogin = true },
                     contentPadding = listPadding,
                 )
+            } else if (key == "sources") {
+                SourcesScreen(contentPadding = listPadding)
             } else if (key == "settings") {
                 SettingsScreen(
                     signedIn = signedIn,
@@ -594,6 +617,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     },
                     onSignOut = { viewModel.signOut() },
                     onAccountScrobbling = { showAccountScrobbling = true },
+                    onSources = { showSources = true },
                     onLyricsSources = { showLyricsSources = true },
                     contentPadding = listPadding,
                 )
@@ -767,7 +791,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         // A detail page's artwork runs up under the status bar, so the bar
         // there is a fade rather than a pane — see [TopFadeBlur]. Drawn before
         // the bar so the bar's own content sits on top of it.
-        val isDetailVisible = detail != null && !showSettings && !showAccountScrobbling
+        val isDetailVisible = detail != null && !showSettings && !showAccountScrobbling && !showSources
         if (isDetailVisible) {
             TopFadeBlur(
                 hazeState = hazeState,
@@ -779,6 +803,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         FrostedTopBar(
             title = when {
                 showAccountScrobbling -> "Account & scrobbling"
+                showSources -> "Sources"
                 showSettings -> "Settings"
                 detail != null -> detail.title
                 else -> tabs[selectedTab].let {
@@ -790,7 +815,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             // Search has no large in-list header to hand the title back to —
             // the field takes that space — so its bar title is always up.
             scrolled = when {
-                showSettings || showAccountScrobbling -> true
+                showSettings || showAccountScrobbling || showSources -> true
                 detail != null -> detailScrolled
                 else -> scrolled || selectedTab == TAB_SEARCH
             },
@@ -798,6 +823,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             pullFraction = { currentPull?.distanceFraction ?: 0f },
             onBack = when {
                 showAccountScrobbling -> ({ showAccountScrobbling = false })
+                showSources -> ({ showSources = false })
                 showSettings -> ({ showSettings = false })
                 detail != null -> ({ viewModel.closeDetail(); Unit })
                 else -> null
@@ -806,7 +832,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             actions = {
                 // Only worth surfacing where there's room for it and it won't
                 // be mistaken for a per-page action — Home, at rest.
-                if (!showSettings && !showAccountScrobbling && detail == null && selectedTab == TAB_HOME) {
+                if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
                     updateNotice?.let { update ->
                         IconButton(onClick = {
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
@@ -819,7 +845,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         }
                     }
                 }
-                if (!showSettings && !showAccountScrobbling) IconButton(onClick = { showSettings = true }) {
+                if (!showSettings && !showAccountScrobbling && !showSources) IconButton(onClick = { showSettings = true }) {
                     Icon(
                         Icons.Rounded.Settings,
                         contentDescription = "Settings",
@@ -878,6 +904,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     viewModel.clearDetail()
                     showSettings = false
                     showAccountScrobbling = false
+                    showSources = false
                     selectedTab = index
                 },
             )
@@ -1279,6 +1306,36 @@ private fun tween(durationMillis: Int) =
 
 /** How many tracks a station pulls in at a time. */
 private const val RADIO_BATCH = 20
+
+/**
+ * A YouTube video id to seed a radio station from, for a track that may not
+ * have one of its own.
+ *
+ * Radio, related tracks and the home feed are YouTube's alone — see
+ * [SourceKind.YOUTUBE][com.music.bitchord.data.sources.SourceKind.YOUTUBE].
+ * A track played from module *search* carries a
+ * [SourceRegistry.trackKey] as its media id, which means nothing to
+ * Innertube: handing one to [YtMusicRepository.radio] gets an empty mix
+ * back, which is why AutoPlay quietly stopped extending the queue after a
+ * module search result. Looking the recording up on YouTube by name gives
+ * the station something it can actually seed from, and the mix that comes
+ * back is YouTube's — those tracks then take the ordinary YouTube path and
+ * get substituted individually if a module happens to hold them.
+ *
+ * Null when the track isn't on YouTube at all, which is a real answer: no
+ * station rather than a station for the wrong song.
+ */
+private suspend fun youtubeSeedFor(song: Song): String? {
+    if (SourceRegistry.parseTrackKey(song.videoId) == null) return song.videoId
+    val target = TrackMatcher.targetOf(song)
+    val query = TrackMatcher.queries(target).firstOrNull() ?: return null
+    return YtMusicRepository.search(query, SearchFilter.SONGS)
+        .getOrNull()
+        ?.filterIsInstance<SearchResult.Track>()
+        ?.map { it.song }
+        ?.let { TrackMatcher.best(it, target) }
+        ?.videoId
+}
 
 /**
  * How far a detail page scrolls before its title moves up into the bar.

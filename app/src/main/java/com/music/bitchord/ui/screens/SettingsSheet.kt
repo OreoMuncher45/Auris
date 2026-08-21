@@ -34,6 +34,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
@@ -92,6 +93,7 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.playback.AudioCache
@@ -114,6 +116,7 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
+    onSources: () -> Unit,
     onLyricsSources: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -138,6 +141,20 @@ fun SettingsScreen(
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
+    val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
+    val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
+
+    // "3 enabled · Lossless" — the row's own summary, so the state of the
+    // feature is legible without opening it.
+    val sourcesSummary = remember(sourceConfigs, lossless) {
+        val enabled = sourceConfigs.count { it.enabled && it.isComplete }
+        val losslessReady = lossless &&
+            sourceConfigs.any { it.enabled && it.isComplete && it.kind.canServeLossless }
+        listOfNotNull(
+            "$enabled enabled",
+            "Lossless".takeIf { losslessReady },
+        ).joinToString(" · ")
+    }
 
     // Scrobbling states
     val lastfmEnabled by AppSettings.lastfmEnabled.collectAsStateWithLifecycle()
@@ -197,8 +214,16 @@ fun SettingsScreen(
             header = "Audio quality",
             footer = "Each connection keeps its own ceiling, so Wi-Fi can stay on " +
                 "High while mobile data is capped. High costs about " +
-                "${AudioQuality.HIGH.hourly} of data.",
+                "${AudioQuality.HIGH.hourly} of data. The ceiling applies to every " +
+                "source, and outranks the lossless preference.",
         ) {
+            SettingsRow(
+                icon = Icons.Rounded.Dns,
+                title = "Sources",
+                subtitle = sourcesSummary,
+                onClick = onSources,
+            )
+            RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.Wifi,
                 title = "On Wi-Fi",

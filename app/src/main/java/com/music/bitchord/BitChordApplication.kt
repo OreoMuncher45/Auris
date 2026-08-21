@@ -18,6 +18,7 @@ import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
@@ -33,6 +34,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // After AppSettings: a device with Atmos switched off retires the
         // spatial audio preference on the spot, and that needs prefs open.
         DolbyAtmos.init(this)
+        // Before LastPlayed: a restored queue can contain source-backed tracks,
+        // and turning one of those back into a playable item needs the registry
+        // that knows which source it belongs to.
+        SourceRegistry.init(this)
         SearchHistory.init(this)
         LastPlayed.init(this)
         // What's already saved to Downloads, so the song menu can say so

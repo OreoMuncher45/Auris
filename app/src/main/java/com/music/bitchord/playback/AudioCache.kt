@@ -14,6 +14,8 @@ import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.SimpleCache
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -164,7 +166,28 @@ object AudioCache {
      * read-ahead builds the same URI, so both land on one cache entry.
      */
     private val keyFactory = CacheKeyFactory { spec ->
-        spec.uri.getQueryParameter("v") ?: spec.key ?: spec.uri.toString()
+        spec.uri.getQueryParameter("v")
+            // A YouTube id can name two different recordings on disk: the Opus
+            // rendition YouTube serves, and whatever a source ranked above it
+            // hands over instead — see [SourceResolver.substituteForYouTube].
+            // Sharing one entry between them survives neither a reorder nor a
+            // half-cached track: the next play would serve a FLAC prefix and
+            // then stream Opus into the middle of it. The two get separate
+            // entries, and a reorder costs a re-download rather than a corrupt
+            // one.
+            ?.let { if (SourceResolver.canSubstituteForYouTube()) "$it#alt" else it }
+            // A source-backed track keys on the source and its track id alone.
+            // The full URI would work but carries the title and artist used
+            // for cross-source matching, and the same track queued from a row
+            // that spelled either of them differently would then occupy a
+            // second copy of itself on disk.
+            ?: spec.uri.takeIf { it.authority == "source" }?.let { uri ->
+                val source = uri.getQueryParameter("s")
+                val track = uri.getQueryParameter("t")
+                if (source != null && track != null) "$source|$track" else null
+            }
+            ?: spec.key
+            ?: spec.uri.toString()
     }
 
     /**
@@ -248,10 +271,29 @@ object AudioCache {
      * is left alone, and a different one replaces it outright, since on a run
      * of skips only wherever the listener actually lands is worth chasing.
      */
-    fun prefetchQueue(videoIds: List<String>) {
-        if (videoIds == pendingQueue) return
-        pendingQueue = videoIds
+    fun prefetchQueue(mediaIds: List<String>) {
+        if (mediaIds == pendingQueue) return
+        pendingQueue = mediaIds
         job?.cancel()
+        // Both halves of the read-ahead below go through [StreamResolver],
+        // which speaks YouTube ids and nothing else. A source-backed track
+        // handed to it resolves to a failure, so filtering here saves a dead
+        // round trip per queued track rather than changing any outcome —
+        // read-ahead for those is a separate job, and their servers are
+        // typically a good deal closer than googlevideo anyway.
+        //
+        // The substitution case drops out entirely. Read-ahead builds its own
+        // spec below from an id alone, and carries none of the title and
+        // artist a substitution is matched on — so it resolves to YouTube and
+        // would write Opus bytes into the very entry playback is about to fill
+        // from a higher-ranked source, under the same key, at whatever offset
+        // each of them happened to reach. Reading ahead for a track and then
+        // corrupting it is worse than not reading ahead at all.
+        val videoIds = if (SourceResolver.canSubstituteForYouTube()) {
+            emptyList()
+        } else {
+            mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
+        }
         job = videoIds.firstOrNull()?.let { next ->
             scope.launch {
                 launch {

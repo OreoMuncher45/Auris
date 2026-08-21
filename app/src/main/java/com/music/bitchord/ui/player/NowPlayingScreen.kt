@@ -10,8 +10,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -60,6 +65,7 @@ import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -74,6 +80,7 @@ import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.mutableStateOf
@@ -104,6 +111,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
@@ -130,6 +138,7 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -886,38 +895,61 @@ fun NowPlayingScreen(
             )
             val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
             val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
-            Row(
+            val losslessOn by AppSettings.losslessAudio.collectAsStateWithLifecycle()
+            val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
+            val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
+            val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
+            // Whether this playback session is even asking for a lossless
+            // stream — the same computation SourceResolver.requestForNow()
+            // makes, mirrored here so "Loading lossless" only appears when a
+            // lossless fetch is actually in flight, not on every buffering
+            // YouTube track.
+            val losslessRequested = losslessOn &&
+                (if (metered == true) cellularQuality else wifiQuality) == AudioQuality.HIGH
+            // Whether a module is still racing YouTube for this exact track —
+            // see [NerdStats.racingLossless]. YouTube can win that race and
+            // already be playing while the module lookup is still running
+            // detached in the background, and the badge should keep saying
+            // "loading" through that stretch rather than going blank only to
+            // possibly say "loading" again a moment later.
+            val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
+            val stillRacing = song.videoId in racingLossless
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     // The slider's touch target extends well past the drawn
                     // bar, so pull the labels back up under it.
                     .offset(y = (-9).dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text(
-                    text = formatTime((shown * durationMs).toLong()),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.55f),
-                )
-                // Sits in the gap the two timestamps leave, and only claims the
-                // space when there is something measured to put there.
-                nerdStats?.describe()?.takeIf { showNerdStats }?.let { stats ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
                     Text(
-                        text = stats,
+                        text = formatTime((shown * durationMs).toLong()),
                         style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.4f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 8.dp),
+                        color = Color.White.copy(alpha = 0.55f),
+                    )
+                    Text(
+                        text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White.copy(alpha = 0.55f),
                     )
                 }
-                Text(
-                    text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.55f),
+                // Pinned to the box's own center rather than squeezed into the
+                // gap between the two timestamps: that gap's width changes by
+                // a digit's worth every time a minute rolls over, which was
+                // dragging this along with it every tick. The screen's center
+                // doesn't move.
+                LosslessOrStats(
+                    isLoading = isLoading,
+                    stillRacing = stillRacing,
+                    losslessRequested = losslessRequested,
+                    nerdStats = nerdStats,
+                    showNerdStats = showNerdStats,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 8.dp),
                 )
             }
 
@@ -2344,14 +2376,174 @@ private fun formatTime(ms: Long): String {
 }
 
 /**
- * "Opus · 141 kbps · 48.0 kHz · Stereo" — whichever of those the player has
+ * The gap between the two timestamps under the seek bar: the "Lossless"
+ * badge when one applies, the raw stats-for-nerds line otherwise.
+ *
+ * The badge is shown independent of [showNerdStats] — whether a track is
+ * genuinely lossless is not a debug detail, it's the thing the whole
+ * lossless setting exists to deliver on. [showNerdStats] only gates the tap:
+ * with it on, tapping the badge swaps in the measured line for three seconds
+ * so the two can be compared without leaving them both on screen at once.
+ */
+@Composable
+private fun LosslessOrStats(
+    isLoading: Boolean,
+    stillRacing: Boolean,
+    losslessRequested: Boolean,
+    nerdStats: NerdStats.Snapshot?,
+    showNerdStats: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    when {
+        // Still resolving — either the player itself is buffering, or a
+        // module is still racing YouTube for this track in the background
+        // (see [NerdStats.racingLossless]) even though YouTube already won
+        // and is audible. Either way nothing measured yet to confirm with,
+        // so this is a statement of intent, not a result — no shimmer, so
+        // it never reads as "confirmed" before it is.
+        // [stillRacing] on its own, not gated on the lossless preference: a
+        // module outranks YouTube on the strength of the source order alone,
+        // so the lookup runs — and can come back lossless — with that switch
+        // off. Gating this on it left the badge blank through the wait and
+        // then jumped straight to "Hi-Res Lossless".
+        (stillRacing || (isLoading && losslessRequested)) && nerdStats?.isLossless != true -> LosslessLabel(
+            text = "Loading lossless",
+            animated = false,
+            modifier = modifier,
+        )
+        nerdStats?.isLossless == true -> {
+            var revealStats by remember(nerdStats) { mutableStateOf(false) }
+            LaunchedEffect(revealStats) {
+                if (revealStats) {
+                    delay(3_000)
+                    revealStats = false
+                }
+            }
+            if (revealStats) {
+                Text(
+                    text = nerdStats.describe() ?: "Lossless",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.4f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = modifier,
+                )
+            } else {
+                LosslessLabel(
+                    // Same line Tidal, Lossless and Apple Music draw it at — see
+                    // [NerdStats.Snapshot.isHiRes].
+                    text = if (nerdStats.isHiRes) "Hi-Res Lossless" else "Lossless",
+                    animated = true,
+                    modifier = modifier.then(
+                        if (showNerdStats) Modifier.clickable { revealStats = true } else Modifier,
+                    ),
+                )
+            }
+        }
+        else -> nerdStats?.describe()?.takeIf { showNerdStats }?.let { stats ->
+            Text(
+                text = stats,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.4f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = modifier,
+            )
+        }
+    }
+}
+
+/** A headphone glyph ahead of either "Loading lossless" or the shimmering "Lossless" tag. */
+@Composable
+private fun LosslessLabel(text: String, animated: Boolean, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Headphones,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = if (animated) 0.7f else 0.45f),
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        if (animated) {
+            ShimmerText(text = text)
+        } else {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.45f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * "Lossless", with a highlight band sweeping left to right across it every
+ * three seconds — confirmed, not just claimed, so it's worth the shine.
+ *
+ * The band's width is measured off the text itself via [onSizeChanged]
+ * rather than assumed, so the sweep always clears the word fully at both
+ * ends instead of being sized for whatever length happened to be typical.
+ */
+@Composable
+private fun ShimmerText(text: String) {
+    var widthPx by remember { mutableIntStateOf(0) }
+    val transition = rememberInfiniteTransition(label = "lossless-shimmer")
+    val progress by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3_000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart,
+        ),
+        label = "lossless-shimmer-progress",
+    )
+    val baseColor = Color.White.copy(alpha = 0.55f)
+    val brush = if (widthPx <= 0) {
+        Brush.linearGradient(listOf(baseColor, baseColor))
+    } else {
+        val band = widthPx * 0.6f
+        val center = -band + progress * (widthPx + 2 * band)
+        Brush.linearGradient(
+            colorStops = arrayOf(0f to baseColor, 0.5f to Color.White, 1f to baseColor),
+            start = Offset(center - band, 0f),
+            end = Offset(center + band, 0f),
+        )
+    }
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium.copy(brush = brush, fontWeight = FontWeight.SemiBold),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.onSizeChanged { widthPx = it.width },
+    )
+}
+
+/**
+ * "FLAC · 24-bit · 96.0 kHz · Stereo" — whichever of those the player has
  * actually reported. A figure it hasn't is dropped rather than filled in, so a
  * short line means little was known, never that something was invented.
+ *
+ * Bitrate is omitted once the stream is known to be lossless: the number is
+ * real but says nothing useful about the quality, and reading "1411 kbps" next
+ * to "FLAC" invites the comparison with a lossy figure that the two do not
+ * support.
+ *
+ * A stream that arrived worse than its source promised gets that stated
+ * outright rather than left to be spotted — see [NerdStats.Snapshot.downgraded].
  */
 private fun NerdStats.Snapshot.describe(): String? {
     val parts = buildList {
         codecLabel(mimeType)?.let(::add)
-        bitrateKbps?.let { add("$it kbps") }
+        bitDepth?.let { add("$it-bit") }
+        if (!isLossless) bitrateKbps?.let { add("$it kbps") }
         sampleRateHz?.let { add("%.1f kHz".format(it / 1000f)) }
         channels?.let {
             add(
@@ -2362,6 +2554,7 @@ private fun NerdStats.Snapshot.describe(): String? {
                 },
             )
         }
+        if (downgraded) add("↓ from ${claimed?.summary}")
     }
     return parts.joinToString(" · ").takeIf { it.isNotEmpty() }
 }
@@ -2373,5 +2566,7 @@ private fun codecLabel(mimeType: String?): String? = when {
     mimeType.endsWith("mp4a-latm") -> "AAC"
     mimeType.endsWith("vorbis") -> "Vorbis"
     mimeType.endsWith("mpeg") -> "MP3"
+    mimeType.endsWith("flac") -> "FLAC"
+    mimeType.endsWith("alac") -> "ALAC"
     else -> mimeType.substringAfter('/').uppercase()
 }

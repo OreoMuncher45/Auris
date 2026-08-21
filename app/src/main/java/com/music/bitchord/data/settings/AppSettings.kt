@@ -51,6 +51,19 @@ object AppSettings {
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
+    /**
+     * Ask sources for the file they hold rather than a transcode of it.
+     *
+     * Off by default, and honestly labelled in Settings: YouTube has no
+     * lossless rendition of anything, so this does nothing at all until a
+     * source that holds real files is added on the Sources screen. It also
+     * loses to [effectiveAudioQuality] — see
+     * [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow] —
+     * because a capped connection is a budget, and a preference should not
+     * quietly overspend one.
+     */
+    val losslessAudio = MutableStateFlow(false)
+
     val crossfadeSeconds = MutableStateFlow(0)
     val skipSilence = MutableStateFlow(false)
 
@@ -138,6 +151,7 @@ object AppSettings {
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
+        losslessAudio.value = prefs.getBoolean(KEY_LOSSLESS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
@@ -230,6 +244,11 @@ object AppSettings {
     fun setAudioQualityCellular(value: AudioQuality) {
         audioQualityCellular.value = value
         prefs.edit().putString(KEY_QUALITY_CELLULAR, value.name).apply()
+    }
+
+    fun setLosslessAudio(value: Boolean) {
+        losslessAudio.value = value
+        prefs.edit().putBoolean(KEY_LOSSLESS, value).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -380,6 +399,7 @@ object AppSettings {
     private const val KEY_QUALITY_LEGACY = "audio_quality"
     private const val KEY_QUALITY_WIFI = "audio_quality_wifi"
     private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
+    private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"

@@ -21,6 +21,8 @@ import androidx.media3.session.SessionToken
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -207,11 +209,39 @@ private fun resolvePlaybackUri(uriString: String, localPath: String?): String {
     return if (file.exists() && file.canRead()) Uri.fromFile(file).toString() else uriString
 }
 
+/**
+ * The `&n=&a=&d=` tail every playback URI carries: what this track is, in the
+ * terms [com.music.bitchord.data.sources.TrackMatcher] compares recordings on.
+ *
+ * The runtime is the one of the three that can rule a candidate *out* on its
+ * own, and it is only ever a hint here — a row that never carried a duration
+ * simply omits it and the match is made on title and artist alone, as it was
+ * before.
+ */
+private fun Song.matchQuery(): String = buildString {
+    append("&n=").append(Uri.encode(title))
+    append("&a=").append(Uri.encode(artist))
+    TrackMatcher.secondsOf(durationText)?.let { append("&d=").append(it) }
+}
+
 fun Song.toMediaItem(): MediaItem {
-    val uriString = localUri ?: if (videoId.startsWith("content://") || videoId.startsWith("file://")) {
-        videoId
-    } else {
-        "bitchord://watch?v=$videoId"
+    val sourceTrack = SourceRegistry.parseTrackKey(videoId)
+    val uriString = localUri ?: when {
+        videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
+        // Title, artist and runtime ride along in the URI because they are what
+        // a cross-source match is made on, and the resolver runs on ExoPlayer's
+        // loader thread with nothing but a DataSpec in hand — see
+        // [SourceResolver.resolve]. Read-ahead resolves tracks that aren't the
+        // current item, so reaching back for the session's metadata isn't an
+        // option either.
+        sourceTrack != null -> SourceRegistry.trackUri(sourceTrack.first, sourceTrack.second)
+            .let { "$it${matchQuery()}" }
+        // The same three fields, for the same reason, on the YouTube path: a
+        // source ranked above YouTube gets offered this track before YouTube
+        // resolves it — see [SourceResolver.substituteForYouTube] — and that
+        // match is made on them, which the loader thread has no other way to
+        // reach.
+        else -> "bitchord://watch?v=$videoId${matchQuery()}"
     }
     return MediaItem.Builder()
         .setMediaId(videoId)

@@ -42,9 +42,13 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.scrobbling.ListenBrainzManager
 import com.music.bitchord.data.scrobbling.ScrobbleManager
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -53,6 +57,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.TimeoutCancellationException
 
 /** Past this point in a track, back restarts it instead of skipping to the previous one. */
@@ -124,28 +129,70 @@ class PlaybackService : MediaSessionService() {
             // why an open-ended read of one is worth avoiding.
             ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
         ) { dataSpec ->
+            // A source-backed track is resolved by whichever source can serve
+            // it, which is not necessarily the one it was queued from — see
+            // [SourceResolver.resolve]. Handled ahead of the YouTube path
+            // because these carry no `v` parameter and would otherwise fall
+            // straight through unresolved.
+            if (dataSpec.uri.authority == "source") {
+                val stream = runBlocking {
+                    withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) }
+                } ?: throw java.io.IOException("No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}")
+                NerdStats.onSourceStream(dataSpec.uri.getQueryParameter("t"), stream.format)
+                return@Factory dataSpec.buildUpon()
+                    .setUri(Uri.parse(stream.url))
+                    .setHttpRequestHeaders(stream.headers)
+                    .build()
+            }
             val videoId = dataSpec.uri.getQueryParameter("v")
                 ?: return@Factory dataSpec
             val downloadedUri = runBlocking { com.music.bitchord.download.Downloads.savedUri(this@PlaybackService, videoId) }
             if (downloadedUri != null) {
                 return@Factory dataSpec.buildUpon().setUri(downloadedUri).build()
             }
-            val streamUrl = try {
-                runBlocking {
-                    withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
+            // A track queued from YouTube may be held by a source the user
+            // ranked above it — see [SourceResolver.substituteForYouTube] and
+            // [raceYouTubeOrModule]. Only worth the extra lookup when
+            // something actually outranks YouTube; otherwise this is the
+            // plain resolve every build before this one made.
+            if (!SourceResolver.canSubstituteForYouTube()) {
+                val streamUrl = try {
+                    runBlocking {
+                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    throw java.io.IOException("Stream resolution timed out for $videoId", e)
                 }
-            } catch (e: TimeoutCancellationException) {
-                throw java.io.IOException("Stream resolution timed out for $videoId", e)
+                return@Factory dataSpec.buildUpon()
+                    .setUri(Uri.parse(streamUrl))
+                    // googlevideo names the client that minted the URL inside
+                    // the URL itself, and compares it against the request
+                    // that comes back for the bytes. A mismatch is answered
+                    // with a throttled trickle or a 403 rather than an error
+                    // worth the name, so the fetch is dressed as whatever the
+                    // URL says it should be.
+                    .setHttpRequestHeaders(PlayerClient.forStreamUrl(streamUrl).mediaHeaders())
+                    .build()
             }
-            dataSpec.buildUpon()
-                .setUri(Uri.parse(streamUrl))
-                // googlevideo names the client that minted the URL inside the
-                // URL itself, and compares it against the request that comes
-                // back for the bytes. A mismatch is answered with a throttled
-                // trickle or a 403 rather than an error worth the name, so the
-                // fetch is dressed as whatever the URL says it should be.
-                .setHttpRequestHeaders(PlayerClient.forStreamUrl(streamUrl).mediaHeaders())
-                .build()
+            val won = runBlocking {
+                resolveWithModulePriority(
+                    videoId = videoId,
+                    target = SourceResolver.targetIn(dataSpec.uri),
+                )
+            }
+            when (won) {
+                is Resolved.Module -> {
+                    NerdStats.onSourceStream(videoId, won.stream.format)
+                    dataSpec.buildUpon()
+                        .setUri(Uri.parse(won.stream.url))
+                        .setHttpRequestHeaders(won.stream.headers)
+                        .build()
+                }
+                is Resolved.YouTube -> dataSpec.buildUpon()
+                    .setUri(Uri.parse(won.url))
+                    .setHttpRequestHeaders(PlayerClient.forStreamUrl(won.url).mediaHeaders())
+                    .build()
+            }
         }
         // Read-ahead resolves streams through the same chain the player does.
         val defaultDataSourceFactory = DefaultDataSource.Factory(this, resolvingFactory)
@@ -269,9 +316,18 @@ class PlaybackService : MediaSessionService() {
                 if (exoPlayer.isPlaying) registerCurrentPlay()
                 prefetchAround(exoPlayer)
                 saveQueue()
-                // Bitrate is per track, so it needs re-reading even when two
-                // songs in a row share a format and no format event fires.
-                publishNerdStats()
+                // Cleared rather than re-published. The renderer is still
+                // configured for the track that just ended at this point, so
+                // reading the format here reports the *previous* song — which
+                // is how a lossy track spent its whole resolve showing the
+                // "Hi-Res Lossless" badge the track before it had earned.
+                // Nothing measured is better than something wrong, and the
+                // gap is exactly when "Loading lossless" should be showing
+                // instead. The periodic sampler below and
+                // onAudioInputFormatChanged both re-publish once the decoder
+                // has actually settled on this track, so the same-format case
+                // the old call was here to cover is still covered.
+                NerdStats.current.value = null
             }
 
             // Nothing follows the last track, so there is no transition to
@@ -418,6 +474,48 @@ class PlaybackService : MediaSessionService() {
         )
     }
 
+    /** What [resolveWithModulePriority] settled on. */
+    private sealed interface Resolved {
+        data class Module(val stream: SourceStream) : Resolved
+        data class YouTube(val url: String) : Resolved
+    }
+
+    /**
+     * Resolves a YouTube-queued track, asking the higher-ranked modules first
+     * and falling through to YouTube only when none of them has it.
+     *
+     * Strictly sequential, and it used to start YouTube's resolve in parallel
+     * on the theory that a module miss would then cost nothing. Measured, that
+     * theory was upside down. The speculative resolve is not free: it is a
+     * NewPipe extraction, several round trips to `youtubei.googleapis.com`,
+     * competing for the same radio and the same connection pool as the module
+     * lookup it is supposedly hedging. On a track the modules *did* have, the
+     * whole of that work was started, run to completion and thrown away —
+     * 5.2s of it, against a module answer that arrived at 10s and would have
+     * arrived sooner without the contention. On a Premium-only track it failed
+     * three extraction attempts over ~10s to produce a URL nobody could use.
+     *
+     * The remaining unavoidable part is unchanged: knowing whether a module
+     * has the track means asking it, and lossless cannot start before that
+     * answer. There is no "play YouTube now, upgrade silently later" without
+     * swapping ExoPlayer's source mid-track, which is an audible seam.
+     */
+    private suspend fun resolveWithModulePriority(
+        videoId: String,
+        target: TrackMatcher.Target,
+    ): Resolved {
+        NerdStats.onLosslessRaceStart(videoId)
+        val module = try {
+            withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) {
+                SourceResolver.substituteForYouTube(target)
+            }
+        } finally {
+            NerdStats.onLosslessRaceEnd(videoId)
+        }
+        if (module != null) return Resolved.Module(module)
+        return Resolved.YouTube(StreamResolver.resolve(videoId))
+    }
+
     /**
      * Publishes what the decoder is really being fed, for "stats for nerds".
      *
@@ -430,13 +528,38 @@ class PlaybackService : MediaSessionService() {
     private fun publishNerdStats() {
         val player = player ?: return
         val format = player.audioFormat
+        val mediaId = player.currentMediaItem?.mediaId
         NerdStats.current.value = NerdStats.Snapshot(
             mimeType = format?.sampleMimeType,
             bitrateKbps = format?.bitrate?.takeIf { it != Format.NO_VALUE }?.div(1000)
-                ?: NerdStats.pickedBitrateKbps(player.currentMediaItem?.mediaId),
+                ?: NerdStats.pickedBitrateKbps(mediaId),
             sampleRateHz = format?.sampleRate?.takeIf { it != Format.NO_VALUE },
             channels = format?.channelCount?.takeIf { it != Format.NO_VALUE },
+            bitDepth = format?.pcmEncoding?.let(::bitDepthOf),
+            claimed = NerdStats.declaredFormat(mediaId),
         )
+    }
+
+    /**
+     * PCM sample depth the renderer settled on, in bits.
+     *
+     * This is the figure that decides whether a hi-res file is being played as
+     * one. A 24-bit FLAC whose renderer reports 16-bit PCM has been truncated
+     * somewhere between the decoder and the sink, and no other number on the
+     * stats line would show it — the sample rate and the codec both survive
+     * that unharmed.
+     *
+     * `ENCODING_INVALID` and `NO_VALUE` mean the renderer hasn't said, which is
+     * common for pass-through and for formats decoded straight to float, and
+     * is reported as unknown rather than as a failure.
+     */
+    private fun bitDepthOf(pcmEncoding: Int): Int? = when (pcmEncoding) {
+        C.ENCODING_PCM_8BIT -> 8
+        C.ENCODING_PCM_16BIT, C.ENCODING_PCM_16BIT_BIG_ENDIAN -> 16
+        C.ENCODING_PCM_24BIT, C.ENCODING_PCM_24BIT_BIG_ENDIAN -> 24
+        C.ENCODING_PCM_32BIT, C.ENCODING_PCM_32BIT_BIG_ENDIAN -> 32
+        C.ENCODING_PCM_FLOAT -> 32
+        else -> null
     }
 
     /** Snapshot the queue so the next launch can open where this one stopped. */
@@ -630,7 +753,9 @@ class PlaybackService : MediaSessionService() {
     private fun observeScrobbling() {
         // Rebuild the ScrobbleManager whenever scrobbling settings change.
         scope.launch {
-            combine(
+            // Explicit <Any, _>: these flows have mixed element types, and letting
+            // the reified vararg combine() infer T lands on an intersection type.
+            combine<Any, ScrobblingSnapshot>(
                 AppSettings.lastfmEnabled,
                 AppSettings.lastfmScrobbleEnabled,
                 AppSettings.lastfmNowPlaying,
@@ -855,5 +980,17 @@ class PlaybackService : MediaSessionService() {
          * waits *longer* under a tighter cap than a looser one.
          */
         const val RESOLVE_TIMEOUT_MS = 120_000L
+
+        /**
+         * Cap on offering a YouTube track to a higher-ranked source.
+         *
+         * Nothing like [RESOLVE_TIMEOUT_MS], because the two are not the same
+         * kind of wait: that one bounds the only way to hear the track, this
+         * one bounds an optional upgrade over a stream YouTube will serve
+         * anyway. Generous enough for a cold module — index fetch, JS
+         * download, engine init, search, then the stream URL — and short
+         * enough that a dead server costs a pause rather than a stall.
+         */
+        const val SUBSTITUTE_TIMEOUT_MS = 20_000L
     }
 }
