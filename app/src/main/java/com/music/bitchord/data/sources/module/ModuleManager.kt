@@ -93,12 +93,8 @@ class ModuleManager {
                         }
                         val body = resp.body?.string()
                             ?: throw Exception("Empty body from $sourceUrl")
-                        TrackLog.d(TAG, "  Index body: ${body.length} chars")
                         val modules = ModuleIndex.parseModules(json, body)
                         TrackLog.d(TAG, "  Parsed ${modules.size} modules")
-                        for (m in modules) {
-                            TrackLog.d(TAG, "    • [${m.id}] ${m.name} v${m.version} tags=${m.tags} download=${m.download}")
-                        }
                         modules
                     }
                 }.onSuccess {

@@ -194,6 +194,30 @@ object AudioCache {
     }
 
     /**
+     * Throws away only the rendition [uri] names, leaving the track's other
+     * entries where they are.
+     *
+     * [discard]'s scorched-earth pass is right when what is on disk cannot be
+     * trusted and there is no telling which entry is at fault. This is for the
+     * case where there is: an upgrade that was fetched and then not used — an
+     * audition that failed to prove itself, a swap the player put back — has
+     * written a prefix of one file under the `#hifi` key and stopped. Left
+     * there, the *next* upgrade of the same track keys to that same `#hifi`
+     * entry, is served the abandoned prefix, and streams a different file into
+     * the middle of it. Taking the whole family instead would throw away the
+     * bytes of the stream still playing, which is the one thing that is
+     * definitely fine.
+     *
+     * Runs on the caller's thread; call it off the main one.
+     */
+    fun discardRendition(uri: Uri) {
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        runCatching { cache.removeResource(key) }
+            .onSuccess { TrackLog.d(TAG, "discarded unused rendition $key") }
+            .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}") }
+    }
+
+    /**
      * The videoId behind a request. Playback asks through the custom scheme;
      * read-ahead builds the same URI, so both land on one cache entry.
      */
@@ -421,13 +445,58 @@ object AudioCache {
     }
 
     /**
+     * Pulls [length] bytes of whatever [uri] names into the cache, under [uri]'s
+     * own key rather than the plain videoId.
+     *
+     * For the opening of a rendition that is about to be swapped in — see
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s audition.
+     * A player preparing a progressive source has to parse the container from
+     * byte zero before it can seek anywhere, and for a FLAC that is not a few
+     * bytes: STREAMINFO, the seek table, the tags and an embedded cover can run
+     * to hundreds of kilobytes. Measured here, the audition itself cached only
+     * `[0, 8192)` before seeking away to the playing position, so the real
+     * player's very first read after the swap — the one nothing can start
+     * without — was a cache miss and a round trip to the CDN, in silence.
+     *
+     * Call it *before* the audition rather than alongside: Media3 locks a cache
+     * entry to one writer, and two writers on the same rendition means one of
+     * them spends the listener's data caching nothing.
+     */
+    /**
+     * What is actually on disk for [uri]'s rendition, as a log line.
+     *
+     * Here because "the audition cached it" is an assumption that has already
+     * been wrong once, and the only place it can be checked is against the
+     * cache itself: a swap that lands on bytes the audition was supposed to
+     * have fetched looks, from the player's side, exactly like one that lands
+     * on bytes it never reached.
+     */
+    fun cachedSummary(uri: Uri): String {
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val spans = cache.getCachedSpans(key).filter { it.isCached }
+        if (spans.isEmpty()) return "$key holds nothing"
+        val total = spans.sumOf { it.length }
+        val ranges = spans.sortedBy { it.position }
+            .joinToString(" ") { "[${it.position},${it.position + it.length})" }
+        return "$key holds ${total / 1024}kB in ${spans.size} spans: $ranges"
+    }
+
+    suspend fun warmRange(uri: Uri, position: Long, length: Long) {
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        fetch(key, uri, position, length)
+    }
+
+    /**
      * Pulls [length] bytes of [videoId] from [position] into the cache.
      * [CacheWriter] fetches only the gaps, so a range already partly on disk —
      * from a track played earlier, or skipped back to — costs only the rest.
      */
-    private suspend fun fetch(videoId: String, position: Long, length: Long) {
+    private suspend fun fetch(videoId: String, position: Long, length: Long) =
+        fetch(videoId, Uri.parse("bitchord://watch?v=$videoId"), position, length)
+
+    private suspend fun fetch(cacheKey: String, uri: Uri, position: Long, length: Long) {
         val upstream = upstreamFactory ?: return
-        if (cache.getCachedBytes(videoId, position, length) >= length) return
+        if (cache.getCachedBytes(cacheKey, position, length) >= length) return
 
         // Read-ahead is the app's largest consumer of bandwidth and, until this
         // line existed, its most invisible: whole tracks were pulled down while
@@ -435,11 +504,11 @@ object AudioCache {
         // nothing in the log said so. Bracketing it is what makes the overlap
         // between "reading ahead" and "waiting for sound" readable at all.
         val fetchStart = SystemClock.elapsedRealtime()
-        TrackLog.d(TAG, "read-ahead fetching $videoId [$position, ${position + length})")
+        TrackLog.d(TAG, "read-ahead fetching $cacheKey [$position, ${position + length})")
 
         val source = cacheFactory(upstream).createDataSource()
         val spec = DataSpec.Builder()
-            .setUri(Uri.parse("bitchord://watch?v=$videoId"))
+            .setUri(uri)
             .setPosition(position)
             .setLength(length)
             .build()
@@ -458,11 +527,11 @@ object AudioCache {
             }
         }.onFailure {
             // Expected on a skip, and never worth failing playback over.
-            TrackLog.d(TAG, "read-ahead stopped for $videoId: ${it.message}")
+            TrackLog.d(TAG, "read-ahead stopped for $cacheKey: ${it.message}")
         }.onSuccess {
             TrackLog.d(
                 TAG,
-                "read-ahead fetched $videoId [$position, ${position + length}) in " +
+                "read-ahead fetched $cacheKey [$position, ${position + length}) in " +
                     "${SystemClock.elapsedRealtime() - fetchStart}ms",
             )
         }

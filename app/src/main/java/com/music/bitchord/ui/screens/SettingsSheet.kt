@@ -41,11 +41,13 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
@@ -146,6 +148,8 @@ fun SettingsScreen(
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
+    val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
+    val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
 
     // Whether the module index URL is baked into this build.
     val losslessConfigured = BuildConfig.MODULE_INDEX_URL.trim().isNotEmpty()
@@ -510,6 +514,27 @@ fun SettingsScreen(
             footer = "When enabled, closing the app from the recent apps screen will also stop music playback.",
         ) {
             SettingsRow(
+                icon = Icons.Rounded.PlaylistPlay,
+                title = "Play next on swipe",
+                subtitle = if (swipeToPlayNext) {
+                    "Swiping a song plays it next"
+                } else {
+                    "Swiping a song adds it to the end of the queue when disabled"
+                },
+                trailing = {
+                    Switch(
+                        checked = swipeToPlayNext,
+                        onCheckedChange = AppSettings::setSwipeToPlayNext,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setSwipeToPlayNext(!swipeToPlayNext) },
+            )
+            RowDivider()
+            SettingsRow(
                 icon = Icons.Rounded.MusicOff,
                 title = "Stop music on close from recents",
                 subtitle = "Stops playback when swiped away from recent apps",
@@ -524,6 +549,23 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setStopOnTaskRemoved(!stopOnTaskRemoved) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.VolumeOff,
+                title = "Hide volume bar",
+                subtitle = "Removes the volume slider from the main player",
+                trailing = {
+                    Switch(
+                        checked = hideVolumeBar,
+                        onCheckedChange = AppSettings::setHideVolumeBar,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
             )
         }
 

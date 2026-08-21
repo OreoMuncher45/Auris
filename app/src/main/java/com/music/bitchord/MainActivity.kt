@@ -225,6 +225,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
+    // Local Music has no artwork to wash the bar in, so it renders with a
+    // plain status bar rather than the artwork-driven blur other detail
+    // pages (album/artist/playlist) get.
+    val isLocalDetail = detail?.browseId == "local:all"
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
@@ -454,6 +458,9 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             }
         }
     }
+    val onSongSwipe: (Song) -> Unit = { song ->
+        if (AppSettings.swipeToPlayNext.value) playNext(song) else addToQueue(song)
+    }
 
     // ---- Downloads ----
     // Two permissions, and never both on one device: writing to the shared
@@ -618,7 +625,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     songs = localSongs,
                     onSongClick = play,
                     onSongLongPress = { songActions = it },
-                    onSongSwipe = addToQueue,
+                    onSongSwipe = onSongSwipe,
                     onShuffle = { songs ->
                         QueueShuffle.enableForNextQueue()
                         play(songs, songs.indices.random())
@@ -631,7 +638,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     listState = detailListState,
                     onSongClick = play,
                     onSongLongPress = { songActions = it },
-                    onSongSwipe = addToQueue,
+                    onSongSwipe = onSongSwipe,
                     onShuffle = { songs ->
                         // Shuffle goes on first so the queue is built shuffled
                         // as it is set — the random pick here only decides
@@ -736,7 +743,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         }
                     },
                     onSongLongPress = { songActions = it },
-                    onSongSwipe = addToQueue,
+                    onSongSwipe = onSongSwipe,
                     onBrowseClick = { item ->
                         viewModel.recordSearch()
                         viewModel.openDetail(
@@ -795,7 +802,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         // A detail page's artwork runs up under the status bar, so the bar
         // there is a fade rather than a pane — see [TopFadeBlur]. Drawn before
         // the bar so the bar's own content sits on top of it.
-        val isDetailVisible = detail != null && !showSettings && !showAccountScrobbling
+        val isDetailVisible = detail != null && !isLocalDetail && !showSettings && !showAccountScrobbling
         if (isDetailVisible) {
             TopFadeBlur(
                 hazeState = hazeState,
@@ -814,7 +821,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                 }
             },
             hazeState = hazeState,
-            ownBackdrop = detail == null,
+            ownBackdrop = detail == null || isLocalDetail,
             // Search has no large in-list header to hand the title back to —
             // the field takes that space — so its bar title is always up.
             scrolled = when {

@@ -1,6 +1,6 @@
 package com.music.bitchord.data.canvas
 
-import android.util.Log
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject

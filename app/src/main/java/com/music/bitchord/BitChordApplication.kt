@@ -46,6 +46,18 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // One cache directory can only be opened once per process, and
         // PlaybackService shares this one — so it's opened here, not there.
         AudioCache.init(this)
+        // A sideloaded update is just a new APK over the old one, so app data —
+        // including whatever the old build left in these caches — survives it
+        // untouched. Wipe both on the first launch of a higher versionCode so a
+        // format or key change between builds can't serve stale or mismatched
+        // bytes from a cache the new code didn't write.
+        if (AppSettings.consumeVersionUpdate(BuildConfig.VERSION_CODE)) {
+            AudioCache.clear()
+            SingletonImageLoader.get(this).let { loader ->
+                loader.memoryCache?.clear()
+                loader.diskCache?.clear()
+            }
+        }
         // Initialize LastFM with saved settings if available
         initLastfm()
     }

@@ -15,11 +15,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -96,12 +99,24 @@ fun LocalMusicScreen(
         drillDownSongs = emptyList()
     }
 
+    // The tab row is fixed above the scrolling content, so its own top
+    // padding has to clear the frosted top bar / status bar that the
+    // LazyColumns beneath it would otherwise scroll under.
+    val bodyContentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding())
+
+    // contentPadding.top carries extra breathing room meant for scrolling
+    // content resting under the glass bar; the tab row is fixed and sits
+    // right below the bar, so it only needs to clear the bar itself
+    // (status bar inset + the bar's own 52dp) — see FrostedTopBar.
+    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp
+
     Column(modifier = modifier.fillMaxSize()) {
         // ── Tab row ──────────────────────────────────────────────────────────
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(top = topBarHeight),
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
@@ -167,7 +182,7 @@ fun LocalMusicScreen(
                             drillDownLabel = null
                             drillDownSongs = emptyList()
                         },
-                        contentPadding = contentPadding,
+                        contentPadding = bodyContentPadding,
                     )
                 }
 
@@ -177,7 +192,7 @@ fun LocalMusicScreen(
                         onSongClick = onSongClick,
                         onSongLongPress = onSongLongPress,
                         onSongSwipe = onSongSwipe,
-                        contentPadding = contentPadding,
+                        contentPadding = bodyContentPadding,
                     )
                 }
 
@@ -193,7 +208,7 @@ fun LocalMusicScreen(
                             drillDownLabel = artist
                             drillDownSongs = artistSongs
                         },
-                        contentPadding = contentPadding,
+                        contentPadding = bodyContentPadding,
                     )
                 }
 
@@ -211,7 +226,7 @@ fun LocalMusicScreen(
                             drillDownLabel = album
                             drillDownSongs = albumSongs
                         },
-                        contentPadding = contentPadding,
+                        contentPadding = bodyContentPadding,
                     )
                 }
             }

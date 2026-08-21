@@ -69,15 +69,10 @@ internal object QuickJsExecutor {
                 bindConsole(qjs)
                 bindAsyncFetch(qjs, fetchBase)
 
-                TrackLog.d(TAG, "  Evaluating polyfills…")
                 qjs.evaluate<String>(POLYFILLS)
-                TrackLog.d(TAG, "  ✓ Polyfills loaded")
-
                 val cleanCode = preprocessModuleCode(jsCode)
-                TrackLog.d(TAG, "  Preprocessed code: ${jsCode.length} → ${cleanCode.length} chars")
 
-                TrackLog.d(TAG, "  Evaluating IIFE wrapper…")
-                val iifeResult = qjs.evaluate<String>(
+                qjs.evaluate<String>(
                     """
                     var __spine_iife_error = null;
                     var __spine_mod = (function() {
@@ -98,11 +93,9 @@ internal object QuickJsExecutor {
                     'ok'
                     """.trimIndent()
                 )
-                TrackLog.d(TAG, "  IIFE result: $iifeResult")
 
                 val iifeError = qjs.evaluate<String>("__spine_iife_error || 'none'")
                 if (iifeError != "none") throw IllegalStateException("Module init error: $iifeError")
-                TrackLog.d(TAG, "  ✓ IIFE no errors")
 
                 val keys = qjs.evaluate<String>("Object.keys(__spine_mod).join(', ')")
                 TrackLog.d(TAG, "  Module exports: [$keys]")
@@ -194,15 +187,12 @@ internal object QuickJsExecutor {
         val exportPattern = Regex("""^export\s+const\s+\w+\s*=\s*`""")
         val exportMatch = exportPattern.find(code)
         if (exportMatch != null) {
-            TrackLog.d(TAG, "  Detected template literal export, extracting content…")
             val contentStart = exportMatch.range.last + 1
             var i = contentStart
             while (i < code.length) {
                 if (code[i] == '\\' && i + 1 < code.length) { i += 2; continue }
                 if (code[i] == '`') {
-                    val extracted = code.substring(contentStart, i).trim()
-                    TrackLog.d(TAG, "  ✓ Extracted template literal: ${extracted.length} chars")
-                    return extracted
+                    return code.substring(contentStart, i).trim()
                 }
                 i++
             }

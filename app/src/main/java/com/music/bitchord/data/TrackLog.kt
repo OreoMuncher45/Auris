@@ -50,33 +50,37 @@ object TrackLog {
 
     // ── Writing ─────────────────────────────────────────────────────────────
 
+    // logcat is only worth writing to in a debug build — nothing in prod ever
+    // reads it (see the class doc), so a release build skips straight to
+    // record(), which is what Copy Log actually depends on.
+
     fun d(tag: String, message: String) {
-        Log.d(tag, message)
+        if (BuildConfig.DEBUG) Log.d(tag, message)
         record('D', message)
     }
 
     fun i(tag: String, message: String) {
-        Log.i(tag, message)
+        if (BuildConfig.DEBUG) Log.i(tag, message)
         record('I', message)
     }
 
     fun w(tag: String, message: String) {
-        Log.w(tag, message)
+        if (BuildConfig.DEBUG) Log.w(tag, message)
         record('W', message)
     }
 
     fun w(tag: String, message: String, error: Throwable) {
-        Log.w(tag, message, error)
+        if (BuildConfig.DEBUG) Log.w(tag, message, error)
         record('W', "$message\n${error.stackTraceToString()}")
     }
 
     fun e(tag: String, message: String) {
-        Log.e(tag, message)
+        if (BuildConfig.DEBUG) Log.e(tag, message)
         record('E', message)
     }
 
     fun e(tag: String, message: String, error: Throwable) {
-        Log.e(tag, message, error)
+        if (BuildConfig.DEBUG) Log.e(tag, message, error)
         record('E', "$message\n${error.stackTraceToString()}")
     }
 

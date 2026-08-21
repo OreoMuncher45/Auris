@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.player
 
 import android.database.ContentObserver
+import android.graphics.Bitmap
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -42,7 +43,10 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -76,6 +80,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
@@ -99,6 +104,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
@@ -112,6 +118,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextLayoutResult
@@ -165,6 +172,16 @@ private val HEADER_HEIGHT = 60.dp
 private val ART_TITLE_GAP = 20.dp
 /** Only drags starting in this top strip reach the sheet and close the player. */
 private val DISMISS_STRIP_HEIGHT = 44.dp
+/** The breathing room above the sleeve, needed twice: once to apply, once to measure past. */
+private val ART_BOX_TOP_PAD = 14.dp
+/**
+ * Share of the motion-artwork banner's height given over to its dissolve.
+ *
+ * Generous on purpose: the banner has no card edge to stop at, so anything
+ * short enough to still be reading as artwork where it ends reads as a picture
+ * that was cut off rather than one that ran out.
+ */
+private const val HERO_FADE_FRACTION = 0.42f
 /** The player's side margin. Scrollable panels reach back across it. */
 private val PLAYER_GUTTER = 30.dp
 /**
@@ -388,11 +405,11 @@ fun NowPlayingScreen(
     lyricsUnavailable: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val meshColors = rememberArtworkColors(song.thumbnailUrl)
     val context = LocalContext.current
     val density = LocalDensity.current
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
+    val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
 
     // Animated cover art: the looping video some labels publish alongside a
     // release, laid over the sleeve. A miss is the normal answer — see
@@ -400,6 +417,13 @@ fun NowPlayingScreen(
     // track" check lives.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     var canvas by remember(song.videoId) { mutableStateOf<CanvasArtwork?>(null) }
+    // Whether the clip actually has a frame on screen right now, and one of
+    // them — used to blow the sleeve out to the full-bleed hero treatment and
+    // to re-tint the backdrop off the clip's own colours rather than the
+    // still sleeve's.
+    var canvasRendered by remember(song.videoId) { mutableStateOf(false) }
+    var canvasFrame by remember(song.videoId) { mutableStateOf<Bitmap?>(null) }
+    val meshColors = rememberArtworkColors(song.thumbnailUrl, canvasFrame)
     LaunchedEffect(song.videoId, song.albumName, canvasEnabled) {
         if (!canvasEnabled) {
             canvas = null
@@ -517,12 +541,82 @@ fun NowPlayingScreen(
         onDispose { context.contentResolver.unregisterContentObserver(observer) }
     }
 
+    // 0 = the ordinary square sleeve, 1 = motion artwork as a full-bleed
+    // banner. Both states collapse the header, but the banner only ever shows
+    // over a settled player: opening the queue or the lyrics hands the sleeve
+    // back its card first.
+    val p = if (lyricsOpen) 1f else queueProgress
+    // Full-bleed is a phone idiom. Past the width the player is willing to grow
+    // to, edge to edge stops meaning "the artwork *is* the screen" and starts
+    // meaning "a video, and separately some controls" — the banner would be
+    // running a foot wider than the column of controls under it. Tablets keep
+    // the sleeve, and the clip plays inside it as before.
+    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
+    val heroMode = CANVAS_HERO_SUPPORTED && screenWidth <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
+    val heroT by animateFloatAsState(
+        targetValue = if (heroMode && canvasRendered && p < 0.5f) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "heroCanvas",
+    )
+    // How tall that banner is, worked out down in the layout where the sleeve's
+    // own geometry is known. Zero until the first measure, which is fine: the
+    // clip has no frame to show that early either.
+    var heroHeight by remember { mutableStateOf(0.dp) }
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
     Box(modifier = modifier.fillMaxSize()) {
         // Keyed on the track: the backdrop drifts when the player opens and on
         // every skip, then rests. Position ticks recompose this screen twice a
         // second and must not drag a full-screen blur along with them, which is
         // why the palette is passed as one immutable value.
         MeshGradientBackground(palette = meshColors, trackKey = song.videoId)
+
+        // Motion artwork, edge to edge and running up behind the status bar,
+        // dissolving into the backdrop where the sleeve's bottom edge would
+        // have been. It lives out here rather than in the sleeve because that
+        // is the only way to escape the player's side gutter and its status-bar
+        // inset — a banner that stops short of either reads as a misplaced card
+        // rather than as the artwork the screen is made of.
+        //
+        // Always composed while there's a clip to play, never gated on [heroT]:
+        // the clip has to be mounted and decoding *before* it can report the
+        // first frame that raises heroT in the first place.
+        if (heroMode && heroHeight > 0.dp) {
+            canvas?.takeIf { p < 0.5f }?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = isPlaying,
+                    onRenderedChanged = { canvasRendered = it },
+                    onFrameCaptured = { canvasFrame = it },
+                    bottomFade = HERO_FADE_FRACTION,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .height(heroHeight),
+                )
+            }
+
+            // The clock, the signal bars and the drag handle are all white, and
+            // the banner puts whatever the video happens to open on directly
+            // behind them — a bright frame leaves the top of the screen
+            // unreadable. Faded in with the banner and gone with it.
+            if (heroT > 0.01f) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .height(statusBarTop + DISMISS_STRIP_HEIGHT)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color.Black.copy(alpha = 0.38f * heroT),
+                                    Color.Transparent,
+                                ),
+                            ),
+                        ),
+                )
+            }
+        }
 
         Column(
             modifier = Modifier
@@ -597,11 +691,8 @@ fun NowPlayingScreen(
                     .weight(1f)
                     .widthIn(max = PLAYER_MAX_WIDTH)
                     .fillMaxWidth()
-                    .padding(top = 14.dp, bottom = 18.dp),
+                    .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
-                // Both states collapse the header, but only one of them owns
-                // the panel below it.
-                val p = if (lyricsOpen) 1f else queueProgress
                 // The sleeve is square, so it is bounded by whichever of the
                 // two axes runs out first: the player's width on a phone, or —
                 // on a tablet, where there is width to spare — the height left
@@ -623,6 +714,15 @@ fun NowPlayingScreen(
                 val titleTop = lerp(groupTop + fullArt + ART_TITLE_GAP, 0.dp, p)
                 val titleStart = lerp(0.dp, THUMB_SIZE + 12.dp, p)
 
+                // How far down the *screen* the sleeve's bottom edge sits, which
+                // is where the full-bleed banner has to stop for the credits
+                // below it not to move when it appears. Everything between the
+                // screen's top and this box's own top is fixed padding, so it
+                // can simply be added back up rather than measured.
+                val bannerBottom = statusBarTop + DISMISS_STRIP_HEIGHT + ART_BOX_TOP_PAD +
+                    groupTop + fullArt + ART_TITLE_GAP / 2
+                SideEffect { heroHeight = bannerBottom }
+
                 // Empty state lives on this Box, not the AsyncImage: a
                 // background *and* a painter both trying to fill the same
                 // clipped shape is what read as two overlapping squares
@@ -640,15 +740,6 @@ fun NowPlayingScreen(
                             scaleY = idle
                             translationX = swipeSettle * (1f - p)
                         }
-                        // A drop shadow grounds a photo; on the flat
-                        // placeholder tile it has nothing to sit behind, so it
-                        // just reads as a second, darker square ringing the
-                        // first. Only cast it once there's actually art.
-                        .shadow(
-                            if (artLoaded) lerp(14.dp, 6.dp, p) else 0.dp,
-                            RoundedCornerShape(lerp(10.dp, 7.dp, p)),
-                        )
-                        .clip(RoundedCornerShape(lerp(10.dp, 7.dp, p)))
                         // Collapsed, the sleeve is the way back: tapping the
                         // thumbnail puts the queue or the lyrics away again.
                         .then(
@@ -660,50 +751,72 @@ fun NowPlayingScreen(
                             } else {
                                 Modifier
                             },
-                        )
-                        .background(Color.Black.copy(alpha = 0.18f)),
+                        ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (!artLoaded) {
-                        Icon(
-                            imageVector = BitChordIcons.MusicNote,
+                    // The sleeve proper. Separated from the box around it so
+                    // the banner can dissolve the card — shadow, corners, tile
+                    // and all — without taking the stats line with it.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = 1f - heroT }
+                            // A drop shadow grounds a photo; on the flat
+                            // placeholder tile it has nothing to sit behind, so
+                            // it just reads as a second, darker square ringing
+                            // the first. Only cast it once there's actually art.
+                            .shadow(
+                                if (artLoaded) lerp(14.dp, 6.dp, p) else 0.dp,
+                                RoundedCornerShape(lerp(10.dp, 7.dp, p)),
+                            )
+                            .clip(RoundedCornerShape(lerp(10.dp, 7.dp, p)))
+                            .background(Color.Black.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!artLoaded) {
+                            Icon(
+                                imageVector = BitChordIcons.MusicNote,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.35f),
+                                modifier = Modifier.size(lerp(40.dp, 20.dp, p)),
+                            )
+                        }
+                        AsyncImage(
+                            // Decode at the sleeve's *expanded* size, always.
+                            // Coil otherwise sizes the decode to however large
+                            // this is when the request goes out — and changing
+                            // track from the queue does that while the sleeve is
+                            // collapsed to a thumbnail, leaving a thumbnail-sized
+                            // bitmap to be blown back up when the queue closes.
+                            // Skipping tracks with the transport keeps it sharp
+                            // only because the sleeve happens to be full size at
+                            // that moment.
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(song.artworkAt(ART_PX))
+                                .size(with(LocalDensity.current) { fullArt.roundToPx() })
+                                .build(),
                             contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.35f),
-                            modifier = Modifier.size(lerp(40.dp, 20.dp, p)),
-                        )
-                    }
-                    AsyncImage(
-                        // Decode at the sleeve's *expanded* size, always. Coil
-                        // otherwise sizes the decode to however large this is
-                        // when the request goes out — and changing track from
-                        // the queue does that while the sleeve is collapsed to
-                        // a thumbnail, leaving a thumbnail-sized bitmap to be
-                        // blown back up when the queue closes. Skipping tracks
-                        // with the transport keeps it sharp only because the
-                        // sleeve happens to be full size at that moment.
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(song.artworkAt(ART_PX))
-                            .size(with(LocalDensity.current) { fullArt.roundToPx() })
-                            .build(),
-                        contentDescription = null,
-                        // Video thumbnails are 16:9; letterboxing them inside
-                        // the square sleeve looks like a broken frame.
-                        contentScale = ContentScale.Crop,
-                        onState = { artLoaded = it is AsyncImagePainter.State.Success },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-
-                    // Sits inside the same clip as the still art, so it takes
-                    // the sleeve's corners, shadow and paused shrink for free.
-                    // Only at full size: collapsed to a 54dp thumbnail behind
-                    // the queue there is nothing to read in a video, and it
-                    // would still cost a decoder and a second stream.
-                    canvas?.takeIf { p < 0.5f }?.let { clip ->
-                        CanvasArtworkPlayer(
-                            canvas = clip,
-                            isPlaying = isPlaying,
+                            // Video thumbnails are 16:9; letterboxing them inside
+                            // the square sleeve looks like a broken frame.
+                            contentScale = ContentScale.Crop,
+                            onState = { artLoaded = it is AsyncImagePainter.State.Success },
                             modifier = Modifier.fillMaxSize(),
                         )
+
+                        // Where the clip plays when it can't have the banner:
+                        // inside the same clip as the still art, taking the
+                        // sleeve's corners, shadow and paused shrink for free.
+                        if (!heroMode) {
+                            canvas?.takeIf { p < 0.5f }?.let { clip ->
+                                CanvasArtworkPlayer(
+                                    canvas = clip,
+                                    isPlaying = isPlaying,
+                                    onRenderedChanged = { canvasRendered = it },
+                                    onFrameCaptured = { canvasFrame = it },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
                     }
 
                     // Measured stats, pinned to the sleeve's own bottom-centre
@@ -716,7 +829,19 @@ fun NowPlayingScreen(
                         nerdStats?.describe()?.let { stats ->
                             Text(
                                 text = stats,
-                                style = MaterialTheme.typography.labelSmall,
+                                // A plain white line reads fine over the usual
+                                // dark tile, but a light stretch of an animated
+                                // cover — sky, snow, a pale sleeve — washes it
+                                // out entirely. The shadow costs nothing on a
+                                // dark background and is what keeps it legible
+                                // on a bright one.
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    shadow = Shadow(
+                                        color = Color.Black.copy(alpha = 0.55f),
+                                        offset = Offset(0f, 1f),
+                                        blurRadius = 4f,
+                                    ),
+                                ),
                                 color = Color.White.copy(alpha = 0.65f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
@@ -735,7 +860,7 @@ fun NowPlayingScreen(
                 // itself to be cropped by. Just a glyph that fades in with
                 // the drag to hint which way a release would skip.
                 val swipeHintProgress = (abs(swipeSettle) / swipeThreshold)
-                    .coerceIn(0f, 1f) * (1f - p)
+                    .coerceIn(0f, 1f) * (1f - p) * (1f - heroT)
                 if (swipeHintProgress > 0.01f) {
                     val showNext = swipeSettle < 0f
                     val enabled = if (showNext) hasNext else hasPrevious
@@ -1047,47 +1172,55 @@ fun NowPlayingScreen(
                 )
             }
 
-            Spacer(Modifier.height(18.dp))
+            // Hidden entirely rather than just faded out — with the setting
+            // on, the slider takes up no space at all, so the transport and
+            // the toggle row below it close the gap instead of leaving a
+            // blank strip where the volume bar used to be.
+            if (hideVolumeBar) {
+                Spacer(Modifier.height(24.dp))
+            } else {
+                Spacer(Modifier.height(18.dp))
 
-            // ---- Volume ----
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Rounded.VolumeDown,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(10.dp))
-                ThinSlider(
-                    value = volume.value,
-                    onValueChange = {
-                        volumeDragging = true
-                        // Follow the finger exactly; only external changes tween.
-                        scope.launch { volume.snapTo(it) }
-                        audioManager?.setStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            (it * maxVolume).roundToInt(),
-                            0,
-                        )
-                    },
-                    onValueChangeFinished = { volumeDragging = false },
-                    idleHeight = 6.dp,
-                    activeHeight = 10.dp,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(10.dp))
-                Icon(
-                    Icons.AutoMirrored.Rounded.VolumeUp,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.5f),
-                    modifier = Modifier.size(20.dp),
-                )
+                // ---- Volume ----
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Rounded.VolumeDown,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    ThinSlider(
+                        value = volume.value,
+                        onValueChange = {
+                            volumeDragging = true
+                            // Follow the finger exactly; only external changes tween.
+                            scope.launch { volume.snapTo(it) }
+                            audioManager?.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                (it * maxVolume).roundToInt(),
+                                0,
+                            )
+                        },
+                        onValueChangeFinished = { volumeDragging = false },
+                        idleHeight = 6.dp,
+                        activeHeight = 10.dp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Icon(
+                        Icons.AutoMirrored.Rounded.VolumeUp,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.5f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+
+                Spacer(Modifier.height(24.dp))
             }
-
-            Spacer(Modifier.height(24.dp))
 
             // ---- Shuffle · Repeat · AutoPlay · Queue ----
             // These live here rather than in the queue panel so their state is

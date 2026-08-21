@@ -71,7 +71,7 @@ object NerdStats {
          */
         val isLossless: Boolean
             get() = when {
-                mimeType != null -> LOSSLESS_CODEC_SUFFIXES.any { mimeType.endsWith(it) }
+                mimeType != null -> isLosslessMime(mimeType)
                 else -> claimed?.isLossless == true
             }
 
@@ -112,6 +112,19 @@ object NerdStats {
      * reaches the renderer as raw samples, not as `audio/wav`.
      */
     private val LOSSLESS_CODEC_SUFFIXES = listOf("flac", "alac", "raw")
+
+    /**
+     * Whether [mimeType] names a bit-exact codec.
+     *
+     * Exposed because the decoder's own verdict is also what decides whether a
+     * track playing from the disk cache is worth hunting a better copy of — see
+     * [QualityUpgrade.adoptUnresolved][com.music.bitchord.playback.QualityUpgrade.adoptUnresolved].
+     * Reading [Snapshot.isLossless] there instead would mean trusting whichever
+     * track the last [current] publish happened to describe, which after a
+     * queue advance is the previous one.
+     */
+    fun isLosslessMime(mimeType: String?): Boolean =
+        mimeType != null && LOSSLESS_CODEC_SUFFIXES.any { mimeType.endsWith(it) }
 
     /**
      * The bitrate a lossy stream has to reach to be worth calling out.

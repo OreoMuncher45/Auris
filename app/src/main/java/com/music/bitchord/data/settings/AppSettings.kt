@@ -93,6 +93,12 @@ object AppSettings {
     /** Stop playback when the app is swiped away from the recent apps screen. */
     val stopOnTaskRemoved = MutableStateFlow(false)
 
+    /** Hides the volume slider on the main player, leaving the rest of the layout to reflow. */
+    val hideVolumeBar = MutableStateFlow(false)
+
+    /** Swiping a song row plays it next instead of adding it to the end of the queue. */
+    val swipeToPlayNext = MutableStateFlow(false)
+
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
@@ -166,6 +172,8 @@ object AppSettings {
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
         stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
+        hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
+        swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
@@ -186,6 +194,27 @@ object AppSettings {
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
         watchConnection(context)
+    }
+
+    /**
+     * True the first time this is called after [currentVersionCode] rises above
+     * whatever was last recorded — i.e. once per update, on the first launch
+     * after it installs. A fresh install has nothing to compare against, so
+     * the very first call seeds the stored value from [currentVersionCode]
+     * rather than reporting an update.
+     *
+     * BitChord ships sideloaded (see [com.music.bitchord.data.AppUpdateChecker]),
+     * so installing a new APK over the old one is the only "update" there is —
+     * app data, this pref included, survives it exactly like a Play Store
+     * update. Call once per process start, before anything reads a cache that
+     * an update should invalidate.
+     */
+    fun consumeVersionUpdate(currentVersionCode: Int): Boolean {
+        val last = prefs.getInt(KEY_LAST_VERSION_CODE, currentVersionCode)
+        if (last != currentVersionCode) {
+            prefs.edit().putInt(KEY_LAST_VERSION_CODE, currentVersionCode).apply()
+        }
+        return currentVersionCode > last
     }
 
     /**
@@ -293,6 +322,16 @@ object AppSettings {
     fun setStopOnTaskRemoved(value: Boolean) {
         stopOnTaskRemoved.value = value
         prefs.edit().putBoolean(KEY_STOP_ON_TASK_REMOVED, value).apply()
+    }
+
+    fun setHideVolumeBar(value: Boolean) {
+        hideVolumeBar.value = value
+        prefs.edit().putBoolean(KEY_HIDE_VOLUME_BAR, value).apply()
+    }
+
+    fun setSwipeToPlayNext(value: Boolean) {
+        swipeToPlayNext.value = value
+        prefs.edit().putBoolean(KEY_SWIPE_TO_PLAY_NEXT, value).apply()
     }
 
     fun setReduceDynamicBlur(value: Boolean) {
@@ -419,6 +458,8 @@ object AppSettings {
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
+    private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
+    private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
@@ -437,4 +478,5 @@ object AppSettings {
     private const val KEY_SCROBBLE_DELAY_SECONDS = "scrobble_delay_seconds"
     private const val KEY_LISTENBRAINZ_ENABLED = "listenbrainz_enabled"
     private const val KEY_LISTENBRAINZ_TOKEN = "listenbrainz_token"
+    private const val KEY_LAST_VERSION_CODE = "last_version_code"
 }

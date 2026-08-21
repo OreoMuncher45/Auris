@@ -1,6 +1,6 @@
 package com.music.bitchord.data
 
-import android.util.Log
+import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.model.Account

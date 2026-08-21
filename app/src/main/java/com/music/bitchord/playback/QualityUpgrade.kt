@@ -81,6 +81,73 @@ object QualityUpgrade {
     private val forced = ConcurrentHashMap<String, SourceStream>()
 
     /**
+     * Tracks whose upgraded stream is being *proved* rather than played — see
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s
+     * audition.
+     *
+     * An audition reaches its bytes through the same resolving data source the
+     * real player does, which is where [forcedStream] hands over the URL and
+     * where the format it promises is recorded for "stats for nerds". That
+     * recording is right for a stream being played and wrong for one being
+     * tried out: for the length of an audition the listener is still hearing
+     * the old stream, and a badge that reads "Lossless" over it is describing
+     * a swap that has not happened and might never.
+     */
+    private val auditioning = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+    fun beginAudition(mediaId: String) {
+        auditioning += mediaId
+    }
+
+    fun endAudition(mediaId: String) {
+        auditioning -= mediaId
+    }
+
+    /** Whether the fetch about to happen for [videoId] is an audition, not playback. */
+    fun isAuditioning(videoId: String?): Boolean = videoId != null && videoId in auditioning
+
+    /**
+     * Upgrades that were found, proved and cached, and then never got to
+     * happen because the queue moved on in the last moments before the swap.
+     *
+     * Everything expensive about an upgrade is already spent by that point —
+     * the catalogue search, the audition, the megabytes on disk — and all of it
+     * was being thrown away over a quarter of a second of timing. Measured: a
+     * FLAC found in 10.1s, proved in 2.0s and cached in full, discarded because
+     * the listener skipped 254ms before the swap; skipping straight back to the
+     * track could not use any of it.
+     *
+     * Held against exactly that — the listener coming back. The stream stays in
+     * [forced] and its bytes stay under the rendition key, so the swap that
+     * follows is the cheap kind: no search, no download, and an audition that
+     * reads from disk.
+     */
+    private val shelved = ConcurrentHashMap<String, SourceStream>()
+
+    /** Keeps a proved-but-unused upgrade for [mediaId] against a return visit. */
+    fun shelve(mediaId: String, stream: SourceStream) {
+        shelved[mediaId] = stream
+        // The answer was yes. Recording it as a settled question is what would
+        // stop [couldStillUpgrade] ever offering the track again.
+        asked -= mediaId
+    }
+
+    /** The upgrade already proved for [mediaId], if one ran out of track. */
+    fun shelvedFor(mediaId: String): SourceStream? = shelved[mediaId]
+
+    /**
+     * Takes [mediaId]'s upgrade off the shelf — it has happened.
+     *
+     * Without this the entry outlives the swap it describes, and the next time
+     * the listener comes back to the track it is offered again: the item URI
+     * already carries the marker, so the swap declines, and the decline is read
+     * as another missed one and shelved afresh.
+     */
+    fun unshelve(mediaId: String) {
+        shelved.remove(mediaId)
+    }
+
+    /**
      * Records that [mediaId] is playing on less than was asked for — whether
      * that is a lossy stream a module handed over, or YouTube's own because no
      * module answered in time.
@@ -150,6 +217,109 @@ object QualityUpgrade {
     }
 
     /**
+     * Tracks that have already had their second look, whether it found
+     * anything or not.
+     *
+     * [pending] cannot answer this on its own, because [lookAgain] empties it
+     * as the question is asked: by the next progress sample a track that has
+     * been asked about and a track that was never a candidate look identical.
+     * That distinction costs nothing on the resolve path — nothing marks a
+     * track pending twice — but it is the whole difference for
+     * [adoptUnresolved], which is offered the same playing track every five
+     * seconds for as long as it lasts.
+     */
+    private val asked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+    /**
+     * Whether [mediaId] is worth *evaluating* for a second look, given that
+     * nothing has resolved it.
+     *
+     * The cheap half of [adoptUnresolved], split out because it is asked on the
+     * main thread every progress sample while the other half has to wait for
+     * the decoder to settle first. Everything here is a fact about the queue
+     * entry and the settings; nothing here touches the network.
+     */
+    fun couldStillUpgrade(mediaId: String, uri: Uri?): Boolean {
+        if (uri == null || uri.getQueryParameter("v") == null) return false
+        // Already upgraded: this *is* the better copy.
+        if (uri.getQueryParameter(MARKER) != null) return false
+        if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false
+        return SourceResolver.requestForNow() is StreamRequest.Lossless &&
+            SourceResolver.canSubstituteForYouTube()
+    }
+
+    /**
+     * Marks a track that is playing without ever having been resolved.
+     *
+     * [settledForLess] is reached from the resolving data source, which is the
+     * only place that knows what was asked for and what came back — and which
+     * a track playing off the disk cache never reaches at all. `CacheDataSource`
+     * wraps the resolver rather than the other way round, so bytes already on
+     * disk are served without a resolve, without a lookup, and so without
+     * anything marking the track worth a second look. The tracks that hit this
+     * hardest are the ones restored into the queue at startup: their bytes were
+     * written by a previous process, so nothing in *this* one has ever asked a
+     * module about them, and they would play at last session's bitrate for the
+     * rest of the session and every session after it, while a freshly queued
+     * copy of the same song upgraded within seconds.
+     *
+     * The floor is deliberately left unknown. A lossy stream from the cache
+     * cannot say what bitrate it is — YouTube's WebM and MP4 containers carry
+     * no bitrate field, and there is no resolver figure to fall back on here
+     * because there was no resolve — so [SourceResolver.worthSwapping] is given
+     * a null and treats it as a floor nothing lossy clears. Only genuine
+     * lossless cuts into a cached track, which is the conservative half of the
+     * feature and the half the disk copy cannot already be.
+     *
+     * @param playingMime what the *decoder* says about the bytes it is being
+     *   fed, and it must be this track's — see
+     *   [PlaybackService.audioFormatFor][com.music.bitchord.playback.PlaybackService].
+     *   The one thing worth not doing here is hunting a lossless copy of a
+     *   track that is already playing one, which is exactly what a cache entry
+     *   written by a previous session's successful upgrade holds.
+     * @return true if the track is now pending, i.e. worth calling
+     *   [lookAgain] for.
+     */
+    fun adoptUnresolved(
+        mediaId: String,
+        uri: Uri,
+        target: TrackMatcher.Target,
+        playingMime: String?,
+    ): Boolean {
+        if (!couldStillUpgrade(mediaId, uri)) return false
+        // [asked] is set only on the two *verdicts* below, not on adoption.
+        // Both are facts about the bytes on disk and the row that queued them,
+        // neither changes while the track plays, and neither is worth
+        // re-deciding every five seconds. A track that gets adopted needs no
+        // entry here at all: [pending] keeps [couldStillUpgrade] off it for
+        // exactly as long as the question is genuinely open, and marking it
+        // answered before it has been asked is what made a skip permanent.
+        if (NerdStats.isLosslessMime(playingMime)) {
+            asked += mediaId
+            // The codec is named because this line is a dead end — the track is
+            // in [asked] by now and will never be offered an upgrade again — and
+            // without it there is no way to tell a correct verdict from one
+            // reached on the previous track's format.
+            TrackLog.d(
+                TAG,
+                "'${target.title}' is already playing $playingMime from cache; no second look needed",
+            )
+            return false
+        }
+        if (target.title.isBlank()) {
+            asked += mediaId
+            return false
+        }
+        pending[mediaId] = Pending(target, inFlight = null, playing = null)
+        NerdStats.onLosslessRaceStart(mediaId)
+        TrackLog.d(
+            TAG,
+            "'${target.title}' is playing from cache and was never resolved; looking for a better copy",
+        )
+        return true
+    }
+
+    /**
      * Looks for a stream that actually satisfies the request, for a track
      * already playing.
      *
@@ -173,6 +343,12 @@ object QualityUpgrade {
     suspend fun lookAgain(mediaId: String, playingDurationSec: Int?): SourceStream? {
         val waiting = pending[mediaId] ?: return null
         var found: SourceStream? = null
+        /**
+         * Whether the search got as far as an answer, as opposed to being
+         * cancelled on its way to one. The difference is the whole of what
+         * [asked] is allowed to mean.
+         */
+        var answered = false
         return try {
             // The lookup that was still running when the fallback won the race
             // gets first refusal: what it returns is the stream that would
@@ -198,6 +374,7 @@ object QualityUpgrade {
                     SourceResolver.sameRecordingAs(late.durationSec, playingDurationSec)
                 ) {
                     found = late
+                    answered = true
                     return late
                 }
             }
@@ -207,11 +384,37 @@ object QualityUpgrade {
             SourceResolver.upgradeFor(
                 waiting.target.copy(durationSec = playingDurationSec ?: waiting.target.durationSec),
                 playing = waiting.playing,
-            ).also { found = it }
+            ).also {
+                found = it
+                answered = true
+            }
         } finally {
-            // Whatever the answer, the question has now been asked. Leaving it
-            // pending would re-run the whole search on every pause and resume.
-            pending.remove(mediaId)
+            if (answered) {
+                // The question has now been asked, whatever the answer. Leaving
+                // it pending would re-run the whole search on every pause and
+                // resume, and leaving it out of [asked] would let
+                // [adoptUnresolved] offer the same track again at the next
+                // progress sample.
+                pending.remove(mediaId)
+                asked += mediaId
+            }
+            // Otherwise the search was cancelled — the queue moved on while it
+            // was still running — and *nothing was learned*. The track is left
+            // exactly as it was found: still pending, still worth asking about
+            // if the listener comes back to it.
+            //
+            // It was not, and that was the single biggest hole in this feature.
+            // Two seconds on another track was enough to record a search that
+            // never finished as a settled "nothing better exists", and the
+            // track then played on at its original bitrate for the rest of the
+            // session with no badge, no search and no way back:
+            //
+            // ```
+            //   21:36:44  'double take' … looking for a better copy
+            //   21:36:46  TIMING track selected: e-9zmBhCfmk
+            //   21:36:48  TIMING track selected: IYOfGK5Zos4   ← and nothing
+            // ```
+            //
             // Only a *no* ends the race here. A yes leaves the badge up for
             // the caller to close out when the swap it describes has actually
             // happened — see this function's own documentation.
@@ -223,6 +426,8 @@ object QualityUpgrade {
     fun forget(mediaId: String) {
         pending.remove(mediaId)?.inFlight?.cancel()
         forced.remove(mediaId)
+        shelved.remove(mediaId)
+        auditioning -= mediaId
         NerdStats.onLosslessRaceEnd(mediaId)
     }
 

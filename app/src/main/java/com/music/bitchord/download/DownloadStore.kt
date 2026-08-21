@@ -7,7 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
-import android.util.Log
+import com.music.bitchord.data.DebugLog as Log
 import androidx.annotation.RequiresApi
 import com.music.bitchord.data.model.Song
 import java.io.File
