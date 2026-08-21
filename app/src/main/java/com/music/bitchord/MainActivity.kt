@@ -195,12 +195,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // once-per-launch popup version of the same news. `updateDialogShown`
     // rides out configuration changes on rememberSaveable so a rotation
     // doesn't bring it back — only a fresh launch does.
-    //
-    // Held until Home has settled. The GitHub check almost always returns
-    // first, and an alert thrown over a page of skeletons reads as something
-    // having gone wrong rather than as an aside — quite apart from its glass
-    // having nothing worth frosting yet. Error counts as settled: the page has
-    // stopped moving either way, and the news is still worth delivering.
     var updateDialogShown by rememberSaveable { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
@@ -210,7 +204,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
      * a beat before the popup does — they're one piece of news, and staggering
      * them made the top bar look like it had caught something the app hadn't.
      */
-    val updateNotice = updateAvailable?.takeIf { homeState !is UiState.Loading }
+    val updateNotice = updateAvailable
 
     LaunchedEffect(updateNotice) {
         if (updateNotice != null && !updateDialogShown) {
