@@ -47,6 +47,21 @@ android {
 
         // Lossless/HQ module index URL — empty string if not configured.
         buildConfigField("String", "MODULE_INDEX_URL", "\"${moduleIndexUrl}\"")
+
+        // Smart Fade's DSP analyzer (native/analyzer). 64-bit only: minSdk 26
+        // already postdates the 64-bit requirement, so a 32-bit slice would
+        // double the native payload for devices that do not exist in the
+        // install base.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     // applicationId can only be overridden per flavor, not per build type, so a

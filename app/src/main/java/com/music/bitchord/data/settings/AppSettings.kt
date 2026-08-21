@@ -65,6 +65,18 @@ object AppSettings {
     val losslessAudio = MutableStateFlow(true)
 
     val crossfadeSeconds = MutableStateFlow(0)
+
+    /**
+     * Lets Smart Fade's analyzer decide the transition's timing and length
+     * from each track's tempo, energy and structure, replacing the fixed
+     * [crossfadeSeconds] window rather than needing it set to anything first
+     * — [crossfadeSeconds] only matters here as a fallback while a pair is
+     * still being analysed. Off by default: analysis costs a background
+     * decode per track.
+     *
+     * See [com.music.bitchord.playback.smart.TransitionPlanner].
+     */
+    val smartFadeEnabled = MutableStateFlow(false)
     val skipSilence = MutableStateFlow(false)
 
     /**
@@ -162,6 +174,7 @@ object AppSettings {
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
         losslessAudio.value = prefs.getBoolean(KEY_LOSSLESS, true)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
+        smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
@@ -287,6 +300,11 @@ object AppSettings {
     fun setCrossfadeSeconds(value: Int) {
         crossfadeSeconds.value = value
         prefs.edit().putInt(KEY_CROSSFADE, value).apply()
+    }
+
+    fun setSmartFadeEnabled(value: Boolean) {
+        smartFadeEnabled.value = value
+        prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
     fun setSkipSilence(value: Boolean) {
@@ -449,6 +467,7 @@ object AppSettings {
     private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
+    private const val KEY_SMART_FADE = "smart_fade_enabled"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_SPEED = "playback_speed"

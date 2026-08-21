@@ -5,9 +5,14 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.smart.CrossfadeMode
+import com.music.bitchord.playback.smart.TrackAnalysis
+import com.music.bitchord.playback.smart.TransitionTrackInfo
+import com.music.bitchord.playback.smart.planTransition
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -15,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToLong
 import kotlin.math.sin
 
 /**
@@ -78,6 +84,20 @@ class CrossfadeController(
     private val player: ExoPlayer,
     /** Builds the tail player. Called at most once; the instance is kept warm. */
     private val newGhost: () -> ExoPlayer,
+    /**
+     * Stored Smart Fade analysis for a media item, or an empty [TrackAnalysis]
+     * when there is none yet. This is the seam Phase 1's DSP analyzer plugs
+     * into: until analysis finishes, a track reads as "no evidence", which
+     * [planTransition] answers with the same fixed-length crossfade this
+     * class always ran before Smart Fade existed.
+     */
+    private val analysisFor: (MediaItem) -> TrackAnalysis = { TrackAnalysis() },
+    /**
+     * Queues background analysis for a media item that will soon need it.
+     * Cheap to call on every tick: a track already analysed, already in
+     * flight, or not yet fully cached is a no-op.
+     */
+    private val requestAnalysis: (MediaItem) -> Unit = {},
 ) {
 
     private enum class Phase {
@@ -102,6 +122,27 @@ class CrossfadeController(
 
     /** Length of the transition in flight, in ms. Fixed when it begins. */
     private var fadeMs = 0L
+
+    /**
+     * Where the fade window ends, in the session player's position ms.
+     * Standard mode sets this to the track's own duration, which is what
+     * [driveArming] always compared against before Smart Fade existed; a
+     * Smart Fade plan can set it earlier, at an analyzed mix-out anchor, so
+     * [driveArming] watches this field rather than re-deriving the fade point
+     * from [ExoPlayer.getDuration] on every tick.
+     */
+    private var fadeEndMs = 0L
+
+    /**
+     * Which setting armed the fade in flight, so [driveFade] knows which one
+     * being switched off mid-blend means "stop now" rather than misreading the
+     * other mode's control as the fade having been turned off. Smart Fade
+     * doesn't need [AppSettings.crossfadeSeconds] to be above zero at all —
+     * see [considerSmartTransition] — so treating that as still-zero as a
+     * reason to cut a Smart Fade short would end every one of them on its
+     * first tick.
+     */
+    private var smartFadeActive = false
 
     private var lapStartedAt = 0L
     private var bailStartedAt = 0L
@@ -147,6 +188,19 @@ class CrossfadeController(
     private var autoAdvance = false
 
     fun consumeAutoAdvance(): Boolean = autoAdvance.also { autoAdvance = false }
+
+    /**
+     * True while a transition is armed or running on [player] and [ghost].
+     *
+     * For callers about to do something that would otherwise fight this
+     * class for the session player mid-blend — [PlaybackService]'s quality
+     * upgrade is the one that does, since `replaceMediaItem` tears the
+     * current source down and rebuilds it. Interrupting the source
+     * [driveArming] is syncing against, or the one [driveFade] is ramping,
+     * breaks the blend rather than merely delaying it, so such a caller
+     * should wait for this to clear rather than proceed anyway.
+     */
+    fun isTransitioning(): Boolean = phase != Phase.IDLE
 
     private val listener = object : Player.Listener {
         override fun onPositionDiscontinuity(
@@ -246,7 +300,6 @@ class CrossfadeController(
 
     /** Arms a crossfade as the playing track runs out. */
     private fun considerAutoTransition() {
-        if (configuredFadeMs() <= 0L) return
         if (!player.isPlaying) return
         // Repeating one track would crossfade it into itself.
         if (player.repeatMode == Player.REPEAT_MODE_ONE) return
@@ -255,6 +308,16 @@ class CrossfadeController(
         val duration = player.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
 
+        // Smart Fade is its own on/off, independent of the manual crossfade
+        // length: it decides its own duration from each pair of tracks (beats,
+        // tempo, structure), so requiring a nonzero [AppSettings.crossfadeSeconds]
+        // first would tie an automatic feature to a manual one it doesn't use.
+        if (AppSettings.smartFadeEnabled.value) {
+            considerSmartTransition(duration)
+            return
+        }
+
+        if (configuredFadeMs() <= 0L) return
         val fade = fadeFor(duration)
         if (fade <= 0L) return
 
@@ -264,18 +327,97 @@ class CrossfadeController(
         // the fade is due rather than started then.
         if (remaining > fade + ARM_LEAD_MS) return
 
-        begin(fade)
+        begin(fade, endMs = duration, smart = false)
     }
+
+    /**
+     * Arms a Smart Fade transition once its plan says the playhead is close
+     * enough to start arming for it.
+     *
+     * Phase 1 only reads the plan's timing — where the fade starts
+     * ([com.music.bitchord.playback.smart.TransitionPlan.transitionStart])
+     * and how long it runs
+     * ([com.music.bitchord.playback.smart.TransitionPlan.fadeMs]). A plan can
+     * also describe *how* to render the transition (a filter ride, a tempo
+     * nudge, a beat-matched native render); that machinery belongs to a later
+     * phase, so every Smart Fade transition today still plays as the same
+     * equal-power blend [driveFade] always has — only its timing is smarter.
+     */
+    private fun considerSmartTransition(duration: Long) {
+        val currentItem = player.currentMediaItem ?: return
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return
+        val nextItem = player.getMediaItemAt(nextIndex)
+
+        // Cheap no-ops once a track is analysed or already in flight; called
+        // every tick so a track that finishes caching mid-song is picked up
+        // without a separate trigger.
+        requestAnalysis(currentItem)
+        requestAnalysis(nextItem)
+
+        // Only used before analysis lands, or when the evidence is too weak
+        // for more than a plain fade (see [TransitionTier.PLAIN_CROSSFADE]):
+        // once real analysis is available, [planTransition] sizes the overlap
+        // itself from tempo and structure and ignores this entirely. Honours
+        // the manual slider if the listener also set one, so the two settings
+        // don't fight; falls back to a fixed length when it's at "Off".
+        val fallbackSeconds = configuredFadeMs().takeIf { it > 0L }
+            ?.div(1000.0)
+            ?: DEFAULT_SMART_FALLBACK_SECONDS
+
+        val plan = planTransition(
+            analysis = analysisFor(currentItem),
+            nextAnalysis = analysisFor(nextItem),
+            currentTrack = currentItem.toTransitionInfo(duration),
+            nextTrack = nextItem.toTransitionInfo(nextItemDurationMs(nextIndex)),
+            currentTime = player.currentPosition / 1000.0,
+            duration = duration / 1000.0,
+            fadeSeconds = fallbackSeconds,
+            mode = CrossfadeMode.SMART,
+        )
+        if (plan.blocked) return
+
+        val fade = plan.fadeMs
+        if (fade <= 0L) return
+
+        val transitionStartMs = (plan.transitionStart * 1000).roundToLong()
+        val remaining = transitionStartMs - player.currentPosition
+        // Same arm-ahead margin as the standard path, just measured against
+        // the plan's own start rather than a fixed offset from track end —
+        // an analyzed mix-out anchor can place that start well before the
+        // file actually ends.
+        if (remaining > ARM_LEAD_MS) return
+
+        begin(fade, endMs = (plan.transitionEnd * 1000).roundToLong(), smart = true)
+    }
+
+    /** The next queue item's own duration, or 0 when Media3 hasn't loaded that far ahead yet. */
+    private fun nextItemDurationMs(nextIndex: Int): Long {
+        val timeline = player.currentTimeline
+        if (timeline.isEmpty) return 0L
+        val durationMs = timeline.getWindow(nextIndex, Timeline.Window()).durationMs
+        return durationMs.takeIf { it != C.TIME_UNSET } ?: 0L
+    }
+
+    /** BitChord doesn't carry album metadata on [MediaMetadata] yet, so [TransitionTrackInfo.album] stays blank. */
+    private fun MediaItem.toTransitionInfo(durationMs: Long) = TransitionTrackInfo(
+        id = mediaId,
+        durationMs = durationMs,
+        title = mediaMetadata.title?.toString().orEmpty(),
+        artist = mediaMetadata.artist?.toString().orEmpty(),
+    )
 
     /**
      * Spins the ghost up on the outgoing track and walks it into sync with the
      * session player.
      */
-    private fun begin(fade: Long): Boolean {
+    private fun begin(fade: Long, endMs: Long, smart: Boolean): Boolean {
         val outgoing = player.currentMediaItem ?: return false
         val ghost = warmGhost() ?: return false
 
         fadeMs = fade
+        fadeEndMs = endMs
+        smartFadeActive = smart
         armDeadline = SystemClock.elapsedRealtime() + ARM_TIMEOUT_MS
         lastSyncAt = 0L
 
@@ -321,10 +463,10 @@ class CrossfadeController(
             }
         }
 
-        // Wait for the track to actually reach the fade point.
-        val duration = player.duration
-        val atFadePoint = duration == C.TIME_UNSET ||
-            duration - player.currentPosition <= fadeMs
+        // Wait for the track to actually reach the fade point. [fadeEndMs] is
+        // the track's own duration in standard mode, or a Smart Fade plan's
+        // analyzed mix-out anchor when it ends before the file does.
+        val atFadePoint = fadeEndMs <= 0L || fadeEndMs - player.currentPosition <= fadeMs
 
         if (!atFadePoint) return
         // Out of time to keep tidying up: a slightly ragged handoff still beats
@@ -390,20 +532,32 @@ class CrossfadeController(
         // one did, so a long crossfade into a short track tightens rather than
         // swallowing it. Its duration is often still unknown when the fade
         // starts — the stream is only being opened — so this is read every tick
-        // and simply narrows the span once the answer arrives.
-        val span = (minOf(fadeMs, fadeFor(player.duration)) - LAP_MS).coerceAtLeast(1L)
+        // and simply narrows the span once the answer arrives. Capped only by
+        // the incoming track's own length, not by [configuredFadeMs] — a Smart
+        // Fade plan already sized itself independently of that setting, and
+        // may be running with it at zero.
+        val incomingCap = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }?.div(3) ?: Long.MAX_VALUE
+        val span = (minOf(fadeMs, incomingCap) - LAP_MS).coerceAtLeast(1L)
         val progress = (player.currentPosition.coerceAtLeast(0L).toFloat() / span).coerceIn(0f, 1f)
 
         player.volume = riseGain(progress)
         ghost.volume = fallGain(progress)
 
         // Whichever comes first: the fade running its course, the old track
-        // genuinely ending, the tail failing outright, or the setting being
-        // switched off mid-blend.
+        // genuinely ending, the tail failing outright, or whichever setting
+        // armed this fade being switched off mid-blend. Checked against the
+        // setting that actually started it — a Smart Fade normally runs with
+        // [configuredFadeMs] at zero, and reading that as "turned off" would
+        // end every Smart Fade on its first tick.
+        val settingSwitchedOff = if (smartFadeActive) {
+            !AppSettings.smartFadeEnabled.value
+        } else {
+            configuredFadeMs() <= 0L
+        }
         val done = progress >= 1f ||
             ghost.playbackState == Player.STATE_ENDED ||
             ghost.playbackState == Player.STATE_IDLE ||
-            configuredFadeMs() <= 0L
+            settingSwitchedOff
         if (done) finish()
     }
 
@@ -450,9 +604,11 @@ class CrossfadeController(
         phase = Phase.IDLE
     }
 
-    /** Still a next track, still playing, still switched on. */
-    private fun stillWorthFading(): Boolean =
-        configuredFadeMs() > 0L && player.hasNextMediaItem()
+    /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
+    private fun stillWorthFading(): Boolean {
+        val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
+        return stillOn && player.hasNextMediaItem()
+    }
 
     private fun warmGhost(): ExoPlayer? {
         ghost?.let { return it }
@@ -482,6 +638,14 @@ class CrossfadeController(
         cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
 
     private companion object {
+        /**
+         * Used only before a pair has been analysed, or when the evidence is
+         * too weak for more than a plain fade — see [considerSmartTransition].
+         * Once real analysis lands, the overlap is sized from tempo and
+         * structure instead and this is never read.
+         */
+        const val DEFAULT_SMART_FALLBACK_SECONDS = 6.0
+
         /** Handoff of the outgoing track between the two players. */
         const val LAP_MS = 90L
 

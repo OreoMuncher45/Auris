@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Animation
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
 import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Check
@@ -131,6 +132,7 @@ fun SettingsScreen(
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
+    val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val atmosSupported by DolbyAtmos.supported.collectAsStateWithLifecycle()
@@ -274,15 +276,41 @@ fun SettingsScreen(
         }
 
         SettingsGroup(header = "Playback") {
-            SliderRow(
-                icon = Icons.Rounded.Waves,
-                title = "Crossfade",
-                subtitle = "Blends one track into the next",
-                value = if (crossfade == 0) "Off" else "${crossfade}s",
-                sliderValue = crossfade.toFloat(),
-                onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
-                valueRange = 0f..12f,
-                steps = 11,
+            // Smart Fade decides its own length from each pair of tracks —
+            // tempo, key, structure — so it replaces the manual slider rather
+            // than needing it set to anything first.
+            if (!smartFade) {
+                SliderRow(
+                    icon = Icons.Rounded.Waves,
+                    title = "Crossfade",
+                    subtitle = "Blends one track into the next",
+                    value = if (crossfade == 0) "Off" else "${crossfade}s",
+                    sliderValue = crossfade.toFloat(),
+                    onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
+                    valueRange = 0f..12f,
+                    steps = 11,
+                )
+                RowDivider()
+            }
+            SettingsRow(
+                icon = Icons.Rounded.AutoAwesome,
+                title = "Smart Fade",
+                subtitle = if (smartFade) {
+                    "Blends every transition, timed automatically from each track"
+                } else {
+                    "Times and blends transitions automatically, no slider needed"
+                },
+                trailing = {
+                    Switch(
+                        checked = smartFade,
+                        onCheckedChange = AppSettings::setSmartFadeEnabled,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
             )
             RowDivider()
             SliderRow(

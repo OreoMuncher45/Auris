@@ -1,18 +1,23 @@
 package com.music.bitchord.playback
 
 import android.content.Context
+import android.media.MediaDataSource
 import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import com.music.bitchord.data.TrackLog
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.TransferListener
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
 import androidx.media3.datasource.cache.CacheWriter
+import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.datasource.cache.SimpleCache
+import java.io.IOException
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
@@ -484,6 +489,122 @@ object AudioCache {
     suspend fun warmRange(uri: Uri, position: Long, length: Long) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         fetch(key, uri, position, length)
+    }
+
+    /**
+     * True once every byte of [uri]'s rendition is on disk.
+     *
+     * Smart Fade's analyzer needs this before it can safely decode a track: a
+     * partially fetched file may not even have a parsable container, and
+     * analysing the head of a track whose tail hasn't arrived would produce a
+     * grid for audio the listener will never reach through that transition.
+     *
+     * Reads the content length Media3 already recorded against this cache key
+     * (from the upstream response, the first time anything read this rendition)
+     * rather than re-deriving it per source type — unlike [cacheWholeOnce],
+     * which only knows how to ask [StreamResolver] for a YouTube videoId's
+     * length, this works for anything that has ever been opened through
+     * [cacheFactory], YouTube or not.
+     */
+    fun isFullyCached(uri: Uri): Boolean {
+        if (!::cache.isInitialized) return false
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val contentLength = ContentMetadata.getContentLength(cache.getContentMetadata(key))
+        if (contentLength <= 0) return false
+        return cache.getCachedBytes(key, 0, contentLength) >= contentLength
+    }
+
+    /**
+     * A random-access reader over [uri]'s cached bytes, for the analyzer to hand
+     * to [android.media.MediaExtractor]. Null when the rendition isn't fully
+     * cached yet — analysis always treats that as "not ready" rather than
+     * reading a partial file.
+     *
+     * The returned source only ever reads from disk: its upstream throws if
+     * touched at all, which should never happen once [isFullyCached] is true.
+     * Callers must [MediaDataSource.close] it.
+     */
+    fun mediaDataSource(uri: Uri): MediaDataSource? {
+        if (!isFullyCached(uri)) return null
+        return CacheMediaDataSource(cacheFactory(NoUpstream).createDataSource(), uri)
+    }
+
+    /** Analysis only ever runs after [isFullyCached], so this should never be asked to fetch anything. */
+    private object NoUpstream : DataSource.Factory {
+        override fun createDataSource(): DataSource = object : DataSource {
+            override fun addTransferListener(transferListener: TransferListener) {}
+            override fun open(dataSpec: DataSpec): Long =
+                throw IOException("Smart Fade analysis requires a fully cached track; no upstream is wired up")
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+                throw IOException("Smart Fade analysis requires a fully cached track; no upstream is wired up")
+            override fun getUri(): Uri? = null
+            override fun close() {}
+        }
+    }
+
+    /**
+     * Adapts a Media3 [DataSource] (reading only from [cache]) to the
+     * [MediaDataSource] interface [android.media.MediaExtractor] wants.
+     *
+     * Keeps the underlying source open across consecutive sequential reads —
+     * the pattern MediaExtractor actually uses — and only reopens at a new
+     * position when the read pattern jumps, e.g. a seek.
+     */
+    private class CacheMediaDataSource(
+        private val dataSource: DataSource,
+        private val uri: Uri,
+    ) : MediaDataSource() {
+        private var isOpen = false
+        private var openPosition = -1L
+
+        override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+            if (size == 0) return 0
+            if (!isOpen || position != openPosition) {
+                closeUpstream()
+                val available = try {
+                    dataSource.open(DataSpec.Builder().setUri(uri).setPosition(position).build())
+                } catch (error: IOException) {
+                    return -1
+                }
+                isOpen = true
+                openPosition = position
+                if (available == 0L) return -1
+            }
+            val count = try {
+                dataSource.read(buffer, offset, size)
+            } catch (error: IOException) {
+                closeUpstream()
+                return -1
+            }
+            if (count == C.RESULT_END_OF_INPUT) {
+                closeUpstream()
+                return -1
+            }
+            openPosition += count
+            return count
+        }
+
+        override fun getSize(): Long {
+            closeUpstream()
+            return try {
+                dataSource.open(DataSpec(uri))
+            } catch (error: IOException) {
+                -1L
+            } finally {
+                closeUpstream()
+            }
+        }
+
+        override fun close() {
+            closeUpstream()
+        }
+
+        private fun closeUpstream() {
+            if (isOpen) {
+                runCatching { dataSource.close() }
+                isOpen = false
+            }
+        }
     }
 
     /**

@@ -92,6 +92,9 @@ class PlaybackService : MediaSessionService() {
     private var crossfade: CrossfadeController? = null
     private val spatialAudioProcessor = SpatialAudioProcessor()
 
+    /** Smart Fade's DSP analyzer — see [com.music.bitchord.playback.smart.TrackAnalyzer]. */
+    private val trackAnalyzer = com.music.bitchord.playback.smart.TrackAnalyzer(AudioCache)
+
     /** Shared with the crossfade's tail player, so both read the same disk cache. */
     private var mediaSourceFactory: DefaultMediaSourceFactory? = null
 
@@ -555,7 +558,15 @@ class PlaybackService : MediaSessionService() {
 
         reportProgress(exoPlayer)
 
-        val controller = CrossfadeController(scope, exoPlayer, ::buildGhostPlayer)
+        val controller = CrossfadeController(
+            scope,
+            exoPlayer,
+            ::buildGhostPlayer,
+            analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
+            requestAnalysis = { item ->
+                item.localConfiguration?.uri?.let { uri -> trackAnalyzer.request(item.mediaId, uri, 0.0) }
+            },
+        )
         crossfade = controller
         controller.start()
 
@@ -982,8 +993,45 @@ class PlaybackService : MediaSessionService() {
             delay(UPGRADE_NOT_BEFORE_MS - settled)
         }
 
+        // Never cut into a crossfade in flight. `replaceMediaItem` tears the
+        // session player's source down and rebuilds it — CrossfadeController
+        // is either syncing its tail player's position against that same
+        // source (arming), riding a ~90ms handoff between the two (lapping),
+        // or ramping volume off the incoming track's own position (fading),
+        // and all three read a session-player discontinuity as either an
+        // unrecognised seek (bail, with an audible ramp-out) or a progress
+        // calculation reset to whatever position the new source opens at.
+        // Either way the blend breaks rather than merely waits.
+        //
+        // Bounded so a stuck flag can never leave the upgrade waiting forever;
+        // past the timeout this falls through to the same check made again,
+        // authoritatively, below — so an unusually long-running crossfade
+        // still gets one more look rather than being forced through.
+        //
+        // This loop is only the coarse wait. [crossfade] is read again inside
+        // the `withContext` below with no suspension between that read and
+        // `replaceMediaItem` — both run on the same single-threaded Main
+        // dispatcher [scope] does — so that second check is the one this
+        // logic actually depends on for correctness, not this one.
+        var waitedForCrossfade = 0L
+        while (withContext(Dispatchers.Main) { crossfade?.isTransitioning() } == true &&
+            waitedForCrossfade < UPGRADE_CROSSFADE_WAIT_TIMEOUT_MS
+        ) {
+            delay(UPGRADE_CROSSFADE_POLL_MS)
+            waitedForCrossfade += UPGRADE_CROSSFADE_POLL_MS
+        }
+
         withContext(Dispatchers.Main) {
             val now = swapPointFor(mediaId)
+            if (crossfade?.isTransitioning() == true) {
+                // Caught right before the swap that would have broken it —
+                // everything spent proving this stream is still worth keeping
+                // for next time rather than throwing away, exactly like the
+                // "queue moved on" case just below.
+                QualityUpgrade.shelve(mediaId, stream)
+                TrackLog.d("BitChord", "upgrade for $mediaId shelved: a crossfade was still running")
+                return@withContext
+            }
             if (now == null) {
                 // The queue moved on between the upgrade being proved and the
                 // swap being made — a skip, or a track that ran out. Everything
@@ -1855,6 +1903,7 @@ class PlaybackService : MediaSessionService() {
         // Last chance to record the resume point, while the player still exists.
         saveQueue()
         AudioCache.cancel()
+        trackAnalyzer.release()
         // Also the last chance to close out the track that was playing — a
         // swipe-away or stop never fires STATE_ENDED, so the session would
         // otherwise end with an un-scrobbled song. This must not ride on the
@@ -2007,6 +2056,19 @@ class PlaybackService : MediaSessionService() {
          * upgrade that arrives with the first note doesn't cut it immediately.
          */
         const val UPGRADE_NOT_BEFORE_MS = 5_000L
+
+        /** How often to recheck [CrossfadeController.isTransitioning] while an upgrade waits on one. */
+        const val UPGRADE_CROSSFADE_POLL_MS = 250L
+
+        /**
+         * Longest an upgrade waits on a crossfade before giving up and
+         * checking once more, authoritatively, right at the swap point. Well
+         * past the longest transition either mode plans — 12s for a manual
+         * crossfade, or a Smart Fade's own beat-bounded overlap, plus its arm
+         * lead — so this is a guard against something stuck, not a limit
+         * expected to bind in the ordinary case.
+         */
+        const val UPGRADE_CROSSFADE_WAIT_TIMEOUT_MS = 20_000L
 
         /**
          * How long a replacement gets to report a length before it is
