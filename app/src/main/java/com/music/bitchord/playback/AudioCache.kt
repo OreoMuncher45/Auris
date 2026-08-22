@@ -89,6 +89,14 @@ object AudioCache {
     private const val CHUNK_BYTES = 2L * 1024 * 1024
 
     /**
+     * How far into a rendition [cachedPrefixBytes] looks when its real length
+     * isn't known yet. Only an upper bound on the answer, so it costs nothing
+     * to set well past the half-minute of audio any caller actually wants —
+     * eight megabytes covers that even for lossless.
+     */
+    private const val HEAD_PROBE_BYTES = 8L * 1024 * 1024
+
+    /**
      * Grace period before reading ahead. The seconds just after a track starts
      * are when the player is filling its own buffer and the listener is waiting
      * on sound; read-ahead competing for bandwidth there would trade the gap
@@ -507,11 +515,55 @@ object AudioCache {
      * [cacheFactory], YouTube or not.
      */
     fun isFullyCached(uri: Uri): Boolean {
-        if (!::cache.isInitialized) return false
-        val key = keyFactory.buildCacheKey(DataSpec(uri))
-        val contentLength = ContentMetadata.getContentLength(cache.getContentMetadata(key))
+        val contentLength = contentLengthOf(uri)
         if (contentLength <= 0) return false
-        return cache.getCachedBytes(key, 0, contentLength) >= contentLength
+        // [Cache.getCachedLength], not [Cache.getCachedBytes]. The latter counts
+        // every cached byte in the span *however it is scattered*, so a
+        // rendition with holes in it — which is the normal result of seeking
+        // around a track while read-ahead fills the rest in behind you — reports
+        // the same total as a complete one. The decoder does not skip holes: it
+        // stops at the first, and the analyzer then reads the entire missing
+        // remainder as trailing silence and places the mix-out anchor there.
+        // That is how a four-minute track came to be analysed as ending at
+        // 61 seconds and transitioned out of at 56. Contiguous-from-zero is what
+        // "fully cached" was always meant to mean.
+        return cachedPrefixBytes(uri) >= contentLength
+    }
+
+    /**
+     * The full size of [uri]'s rendition in bytes, or 0 when it isn't known yet.
+     *
+     * Read from the content metadata Media3 recorded from the upstream response
+     * the first time anything opened this rendition, so it is available well
+     * before the bytes are.
+     */
+    fun contentLengthOf(uri: Uri): Long {
+        if (!::cache.isInitialized) return 0L
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        return ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
+    }
+
+    /**
+     * How many bytes of [uri]'s rendition are on disk *contiguously from the
+     * start*, which is the only measure a head-only decode can act on: a
+     * rendition holding its last megabyte and nothing else has plenty of cached
+     * bytes and no parsable beginning.
+     *
+     * Zero when the rendition's length isn't known yet, when nothing is cached,
+     * or when the cached region doesn't start at byte 0.
+     */
+    fun cachedPrefixBytes(uri: Uri): Long {
+        if (!::cache.isInitialized) return 0L
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        // Probed over a fixed span rather than the content length. The length is
+        // only recorded once something has *opened* the rendition, and the whole
+        // point of this measurement is a track nothing has opened yet — read-
+        // ahead has written its opening bytes and nothing else has touched it.
+        // Requiring the length here made this return zero for exactly the
+        // tracks it exists to describe.
+        val probe = contentLengthOf(uri).takeIf { it > 0 } ?: HEAD_PROBE_BYTES
+        // Negative means "this many bytes of hole", i.e. position 0 isn't cached at all.
+        return cache.getCachedLength(key, 0, probe).coerceAtLeast(0L)
     }
 
     /**
@@ -529,14 +581,39 @@ object AudioCache {
         return CacheMediaDataSource(cacheFactory(NoUpstream).createDataSource(), uri)
     }
 
-    /** Analysis only ever runs after [isFullyCached], so this should never be asked to fetch anything. */
+    /**
+     * The same reader over a rendition that is still downloading, for Smart
+     * Fade's head-only pass.
+     *
+     * Nothing here truncates explicitly: a read into a region that hasn't
+     * arrived reaches [NoUpstream], which throws, and [CacheMediaDataSource]
+     * turns that into an end-of-stream. So a partially cached rendition presents
+     * itself to [android.media.MediaExtractor] as a short file that stops where
+     * the cache does, which is exactly what a head-only decode wants. Its
+     * declared size is still the real one, so a container whose header describes
+     * the whole track parses normally.
+     *
+     * Callers must check [cachedPrefixBytes] first — this only refuses the case
+     * where the rendition has no beginning on disk at all. Callers must
+     * [MediaDataSource.close] it.
+     */
+    fun headMediaDataSource(uri: Uri): MediaDataSource? {
+        if (cachedPrefixBytes(uri) <= 0L) return null
+        return CacheMediaDataSource(cacheFactory(NoUpstream).createDataSource(), uri)
+    }
+
+    /**
+     * Never fetches. For a fully cached rendition nothing should reach this; for
+     * a partially cached one, throwing is how a read past the cached prefix
+     * becomes an end-of-stream instead of a download.
+     */
     private object NoUpstream : DataSource.Factory {
         override fun createDataSource(): DataSource = object : DataSource {
             override fun addTransferListener(transferListener: TransferListener) {}
             override fun open(dataSpec: DataSpec): Long =
-                throw IOException("Smart Fade analysis requires a fully cached track; no upstream is wired up")
+                throw IOException("Smart Fade analysis reads only cached bytes; no upstream is wired up")
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                throw IOException("Smart Fade analysis requires a fully cached track; no upstream is wired up")
+                throw IOException("Smart Fade analysis reads only cached bytes; no upstream is wired up")
             override fun getUri(): Uri? = null
             override fun close() {}
         }

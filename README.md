@@ -11,7 +11,7 @@ An unofficial YouTube Music client for Android, built with Jetpack Compose. BitC
 - **Search, browse and play** anything available on YouTube Music — songs, albums, artists, playlists.
 - **Gapless playback with true crossfade**, adjustable 0–12s — two overlapping decoders on an equal-power curve, applied to manual skips as well as track ends, powered by Media3/ExoPlayer.
 - **Sign in with your Google account** — an in-app WebView runs the real `accounts.google.com` login (2FA and passkeys work as normal); only the resulting session cookies are captured, never the credential itself.
-- **Offline downloads** — save tracks to `Downloads/BitChord` with title/artist/album/cover art embedded directly into the file, so they read correctly in a file manager or another player, not just inside BitChord.
+- **Offline downloads** — save tracks to `Music/BitChord` with title/artist/album/cover art embedded directly into the file, so they read correctly in a file manager or another player, not just inside BitChord.
 - **Local music library** — anything already on the device (or previously downloaded) is scanned in alongside what streams from YouTube Music.
 - **Scrobbling** to **Last.fm** and **ListenBrainz**, with per-service timing/threshold controls.
 - **Per-network audio quality** — separate quality ceilings for Wi-Fi and mobile data.

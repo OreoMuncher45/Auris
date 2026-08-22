@@ -167,6 +167,22 @@ private const val ART_PX = 1200
  */
 private const val ALBUM_SETTLE_MS = 700L
 
+/**
+ * How close the player's reported position has to get to a released scrub
+ * handle before the handle stops being drawn where it was dropped. Wide enough
+ * to swallow a coarse progress tick, tight enough that the handle doesn't hand
+ * over while it is still visibly wrong.
+ */
+private const val SEEK_SETTLE_TOLERANCE_MS = 1_500L
+
+/**
+ * How long that handle is held at the drop point regardless. A backstop, not a
+ * schedule: a seek normally settles in a tick or two, and this only decides how
+ * long a seek that never settles can freeze the bar for. Generous enough that a
+ * slow buffer still hands over smoothly rather than snapping back.
+ */
+private const val SEEK_SETTLE_TIMEOUT_MS = 4_000L
+
 private val THUMB_SIZE = 54.dp
 private val HEADER_HEIGHT = 60.dp
 private val ART_TITLE_GAP = 20.dp
@@ -390,6 +406,18 @@ fun NowPlayingScreen(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     onSeek: (Long) -> Unit,
+    /**
+     * Seek to a fraction of the track, for the scrubber.
+     *
+     * Separate from [onSeek] because the scrubber is the one caller that knows
+     * *where along the bar* it wants to go rather than a time. Converting that
+     * here would use this screen's cached duration, which lags a track change by
+     * however long the session takes to report the new one — long enough to drop
+     * the handle on a bar still scaled to the previous song and seek to the
+     * wrong fraction of the current one. The conversion belongs wherever the
+     * freshest duration is.
+     */
+    onSeekFraction: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit,
     onToggleAutoplay: () -> Unit,
@@ -483,9 +511,31 @@ fun NowPlayingScreen(
         else -> fraction.coerceIn(0f, 1f)
     }
 
-    LaunchedEffect(fraction, pendingSeek) {
+    // Released as soon as the player's own position agrees with where the handle
+    // was dropped — and unconditionally a few seconds later whether it agrees or
+    // not.
+    //
+    // The agreement test alone is not enough, because it is the only thing that
+    // ever cleared the override: if the position never passes close to the
+    // target — a clamped or rejected seek, a rendition swapped underneath, a
+    // progress sample that steps straight over the window — nothing releases it
+    // and the handle sits frozen at the drop point for the rest of the track.
+    // Audio and lyrics follow the real position perfectly throughout, so the
+    // failure looks like a stuck seek bar on a track that is playing fine.
+    //
+    // Tolerance is absolute rather than a share of the duration: two percent is
+    // a quarter-second on a jingle and twelve seconds on a long mix, and it is
+    // the wall-clock gap that decides whether the handle appears to jump.
+    LaunchedEffect(positionMs, durationMs, pendingSeek) {
         val target = pendingSeek ?: return@LaunchedEffect
-        if (kotlin.math.abs(fraction - target) < 0.02f) pendingSeek = null
+        if (durationMs > 0 && abs(positionMs - (target * durationMs).toLong()) < SEEK_SETTLE_TOLERANCE_MS) {
+            pendingSeek = null
+        }
+    }
+    LaunchedEffect(pendingSeek) {
+        if (pendingSeek == null) return@LaunchedEffect
+        delay(SEEK_SETTLE_TIMEOUT_MS)
+        pendingSeek = null
     }
     LaunchedEffect(song.videoId) { pendingSeek = null }
 
@@ -1039,10 +1089,8 @@ fun NowPlayingScreen(
                     scrubValue = it
                 },
                 onValueChangeFinished = {
-                    if (durationMs > 0) {
-                        pendingSeek = scrubValue
-                        onSeek((scrubValue * durationMs).toLong())
-                    }
+                    pendingSeek = scrubValue
+                    onSeekFraction(scrubValue)
                     scrubbing = false
                 },
             )

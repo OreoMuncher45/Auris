@@ -92,8 +92,16 @@ class PlaybackService : MediaSessionService() {
     private var crossfade: CrossfadeController? = null
     private val spatialAudioProcessor = SpatialAudioProcessor()
 
+    /**
+     * Smart Fade's filter ride and bass swap, one per audio sink. The session
+     * player's carries the track arriving; the ghost's carries the track
+     * leaving. Both sit parked open outside a transition and cost a buffer copy.
+     */
+    private val transitionFilter = TransitionFilterProcessor()
+    private val ghostTransitionFilter = TransitionFilterProcessor()
+
     /** Smart Fade's DSP analyzer — see [com.music.bitchord.playback.smart.TrackAnalyzer]. */
-    private val trackAnalyzer = com.music.bitchord.playback.smart.TrackAnalyzer(AudioCache)
+    private val trackAnalyzer = com.music.bitchord.playback.smart.TrackAnalyzer(this, AudioCache)
 
     /** Shared with the crossfade's tail player, so both read the same disk cache. */
     private var mediaSourceFactory: DefaultMediaSourceFactory? = null
@@ -270,7 +278,7 @@ class PlaybackService : MediaSessionService() {
         mediaSourceFactory = DefaultMediaSourceFactory(AudioCache.playbackFactory(defaultDataSourceFactory))
 
         val exoPlayer = ExoPlayer.Builder(this)
-            .setRenderersFactory(silenceSkippingRenderers(spatialAudioProcessor))
+            .setRenderersFactory(silenceSkippingRenderers(spatialAudioProcessor, transitionFilter))
             .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
             .setLoadControl(farBufferingLoadControl())
             .setAudioAttributes(
@@ -566,6 +574,16 @@ class PlaybackService : MediaSessionService() {
             requestAnalysis = { item ->
                 item.localConfiguration?.uri?.let { uri -> trackAnalyzer.request(item.mediaId, uri, 0.0) }
             },
+            // "Incoming" and "outgoing" are roles, not players, and they only
+            // line up with these two once the lap has handed the queue over —
+            // which is the only point at which the controller filters anything.
+            filters = object : TransitionFilters {
+                override fun incoming(lowPassHz: Float, highPassHz: Float) =
+                    transitionFilter.setCutoffs(lowPassHz, highPassHz)
+
+                override fun outgoing(lowPassHz: Float, highPassHz: Float) =
+                    ghostTransitionFilter.setCutoffs(lowPassHz, highPassHz)
+            },
         )
         crossfade = controller
         controller.start()
@@ -599,7 +617,7 @@ class PlaybackService : MediaSessionService() {
      * stream URL for audio that is already local.
      */
     private fun buildGhostPlayer(): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(ghostSpatialAudioProcessor))
+        .setRenderersFactory(silenceSkippingRenderers(ghostSpatialAudioProcessor, ghostTransitionFilter))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(
@@ -1729,7 +1747,10 @@ class PlaybackService : MediaSessionService() {
      * track. Everything else about the chain stays default, so
      * `skipSilenceEnabled` keeps driving it as before.
      */
-    private fun silenceSkippingRenderers(spatial: SpatialAudioProcessor) = object : DefaultRenderersFactory(this) {
+    private fun silenceSkippingRenderers(
+        spatial: SpatialAudioProcessor,
+        transition: TransitionFilterProcessor,
+    ) = object : DefaultRenderersFactory(this) {
         override fun buildAudioSink(
             context: Context,
             enableFloatOutput: Boolean,
@@ -1739,7 +1760,10 @@ class PlaybackService : MediaSessionService() {
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(
-                    arrayOf(spatial),
+                    // Transition filtering last of the two: widening is a
+                    // property of the track, and a bass swap that ran before it
+                    // would have its own low end fed back in by the crossfeed.
+                    arrayOf(spatial, transition),
                     SilenceSkippingAudioProcessor(
                         MIN_SILENCE_US,
                         SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,

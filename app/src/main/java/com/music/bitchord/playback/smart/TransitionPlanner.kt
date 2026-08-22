@@ -35,12 +35,15 @@ import kotlin.math.roundToLong
  * tracks.
  *
  * Nothing here touches PCM; the planner decides *where* a transition happens
- * and *how* ambitious it is. [CrossfadeController] is what executes a plan —
- * and in Phase 1, it only reads the timing fields ([TransitionPlan.transitionStart],
- * [TransitionPlan.fadeSeconds], [TransitionPlan.incomingCueTime]) and always
- * renders an equal-power blend regardless of [TransitionPlan.transitionStyle];
- * the style-specific rendering (filter automation, tempo nudge, the
- * beat-matched native renderer) is what later phases add.
+ * and *how* ambitious it is. [CrossfadeController] is what executes a plan: it
+ * reads the timing fields ([TransitionPlan.transitionStart], [TransitionPlan.fadeSeconds]),
+ * cues the incoming track to [TransitionPlan.incomingCueTime] instead of 0,
+ * stretches it by [TransitionPlan.incomingPlaybackRate] to align tempo, and
+ * renders [TransitionPlan.transitionStyle] as filtering across the blend —
+ * a closing low-pass over the outgoing track for [TransitionStyle.DJ_FILTER],
+ * a low-end handover at [TransitionPlan.bassSwapFraction] for
+ * [TransitionStyle.DJ_BLEND]. The gain curve underneath is equal-power in every
+ * case; see [com.music.bitchord.playback.TransitionFilterProcessor].
  */
 
 /** Which crossfade behaviour the listener asked for. */
@@ -93,7 +96,7 @@ private val BLOCKED_TEXT = Regex(
 
 /** How the renderer should execute a planned transition. */
 enum class TransitionStyle {
-    /** A constant-power fade. The only style the bottom tier permits, and all Phase 1 renders. */
+    /** A constant-power fade, unfiltered. The only style the bottom tier permits. */
     EQUAL_POWER,
 
     /** Album siblings played through: a near-instant handoff, not a mix. */
@@ -324,7 +327,10 @@ internal const val ARRANGEMENT_OVERLAP_BEATS = 8
 
 /**
  * One continuous equal-power fade across the whole overlap. 0.5/0.5 is the
- * plain symmetric crossfade; see `handoff`/`bed` in a future native renderer.
+ * plain symmetric crossfade, which is exactly the sin/cos pair
+ * [com.music.bitchord.playback.CrossfadeController] rides — so at these values
+ * the renderer already honours them, and anything else would need a two-segment
+ * gain curve it does not have.
  */
 const val HANDOFF_FRACTION = 0.5
 const val BED_POSITION = 0.5
@@ -341,7 +347,11 @@ private const val MIN_BASS_STRUCTURE_SCORE = 0.25
 /** Capped in absolute seconds too, so a long overlap does not scale the hold up with it. */
 private const val BASS_SWAP_MAX_SECONDS = 6.0
 
-/** How far the outgoing track's low-pass sweep travels by the end of the overlap; see a future native renderer's `filter_sweep`. */
+/**
+ * How far the outgoing track's low-pass sweep travels by the end of the
+ * overlap, as a fraction of a full ride. 1.0 is the whole way down to
+ * [com.music.bitchord.playback.CrossfadeController.FILTER_FLOOR_HZ].
+ */
 const val FILTER_SWEEP = 1.0
 
 /** The outgoing track must have this much audio before the overlap and the incoming this much after it. */
@@ -680,7 +690,13 @@ private fun phraseSwitch(
         handoffFraction = planned.handoffFraction,
         bedPosition = planned.bedPosition,
         bassSwapFraction = planned.bassSwapFraction,
-        filterSweep = planned.filterSweep,
+        // Deliberately not `planned.filterSweep`. A phrase switch is the one
+        // case where both decks are genuinely on the same grid, and the move
+        // there is to hand the low end over on a beat, not to hide the outgoing
+        // track behind a filter — filtering a blend this well aligned would
+        // throw away the reason it was worth aligning. The renderer reads a
+        // nonzero sweep as "ride the filter instead", so this says zero.
+        filterSweep = 0.0,
         outgoingBpm = planned.outgoingBpm,
         incomingBpm = planned.incomingBpm,
         transitionStyle = TransitionStyle.DJ_BLEND,
@@ -974,6 +990,12 @@ fun planTransition(
         transitionBeats = transitionBeats,
         bassSwap = sameBeatBlend || hasBassContent,
         transitionStyle = if (sameBeatBlend) TransitionStyle.DJ_BLEND else TransitionStyle.DJ_FILTER,
+        // The two styles are alternatives, not a scale: a matched pair hands the
+        // low end over on a beat and otherwise stays open, while an unmatched
+        // pair has no shared grid to hand anything over on and instead pulls the
+        // outgoing track behind a closing low-pass. Left at zero on the blend
+        // branch so the renderer doesn't do both at once.
+        filterSweep = if (sameBeatBlend) 0.0 else FILTER_SWEEP,
         policyReasons = policy.reasons,
         reason = if (started) "smart-duration" else "before-smart-duration",
     )

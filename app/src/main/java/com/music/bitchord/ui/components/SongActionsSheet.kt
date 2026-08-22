@@ -292,7 +292,7 @@ private val SHEET_SHAPE = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
  * and delete what it produced.
  *
  * A row rather than a screen because that is the size of the decision. The
- * files land in the device's own Downloads folder, which already has a manager
+ * files land in the device's own Music folder, which already has a manager
  * — the Files app — and building a second one inside this app would be
  * duplicating it in a worse place. What this app uniquely knows is which *song*
  * a file belongs to, and that is exactly what this row says.

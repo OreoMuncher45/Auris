@@ -464,7 +464,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
     // ---- Downloads ----
     // Two permissions, and never both on one device: writing to the shared
-    // Downloads folder needs storage access below API 29 and none at all from
+    // Music folder needs storage access below API 29 and none at all from
     // 29 on, where MediaStore grants an app its own rows; notifications are
     // only asked for from API 33. So the branches below are mutually exclusive
     // by SDK level, and nothing here can stack two dialogs on each other.
@@ -481,7 +481,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             songs.isEmpty() -> Unit
             granted -> songs.forEach { Downloads.enqueue(context, it) }
             // The one case where refusing is fatal: below API 29 there is no
-            // other way to reach the Downloads folder.
+            // other way to reach the Music folder.
             else -> Toast
                 .makeText(context, "Storage access is needed to save songs", Toast.LENGTH_SHORT)
                 .show()
@@ -967,7 +967,47 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     },
                     onNext = { controller?.seekToNextMediaItem() },
                     onPrevious = { controller?.seekToPrevious() },
-                    onSeek = { controller?.seekTo(it) },
+                    onSeekFraction = { fraction ->
+                        controller?.let { player ->
+                            // Read at the moment of the seek, not from the
+                            // polled snapshot the screen draws with: a track
+                            // change updates the current item before it updates
+                            // the duration, so a fraction dropped seconds after
+                            // a transition would otherwise be scaled by the
+                            // previous song's length.
+                            val duration = player.duration
+                            if (duration > 0) {
+                                player.seekTo(
+                                    (fraction * duration).toLong()
+                                        .coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L)),
+                                )
+                            }
+                        }
+                    },
+                    onSeek = { target ->
+                        controller?.let { player ->
+                            // Clamped here rather than at each caller because
+                            // not every caller can clamp. The scrubber's target
+                            // is a fraction of the duration and cannot overrun,
+                            // but a tapped lyric line seeks to a timestamp from
+                            // whichever transcription matched on title, artist
+                            // and duration — and a match against a slightly
+                            // longer master puts every line late, so a tap near
+                            // the end asks for a position past the end of this
+                            // stream. Media3 answers that by clamping to the
+                            // final millisecond, which ends the track and starts
+                            // the next one: tapping the last line of a song
+                            // skipped it.
+                            val duration = player.duration
+                            player.seekTo(
+                                if (duration > 0) {
+                                    target.coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L))
+                                } else {
+                                    target.coerceAtLeast(0L)
+                                },
+                            )
+                        }
+                    },
                     queue = player.queue,
                     queueIndex = player.queueIndex,
                     hasPrevious = player.hasPrevious,
@@ -1334,6 +1374,16 @@ private fun tween(durationMillis: Int) =
 
 /** How many tracks a station pulls in at a time. */
 private const val RADIO_BATCH = 20
+
+/**
+ * How far short of the end a seek is allowed to land.
+ *
+ * Seeking to the final millisecond is indistinguishable from the track running
+ * out, so it starts the next song — which is not what anyone dragging to the end
+ * of the bar, or tapping the last line of a lyric, is asking for. A second back
+ * from the end plays the outro instead.
+ */
+private const val SEEK_END_GUARD_MS = 1_000L
 
 /**
  * A YouTube video id to seed a radio station from, for a track that may not

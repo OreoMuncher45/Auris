@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import android.os.SystemClock
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -11,6 +12,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.TrackAnalysis
+import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
 import com.music.bitchord.playback.smart.planTransition
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +22,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.roundToLong
 import kotlin.math.sin
 
@@ -98,6 +101,15 @@ class CrossfadeController(
      * flight, or not yet fully cached is a no-op.
      */
     private val requestAnalysis: (MediaItem) -> Unit = {},
+    /**
+     * The low-pass and high-pass riding each side of a transition. This is what
+     * makes a plan's
+     * [com.music.bitchord.playback.smart.TransitionPlan.transitionStyle] audible
+     * rather than advisory: see [rideFilters]. Defaults to
+     * [TransitionFilters.None], which renders every style as the plain
+     * equal-power blend this class ran before.
+     */
+    private val filters: TransitionFilters = TransitionFilters.None,
 ) {
 
     private enum class Phase {
@@ -144,6 +156,44 @@ class CrossfadeController(
      */
     private var smartFadeActive = false
 
+    /**
+     * Where the incoming track is cued when the lap hands the queue over, in
+     * its own timeline ms. Standard fades always leave this at 0 — a plain
+     * track change starts from the top — and only a Smart Fade plan sets it
+     * to an analyzed mix-in point instead.
+     */
+    private var incomingCueTimeMs: Long = 0L
+
+    /**
+     * The tempo-stretch ratio applied to the incoming track for the
+     * transition, stacked on top of whatever [AppSettings.playbackSpeed] the
+     * listener already has set — 1.0 is a no-op. This is what actually
+     * beatmatches a BEATMATCHED-tier plan: without it, the two tracks blend
+     * at their own unrelated tempi and the result is a crossfade with
+     * smarter timing, not a beatmatch.
+     */
+    private var incomingPlaybackRate: Double = 1.0
+
+    /**
+     * The style-specific half of the plan in flight — everything [rideFilters]
+     * needs and nothing else. Fixed when the transition begins, because a plan
+     * is recomputed every tick and a bass swap that moved to a different beat
+     * halfway through the blend would be heard as the low end flapping.
+     */
+    private var render = Render()
+
+    /**
+     * The style fields of a [com.music.bitchord.playback.smart.TransitionPlan],
+     * separated out so the standard (non-Smart) path can pass defaults without
+     * constructing a plan it never made.
+     */
+    private data class Render(
+        val style: TransitionStyle = TransitionStyle.EQUAL_POWER,
+        val bassSwap: Boolean = false,
+        val bassSwapFraction: Double = 0.7,
+        val filterSweep: Double = 0.0,
+    )
+
     private var lapStartedAt = 0L
     private var bailStartedAt = 0L
     private var armDeadline = 0L
@@ -158,6 +208,9 @@ class CrossfadeController(
 
     /** Last time the ghost was nudged, so corrections get a chance to settle. */
     private var lastSyncAt = 0L
+
+    /** Dedupes the per-tick plan log down to one line per distinct verdict. */
+    private var lastPlanVerdict = ""
 
     /**
      * How far ahead of the session player the ghost is seeked, to cover the time
@@ -252,6 +305,7 @@ class CrossfadeController(
     fun release() {
         player.removeListener(listener)
         player.volume = 1f
+        filters.open()
         ghost?.release()
         ghost = null
     }
@@ -334,14 +388,16 @@ class CrossfadeController(
      * Arms a Smart Fade transition once its plan says the playhead is close
      * enough to start arming for it.
      *
-     * Phase 1 only reads the plan's timing — where the fade starts
-     * ([com.music.bitchord.playback.smart.TransitionPlan.transitionStart])
-     * and how long it runs
-     * ([com.music.bitchord.playback.smart.TransitionPlan.fadeMs]). A plan can
-     * also describe *how* to render the transition (a filter ride, a tempo
-     * nudge, a beat-matched native render); that machinery belongs to a later
-     * phase, so every Smart Fade transition today still plays as the same
-     * equal-power blend [driveFade] always has — only its timing is smarter.
+     * Reads the plan's timing (where the fade starts and how long it runs),
+     * where the incoming track should be cued
+     * ([com.music.bitchord.playback.smart.TransitionPlan.incomingCueTime]),
+     * and the tempo-stretch to align it with the outgoing track
+     * ([com.music.bitchord.playback.smart.TransitionPlan.incomingPlaybackRate])
+     * — see [driveLap], which applies both at the handoff — and the style the
+     * blend is rendered in
+     * ([com.music.bitchord.playback.smart.TransitionPlan.transitionStyle]),
+     * which [rideFilters] turns into a filter ride or a bass swap over the same
+     * equal-power gain curve.
      */
     private fun considerSmartTransition(duration: Long) {
         val currentItem = player.currentMediaItem ?: return
@@ -375,6 +431,21 @@ class CrossfadeController(
             fadeSeconds = fallbackSeconds,
             mode = CrossfadeMode.SMART,
         )
+        // One line per distinct verdict rather than one per 250ms tick, so the
+        // log says what the planner decided for this pair without burying it.
+        val verdict = "${plan.reason}|${plan.transitionStyle}|fade=${plan.fadeMs}" +
+            "|cue=${plan.incomingCueTime}|rate=${plan.incomingPlaybackRate}" +
+            "|blocked=${plan.blocked}|policy=${plan.policyReasons.joinToString(",")}"
+        if (verdict != lastPlanVerdict) {
+            lastPlanVerdict = verdict
+            Log.d(
+                TAG,
+                "plan ${currentItem.mediaId}->${nextItem.mediaId}: $verdict " +
+                    "bpm=${analysisFor(currentItem).bpm}/${analysisFor(nextItem).bpm} " +
+                    "conf=${analysisFor(currentItem).beatConfidence}/${analysisFor(nextItem).beatConfidence}",
+            )
+        }
+
         if (plan.blocked) return
 
         val fade = plan.fadeMs
@@ -388,7 +459,19 @@ class CrossfadeController(
         // file actually ends.
         if (remaining > ARM_LEAD_MS) return
 
-        begin(fade, endMs = (plan.transitionEnd * 1000).roundToLong(), smart = true)
+        begin(
+            fade,
+            endMs = (plan.transitionEnd * 1000).roundToLong(),
+            smart = true,
+            cueTimeMs = (plan.incomingCueTime * 1000).roundToLong(),
+            playbackRate = plan.incomingPlaybackRate,
+            renderStyle = Render(
+                style = plan.transitionStyle,
+                bassSwap = plan.bassSwap,
+                bassSwapFraction = plan.bassSwapFraction,
+                filterSweep = plan.filterSweep,
+            ),
+        )
     }
 
     /** The next queue item's own duration, or 0 when Media3 hasn't loaded that far ahead yet. */
@@ -411,13 +494,23 @@ class CrossfadeController(
      * Spins the ghost up on the outgoing track and walks it into sync with the
      * session player.
      */
-    private fun begin(fade: Long, endMs: Long, smart: Boolean): Boolean {
+    private fun begin(
+        fade: Long,
+        endMs: Long,
+        smart: Boolean,
+        cueTimeMs: Long = 0L,
+        playbackRate: Double = 1.0,
+        renderStyle: Render = Render(),
+    ): Boolean {
         val outgoing = player.currentMediaItem ?: return false
         val ghost = warmGhost() ?: return false
 
         fadeMs = fade
         fadeEndMs = endMs
         smartFadeActive = smart
+        incomingCueTimeMs = cueTimeMs.coerceAtLeast(0L)
+        incomingPlaybackRate = playbackRate
+        render = renderStyle
         armDeadline = SystemClock.elapsedRealtime() + ARM_TIMEOUT_MS
         lastSyncAt = 0L
 
@@ -426,6 +519,14 @@ class CrossfadeController(
         // whole handoff rests on the pair agreeing about where they are.
         ghost.skipSilenceEnabled = player.skipSilenceEnabled
         ghost.playbackParameters = player.playbackParameters
+
+        Log.d(
+            TAG,
+            "arm ${if (smart) "smart" else "standard"} fade=${fade}ms end=${endMs}ms " +
+                "cue=${incomingCueTimeMs}ms rate=$incomingPlaybackRate at=${player.currentPosition}ms " +
+                "style=${render.style} bassSwap=${render.bassSwap}@${render.bassSwapFraction} " +
+                "sweep=${render.filterSweep}",
+        )
 
         ghost.setMediaItem(outgoing)
         ghost.seekTo(player.currentPosition + seekLeadMs)
@@ -514,7 +615,25 @@ class CrossfadeController(
         // here is always the crossfade standing in for a track ending.
         autoAdvance = true
         selfMoveUntil = SystemClock.elapsedRealtime() + SELF_MOVE_WINDOW_MS
-        player.seekToNextMediaItem()
+        // A Smart Fade plan cues the incoming track to its own analyzed mix-in
+        // point rather than 0 — landing on the beat grid, not the file's cold
+        // open — so this seeks straight to that position in the same call
+        // that moves the queue forward, instead of using
+        // [Player.seekToNextMediaItem] (which always lands on 0) and then
+        // correcting with a second seek that would itself be visible as a
+        // discontinuity.
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex != C.INDEX_UNSET && incomingCueTimeMs > 0L) {
+            player.seekTo(nextIndex, incomingCueTimeMs)
+        } else {
+            player.seekToNextMediaItem()
+        }
+        // Stacks on top of the listener's own speed control rather than
+        // replacing it, so a beatmatched transition and "play everything at
+        // 1.25x" don't fight each other. Restored in [finish].
+        if (incomingPlaybackRate != 1.0) {
+            player.setPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
+        }
         phase = Phase.FADING
     }
 
@@ -536,12 +655,29 @@ class CrossfadeController(
         // the incoming track's own length, not by [configuredFadeMs] — a Smart
         // Fade plan already sized itself independently of that setting, and
         // may be running with it at zero.
-        val incomingCap = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }?.div(3) ?: Long.MAX_VALUE
+        // Measured from where the incoming track was *cued*, not from zero. A
+        // Smart Fade plan can drop it in mid-arrangement, and reading its raw
+        // position as elapsed-fade would put a cue at 0:45 instantly past the
+        // end of an 8-second fade — finishing the blend on its first tick and
+        // landing as an abrupt cut, which is precisely the failure a cued
+        // transition is supposed to avoid.
+        val remainingIncoming = player.duration
+            .takeIf { it != C.TIME_UNSET && it > 0L }
+            ?.minus(incomingCueTimeMs)
+            ?.coerceAtLeast(0L)
+        val incomingCap = remainingIncoming?.div(3) ?: Long.MAX_VALUE
         val span = (minOf(fadeMs, incomingCap) - LAP_MS).coerceAtLeast(1L)
-        val progress = (player.currentPosition.coerceAtLeast(0L).toFloat() / span).coerceIn(0f, 1f)
+        val elapsed = (player.currentPosition - incomingCueTimeMs).coerceAtLeast(0L)
+        val progress = (elapsed.toFloat() / span).coerceIn(0f, 1f)
 
         player.volume = riseGain(progress)
         ghost.volume = fallGain(progress)
+        // Only here, never during ARMING or LAPPING: those two phases have both
+        // players rendering the *same* audio at the same position, and filtering
+        // one copy and not the other would comb them against each other. From
+        // FADING onwards the session player is the incoming track and the ghost
+        // is the outgoing one, which is exactly the split [filters] describes.
+        rideFilters(progress)
 
         // Whichever comes first: the fade running its course, the old track
         // genuinely ending, the tail failing outright, or whichever setting
@@ -586,7 +722,13 @@ class CrossfadeController(
      */
     private fun bail() {
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
+        Log.d(TAG, "bail from $phase")
         player.volume = 1f
+        // Glided open rather than snapped: the session player is still audible
+        // here, and if the bail caught a bass swap mid-handover its low end is
+        // currently lifted out. Dropping a 24 dB/octave filter in one buffer is
+        // the click this ramp exists to avoid.
+        filters.open()
         autoAdvance = false
         bailFromGain = ghost?.volume ?: 0f
         bailStartedAt = SystemClock.elapsedRealtime()
@@ -594,7 +736,19 @@ class CrossfadeController(
     }
 
     private fun finish() {
+        if (phase != Phase.IDLE) Log.d(TAG, "finish from $phase")
         player.volume = 1f
+        // Unconditional and idempotent, like the speed reset below: correct
+        // whether or not this transition ever filtered anything.
+        filters.open()
+        render = Render()
+        // Undoes whatever [driveLap] stacked on for a beatmatched handoff —
+        // unconditional and idempotent, so this is correct whether or not a
+        // stretch was ever actually applied (a standard fade, or a Smart Fade
+        // that never reached FADING, both leave the listener's own speed
+        // control untouched anyway).
+        player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+        incomingPlaybackRate = 1.0
         ghost?.let {
             it.volume = 0f
             it.stop()
@@ -630,6 +784,82 @@ class CrossfadeController(
         return minOf(configured, duration / 3).coerceAtLeast(0L)
     }
 
+    /**
+     * Renders the plan's [TransitionStyle] as filtering across the blend.
+     *
+     * The gain curve is the same equal-power pair for every style — this is
+     * what makes them sound different from each other, and it is the whole of
+     * Phase 4. Driven off the same `progress` as the gains so the two stay
+     * locked: a pause parks the filter exactly where it parks the fade.
+     */
+    private fun rideFilters(progress: Float) {
+        when (render.style) {
+            TransitionStyle.DJ_FILTER -> rideFilterSweep(progress)
+            TransitionStyle.DJ_BLEND ->
+                if (render.bassSwap) rideBassSwap(progress) else filters.open()
+            // Both of these are defined as "don't touch the spectrum".
+            // EQUAL_POWER is the bottom tier, reached because the evidence was
+            // too weak to justify anything more opinionated; GAPLESS is an album
+            // being played through, where any filtering would be an edit the
+            // record didn't ask for.
+            TransitionStyle.EQUAL_POWER, TransitionStyle.GAPLESS -> filters.open()
+        }
+    }
+
+    /**
+     * Pulls the outgoing track behind a closing low-pass, for a pair too far
+     * apart in tempo to blend flat.
+     *
+     * Squared rather than linear because the fade and the filter are two things
+     * happening to the same track at once: a cutoff falling linearly in octaves
+     * is already dark by the halfway mark, and stacked on a gain that is also
+     * falling it takes the outgoing track out well before the incoming one has
+     * established itself. Holding the top end open through the first half and
+     * spending the sweep in the second is the ride a DJ actually performs.
+     */
+    private fun rideFilterSweep(progress: Float) {
+        val sweep = render.filterSweep.coerceIn(0.0, 1.0)
+        if (sweep <= 0.0) {
+            filters.open()
+            return
+        }
+        // In octaves, because a sweep only sounds even if the cutoff halves at a
+        // constant rate. Scaled by [filterSweep] so a partial sweep stops short
+        // of the floor rather than crawling the same distance.
+        val travel = FILTER_SWEEP_OCTAVES * sweep * progress * progress
+        val cutoff = (TransitionFilterProcessor.OPEN_HZ * 2.0.pow(-travel))
+            .coerceAtLeast(FILTER_FLOOR_HZ)
+        filters.outgoing(cutoff.toFloat(), TransitionFilterProcessor.OFF_HZ)
+        filters.incoming(TransitionFilterProcessor.OPEN_HZ, TransitionFilterProcessor.OFF_HZ)
+    }
+
+    /**
+     * Hands the low end from one track to the other, once, at the beat the
+     * planner chose.
+     *
+     * Both tracks keep their full spectrum except below [BASS_SWAP_HZ], where
+     * exactly one of them is present at any instant: the incoming track arrives
+     * with its low end lifted out, and takes it over as the outgoing track's is
+     * lifted in turn. Ramped over [BASS_SWAP_WIDTH] of the fade rather than
+     * switched, because a 24 dB/octave filter appearing in one buffer is a
+     * transient of its own.
+     */
+    private fun rideBassSwap(progress: Float) {
+        val swapAt = render.bassSwapFraction.coerceIn(0.05, 0.95)
+        // 0 before the swap window, 1 after it: how much of the low end has
+        // changed hands.
+        val handover = ((progress - swapAt) / BASS_SWAP_WIDTH * 0.5 + 0.5).coerceIn(0.0, 1.0)
+        filters.incoming(TransitionFilterProcessor.OPEN_HZ, bassCutoff(1.0 - handover))
+        filters.outgoing(TransitionFilterProcessor.OPEN_HZ, bassCutoff(handover))
+    }
+
+    /** [amount] 0 leaves the low end alone; 1 lifts it out entirely. */
+    private fun bassCutoff(amount: Double): Float {
+        if (amount <= 0.0) return TransitionFilterProcessor.OFF_HZ
+        val off = TransitionFilterProcessor.OFF_HZ.toDouble()
+        return (off * (BASS_SWAP_HZ / off).pow(amount)).toFloat()
+    }
+
     /** Equal-power pair: [riseGain]² + [fallGain]² = 1, so the blend never dips. */
     private fun riseGain(progress: Float): Float =
         sin(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
@@ -638,6 +868,8 @@ class CrossfadeController(
         cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
 
     private companion object {
+        const val TAG = "BitChordCrossfade"
+
         /**
          * Used only before a pair has been analysed, or when the evidence is
          * too weak for more than a plain fade — see [considerSmartTransition].
@@ -668,6 +900,30 @@ class CrossfadeController(
 
         /** How long the lap's own seek stays recognisable as ours. */
         const val SELF_MOVE_WINDOW_MS = 150L
+
+        /**
+         * How far a full filter ride travels, in octaves down from
+         * [TransitionFilterProcessor.OPEN_HZ]. Lands on [FILTER_FLOOR_HZ].
+         */
+        const val FILTER_SWEEP_OCTAVES = 6.1
+
+        /**
+         * The bottom of a filter ride. Below a few hundred hertz a track stops
+         * reading as "further away" and starts reading as "broken", which is not
+         * the impression a transition should leave of the song being left.
+         */
+        const val FILTER_FLOOR_HZ = 300.0
+
+        /**
+         * Where the low end is considered to end. Around the fundamental of a
+         * bass guitar's upper register, and the usual corner on a mixer's bass
+         * kill — high enough to clear the kick and the sub, low enough to leave
+         * the body of the vocal alone.
+         */
+        const val BASS_SWAP_HZ = 200.0
+
+        /** How much of the fade the low end takes to change hands. */
+        const val BASS_SWAP_WIDTH = 0.10
 
         const val IDLE_STEP_MS = 250L
         const val ARM_STEP_MS = 40L

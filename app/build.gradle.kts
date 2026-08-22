@@ -185,6 +185,12 @@ dependencies {
     // ---- JS module execution: QuickJS VM for Convx-style source plugins ----
     implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
 
+    // ---- Smart Fade: on-device beat/downbeat model (Beat This!, MIT-licensed) ----
+    // The full android artifact, not onnxruntime-mobile: mobile only loads .ort
+    // files, which would put an offline conversion step between the model and
+    // the app for a saving that does not matter in a self-distributed APK.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")

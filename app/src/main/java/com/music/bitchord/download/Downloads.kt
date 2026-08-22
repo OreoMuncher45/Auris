@@ -316,7 +316,7 @@ object Downloads {
             // adopt it rather than writing a second copy beside it.
             val alreadyThere = DownloadStore.existing(context, name)
             if (alreadyThere != null) {
-                Log.d(TAG, "$name is already in Downloads; adopting it")
+                Log.d(TAG, "$name is already in Music; adopting it")
                 remember(song, track, alreadyThere)
                 clear(id)
                 return@withContext

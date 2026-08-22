@@ -973,7 +973,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Downloads/BitChord")
+                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
                     else UiState.Success(songs)
                 }
                 browseId == "local:all" -> {
@@ -1042,7 +1042,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val state: UiState<List<Song>> = when (browseId) {
                 "local:downloads" -> {
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Downloads/BitChord")
+                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
                     else UiState.Success(songs)
                 }
                 "local:all" -> {
