@@ -92,6 +92,19 @@ data class TrackAnalysis(
     /** Whole-track vocal likelihood, distinct from the per-sample [vocalActivityMask]. */
     val vocalProbability: Double = 0.0,
 ) {
+    /**
+     * Whether this analysis actually describes a track, as opposed to standing
+     * in for one that has not been analysed or could not be.
+     *
+     * Both no-analysis states have to be excluded, and they look different: a
+     * track nothing has looked at yet has a blank [status], while one whose
+     * decode failed is recorded [STATUS_READY] with every field at its default
+     * so it is not retried forever. A zero [bpm] is what separates the second
+     * from a real result — and it is also the threshold the policy uses, since
+     * a tempo outside 40–220 drops a pairing to a plain crossfade anyway.
+     */
+    val isUsable: Boolean get() = status == STATUS_READY && bpm > 0
+
     companion object {
         const val STATUS_READY = "ready"
     }

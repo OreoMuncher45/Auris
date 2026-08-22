@@ -571,8 +571,10 @@ class PlaybackService : MediaSessionService() {
             exoPlayer,
             ::buildGhostPlayer,
             analysisFor = { item -> trackAnalyzer.analysisFor(item.mediaId) },
-            requestAnalysis = { item ->
-                item.localConfiguration?.uri?.let { uri -> trackAnalyzer.request(item.mediaId, uri, 0.0) }
+            requestAnalysis = { item, durationMs ->
+                item.localConfiguration?.uri?.let { uri ->
+                    trackAnalyzer.request(item.mediaId, uri, durationMs / 1000.0)
+                }
             },
             // "Incoming" and "outgoing" are roles, not players, and they only
             // line up with these two once the lap has handed the queue over —
@@ -584,6 +586,7 @@ class PlaybackService : MediaSessionService() {
                 override fun outgoing(lowPassHz: Float, highPassHz: Float) =
                     ghostTransitionFilter.setCutoffs(lowPassHz, highPassHz)
             },
+            analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
         )
         crossfade = controller
         controller.start()
@@ -619,7 +622,7 @@ class PlaybackService : MediaSessionService() {
     private fun buildGhostPlayer(): ExoPlayer = ExoPlayer.Builder(this)
         .setRenderersFactory(silenceSkippingRenderers(ghostSpatialAudioProcessor, ghostTransitionFilter))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
-        .setLoadControl(farBufferingLoadControl())
+        .setLoadControl(ghostLoadControl())
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -1104,6 +1107,24 @@ class PlaybackService : MediaSessionService() {
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
+            // The opening again, this time sized for Smart Fade rather than for
+            // a container header.
+            //
+            // An upgraded rendition is only ever fetched from the swap point
+            // onward, so its first seconds are the one region nothing downloads
+            // on its own — [UPGRADE_HEADER_BYTES] covers the header and stops
+            // well short of enough *audio* to measure. A megabyte of lossless is
+            // four seconds, against the twelve the analyzer needs, so a track
+            // that upgrades early could never be analysed from any rendition:
+            // the lossless copy had no audio at its head and the copy it
+            // replaced was discarded.
+            //
+            // After the swap and off the main thread, because nothing waits on
+            // it — the upgrade is already audible and this only decides whether
+            // the *next* transition can be a real mix.
+            launch(Dispatchers.IO) {
+                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+            }
         }
     }
 
@@ -1738,6 +1759,44 @@ class PlaybackService : MediaSessionService() {
         .build()
 
     /**
+     * The tail player's load control, and deliberately not the session
+     * player's.
+     *
+     * [farBufferingLoadControl]'s playout guards exist to stop a *listener*
+     * hearing a stall: half a second of audio before starting, and two whole
+     * seconds before resuming after a rebuffer, because resuming into another
+     * stall is worse than waiting. Neither reason survives on the ghost. It is
+     * silent, it is reading audio the session player already pulled into the
+     * on-disk cache, and it is only ever alive for the last few seconds of a
+     * track.
+     *
+     * What those guards cost is the entire crossfade. Every corrective seek
+     * [CrossfadeController] makes puts the ghost into a rebuffer, and
+     * `bufferForPlaybackAfterRebufferMs` then holds it silent for two seconds
+     * before it resumes — measured against a three-second arming window, so the
+     * walk into sync ran out of time and the handoff happened on its timeout
+     * escape hatch with whatever misalignment was left. That is audible: the
+     * two players end up tens of milliseconds apart on the same audio, which is
+     * heard as the last moment of the outgoing track playing twice.
+     *
+     * So the guards go to roughly one decoded frame. A stall on the ghost costs
+     * a fraction of a second of a tail that is fading out anyway; a slow seek
+     * costs the whole transition.
+     */
+    private fun ghostLoadControl() = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            /* minBufferMs = */ GHOST_MIN_BUFFER_MS,
+            /* maxBufferMs = */ GHOST_MAX_BUFFER_MS,
+            /* bufferForPlaybackMs = */ GHOST_START_PLAYBACK_MS,
+            /* bufferForPlaybackAfterRebufferMs = */ GHOST_START_PLAYBACK_MS,
+        )
+        // Time, not bytes: the ghost wants to be playing again as soon as there
+        // is anything to play, and it never needs the far read-ahead the
+        // session player's byte ceiling is sizing.
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+
+    /**
      * Renderers whose audio sink only skips silence worth skipping.
      *
      * Media3's stock threshold is 100ms, which eats the breaths, rests and
@@ -2038,6 +2097,17 @@ class PlaybackService : MediaSessionService() {
         /** Enough to cover the decoder's own latency, not seconds of dead air. */
         const val START_PLAYBACK_MS = 500
 
+        /**
+         * The ghost's playout guard — see [ghostLoadControl]. About one decoded
+         * frame: enough not to thrash the decoder, short enough that a
+         * corrective seek is measured in frames rather than in seconds.
+         */
+        const val GHOST_START_PLAYBACK_MS = 120
+
+        /** Enough for the longest tail a fade can ask for, and no read-ahead. */
+        const val GHOST_MIN_BUFFER_MS = 2_000
+        const val GHOST_MAX_BUFFER_MS = 60_000
+
         /** More room after a stall than at the start — see the load control. */
         const val RESUME_PLAYBACK_MS = 2_000
 
@@ -2162,6 +2232,14 @@ class PlaybackService : MediaSessionService() {
          * range that stops short of the first frame buys nothing at all.
          */
         const val UPGRADE_HEADER_BYTES = 1L * 1024 * 1024
+
+        /**
+         * Opening fetched after an upgrade so the track stays analysable. Four
+         * megabytes is a little over twelve seconds of lossless — the shortest
+         * window Smart Fade's head pass accepts — and many times that for a
+         * compressed rendition, which simply finishes sooner.
+         */
+        const val ANALYSIS_HEAD_BYTES = 4L * 1024 * 1024
 
         /**
          * The audition's own buffer, in time and in bytes.

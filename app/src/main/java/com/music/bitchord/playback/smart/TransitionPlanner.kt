@@ -142,6 +142,22 @@ data class TransitionPlan(
     val bassSwapFraction: Double = 0.7,
     val filterSweep: Double = 0.0,
     /**
+     * How strongly the two tracks are expected to be singing over each other
+     * through this overlap, 0..1; see [vocalOverlapAmount].
+     *
+     * Separate from [filterSweep] because they answer to different things.
+     * [filterSweep] is a property of the *style* — a filter ride is what an
+     * unmatched pair gets instead of a beat-matched blend — and a blend
+     * deliberately asks for none of it. This is a property of the *material*, and
+     * it applies whatever the style: two tempo-matched vocals sitting on the same
+     * grid is the case a blend handles worst, precisely because nothing about the
+     * arrangement is going to separate them.
+     *
+     * Zero whenever either track lacks a vocal mask, which leaves every style
+     * rendering exactly as it did before this existed.
+     */
+    val vocalOverlap: Double = 0.0,
+    /**
      * The tempi the overlap is built on, which are **not** the analyses' raw
      * BPMs: the incoming one has been folded into the outgoing one's octave.
      * Zero when the plan is not beat-matched.
@@ -470,6 +486,40 @@ private fun bassSwapFractionFor(
     return chosenBeat.toDouble() / overlapBeats
 }
 
+/**
+ * How vocal the planned overlap is on both sides at once, measured over the
+ * windows the plan actually blends.
+ *
+ * The two windows are not the same length in wall-clock terms whenever the
+ * incoming track is being stretched: [incomingPlaybackRate] above 1 means it
+ * covers proportionally more of its own timeline in the same number of seconds,
+ * so the incoming window is scaled by it rather than copied from the outgoing
+ * one. Getting that wrong would measure a window the listener never hears.
+ *
+ * Answers zero for a degenerate span and for any track without a mask, so every
+ * caller can set this unconditionally.
+ */
+private fun plannedVocalOverlap(
+    analysis: TrackAnalysis,
+    nextAnalysis: TrackAnalysis,
+    transitionStart: Double,
+    transitionEnd: Double,
+    incomingCueTime: Double,
+    incomingPlaybackRate: Double,
+): Double {
+    val outgoingSpan = transitionEnd - transitionStart
+    if (outgoingSpan <= 0.0 || !outgoingSpan.isFinite()) return 0.0
+    val rate = incomingPlaybackRate.takeIf { it.isFinite() && it > 0 } ?: 1.0
+    return simultaneousVocalFraction(
+        outgoing = analysis,
+        incoming = nextAnalysis,
+        outStart = transitionStart,
+        outEnd = transitionEnd,
+        inStart = incomingCueTime,
+        rate = rate,
+    ) ?: 0.0
+}
+
 private fun nearestAtOrBefore(values: List<Double>, target: Double): Double? =
     values.filter { it.isFinite() && it >= 0 && it <= target }.maxOrNull()
 
@@ -576,6 +626,23 @@ fun planWsolaTransition(
         val inStart = max(audibleStart, incomingDropTime - beats * incomingBeatSeconds)
         val outVocal = vocalActivityBetween(analysis, outStart, overlapEndTarget)
         val inVocal = vocalActivityBetween(nextAnalysis, inStart, incomingDropTime)
+
+        // Instant-by-instant first, because it is the question actually being
+        // asked. The mean-based test below only fires when *both* windows average
+        // vocal across their whole length, which a real clash routinely does not:
+        // an incoming track that starts singing a few seconds into the overlap
+        // averages clear and still puts its opening line under the outgoing
+        // vocal. This catches that, and it is what shrinks the overlap until the
+        // two voices stop landing together.
+        val simultaneous = simultaneousVocalFraction(
+            outgoing = analysis,
+            incoming = nextAnalysis,
+            outStart = outStart,
+            outEnd = overlapEndTarget,
+            inStart = inStart,
+            rate = if (outgoingBeatSeconds > 0) incomingBeatSeconds / outgoingBeatSeconds else 1.0,
+        )
+        if (simultaneous != null && simultaneous > VOCAL_CLASH_TOLERANCE) return true
 
         if (isVocalClash(outVocal, inVocal)) return true
 
@@ -697,6 +764,20 @@ private fun phraseSwitch(
         // throw away the reason it was worth aligning. The renderer reads a
         // nonzero sweep as "ride the filter instead", so this says zero.
         filterSweep = 0.0,
+        // The separation this style *does* need, and the one it cannot get from
+        // alignment. Two tracks on a shared grid are the worst case for
+        // overlapping voices precisely because nothing about the arrangement
+        // pulls them apart — they sit in the same bar, in the same range, for the
+        // whole blend. The renderer uses this to deepen the entry high-pass and
+        // the exit low-pass without turning the blend into a filter ride.
+        vocalOverlap = plannedVocalOverlap(
+            analysis = analysis,
+            nextAnalysis = nextAnalysis,
+            transitionStart = planned.transitionStart,
+            transitionEnd = planned.transitionEnd,
+            incomingCueTime = planned.incomingCueTime,
+            incomingPlaybackRate = planned.stretchRatio,
+        ),
         outgoingBpm = planned.outgoingBpm,
         incomingBpm = planned.incomingBpm,
         transitionStyle = TransitionStyle.DJ_BLEND,
@@ -996,6 +1077,14 @@ fun planTransition(
         // outgoing track behind a closing low-pass. Left at zero on the blend
         // branch so the renderer doesn't do both at once.
         filterSweep = if (sameBeatBlend) 0.0 else FILTER_SWEEP,
+        vocalOverlap = plannedVocalOverlap(
+            analysis = analysis,
+            nextAnalysis = nextAnalysis,
+            transitionStart = transitionStart,
+            transitionEnd = mixEnd,
+            incomingCueTime = finalIncomingCueTime,
+            incomingPlaybackRate = incomingPlaybackRate,
+        ),
         policyReasons = policy.reasons,
         reason = if (started) "smart-duration" else "before-smart-duration",
     )

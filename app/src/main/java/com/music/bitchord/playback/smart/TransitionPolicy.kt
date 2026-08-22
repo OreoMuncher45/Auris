@@ -157,6 +157,97 @@ fun isVocalClash(outgoingActivity: Double?, incomingActivity: Double?): Boolean 
         incomingActivity >= VOCAL_ACTIVE_THRESHOLD
 
 /**
+ * How strongly two windows sing over each other: 0 for nothing worth acting on,
+ * 1 for two fully vocal passages landing on one another.
+ *
+ * [isVocalClash]'s graded counterpart, and the reason for having both. A boolean
+ * is the right shape for a routing decision — shorten the overlap or don't — but
+ * it is the wrong shape for the renderer, which has to decide *how hard* to pull
+ * the two voices apart. A pair scraping over the threshold and two choruses
+ * colliding are the same `true` and want visibly different treatment.
+ *
+ * Governed by the quieter of the two, because a clash needs both sides: an
+ * instrumental passage under a vocal is not a clash however loud the vocal is,
+ * and taking a mean would let one strong side manufacture one.
+ *
+ * Null on either side is no evidence and answers zero, which leaves whatever the
+ * caller would have done anyway. Absence of a mask is not absence of a vocal —
+ * but acting on it would filter every track a fallback analyzer handled.
+ */
+fun vocalOverlapAmount(outgoingActivity: Double?, incomingActivity: Double?): Double {
+    if (outgoingActivity == null || incomingActivity == null) return 0.0
+    val both = min(outgoingActivity, incomingActivity)
+    if (both <= VOCAL_ACTIVE_THRESHOLD) return 0.0
+    return ((both - VOCAL_ACTIVE_THRESHOLD) / (1.0 - VOCAL_ACTIVE_THRESHOLD)).coerceIn(0.0, 1.0)
+}
+
+/**
+ * The fraction of a planned overlap where **both** tracks are singing at the
+ * same instant, or null when either side has no mask.
+ *
+ * Why this exists alongside [vocalActivityBetween]: that one answers with a
+ * *mean* over the window, and a mean is the wrong statistic for a clash. Twelve
+ * seconds holding three seconds of vocal and nine of instrumental averages well
+ * under [VOCAL_ACTIVE_THRESHOLD] and reads as clear — while the listener plainly
+ * hears two voices for those three seconds. Every clash short of about half the
+ * overlap was being averaged into silence, which is why a transition could be
+ * planned as clean and still land two vocals on top of each other.
+ *
+ * Instant by instant instead. The outgoing track's own energy-curve samples are
+ * the clock; each is mapped onto the incoming timeline through [rate], because a
+ * stretched incoming track covers proportionally more of its own timeline in the
+ * same wall-clock second. Unmeasured regions sit at the analyzer's neutral 0.5,
+ * below the threshold, so they count as "not singing" rather than as evidence.
+ *
+ * Both curves are time-ascending, so the incoming index only ever moves forward:
+ * this is one pass over each, not a search per sample.
+ */
+fun simultaneousVocalFraction(
+    outgoing: TrackAnalysis,
+    incoming: TrackAnalysis,
+    outStart: Double,
+    outEnd: Double,
+    inStart: Double,
+    rate: Double,
+): Double? {
+    val outMask = outgoing.vocalActivityMask
+    val outCurve = outgoing.energyCurve
+    val inMask = incoming.vocalActivityMask
+    val inCurve = incoming.energyCurve
+    if (outMask.isEmpty() || outMask.size != outCurve.size) return null
+    if (inMask.isEmpty() || inMask.size != inCurve.size) return null
+    if (outEnd <= outStart) return null
+    val step = if (rate.isFinite() && rate > 0) rate else 1.0
+
+    var inIndex = 0
+    var both = 0
+    var total = 0
+    for (index in outMask.indices) {
+        val time = outCurve[index].time
+        if (!time.isFinite() || time < outStart) continue
+        if (time > outEnd) break
+        total += 1
+        if (outMask[index] < VOCAL_ACTIVE_THRESHOLD) continue
+        val target = inStart + (time - outStart) * step
+        while (inIndex + 1 < inCurve.size && inCurve[inIndex + 1].time <= target) inIndex += 1
+        if (inMask[inIndex] >= VOCAL_ACTIVE_THRESHOLD) both += 1
+    }
+    return if (total > 0) both.toDouble() / total else null
+}
+
+/**
+ * How much simultaneous vocal a transition may carry before it counts as a
+ * clash worth reshaping the overlap for.
+ *
+ * Not zero. A mask is a model's estimate sampled on a coarse grid, and both
+ * edges of a vocal phrase are soft, so demanding literal zero would refuse
+ * overlaps that sound clean and spend the fade budget chasing a rounding error.
+ * A twentieth of the window is roughly one energy-curve sample either side of a
+ * boundary.
+ */
+const val VOCAL_CLASH_TOLERANCE = 0.05
+
+/**
  * Seconds of audible music in [start]..[end] on a track's own timeline,
  * judged against the track's own loud-end reference so the measure is
  * independent of how the analyzer scales energy. Returns null when there is

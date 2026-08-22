@@ -140,6 +140,7 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.lyrics.LyricLine
@@ -736,6 +737,12 @@ fun NowPlayingScreen(
             // needs these before the seek bar does.
             val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
             val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+            // Hoisted alongside the other two rather than read where it is drawn:
+            // the stats block is inside a condition that flips as the sleeve
+            // collapses, and re-subscribing to a flow on every frame of that
+            // collapse is a waste of a subscription.
+            val smartFadeOn by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+            val smartAnalysis by AppSettings.smartAnalysis.collectAsStateWithLifecycle()
             BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
@@ -876,31 +883,57 @@ fun NowPlayingScreen(
                     // tap. Fades out with the sleeve as it collapses to a
                     // thumbnail, where there's no room to read it anyway.
                     if (showNerdStats && p < 0.5f) {
-                        nerdStats?.describe()?.let { stats ->
-                            Text(
-                                text = stats,
-                                // A plain white line reads fine over the usual
-                                // dark tile, but a light stretch of an animated
-                                // cover — sky, snow, a pale sleeve — washes it
-                                // out entirely. The shadow costs nothing on a
-                                // dark background and is what keeps it legible
-                                // on a bright one.
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    shadow = Shadow(
-                                        color = Color.Black.copy(alpha = 0.55f),
-                                        offset = Offset(0f, 1f),
-                                        blurRadius = 4f,
-                                    ),
-                                ),
-                                color = Color.White.copy(alpha = 0.65f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .padding(horizontal = 10.dp, vertical = 8.dp)
-                                    .graphicsLayer { alpha = 1f - p * 2f },
-                            )
+                        // A plain white line reads fine over the usual dark
+                        // tile, but a light stretch of an animated cover — sky,
+                        // snow, a pale sleeve — washes it out entirely. The
+                        // shadow costs nothing on a dark background and is what
+                        // keeps it legible on a bright one.
+                        val nerdStyle = MaterialTheme.typography.labelSmall.copy(
+                            shadow = Shadow(
+                                color = Color.Black.copy(alpha = 0.55f),
+                                offset = Offset(0f, 1f),
+                                blurRadius = 4f,
+                            ),
+                        )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                .graphicsLayer { alpha = 1f - p * 2f },
+                        ) {
+                            nerdStats?.describe()?.let { stats ->
+                                Text(
+                                    text = stats,
+                                    style = nerdStyle,
+                                    color = Color.White.copy(alpha = 0.65f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                            // Only when Smart Fade is actually switched on:
+                            // otherwise this would report on analysis nothing is
+                            // going to use, which is noise rather than a stat.
+                            if (smartFadeOn) {
+                                Text(
+                                    // Both sides always named, even when they
+                                    // agree, so the line reads the same way every
+                                    // time and the eye can find the half it wants
+                                    // without re-parsing the sentence.
+                                    text = "Smart Fade · this song " +
+                                        smartAnalysis.current.label() +
+                                        " · next " + smartAnalysis.next.label(),
+                                    style = nerdStyle,
+                                    // Dimmer than the measured line above it: that
+                                    // one describes the audio, this one describes
+                                    // the app, and the ranking should show.
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                         }
                     }
                 }
@@ -1082,6 +1115,8 @@ fun NowPlayingScreen(
                     }
                 }
             }
+            val mixing by AppSettings.smartMixInProgress.collectAsStateWithLifecycle()
+            val transitionWindow by AppSettings.smartTransitionWindow.collectAsStateWithLifecycle()
             ThinSlider(
                 value = shown,
                 onValueChange = {
@@ -1093,6 +1128,17 @@ fun NowPlayingScreen(
                     onSeekFraction(scrubValue)
                     scrubbing = false
                 },
+                // Suppressed under the finger: the bar is already thickening and
+                // tracking a drag, and a sheen sweeping through that reads as a
+                // rendering glitch rather than as a signal.
+                mixing = mixing && !scrubbing,
+                // Hidden while scrubbing for the same reason as the sheen: the
+                // planner is still describing where the transition *would* be,
+                // and a marker sitting under a finger that is moving the
+                // playhead invites reading it as a drag target.
+                transitionWindow = transitionWindow
+                    ?.takeIf { !scrubbing && it.end > it.start }
+                    ?.let { it.start..it.end },
             )
             val losslessOn by AppSettings.losslessAudio.collectAsStateWithLifecycle()
             val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
@@ -2755,4 +2801,13 @@ private fun codecLabel(mimeType: String?): String? = when {
     mimeType.endsWith("flac") -> "FLAC"
     mimeType.endsWith("alac") -> "ALAC"
     else -> mimeType.substringAfter('/').uppercase()
+}
+
+/** Wording for the stats line; see [TrackAnalysisState]. */
+private fun TrackAnalysisState.label(): String = when (this) {
+    TrackAnalysisState.ANALYSED -> "analysed"
+    TrackAnalysisState.REFINING -> "analysed, refining…"
+    TrackAnalysisState.ANALYSING -> "analysing…"
+    TrackAnalysisState.WAITING -> "waiting"
+    TrackAnalysisState.FAILED -> "failed"
 }

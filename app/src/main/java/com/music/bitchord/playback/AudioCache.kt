@@ -16,6 +16,7 @@ import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheKeyFactory
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
+import androidx.media3.datasource.cache.ContentMetadataMutations
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.IOException
 import com.music.bitchord.data.innertube.StreamResolver
@@ -31,6 +32,7 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -95,6 +97,40 @@ object AudioCache {
      * eight megabytes covers that even for lossless.
      */
     private const val HEAD_PROBE_BYTES = 8L * 1024 * 1024
+
+    /**
+     * What [requestAnalysisHead] asks for when the track's real size can't be
+     * had.
+     *
+     * Twelve seconds of audio is what the head pass needs and four megabytes
+     * clears that for anything short of lossless. Only reached when
+     * [StreamResolver] cannot say how long the file is, which is rare — it has
+     * just resolved the stream — and a blind request is the one case where
+     * spending more would be the listener's data spent on a guess.
+     */
+    private const val MAX_ANALYSIS_HEAD_BYTES = 4L * 1024 * 1024
+
+    /**
+     * The most [requestAnalysisHead] will pull for one track when its size *is*
+     * known.
+     *
+     * A bound rather than "the whole file, always": a substituted lossless
+     * rendition runs to thirty or forty megabytes, and the analyzer only ever
+     * reads the head and the tail. Sixteen covers every YouTube Opus stream in
+     * full — a ten-minute track at 160 kbps is twelve — which is the case this
+     * exists for.
+     *
+     * Taking the whole file in one request is also what keeps the entry
+     * single-sourced; see [analysisHeadSize].
+     */
+    private const val MAX_ANALYSIS_TRACK_BYTES = 16L * 1024 * 1024
+
+    /**
+     * How long [renditionKeysFor]'s answer is reused. Short enough that a
+     * rendition which just started downloading is picked up well inside the
+     * several seconds an analysis takes anyway.
+     */
+    private const val RENDITION_KEYS_TTL_MS = 5_000L
 
     /**
      * Grace period before reading ahead. The seconds just after a track starts
@@ -228,6 +264,48 @@ object AudioCache {
         runCatching { cache.removeResource(key) }
             .onSuccess { TrackLog.d(TAG, "discarded unused rendition $key") }
             .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}") }
+    }
+
+    /**
+     * Throws away one named rendition of [uri] because its bytes cannot be
+     * decoded, so the next attempt starts from a clean copy.
+     *
+     * The analyzer can tell a corrupt file from a merely incomplete one — a
+     * container that reports two and a half minutes and decodes fourteen seconds
+     * is not still downloading — but until this existed, knowing that led
+     * nowhere. It recorded the rendition as bad and moved on, the bytes stayed on
+     * disk looking complete, and every later attempt (including after a restart,
+     * which clears that memory) re-read the same file and reached the same
+     * answer. Two tracks were observed stuck that way permanently.
+     *
+     * Refuses to touch the rendition the player is currently reading from, whose
+     * bytes are by definition fine — the decode that failed was of a *sibling*
+     * copy. [Cache.removeResource] would also throw on the live entry's lock, but
+     * relying on that would mean asking for playback's bytes to be deleted and
+     * being saved by a race.
+     *
+     * Runs on the caller's thread; call it off the main one.
+     *
+     * @return true when the bytes are actually gone, which the caller must treat
+     *   as "stop holding this key against the track" — a copy that no longer
+     *   exists cannot be the reason to refuse the one replacing it.
+     */
+    fun discardBadRendition(uri: Uri, key: String): Boolean {
+        if (!::cache.isInitialized) return false
+        if (key == keyFactory.buildCacheKey(DataSpec(uri))) {
+            TrackLog.d(TAG, "keeping undecodable rendition $key: it is the one playing")
+            return false
+        }
+        return runCatching { cache.removeResource(key) }
+            .onSuccess {
+                TrackLog.d(TAG, "discarded undecodable rendition $key")
+                // Deleting the bytes is only half of it. The head fetch runs once
+                // per track per session, so without this the entry it just made
+                // room for is never refilled and the discard buys nothing.
+                uri.getQueryParameter("v")?.let(analysisHeads::remove)
+            }
+            .onFailure { TrackLog.d(TAG, "undecodable rendition $key still in use: ${it.message}") }
+            .isSuccess
     }
 
     /**
@@ -500,6 +578,178 @@ object AudioCache {
     }
 
     /**
+     * Video ids whose analysis copy has already been asked for this session.
+     *
+     * A set, not a size: the fetch is sized once from the track's real length
+     * rather than grown into over several rounds — see [analysisHeadSize].
+     * Cleared for a track whose copy turns out to be undecodable, so discarding
+     * it leads to a fresh pull rather than to nothing.
+     */
+    private val analysisHeads = ConcurrentHashMap<String, Boolean>()
+
+    /** Video ids with a head fetch in the air, so a tick cannot stack another on top. */
+    private val analysisHeadsInFlight = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Pulls [uri]'s recording onto disk under the plain YouTube key, so Smart
+     * Fade has something to measure; sized by [analysisHeadSize].
+     *
+     * ## Why the analyzer has to ask for this
+     *
+     * Nothing else fetches a track's opening early enough. The analyzer can only
+     * read bytes some other part of the app happened to write, at the offsets it
+     * happened to need, and neither of the two writers produces a head in time:
+     *
+     *  - Read-ahead's *byte* half is switched off outright whenever source
+     *    substitution is on — see [prefetchQueue] — so a track that has never
+     *    been played holds nothing at all until it starts playing. Measured, the
+     *    next track's analysis then lands eleven to forty seconds late, which is
+     *    after the transition it was meant to inform and sometimes after the
+     *    track has started.
+     *  - A quality upgrade fetches its rendition from the swap point onward, so
+     *    the upgraded copy's first seconds are a region nothing downloads on its
+     *    own, and the copy it replaced is discarded. A track that plays lossless
+     *    from the start is therefore permanently unmeasurable however long it
+     *    sits in the cache.
+     *
+     * ## Why this one is safe when [prefetchQueue]'s bytes are not
+     *
+     * The hazard read-ahead was disabled over is a key that disagrees with its
+     * contents. [keyFactory] decides between `videoId` and `videoId#alt` from
+     * the *global* substitution setting rather than from what a request actually
+     * resolved to, so a fetch built from an id alone — which always resolves to
+     * YouTube, carrying none of the title and artist a substitution is matched
+     * on — wrote Opus bytes into the entry playback was filling from another
+     * source. That is what produced `No valid varint length mask found` at the
+     * seam.
+     *
+     * Here the key is pinned to the plain videoId rather than derived, so the
+     * bytes and the entry they land in are both unambiguously YouTube's, and the
+     * `#alt` and `#<rendition>` entries are untouched. The analyzer reaches this
+     * copy through [renditionsOf] and cross-checks its container duration before
+     * borrowing a beat grid across renditions, so a substituted source that
+     * turns out to be a different cut is caught there.
+     *
+     * ## Why it fetches once, at full size
+     *
+     * An earlier version started at a megabyte and grew the request on each
+     * later call, so that a track whose first attempt did not decode was not
+     * stuck forever. That cured the dead end and caused a worse fault: every
+     * round resolves the stream again, and the second round skips what is
+     * already cached and writes the *remainder of a different rendition* into the
+     * same entry. See [analysisHeadSize].
+     *
+     * The dead end it was solving is now answered from the other side. A copy
+     * that cannot be decoded is deleted rather than remembered — see
+     * [discardBadRendition] — which both frees the entry and re-arms this, so the
+     * retry is a clean pull instead of a larger read of the same bad bytes.
+     *
+     * A no-op for anything that isn't a YouTube-backed track.
+     */
+    fun requestAnalysisHead(uri: Uri) {
+        if (!::cache.isInitialized) return
+        if (upstreamFactory == null) return
+        val videoId = uri.getQueryParameter("v") ?: return
+        // One round per track per session, and it is sized correctly up front
+        // rather than grown into. See [analysisHeadSize] for why growing it was
+        // the wrong shape.
+        if (analysisHeads.putIfAbsent(videoId, true) != null) return
+        // Checked before the round is claimed, so the playback thread pays a set
+        // lookup per tick rather than queueing coroutines four times a second on
+        // top of a fetch that is still running.
+        if (!analysisHeadsInFlight.add(videoId)) return
+        scope.launch {
+            try {
+                val total = runCatching { StreamResolver.contentLength(videoId) }.getOrNull() ?: 0L
+                val want = analysisHeadSize(total)
+                if (!clearPartialHead(videoId, want)) return@launch
+                fetch(
+                    cacheKey = videoId,
+                    uri = Uri.parse("bitchord://watch?v=$videoId"),
+                    position = 0,
+                    length = want,
+                    pinKey = true,
+                )
+                if (total > 0) recordContentLength(videoId, total)
+            } finally {
+                analysisHeadsInFlight.remove(videoId)
+            }
+        }
+    }
+
+    /**
+     * How much of a track to pull for the analyzer, decided once from its real
+     * size.
+     *
+     * This used to start at a megabyte and grow by [HEAD_ESCALATION] on each
+     * later call, which was the wrong shape for a reason this file documents
+     * elsewhere — see [discardRendition]. Each round resolves the stream again,
+     * and YouTube does not promise the same rendition twice. Round one wrote a
+     * megabyte of one encoding; round two skipped what was already cached and
+     * wrote the *remainder of a different one* into the same entry. The result is
+     * a contiguous, correctly sized, complete-looking file that decodes for a few
+     * seconds and then stops at the seam — which is exactly what two tracks were
+     * observed doing, one decoding 14.4s of a 153s container and another 35.5s of
+     * 211.5s, both while the cache called them complete.
+     *
+     * One resolve, one range, one encoding. [StreamResolver] has the length
+     * already, from resolving the stream, so asking first costs nothing.
+     */
+    private fun analysisHeadSize(total: Long): Long =
+        if (total > 0) minOf(total, MAX_ANALYSIS_TRACK_BYTES) else MAX_ANALYSIS_HEAD_BYTES
+
+    /**
+     * Makes sure [videoId]'s entry is either empty or already covers [want]
+     * before anything writes to it.
+     *
+     * A part-filled entry is the seam hazard in [analysisHeadSize] waiting to
+     * happen: whatever is there came from an earlier resolve — a fetch this
+     * session cancelled, or a round from a build that still escalated — and
+     * filling the gap would splice a second encoding onto it. Cheaper to throw
+     * the prefix away and pull one clean copy.
+     *
+     * @return false when the caller should not fetch: either the entry is
+     *   already complete enough, or it is held by a live reader and cannot be
+     *   cleared, in which case writing would create the very seam this avoids.
+     */
+    private fun clearPartialHead(videoId: String, want: Long): Boolean {
+        val held = cache.getCachedBytes(videoId, 0, want)
+        if (held <= 0L) return true
+        if (held >= want) return false
+        return runCatching { cache.removeResource(videoId) }
+            .onSuccess { TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)") }
+            .onFailure { TrackLog.d(TAG, "partial head for $videoId is in use: ${it.message}") }
+            .isSuccess
+    }
+
+    /**
+     * Writes [videoId]'s real size into its cache metadata, which a bounded
+     * fetch does not.
+     *
+     * Media3 records a resource's length from a response that describes the
+     * whole resource. [requestAnalysisHead] asks for a megabyte, so the response
+     * describes a megabyte, and the entry is left with no length at all — which
+     * is not a cosmetic gap. Everything downstream divides by it: the analyzer
+     * ranks renditions by how much *audio* each holds, so a length of zero makes
+     * a freshly fetched head score zero seconds and lose to any sibling holding
+     * a sliver of an unusable one. That is how a track whose opening had just
+     * been downloaded went on reading as having nothing.
+     *
+     * Cheap because [StreamResolver] has the number already: it was read to
+     * resolve the stream this fetch just pulled from.
+     */
+    private fun recordContentLength(videoId: String, total: Long) {
+        if (ContentMetadata.getContentLength(cache.getContentMetadata(videoId)) > 0) return
+        if (total <= 0) return
+        runCatching {
+            cache.applyContentMetadataMutations(
+                videoId,
+                ContentMetadataMutations().apply { ContentMetadataMutations.setContentLength(this, total) },
+            )
+        }.onFailure { TrackLog.d(TAG, "could not record length for $videoId: ${it.message}") }
+    }
+
+    /**
      * True once every byte of [uri]'s rendition is on disk.
      *
      * Smart Fade's analyzer needs this before it can safely decode a track: a
@@ -565,6 +815,98 @@ object AudioCache {
         // Negative means "this many bytes of hole", i.e. position 0 isn't cached at all.
         return cache.getCachedLength(key, 0, probe).coerceAtLeast(0L)
     }
+
+    /**
+     * One rendition of a recording, as Smart Fade's analyzer sees it.
+     *
+     * [key] is a cache key, not a URI: the point of this type is to name a
+     * rendition the *player* is not using, which no URI in hand refers to.
+     */
+    data class Rendition(val key: String, val contentLength: Long, val cachedPrefix: Long) {
+        val isComplete: Boolean get() = contentLength > 0 && cachedPrefix >= contentLength
+    }
+
+    /**
+     * Every rendition of [uri]'s recording that is on disk, cheapest first.
+     *
+     * One videoId owns up to three cache entries — the Opus stream YouTube
+     * serves, a substituted source's copy (`#alt`), and a quality upgrade
+     * (`#<rendition>`); see [keyFactory]. They hold the same *music*, so an
+     * analysis of any of them describes all of them, and analysing the smallest
+     * one costs a fraction of what the largest does. This is what lets a track
+     * be analysed off a 3 MB Opus stream that finished downloading a minute ago
+     * instead of waiting on the 40 MB FLAC that replaced it.
+     *
+     * Ordered by size because decode time tracks bytes, and because the
+     * lightest complete rendition is the one that was available earliest.
+     *
+     * Callers must still check the durations agree before treating two
+     * renditions as interchangeable — see [TrackAnalyzer]. A `#alt` entry comes
+     * from a different source and can be a different cut of the same song,
+     * where a shared beat grid would put every anchor seconds off.
+     */
+    fun renditionsOf(uri: Uri): List<Rendition> {
+        if (!::cache.isInitialized) return emptyList()
+        val videoId = uri.getQueryParameter("v")
+            ?: return listOfNotNull(renditionFor(keyFactory.buildCacheKey(DataSpec(uri))))
+        return renditionKeysFor(videoId)
+            .mapNotNull(::renditionFor)
+            .sortedBy { it.contentLength }
+    }
+
+    /**
+     * Which cache keys belong to [videoId], memoized.
+     *
+     * [SimpleCache.getKeys] copies the entire key set on every call, and this
+     * runs on the main thread twice per crossfade tick — four times a second,
+     * against a cache holding every track ever played. Which *renditions* exist
+     * changes only when a new one starts downloading, so it is safe to hold for
+     * a few seconds; how much of each is on disk is not memoized and is still
+     * read fresh every time.
+     */
+    private fun renditionKeysFor(videoId: String): List<String> {
+        val now = SystemClock.elapsedRealtime()
+        renditionKeys[videoId]?.let { (at, keys) ->
+            if (now - at < RENDITION_KEYS_TTL_MS) return keys
+        }
+        val keys = cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
+        renditionKeys[videoId] = now to keys
+        return keys
+    }
+
+    private val renditionKeys = ConcurrentHashMap<String, Pair<Long, List<String>>>()
+
+    /** The cache key [uri] itself resolves to right now — the rendition the player is using. */
+    fun cacheKeyOf(uri: Uri): String = keyFactory.buildCacheKey(DataSpec(uri))
+
+    private fun renditionFor(key: String): Rendition? {
+        val contentLength =
+            ContentMetadata.getContentLength(cache.getContentMetadata(key)).coerceAtLeast(0L)
+        val probe = contentLength.takeIf { it > 0 } ?: HEAD_PROBE_BYTES
+        val prefix = cache.getCachedLength(key, 0, probe).coerceAtLeast(0L)
+        return if (prefix <= 0L) null else Rendition(key, contentLength, prefix)
+    }
+
+    /**
+     * A reader over one named [Rendition], whatever the player is currently
+     * using.
+     *
+     * The key is pinned rather than derived, because [keyFactory] resolves a
+     * YouTube URI to whichever rendition is live *now* — which is precisely the
+     * heavy one this exists to avoid reading. The URI is still passed along for
+     * [CacheDataSource] to open against; only the key decides which bytes come
+     * back.
+     */
+    fun renditionDataSource(uri: Uri, rendition: Rendition): MediaDataSource =
+        CacheMediaDataSource(
+            CacheDataSource.Factory()
+                .setCache(cache)
+                .setUpstreamDataSourceFactory(NoUpstream)
+                .setCacheKeyFactory { rendition.key }
+                .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+                .createDataSource(),
+            uri,
+        )
 
     /**
      * A random-access reader over [uri]'s cached bytes, for the analyzer to hand
@@ -692,7 +1034,25 @@ object AudioCache {
     private suspend fun fetch(videoId: String, position: Long, length: Long) =
         fetch(videoId, Uri.parse("bitchord://watch?v=$videoId"), position, length)
 
-    private suspend fun fetch(cacheKey: String, uri: Uri, position: Long, length: Long) {
+    /**
+     * [pinKey] forces the write to land under [cacheKey] instead of wherever
+     * [keyFactory] would put it.
+     *
+     * Worth spelling out because the two are not otherwise the same thing:
+     * [cacheKey] is only consulted for the "is this already here" check below,
+     * while the entry actually written is chosen by [keyFactory] from the spec —
+     * and [keyFactory] answers partly from the global substitution setting, not
+     * from what this request resolves to. A caller that knows exactly what it is
+     * fetching, as [requestAnalysisHead] does, is better off saying so than
+     * letting a global decide on its behalf.
+     */
+    private suspend fun fetch(
+        cacheKey: String,
+        uri: Uri,
+        position: Long,
+        length: Long,
+        pinKey: Boolean = false,
+    ) {
         val upstream = upstreamFactory ?: return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
 
@@ -704,7 +1064,9 @@ object AudioCache {
         val fetchStart = SystemClock.elapsedRealtime()
         TrackLog.d(TAG, "read-ahead fetching $cacheKey [$position, ${position + length})")
 
-        val source = cacheFactory(upstream).createDataSource()
+        val source = cacheFactory(upstream)
+            .apply { if (pinKey) setCacheKeyFactory { cacheKey } }
+            .createDataSource()
         val spec = DataSpec.Builder()
             .setUri(uri)
             .setPosition(position)
