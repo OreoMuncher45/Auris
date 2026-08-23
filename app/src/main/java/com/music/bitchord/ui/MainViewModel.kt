@@ -88,16 +88,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _filter = MutableStateFlow(SearchFilter.SONGS)
     val filter: StateFlow<SearchFilter> = _filter.asStateFlow()
 
+    /**
+     * What the search page offers while a query is being typed, led by the
+     * query itself.
+     *
+     * Non-empty *is* the signal that the field is mid-edit, so the screen
+     * needs no second flag: these rows are shown in place of the results
+     * whenever there are any, and cleared the moment a search is actually run
+     * — see [submitSearch], [searchFor].
+     *
+     * Element 0 is always the raw text as typed. It's put there by the
+     * keystroke itself rather than taken from the response, so the row the
+     * thumb is already heading for is correct before the network answers, and
+     * stays correct if it never does — YouTube's list never contains the
+     * half-typed text, only completions of it.
+     */
+    private val _suggestions = MutableStateFlow<List<String>>(emptyList())
+    val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
+
     // The search pipeline's own state. Declared here, above [init], because
     // that is where the collector is started from and a property declared
     // below it would still be null when it runs. See [startSearchPipeline].
 
     /**
-     * Buffered so a keystroke is never lost, and [BufferOverflow.DROP_OLDEST]
-     * so a fast typist's backlog collapses to the query they ended on rather
-     * than being worked through one at a time.
+     * Buffered so an emission is never lost to a collector that happens to be
+     * mid-search, and [BufferOverflow.DROP_OLDEST] because when two arrive
+     * together the later one is the one meant.
      */
     private val searchRequests = MutableSharedFlow<SearchRequest>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * The same arrangement as [searchRequests], for the typeahead — where the
+     * drop policy earns its keep rather than just being safe: this one really
+     * does take a keystroke each, and a fast typist's backlog should collapse
+     * to the prefix they ended on instead of being worked through a letter at
+     * a time.
+     */
+    private val suggestRequests = MutableSharedFlow<String>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
@@ -105,14 +135,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val newestRequestId = AtomicLong(0L)
 
     /**
-     * Results of recent searches, so a query typed before is answered without
-     * asking again.
+     * Results of recent searches, so a query searched before is answered
+     * without asking again. That covers the two ways a query is repeated most:
+     * a filter tab, which re-runs the same text against a different tab and
+     * then usually goes back, and a term tapped out of the recent searches.
      *
-     * Its real work is [prefixMatch]: typing "blinding" runs through five
-     * queries on the way, and each one's results are a good enough answer for
-     * the next keystroke to be worth showing while the real one is in flight.
-     * That is the difference between a list that refines as you type and one
-     * that blanks to a spinner on every letter.
+     * Its other half is [prefixMatch], which is what the typeahead makes worth
+     * keeping: picking "coldplay yellow" off a list is normally preceded by
+     * having searched "coldplay", and those results are close enough to leave
+     * up for the moment the narrower one takes rather than blanking the page
+     * to a spinner.
      */
     private val searchCache = LruCache<String, List<SearchResult>>(SEARCH_CACHE_ENTRIES)
 
@@ -601,6 +633,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         startSearchPipeline()
+        startSuggestPipeline()
         loadHome()
         loadExplore()
         if (_signedIn.value) {
@@ -753,8 +786,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val searchHistory: StateFlow<List<String>> = SearchHistory.recent
 
     fun onQueryChange(value: String) {
+        val previous = _query.value
         _query.value = value
-        runSearch()
+        if (value.isBlank()) {
+            // Emptying the field is how the recent searches are got back to,
+            // so it takes down the suggestions and the results together.
+            // Nothing in flight can still be waiting to overwrite the latter:
+            // the id it would be checked against has already moved past it.
+            newestRequestId.incrementAndGet()
+            _results.value = null
+            _suggestions.value = emptyList()
+            return
+        }
+        // The previous keystroke's completions are left up beneath the new
+        // lead row while the fresh ones are fetched — the same reasoning as
+        // [prefixMatch]: they were right a letter ago, and a list that
+        // collapses to one row on every letter is what makes a typeahead feel
+        // broken. Text that isn't a continuation of what they were for (the
+        // whole field replaced at once, say) drops them instead of showing
+        // completions of a query that's gone.
+        val stale = if (value.startsWith(previous, true) || previous.startsWith(value, true)) {
+            _suggestions.value.drop(1)
+        } else {
+            emptyList()
+        }
+        _suggestions.value = listOf(value) + stale.filterNot { it.equals(value, true) }
+        suggestRequests.tryEmit(value)
     }
 
     /**
@@ -766,21 +823,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun recordSearch() = SearchHistory.record(_query.value)
 
     /**
-     * The keyboard's search/enter action. A deliberate "I'm done typing", so
-     * it jumps the debounce queue rather than waiting out [SEARCH_DEBOUNCE_MS]
-     * behind it — that wait exists for keystrokes, not for a user who already
-     * told us they're finished.
+     * The search button — the keyboard's search action, or the magnifier in
+     * the field. The only thing that runs a search for text the user typed:
+     * keystrokes themselves ask for suggestions and nothing more, so a query
+     * is fetched once, when they say it's finished, instead of once per
+     * prefix on the way to it.
      */
     fun submitSearch() {
         recordSearch()
-        runSearch(immediate = true)
+        _suggestions.value = emptyList()
+        runSearch()
     }
 
-    /** Re-runs a term picked out of the history, and floats it back to the top. */
+    /**
+     * Runs a term the user picked out of a list rather than typed — a recent
+     * search, or one of [suggestions] — and floats it to the top of the
+     * history. Picking is as deliberate as submitting, so it searches on the
+     * spot.
+     */
     fun searchFor(term: String) {
         _query.value = term
+        _suggestions.value = emptyList()
         SearchHistory.record(term)
-        runSearch(immediate = true)
+        runSearch()
     }
 
     fun removeSearch(term: String) = SearchHistory.remove(term)
@@ -790,30 +855,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onFilterChange(value: SearchFilter) {
         if (_filter.value == value) return
         _filter.value = value
-        runSearch(immediate = true)
+        runSearch()
     }
 
     /**
-     * Every keystroke, as a request the pipeline below decides what to do with.
+     * A search asked for, as a request the pipeline below decides what to do
+     * with.
      *
      * [requestId] is what makes a late answer harmless: a response is only
      * written to the screen if its id is still the newest one asked for.
-     * [immediate] is set for a deliberate action — submitting, tapping a
-     * filter, picking a history entry — so the pipeline can skip the
-     * keystroke debounce for it.
      */
     private data class SearchRequest(
         val query: String,
         val filter: SearchFilter,
         val requestId: Long,
-        val immediate: Boolean = false,
     )
 
     private fun cacheKey(query: String, filter: SearchFilter) = "${filter.name}:$query"
 
     /**
-     * The results of the longest earlier query this one starts with — what was
-     * on screen a keystroke ago, near enough to leave up meanwhile.
+     * The results of the longest earlier query this one starts with — near
+     * enough to leave up while the narrower search runs.
      */
     private fun prefixMatch(query: String, filter: SearchFilter): List<SearchResult>? {
         val prefix = "${filter.name}:"
@@ -823,7 +885,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?.value
     }
 
-    private fun runSearch(immediate: Boolean = false) {
+    private fun runSearch() {
         val query = _query.value
         if (query.isBlank()) {
             // Nothing in flight can still be waiting to overwrite this: the
@@ -833,31 +895,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val id = newestRequestId.incrementAndGet()
-        searchRequests.tryEmit(SearchRequest(query, _filter.value, id, immediate))
+        searchRequests.tryEmit(SearchRequest(query, _filter.value, id))
     }
 
     /**
      * The search pipeline, started once and left running for the lifetime of
      * the view model.
      *
-     * The point of it being one long-lived collector is that a keystroke no
-     * longer cancels the request before it. Cancelling a call mid-flight tears
-     * down its socket, and on a pooled HTTP client that is felt by whatever
-     * picks that connection up next — which is how typing a word could end in
-     * "Software caused connection abort" for a request that was never itself
-     * in any trouble. [debounce] collapses a burst of keystrokes into one
-     * query before any request is made, and [collectLatest] only abandons a
-     * search once a genuinely newer one has survived that window.
+     * The point of it being one long-lived collector is that a new search no
+     * longer cancels the request before it out of a fresh coroutine.
+     * Cancelling a call mid-flight tears down its socket, and on a pooled HTTP
+     * client that is felt by whatever picks that connection up next — which is
+     * how one search could end in "Software caused connection abort" for a
+     * request that was never itself in any trouble.
      *
-     * The wait is skipped entirely for [SearchRequest.immediate] requests —
-     * submitting from the keyboard is the user telling us they're done typing,
-     * so it shouldn't sit behind the same delay that exists to absorb the
-     * keystrokes leading up to it.
+     * There is no debounce here any more, and nothing to absorb: a search is
+     * only ever asked for by a deliberate act — the search button, a
+     * suggestion or history row, a filter tab — so the request that arrives is
+     * already the one the user meant, and making them wait out a timer for it
+     * would be a delay with nothing behind it. Typing asks
+     * [startSuggestPipeline] for completions instead and leaves the results
+     * alone.
      */
-    @OptIn(FlowPreview::class)
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
-            .debounce { if (it.immediate) 0L else SEARCH_DEBOUNCE_MS }
             .collectLatest { request ->
                 val key = cacheKey(request.query, request.filter)
                 // Something to look at immediately: the exact answer if this
@@ -878,13 +939,53 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // the ones it holds without any of them having to be a
                 // separate row to pick between.
                 val result = YtMusicRepository.search(request.query, request.filter)
-                // A search the user has already typed past shouldn't land on
-                // screen, whether it succeeded or failed.
+                // A search that has been superseded shouldn't land on screen,
+                // whether it succeeded or failed.
                 if (request.requestId != newestRequestId.get()) return@collectLatest
                 _results.value = result.fold(
                     onSuccess = { rows -> published(rows, key) },
                     onFailure = { failure -> UiState.Error(failure.friendly()) },
                 )
+            }
+    }
+
+    /**
+     * The typeahead pipeline, alongside [startSearchPipeline] and for the same
+     * structural reason — one long-lived collector rather than a coroutine per
+     * keystroke, so a lookup the user has typed past doesn't take a pooled
+     * socket down with it.
+     *
+     * This one *does* debounce, and that isn't the timer that was taken off the
+     * search. It's two orders of magnitude shorter, and it's paid for by the
+     * request behind it being a few hundred bytes rather than a full page of
+     * results — a burst of keystrokes shouldn't each cost a round trip, but the
+     * gap has to be short enough that the list is up before the next letter is
+     * typed. Nothing is waiting on it either way: the row the user typed is
+     * already on screen from the keystroke itself.
+     *
+     * A failure is left on the floor. There is no worthwhile way to report
+     * "couldn't suggest anything" in a list of suggestions, and the typed text
+     * is standing there as a working first row regardless.
+     */
+    @OptIn(FlowPreview::class)
+    private fun startSuggestPipeline() = viewModelScope.launch {
+        // Whether a list for [input] is still wanted. False once the field has
+        // moved on: typed further, or searched — which empties [_suggestions],
+        // and a late answer writing to it would reopen the suggestions over
+        // the results the user is by then reading.
+        fun stillWanted(input: String) =
+            _query.value == input && _suggestions.value.isNotEmpty()
+
+        suggestRequests
+            .debounce(SUGGEST_DEBOUNCE_MS)
+            .collectLatest { input ->
+                if (!stillWanted(input)) return@collectLatest
+                val fetched = YtMusicRepository.searchSuggestions(input).getOrNull()
+                    ?: return@collectLatest
+                // Asked again on the way back; the field is live throughout.
+                if (!stillWanted(input)) return@collectLatest
+                _suggestions.value = listOf(input) +
+                    fetched.filterNot { it.equals(input, ignoreCase = true) }
             }
     }
 
@@ -960,12 +1061,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         /**
-         * Deliberately generous: long enough that typing a full query rarely
-         * outruns it, since [SearchRequest.immediate] is the fast path for a
-         * user who wants results before that — pressing search/enter on the
-         * keyboard — not this timer.
+         * How long a keystroke waits before the typeahead is asked about it.
+         *
+         * Not the search's timer — searches aren't on a timer any more. This
+         * one only stops a fast typist spending a round trip per letter, so it
+         * wants to be as short as it can be while still collapsing a burst:
+         * long enough that "cold" isn't four lookups, short enough that the
+         * list is up by the time the thumb has left the key.
          */
-        const val SEARCH_DEBOUNCE_MS = 2000L
+        const val SUGGEST_DEBOUNCE_MS = 180L
 
         const val SEARCH_CACHE_ENTRIES = 100
 

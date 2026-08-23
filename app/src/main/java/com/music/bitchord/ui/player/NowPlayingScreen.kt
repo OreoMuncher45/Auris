@@ -622,12 +622,22 @@ fun NowPlayingScreen(
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
     var artLoaded by remember(song.videoId) { mutableStateOf(false) }
+    // Sticky, unlike [artLoaded]: the banner is the shape of the player rather
+    // than a property of the track in it. Waiting on each new cover would
+    // collapse the banner into a card and blow it back out on every skip —
+    // twice the length of the whole screen's worth of movement for a change the
+    // artwork itself already announces. The frame stays; the cover arrives in
+    // it, fading in as Coil fades in everywhere else.
+    var heroSettled by remember { mutableStateOf(false) }
+    LaunchedEffect(artLoaded) { if (artLoaded) heroSettled = true }
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     // Below API 31 a rendered clip has to hand the card back: the clip can only
     // play inside the sleeve there, and the sleeve is what the banner fades out.
     val stillHero = fullBleedArt && heroWidth && (CANVAS_HERO_SUPPORTED || !canvasRendered)
     val heroT by animateFloatAsState(
-        targetValue = if (p < 0.5f && ((heroMode && canvasRendered) || (stillHero && artLoaded))) 1f else 0f,
+        targetValue = if (
+            p < 0.5f && ((heroMode && canvasRendered) || (stillHero && (artLoaded || heroSettled)))
+        ) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )

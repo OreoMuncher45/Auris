@@ -63,6 +63,30 @@ object InnertubeParser {
         }
     }
 
+    /**
+     * The typeahead queries out of a `music/get_search_suggestions` response.
+     *
+     * Two sections come back. The first is what this reads: query strings, as
+     * `searchSuggestionRenderer`. The second — present signed in, and for
+     * some terms signed out — is entity rows for songs and artists, as the
+     * same `musicResponsiveListItemRenderer` a search result uses. Those are
+     * deliberately ignored: what the field is being filled in with is a
+     * query, and a row that navigates straight to a track instead is a
+     * different feature with a different tap target.
+     *
+     * `searchEndpoint.query` is preferred over the display text because the
+     * display text arrives split into runs purely so the typed prefix can be
+     * bold-faced, with no separator of its own to rejoin on.
+     */
+    fun parseSearchSuggestions(response: JsonObject): List<String> =
+        collectRenderers(response, "searchSuggestionRenderer")
+            .mapNotNull { renderer ->
+                val query = renderer.o("navigationEndpoint").o("searchEndpoint").s("query")
+                    ?: renderer.o("suggestion").runs()
+                query.takeIf { it.isNotBlank() }
+            }
+            .distinct()
+
     /** Depth-first collection of a named renderer, preserving document order. */
     private fun collectRenderers(root: JsonElement, name: String): List<JsonObject> {
         val out = mutableListOf<JsonObject>()

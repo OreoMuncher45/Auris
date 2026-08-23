@@ -234,12 +234,15 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
     // Local Music has no artwork to wash the bar in, so it renders with a
     // plain status bar rather than the artwork-driven blur other detail
-    // pages (album/artist/playlist) get.
-    val isLocalDetail = detail?.browseId == "local:all"
+    // pages (album/artist/playlist) get. Downloads is the same page, and the
+    // tab row it now carries sits directly under the bar, so it needs the same
+    // treatment — an artwork blur over it would tint the tabs.
+    val isLocalDetail = detail?.browseId?.startsWith("local:") == true
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
@@ -791,7 +794,12 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         )
                     },
                     history = searchHistory,
+                    suggestions = searchSuggestions,
                     onSubmit = viewModel::submitSearch,
+                    // A suggestion and a recent search are the same act — a
+                    // term picked out of a list rather than typed — so they run
+                    // through the same path and both land in the history.
+                    onSuggestionClick = viewModel::searchFor,
                     onHistoryClick = viewModel::searchFor,
                     onHistoryRemove = viewModel::removeSearch,
                     onHistoryClear = viewModel::clearSearchHistory,

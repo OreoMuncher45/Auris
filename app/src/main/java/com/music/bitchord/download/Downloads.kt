@@ -182,12 +182,19 @@ object Downloads {
     private fun remember(asked: Song, fetched: Song, uri: Uri) {
         val ids = setOf(asked.videoId, fetched.videoId)
         val newSaved = _saved.value + ids.associateWith { uri.toString() }
+        // Either row may be the one that knew the release: a music video is
+        // swapped for the catalogue track before this, and it is the catalogue
+        // row that usually carries the album — but a search hit tapped directly
+        // is both, and an album page's rows are neither.
+        val album = fetched.albumName?.takeIf { it.isNotBlank() }
+            ?: asked.albumName?.takeIf { it.isNotBlank() }
         val metaAsked = SavedSongMetadata(
             videoId = asked.videoId,
             title = asked.title,
             artist = asked.artist,
             thumbnailUrl = asked.thumbnailUrl,
             durationText = asked.durationText,
+            albumName = album,
             uri = uri.toString(),
         )
         val metaFetched = SavedSongMetadata(
@@ -196,6 +203,7 @@ object Downloads {
             artist = fetched.artist,
             thumbnailUrl = fetched.thumbnailUrl,
             durationText = fetched.durationText,
+            albumName = album,
             uri = uri.toString(),
         )
         val newMeta = _savedMetadata.value + mapOf(
@@ -233,6 +241,7 @@ object Downloads {
                             artist = meta.artist,
                             thumbnailUrl = meta.thumbnailUrl,
                             durationText = meta.durationText,
+                            albumName = meta.albumName,
                             localUri = meta.uri,
                         )
                     )
@@ -381,5 +390,13 @@ internal data class SavedSongMetadata(
     val artist: String,
     val thumbnailUrl: String? = null,
     val durationText: String? = null,
+    /**
+     * What release this track is off, when the row it was downloaded from knew.
+     *
+     * Added after the fact and defaulted, so a record written before it existed
+     * still decodes — those entries come back with a null album and are filled
+     * in from the file's own tags instead, see LocalMediaRepository.
+     */
+    val albumName: String? = null,
     val uri: String,
 )

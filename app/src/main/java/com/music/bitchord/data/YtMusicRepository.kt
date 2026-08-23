@@ -136,6 +136,16 @@ object YtMusicRepository {
         }
 
     /**
+     * What YouTube Music would suggest completing [input] to, for the search
+     * field's typeahead. Unfiltered on purpose: a suggestion is a query, and
+     * which tab it is then run against is the user's to pick afterwards.
+     */
+    suspend fun searchSuggestions(input: String): Result<List<String>> =
+        call("suggest") {
+            InnertubeParser.parseSearchSuggestions(Innertube.searchSuggestions(input))
+        }
+
+    /**
      * The catalogue (audio-only) release of a music-video upload, found the
      * same way the "Switch to audio" toggle in the real app would land on
      * it: searching the title and artist and taking the closest song match.

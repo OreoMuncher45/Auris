@@ -29,6 +29,7 @@ import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Search
@@ -83,7 +84,9 @@ fun SearchScreen(
     onSongSwipe: (Song) -> Unit,
     onBrowseClick: (BrowseItem) -> Unit,
     history: List<String>,
+    suggestions: List<String>,
     onSubmit: () -> Unit,
+    onSuggestionClick: (String) -> Unit,
     onHistoryClick: (String) -> Unit,
     onHistoryRemove: (String) -> Unit,
     onHistoryClear: () -> Unit,
@@ -91,11 +94,17 @@ fun SearchScreen(
     contentPadding: PaddingValues,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     // Re-tapping the search tab from the nav bar increments focusTrigger;
     // respond by focusing the field and opening the keyboard.
     LaunchedEffect(focusTrigger) {
         if (focusTrigger > 0) focusRequester.requestFocus()
     }
+    // A non-empty suggestion list means the field is mid-edit — see
+    // MainViewModel.suggestions. Nothing below it is worth showing while it is
+    // up: the results are for whatever was searched before this edit began,
+    // and so are the filter tabs above them.
+    val suggesting = suggestions.isNotEmpty()
     Column(modifier = modifier.fillMaxSize()) {
         // Search field and filter tabs stay fixed at the top, outside the
         // scrolling list, so they're always reachable rather than scrolling
@@ -111,7 +120,7 @@ fun SearchScreen(
             // The filters only mean something once there is a result set to narrow;
             // they stay up for an empty or failed search too, or picking a filter
             // that finds nothing would take away the control needed to leave it.
-            if (results != null) {
+            if (results != null && !suggesting) {
                 SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
             }
         }
@@ -121,15 +130,25 @@ fun SearchScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
-            when (results) {
-                null -> if (history.isEmpty()) {
+            when {
+                suggesting -> searchSuggestions(
+                    suggestions = suggestions,
+                    // Picking one is done typing, so the keyboard comes down
+                    // with it and the results get the whole screen.
+                    onClick = { term ->
+                        onSuggestionClick(term)
+                        focusManager.clearFocus()
+                    },
+                    onFill = onQueryChange,
+                )
+                results == null -> if (history.isEmpty()) {
                     item { MessageState("Search millions of songs on YouTube Music.") }
                 } else {
                     recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
                 }
-                is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
-                is UiState.Error -> item { MessageState(results.message) }
-                is UiState.Success -> {
+                results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
+                results is UiState.Error -> item { MessageState(results.message) }
+                results is UiState.Success -> {
                     // Tapping a track plays the tracks around it, not the browse rows.
                     val tracks = results.data
                         .filterIsInstance<SearchResult.Track>()
@@ -159,6 +178,84 @@ fun SearchScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * What YouTube would complete the half-typed query to, in place of the results
+ * while it is being typed.
+ *
+ * The first row is the text as typed, put there by the view model rather than
+ * taken from YouTube's answer, so running exactly what was asked for is always
+ * the nearest row to the keyboard rather than something the thumb has to aim
+ * past.
+ */
+private fun LazyListScope.searchSuggestions(
+    suggestions: List<String>,
+    onClick: (String) -> Unit,
+    onFill: (String) -> Unit,
+) {
+    itemsIndexed(suggestions, key = { _, term -> "suggest:$term" }) { index, term ->
+        SuggestionRow(
+            term = term,
+            // The lead row *is* what's in the field, so there is nothing to
+            // fill it with and the arrow would be a no-op button.
+            onFill = if (index == 0) null else ({ onFill(term) }),
+            onClick = { onClick(term) },
+        )
+    }
+}
+
+/**
+ * One typeahead row: tap the text to search it, or the arrow to put it in the
+ * field and carry on typing — the pair YouTube, Google and every mobile
+ * keyboard's own suggestion strip use, and the reason a longer completion
+ * isn't a dead end when it's only nearly right.
+ */
+@Composable
+private fun SuggestionRow(term: String, onFill: (() -> Unit)?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = PAGE_GUTTER, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = term,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (onFill != null) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onFill),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.NorthWest,
+                    contentDescription = "Edit \"$term\"",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        } else {
+            // Keeps the text column the same width as the rows below, so the
+            // lead row doesn't sit a touch wider than its completions.
+            Spacer(Modifier.width(40.dp))
         }
     }
 }
@@ -347,22 +444,39 @@ private fun SearchField(
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
+    // Both ways of saying "search this" do the same two things, so they're
+    // written once here rather than twice.
+    val submit = {
+        onSubmit()
+        focusManager.clearFocus()
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             // Fixed height prevents the row from growing when text is entered
             .height(46.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
-            .padding(horizontal = 12.dp),
+            // Asymmetric: the magnifier is a button now and wants a real touch
+            // target, so it's given the room by pulling the field's own start
+            // padding in rather than by pushing the glyph and the text along.
+            .padding(start = 8.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // The search button. It reads as one — a magnifier at the head of a
+        // text field is the search affordance on every platform — and now that
+        // pressing it is the only thing that runs a search, leaving it
+        // decorative would mean the keyboard's own key was the single way in.
         Icon(
             Icons.Rounded.Search,
-            contentDescription = null,
+            contentDescription = "Search",
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(enabled = query.isNotBlank(), onClick = submit)
+                .padding(6.dp),
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(4.dp))
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
@@ -380,12 +494,7 @@ private fun SearchField(
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = {
-                        onSubmit()
-                        focusManager.clearFocus()
-                    },
-                ),
+                keyboardActions = KeyboardActions(onSearch = { submit() }),
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester),

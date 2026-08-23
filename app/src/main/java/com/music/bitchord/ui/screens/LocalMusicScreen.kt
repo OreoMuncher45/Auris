@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
@@ -70,6 +71,11 @@ private const val LOCAL_TAB_ALBUMS = 2
 
 /**
  * Local Music folder view with three tabs: Songs (default), Artists, Albums.
+ *
+ * Also the Downloads folder — the two are the same thing from here, a flat list
+ * of tracks on this device, and they read as the same page because they are the
+ * same page. What differs is only where the list came from and what to say when
+ * it is empty, which is [emptyMessage].
  *
  * Tapping an artist or album name slides in a filtered song list inline, so
  * the tab bar stays visible and Back returns to the grid rather than leaving
@@ -83,6 +89,11 @@ fun LocalMusicScreen(
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     contentPadding: PaddingValues,
+    /**
+     * Shown in place of the tab content when there are no songs at all — the
+     * reason there are none, which "0 songs" on its own doesn't give.
+     */
+    emptyMessage: String? = null,
     modifier: Modifier = Modifier,
 ) {
     // Which top-level tab is selected.
@@ -169,6 +180,19 @@ fun LocalMusicScreen(
             modifier = Modifier.fillMaxSize(),
         ) { key ->
             when {
+                // Nothing to tab through. The tab row stays put rather than
+                // being swapped out with the list, so the page still reads as
+                // itself while it says why it's empty.
+                songs.isEmpty() && emptyMessage != null -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(bodyContentPadding),
+                    ) {
+                        MessageState(message = emptyMessage)
+                    }
+                }
+
                 key.startsWith("drill:") -> {
                     // Drill-down song list for artist / album
                     DrillDownSongList(
@@ -376,6 +400,15 @@ private fun AlbumsTab(
                 icon = Icons.Rounded.Album,
                 title = "${albums.size} albums",
             )
+        }
+        // Songs but no albums: nothing here carries an album tag. Worth saying
+        // outright — most of the Downloads folder is `.webm` and `.m4a` written
+        // by this app, and a track downloaded from a row that never named a
+        // release has no album for any player to group it under.
+        if (albums.isEmpty()) {
+            item {
+                MessageState(message = "None of these tracks say what album they're from.")
+            }
         }
         items(albums) { (album, albumSongs) ->
             AlbumRow(
