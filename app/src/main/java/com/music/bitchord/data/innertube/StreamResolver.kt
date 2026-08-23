@@ -331,14 +331,20 @@ object StreamResolver {
      * that a caller giving up on its own timeout — see
      * [PlaybackService][com.music.bitchord.playback.PlaybackService] —
      * cancels only its own wait, not the walk a second caller may still be
-     * waiting on.
+     * waiting on. Being parented elsewhere is also why the walk has to be told
+     * whose it is — [TrackLog.about] — rather than inheriting it: this is the
+     * single largest producer of lines in the log, and every one of them was
+     * previously filed against whatever happened to be playing while the walk
+     * ran, which for read-ahead is the track before this one.
      */
     private suspend fun coalescedResolve(videoId: String): Stream {
         // computeIfAbsent, not getOrPut: getOrPut's get-then-put isn't atomic
         // on a ConcurrentHashMap, and two racing callers each starting their
         // own async before either one's put() lands is the exact race this
         // exists to close.
-        val deferred = inFlight.computeIfAbsent(videoId) { resolverScope.async { resolveUncached(videoId) } }
+        val deferred = inFlight.computeIfAbsent(videoId) {
+            resolverScope.async(TrackLog.about(videoId)) { resolveUncached(videoId) }
+        }
         return try {
             deferred.await()
         } finally {
@@ -513,7 +519,7 @@ object StreamResolver {
      * wall has to do the same thing or it fails while the track it is refusing
      * to save is audibly playing.
      */
-    suspend fun resolveForDownload(videoId: String): Stream {
+    suspend fun resolveForDownload(videoId: String): Stream = withContext(TrackLog.about(videoId)) {
         init
 
         // Whether any client offered Opus at all, as distinct from whether one
@@ -534,7 +540,7 @@ object StreamResolver {
             // no-op.
             val responses = mutableMapOf<PlayerClient, JsonObject>()
             playerStream(videoId, { response -> pickOpus(response)?.also { offered = true } }, responses)
-                ?.let { return it }
+                ?.let { return@withContext it }
         }
 
         // Not "try again later" — every client being refused at once is a state
@@ -549,7 +555,7 @@ object StreamResolver {
                     .maxByOrNull { it.first }?.second
                     ?.also { offered = true }
             }
-        }.onSuccess { return it }
+        }.onSuccess { return@withContext it }
             .onFailure { TrackLog.w(TAG, "extraction found no Opus for $videoId: ${it.message}") }
 
         if (offered) {
@@ -557,7 +563,7 @@ object StreamResolver {
         }
 
         TrackLog.w(TAG, "nothing offered Opus for $videoId; taking the best available")
-        return playerStream(videoId, ::pickBest)
+        playerStream(videoId, ::pickBest)
             ?: newPipeStream(videoId) { candidates ->
                 // Reached only when no client answered at all, so this is
                 // re-deriving the formats from scratch rather than picking

@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.lyrics.LyricsSource
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -39,6 +40,9 @@ enum class ThemeMode(val label: String) {
 object AppSettings {
 
     private lateinit var prefs: SharedPreferences
+
+    /** Only for the Discord token — everything else on here is plain prefs. */
+    private lateinit var authStore: AuthStore
 
     /**
      * Quality ceilings, one per kind of connection — the point of the split is
@@ -126,6 +130,18 @@ object AppSettings {
     val animatedCanvas = MutableStateFlow(true)
 
     /**
+     * Blows the player's cover art out to a full-bleed banner running off the
+     * top of the screen, rather than sitting it in a square card.
+     *
+     * The treatment motion artwork has always had, applied to still sleeves too.
+     * Off restores the card: the sleeve keeps its corners, its shadow and its
+     * shrink-while-paused, and only a clip goes full-bleed. Phones only either
+     * way — see the hero notes in
+     * [NowPlayingScreen][com.music.bitchord.ui.player.NowPlayingScreen].
+     */
+    val fullBleedArtwork = MutableStateFlow(true)
+
+    /**
      * Time-synced lyrics on the player, lit up as they are sung.
      *
      * On by default — it is most of the point of the player screen — but it
@@ -142,6 +158,25 @@ object AppSettings {
 
     // ── Scrobbling ──────────────────────────────────────────────────────
 
+    /**
+     * Whether the scrobbling integrations are offered at all.
+     *
+     * Off for now: Last.fm and ListenBrainz are shelved until a later version,
+     * and this is the one switch that shelves them — the settings rows dim
+     * and the submit paths in
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService] go quiet.
+     * Without the second half of that, a device that had Last.fm connected
+     * before would keep scrobbling behind a screen saying the feature is gone.
+     *
+     * Nothing here clears the stored keys or toggles, so an account that was
+     * connected comes back exactly as it was.
+     *
+     * A plain `val` rather than a `const val` on purpose: a const would be
+     * folded away and every gate below would compile to a "condition is always
+     * false" warning.
+     */
+    val scrobblingAvailable = false
+
     val lastfmEnabled = MutableStateFlow(false)
     val lastfmUsername = MutableStateFlow("")
     val lastfmSessionKey = MutableStateFlow("")
@@ -155,6 +190,49 @@ object AppSettings {
     val scrobbleDelaySeconds = MutableStateFlow(180)
     val listenBrainzEnabled = MutableStateFlow(false)
     val listenBrainzToken = MutableStateFlow("")
+
+    // ── Discord Rich Presence ───────────────────────────────────────────
+
+    /**
+     * The connected Discord account's token, mirrored out of [AuthStore] so
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService] can pick
+     * up a login without polling for one. Empty means not connected.
+     *
+     * Only the mirror is here — the persisted copy is encrypted, because unlike
+     * a scrobbler key this one is the account itself.
+     */
+    val discordToken = MutableStateFlow("")
+
+    /**
+     * Who the token belongs to, cached at login. Kept so the settings screen
+     * can show the account without a round trip every time it opens, and can
+     * still show it offline.
+     */
+    val discordUsername = MutableStateFlow("")
+    val discordName = MutableStateFlow("")
+    val discordAvatar = MutableStateFlow("")
+
+    val discordRpcEnabled = MutableStateFlow(true)
+
+    /** Put the track title on the bold profile line, in place of the artist. */
+    val discordUseDetails = MutableStateFlow(false)
+
+    /** Reveals the presence-shape controls: status, activity type/name, buttons. */
+    val discordAdvancedMode = MutableStateFlow(false)
+
+    val discordStatus = MutableStateFlow("online")
+    val discordActivityType = MutableStateFlow("listening")
+
+    /** Overrides the "Listening to ___" line; empty means the app's own name. */
+    val discordActivityName = MutableStateFlow("")
+
+    val discordButton1Text = MutableStateFlow("")
+    val discordButton1Visible = MutableStateFlow(true)
+    val discordButton2Text = MutableStateFlow("")
+    val discordButton2Visible = MutableStateFlow(true)
+
+    /** The notice about what connecting an account actually does has been read. */
+    val discordInfoDismissed = MutableStateFlow(false)
 
     /** Published by PlaybackService so the UI can open the system equalizer. */
     val audioSessionId = MutableStateFlow(0)
@@ -219,6 +297,7 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
+        fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         audioCacheLimitBytes.value = prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES)
@@ -236,6 +315,22 @@ object AppSettings {
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
+        authStore = AuthStore(context)
+        discordToken.value = authStore.discordToken.orEmpty()
+        discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
+        discordName.value = prefs.getString(KEY_DISCORD_NAME, "").orEmpty()
+        discordAvatar.value = prefs.getString(KEY_DISCORD_AVATAR, "").orEmpty()
+        discordRpcEnabled.value = prefs.getBoolean(KEY_DISCORD_RPC_ENABLED, true)
+        discordUseDetails.value = prefs.getBoolean(KEY_DISCORD_USE_DETAILS, false)
+        discordAdvancedMode.value = prefs.getBoolean(KEY_DISCORD_ADVANCED_MODE, false)
+        discordStatus.value = prefs.getString(KEY_DISCORD_STATUS, "online").orEmpty()
+        discordActivityType.value = prefs.getString(KEY_DISCORD_ACTIVITY_TYPE, "listening").orEmpty()
+        discordActivityName.value = prefs.getString(KEY_DISCORD_ACTIVITY_NAME, "").orEmpty()
+        discordButton1Text.value = prefs.getString(KEY_DISCORD_BUTTON_1_TEXT, "").orEmpty()
+        discordButton1Visible.value = prefs.getBoolean(KEY_DISCORD_BUTTON_1_VISIBLE, true)
+        discordButton2Text.value = prefs.getString(KEY_DISCORD_BUTTON_2_TEXT, "").orEmpty()
+        discordButton2Visible.value = prefs.getBoolean(KEY_DISCORD_BUTTON_2_VISIBLE, true)
+        discordInfoDismissed.value = prefs.getBoolean(KEY_DISCORD_INFO_DISMISSED, false)
         watchConnection(context)
     }
 
@@ -417,6 +512,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_ANIMATED_CANVAS, value).apply()
     }
 
+    fun setFullBleedArtwork(value: Boolean) {
+        fullBleedArtwork.value = value
+        prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
+    }
+
     /** Clamped to [DEFAULT_CACHE_LIMIT_BYTES]..[MAX_CACHE_LIMIT_BYTES] — the floor is the default, not zero. */
     fun setAudioCacheLimitBytes(value: Long) {
         val clamped = value.coerceIn(DEFAULT_CACHE_LIMIT_BYTES, MAX_CACHE_LIMIT_BYTES)
@@ -489,6 +589,84 @@ object AppSettings {
         prefs.edit().putString(KEY_LISTENBRAINZ_TOKEN, value).apply()
     }
 
+    /** Writes through to the encrypted store; pass "" to disconnect. */
+    fun setDiscordToken(value: String) {
+        discordToken.value = value
+        authStore.discordToken = value.ifEmpty { null }
+    }
+
+    fun setDiscordAccount(username: String, name: String, avatar: String?) {
+        discordUsername.value = username
+        discordName.value = name
+        discordAvatar.value = avatar.orEmpty()
+        prefs.edit()
+            .putString(KEY_DISCORD_USERNAME, username)
+            .putString(KEY_DISCORD_NAME, name)
+            .putString(KEY_DISCORD_AVATAR, avatar.orEmpty())
+            .apply()
+    }
+
+    fun setDiscordRpcEnabled(value: Boolean) {
+        discordRpcEnabled.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_RPC_ENABLED, value).apply()
+    }
+
+    fun setDiscordUseDetails(value: Boolean) {
+        discordUseDetails.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_USE_DETAILS, value).apply()
+    }
+
+    fun setDiscordAdvancedMode(value: Boolean) {
+        discordAdvancedMode.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_ADVANCED_MODE, value).apply()
+    }
+
+    fun setDiscordStatus(value: String) {
+        discordStatus.value = value
+        prefs.edit().putString(KEY_DISCORD_STATUS, value).apply()
+    }
+
+    fun setDiscordActivityType(value: String) {
+        discordActivityType.value = value
+        prefs.edit().putString(KEY_DISCORD_ACTIVITY_TYPE, value).apply()
+    }
+
+    fun setDiscordActivityName(value: String) {
+        discordActivityName.value = value
+        prefs.edit().putString(KEY_DISCORD_ACTIVITY_NAME, value).apply()
+    }
+
+    fun setDiscordButton1Text(value: String) {
+        discordButton1Text.value = value
+        prefs.edit().putString(KEY_DISCORD_BUTTON_1_TEXT, value).apply()
+    }
+
+    fun setDiscordButton1Visible(value: Boolean) {
+        discordButton1Visible.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_BUTTON_1_VISIBLE, value).apply()
+    }
+
+    fun setDiscordButton2Text(value: String) {
+        discordButton2Text.value = value
+        prefs.edit().putString(KEY_DISCORD_BUTTON_2_TEXT, value).apply()
+    }
+
+    fun setDiscordButton2Visible(value: Boolean) {
+        discordButton2Visible.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_BUTTON_2_VISIBLE, value).apply()
+    }
+
+    fun setDiscordInfoDismissed(value: Boolean) {
+        discordInfoDismissed.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_INFO_DISMISSED, value).apply()
+    }
+
+    /** Forgets the account: token and cached profile. */
+    fun clearDiscordAccount() {
+        setDiscordToken("")
+        setDiscordAccount("", "", null)
+    }
+
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
     const val MAX_CACHE_LIMIT_BYTES = 10L * 1024 * 1024 * 1024
 
@@ -511,6 +689,7 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
+    private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
 
@@ -527,6 +706,21 @@ object AppSettings {
     private const val KEY_SCROBBLE_DELAY_SECONDS = "scrobble_delay_seconds"
     private const val KEY_LISTENBRAINZ_ENABLED = "listenbrainz_enabled"
     private const val KEY_LISTENBRAINZ_TOKEN = "listenbrainz_token"
+
+    private const val KEY_DISCORD_USERNAME = "discord_username"
+    private const val KEY_DISCORD_NAME = "discord_name"
+    private const val KEY_DISCORD_AVATAR = "discord_avatar"
+    private const val KEY_DISCORD_RPC_ENABLED = "discord_rpc_enabled"
+    private const val KEY_DISCORD_USE_DETAILS = "discord_use_details"
+    private const val KEY_DISCORD_ADVANCED_MODE = "discord_advanced_mode"
+    private const val KEY_DISCORD_STATUS = "discord_status"
+    private const val KEY_DISCORD_ACTIVITY_TYPE = "discord_activity_type"
+    private const val KEY_DISCORD_ACTIVITY_NAME = "discord_activity_name"
+    private const val KEY_DISCORD_BUTTON_1_TEXT = "discord_button_1_text"
+    private const val KEY_DISCORD_BUTTON_1_VISIBLE = "discord_button_1_visible"
+    private const val KEY_DISCORD_BUTTON_2_TEXT = "discord_button_2_text"
+    private const val KEY_DISCORD_BUTTON_2_VISIBLE = "discord_button_2_visible"
+    private const val KEY_DISCORD_INFO_DISMISSED = "discord_info_dismissed"
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
 }
 

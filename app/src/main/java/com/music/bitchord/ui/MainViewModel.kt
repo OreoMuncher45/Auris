@@ -19,6 +19,7 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
+import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
@@ -329,6 +330,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             LikeStatus.DISLIKE
         },
     )
+
+    /**
+     * Saves the album or playlist [browseId] to the library, or takes it out.
+     *
+     * Written to the screen first and rolled back if YouTube refuses, for the
+     * same reason [setLike] is: it is one tap on a page the user is looking at,
+     * and a control that waits on a round trip before it changes reads as a tap
+     * that missed.
+     *
+     * A page with no [DetailPage.library] is one YouTube never offered to save
+     * — a local page, an auto-playlist, a generated mix — and the UI has no
+     * control on it to have been tapped, so this is a no-op rather than a guess.
+     */
+    fun toggleLibrary(browseId: String) {
+        if (!requireSignIn()) return
+        val current = _detailStack.value.firstOrNull { it.browseId == browseId }?.library ?: return
+        val target = !current.saved
+        setSavedOnPage(browseId, target)
+        viewModelScope.launch {
+            if (YtMusicRepository.setSaved(current.playlistId, target).isSuccess) {
+                // The Library tab's Albums/Playlists shelf is now out of date.
+                libraryStale = true
+            } else {
+                setSavedOnPage(browseId, current.saved)
+            }
+        }
+    }
+
+    /**
+     * Restates whether a page is saved. By id rather than by index: the user may
+     * have pushed or popped pages while the write was in flight.
+     */
+    private fun setSavedOnPage(browseId: String, saved: Boolean) {
+        _detailStack.value = _detailStack.value.map { page ->
+            val library = page.library
+            if (page.browseId != browseId || library == null) {
+                page
+            } else {
+                page.copy(library = library.copy(saved = saved))
+            }
+        }
+    }
 
     /**
      * The open track menu's account state, or null while it is still being
@@ -969,6 +1012,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var more: String? = null
             /** Tracks YouTube offers to round the playlist out — see [DetailPage.suggestedSongs]. */
             var suggested: List<Song> = emptyList()
+            /** Whether this release is already saved — see [DetailPage.library]. */
+            var library: LibraryState? = null
             val state = when {
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
@@ -1009,6 +1054,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             } else {
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl)
+                                library = page.library
                                 UiState.Success(page.songs.withArtwork(thumbnailUrl))
                             }
                         },
@@ -1025,6 +1071,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         thumbnailUrl = artwork ?: it.thumbnailUrl,
                         title = name ?: it.title,
                         suggestedSongs = suggested,
+                        library = library,
                     )
                 } else {
                     it

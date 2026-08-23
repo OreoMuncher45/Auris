@@ -188,6 +188,7 @@ object QualityUpgrade {
             } else {
                 "below request for '${target.title}'; will look again during playback"
             },
+            about = mediaId,
         )
         return true
     }
@@ -213,7 +214,7 @@ object QualityUpgrade {
      */
     fun refuseUpgrades(mediaId: String) {
         refused += mediaId
-        TrackLog.d(TAG, "$mediaId broke on its upgrade; no more swaps for it")
+        TrackLog.d(TAG, "$mediaId broke on its upgrade; no more swaps for it", about = mediaId)
     }
 
     /**
@@ -303,6 +304,7 @@ object QualityUpgrade {
             TrackLog.d(
                 TAG,
                 "'${target.title}' is already playing $playingMime from cache; no second look needed",
+                about = mediaId,
             )
             return false
         }
@@ -315,6 +317,7 @@ object QualityUpgrade {
         TrackLog.d(
             TAG,
             "'${target.title}' is playing from cache and was never resolved; looking for a better copy",
+            about = mediaId,
         )
         return true
     }

@@ -36,6 +36,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
@@ -58,6 +59,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -140,6 +143,31 @@ class PlaybackService : MediaSessionService() {
 
     private var listenBrainzDurationMs: Long? = null
 
+    /**
+     * The gateway connection publishing what's playing to Discord, or null when
+     * the feature is off or no account is connected. See [DiscordRPC].
+     */
+    private var discordRpc: DiscordRPC? = null
+
+    /**
+     * The in-flight presence push. Held so the next one can cancel it: the
+     * pushes hit the network — the artwork has to be mirrored onto Discord's CDN
+     * before the activity can name it — and a skipped-through queue would
+     * otherwise land its presences in whatever order the requests happened to
+     * finish in, leaving the profile on a track the listener passed seconds ago.
+     */
+    private var discordUpdateJob: Job? = null
+
+    /**
+     * Whether a presence has been published and not yet taken down.
+     *
+     * Tracked because [KizzyRPC.close] — which is what clears the card — opens a
+     * gateway connection first if one isn't already up. Clearing unconditionally
+     * would therefore dial Discord for the sole purpose of sending it nothing,
+     * every time playback paused without a presence ever having been set.
+     */
+    private var discordPresenceUp = false
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     /**
@@ -167,6 +195,7 @@ class PlaybackService : MediaSessionService() {
                     TrackLog.d(
                         "BitChord",
                         "TIMING first audio: ${SystemClock.elapsedRealtime() - it}ms since track selected",
+                        about = exoPlayer.currentMediaItem?.mediaId,
                     )
                     trackSelectedAt = null
                 }
@@ -192,6 +221,34 @@ class PlaybackService : MediaSessionService() {
                     listenBrainzDurationMs = durationMs
                 }
                 submitListenBrainzPlayingNow(song, exoPlayer.currentPosition, durationMs)
+            }
+
+            // Discord: a pause has to clear the presence, not just stop
+            // refreshing it. Discord's countdown runs on its own clock from the
+            // timestamps it was given, so a presence left up while paused goes
+            // on advancing through a song that has stopped — and finishes it.
+            if (isPlaying) {
+                pushDiscordPresence(exoPlayer)
+            } else {
+                clearDiscordPresence()
+            }
+        }
+
+        /**
+         * A seek is the one change to a playing track that no other callback
+         * reports, and the only one Discord cannot work out for itself: its bar
+         * is drawn from two absolute instants, so moving the playhead without
+         * sending new ones leaves the profile counting down from where the
+         * listener no longer is.
+         */
+        override fun onPositionDiscontinuity(
+            oldPosition: Player.PositionInfo,
+            newPosition: Player.PositionInfo,
+            reason: Int,
+        ) {
+            val exoPlayer = player ?: return
+            if (reason == Player.DISCONTINUITY_REASON_SEEK && exoPlayer.isPlaying) {
+                pushDiscordPresence(exoPlayer)
             }
         }
 
@@ -288,11 +345,7 @@ class PlaybackService : MediaSessionService() {
             // Taken off the event's own window rather than off the player,
             // so it names the track this format arrived for even if the
             // queue has moved on again since. See [audioFormatFor].
-            audioFormatFor = eventTime.timeline
-                .takeIf { eventTime.windowIndex < it.windowCount }
-                ?.getWindow(eventTime.windowIndex, Timeline.Window())
-                ?.mediaItem
-                ?.mediaId
+            audioFormatFor = eventTime.mediaId()
             // Ground truth for a real-device listening test: this is the
             // renderer's own Format, straight off the decoder with none of
             // the app's caching/upgrade logic in between, so it's the one
@@ -306,6 +359,7 @@ class PlaybackService : MediaSessionService() {
             TrackLog.i(
                 "DECODE",
                 "$audioFormatFor <- ${format.sampleMimeType} $khz $kbps $depth ${format.channelCount}ch",
+                about = audioFormatFor,
             )
             publishNerdStats()
         }
@@ -325,7 +379,11 @@ class PlaybackService : MediaSessionService() {
         ) {
             val cutAt = swapCutAt ?: return
             swapCutAt = null
-            TrackLog.d("BitChord", "swap seam: ${SystemClock.elapsedRealtime() - cutAt}ms of silence")
+            TrackLog.d(
+                "BitChord",
+                "swap seam: ${SystemClock.elapsedRealtime() - cutAt}ms of silence",
+                about = eventTime.mediaId(),
+            )
         }
 
         /**
@@ -337,7 +395,11 @@ class PlaybackService : MediaSessionService() {
         override fun onPlaybackStateChanged(eventTime: AnalyticsListener.EventTime, state: Int) {
             val cutAt = swapCutAt ?: return
             if (state == Player.STATE_READY) {
-                TrackLog.d("BitChord", "swap leg: ready ${SystemClock.elapsedRealtime() - cutAt}ms after the cut")
+                TrackLog.d(
+                    "BitChord",
+                    "swap leg: ready ${SystemClock.elapsedRealtime() - cutAt}ms after the cut",
+                    about = eventTime.mediaId(),
+                )
             }
         }
 
@@ -352,9 +414,24 @@ class PlaybackService : MediaSessionService() {
                 "BitChord",
                 "swap leg: $decoderName stood up in ${initializationDurationMs}ms, " +
                     "${SystemClock.elapsedRealtime() - cutAt}ms after the cut",
+                about = eventTime.mediaId(),
             )
         }
     }
+
+    /**
+     * Which track an analytics event is about, taken off the event's own window.
+     *
+     * The player has moved on by the time some of these arrive — a format
+     * change for the outgoing track lands after the transition — so its
+     * `currentMediaItem` names the wrong one. The event carries the timeline it
+     * was raised against, which does not.
+     */
+    private fun AnalyticsListener.EventTime.mediaId(): String? = timeline
+        .takeIf { windowIndex < it.windowCount }
+        ?.getWindow(windowIndex, Timeline.Window())
+        ?.mediaItem
+        ?.mediaId
 
     override fun onCreate() {
         super.onCreate()
@@ -378,13 +455,22 @@ class PlaybackService : MediaSessionService() {
             // why an open-ended read of one is worth avoiding.
             ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
         ) { dataSpec ->
+            // Which track everything below is for, said once, because none of
+            // it would otherwise know: this runs on ExoPlayer's loader thread
+            // with a DataSpec and nothing else, and the work it starts — the
+            // source ladder, the module sandbox, a client walk — logs from
+            // places several layers deep that have no idea whose bytes they
+            // are fetching. Read-ahead means the track being resolved here is
+            // usually *not* the one playing, which is exactly why the lines
+            // have to say. See [TrackLog.about].
+            val about = TrackLog.about(mediaIdIn(dataSpec.uri))
             // A source-backed track is resolved by whichever source can serve
             // it, which is not necessarily the one it was queued from — see
             // [SourceResolver.resolve]. Handled ahead of the YouTube path
             // because these carry no `v` parameter and would otherwise fall
             // straight through unresolved.
             if (dataSpec.uri.authority == "source") {
-                val stream = runBlocking {
+                val stream = runBlocking(about) {
                     withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) }
                 } ?: throw java.io.IOException("No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}")
                 NerdStats.onSourceStream(dataSpec.uri.getQueryParameter("t"), stream.format)
@@ -417,13 +503,14 @@ class PlaybackService : MediaSessionService() {
                     "${if (proving) "auditioning" else "serving"} upgraded $videoId " +
                         "from ${Uri.parse(upgraded.url).host} " +
                         "at ${dataSpec.position} (${upgraded.format.summary})",
+                    about = videoId,
                 )
                 return@Factory dataSpec.buildUpon()
                     .setUri(Uri.parse(upgraded.url))
                     .setHttpRequestHeaders(upgraded.headers)
                     .build()
             }
-            val downloadedUri = runBlocking { com.music.bitchord.download.Downloads.savedUri(this@PlaybackService, videoId) }
+            val downloadedUri = runBlocking(about) { com.music.bitchord.download.Downloads.savedUri(this@PlaybackService, videoId) }
             if (downloadedUri != null) {
                 return@Factory dataSpec.buildUpon().setUri(downloadedUri).build()
             }
@@ -447,7 +534,7 @@ class PlaybackService : MediaSessionService() {
             // plain resolve every build before this one made.
             if (!SourceResolver.canSubstituteForYouTube()) {
                 val streamUrl = try {
-                    runBlocking {
+                    runBlocking(about) {
                         withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
                     }
                 } catch (e: TimeoutCancellationException) {
@@ -469,7 +556,7 @@ class PlaybackService : MediaSessionService() {
                     .setHttpRequestHeaders(headers)
                     .build()
             }
-            val won = runBlocking {
+            val won = runBlocking(about) {
                 resolveWithModulePriority(
                     videoId = videoId,
                     target = SourceResolver.targetIn(dataSpec.uri),
@@ -522,6 +609,7 @@ class PlaybackService : MediaSessionService() {
         applySettings(sparePlayer)
         observeSettings()
         observeScrobbling()
+        observeDiscord()
         watchSleepTimer()
         // Before the listener below is attached, so loading the queue doesn't
         // read as a track change and set the read-ahead going.
@@ -718,12 +806,20 @@ class PlaybackService : MediaSessionService() {
         // instantly. Measured one at 16871ms.
         trackSelectedAt = if (alreadyAudible) null else SystemClock.elapsedRealtime()
         if (alreadyAudible) {
-            TrackLog.d("BitChord", "TIMING first audio: 0ms, the crossfade covered it")
+            TrackLog.d(
+                "BitChord",
+                "TIMING first audio: 0ms, the crossfade covered it",
+                about = mediaItem?.mediaId,
+            )
         }
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].
         mediaItem?.mediaId?.let(TrackLog::onTrackStarted)
-        TrackLog.d("BitChord", "TIMING track selected: ${mediaItem?.mediaId} (reason=$reason)")
+        TrackLog.d(
+            "BitChord",
+            "TIMING track selected: ${mediaItem?.mediaId} (reason=$reason)",
+            about = mediaItem?.mediaId,
+        )
 
         // currentPosition already belongs to the new item by now, so
         // the outgoing track is closed out on the last sampled value.
@@ -753,6 +849,11 @@ class PlaybackService : MediaSessionService() {
         if (newSong != null) {
             submitListenBrainzPlayingNow(newSong, 0L, durationMs)
         }
+
+        // Discord: the whole of "live updating" for a card whose bar Discord
+        // draws itself. Only a track change needs a new presence; the countdown
+        // in between is Discord's own arithmetic.
+        if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
 
         // "Sleep after this song": the queue moving on by itself is the
         // moment the track the user meant has finished. REPEAT counts
@@ -850,9 +951,10 @@ class PlaybackService : MediaSessionService() {
             "BitChord",
             "playback failed for $mediaId at ${position}ms (${error.errorCodeName}), attempt $attempts",
             error,
+            about = mediaId,
         )
         if (attempts > MAX_RECOVERIES) {
-            TrackLog.w("BitChord", "$mediaId has failed $attempts times; leaving it alone")
+            TrackLog.w("BitChord", "$mediaId has failed $attempts times; leaving it alone", about = mediaId)
             return
         }
         // The upgraded rendition goes with the cache entry it lived in, so the
@@ -873,7 +975,7 @@ class PlaybackService : MediaSessionService() {
         // sitting over the Opus that replaced it.
         NerdStats.clearDeclared(mediaId)
         uri?.getQueryParameter("v")?.let(StreamChoice::forget)
-        scope.launch {
+        scope.launch(TrackLog.about(mediaId)) {
             // Long enough for the released source to let go of the cache keys
             // about to be removed, short enough to read as a stutter.
             delay(RECOVERY_DELAY_MS)
@@ -956,8 +1058,10 @@ class PlaybackService : MediaSessionService() {
             upgradeJob?.cancel()
         }
         upgradeFor = mediaId
-        if (alreadyPending) TrackLog.d("BitChord", "looking again for a better copy of $mediaId")
-        upgradeJob = scope.launch {
+        if (alreadyPending) {
+            TrackLog.d("BitChord", "looking again for a better copy of $mediaId", about = mediaId)
+        }
+        upgradeJob = scope.launch(TrackLog.about(mediaId)) {
             // A previous visit to this track already did all the expensive
             // parts and lost the swap to a skip. Nothing about the answer has
             // gone stale — the stream is still parked and its bytes are still
@@ -1163,6 +1267,29 @@ class PlaybackService : MediaSessionService() {
         ) {
             delay(UPGRADE_CROSSFADE_POLL_MS)
             waitedForCrossfade += UPGRADE_CROSSFADE_POLL_MS
+        }
+
+        // Nor the instant one ends. The loop above releases on the tick the
+        // blend completes, and a swap made there lands its cut a few hundred
+        // milliseconds after the incoming track finally stood alone: the
+        // listener hears the mix land and the music stop, in that order, which
+        // reads as the transition having broken rather than as a track quietly
+        // getting better. [UPGRADE_NOT_BEFORE_MS] does not cover this — that is
+        // measured from the track's own start, and an Automix hands over at a
+        // cue point that can be well past it.
+        //
+        // Keyed off when a transition last ended rather than off whether the
+        // loop above actually waited, so the same grace covers an upgrade
+        // shelved by the check below and re-offered moments later — the same
+        // swap, the same few seconds after the same blend, arriving by a
+        // different route. And nothing is held back on a track nowhere near a
+        // transition: the reading is then already long past the grace.
+        withContext(Dispatchers.Main) { crossfade?.msSinceTransition() }?.let { since ->
+            if (since < UPGRADE_AFTER_CROSSFADE_MS) {
+                val settle = UPGRADE_AFTER_CROSSFADE_MS - since
+                TrackLog.d("BitChord", "upgrade for $mediaId holding ${settle}ms; a transition just ended")
+                delay(settle)
+            }
         }
 
         withContext(Dispatchers.Main) {
@@ -1522,7 +1649,7 @@ class PlaybackService : MediaSessionService() {
         previousFormat: StreamFormat?,
     ) {
         if (previousDuration <= 0) return
-        scope.launch {
+        scope.launch(TrackLog.about(mediaId)) {
             val agreed = withTimeoutOrNull(UPGRADE_PROVE_MS) {
                 while (true) {
                     val current = player?.takeIf { it.currentMediaItem?.mediaId == mediaId }
@@ -1639,14 +1766,21 @@ class PlaybackService : MediaSessionService() {
         target: TrackMatcher.Target,
     ): Resolved {
         NerdStats.onLosslessRaceStart(videoId)
-        val lookup = scope.async(Dispatchers.IO) {
+        // Both legs are parented to the service's scope rather than to the
+        // caller, so neither inherits whose track this is — see
+        // [TrackLog.about]. Without it the module walk and the client walk both
+        // log from a scope that knows nothing, which is most of what a resolve
+        // has to say about itself.
+        val lookup = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { SourceResolver.substituteForYouTube(target) }
         }
         // Started now rather than after the modules have had their say, and
         // wrapped rather than thrown from: it is awaited only on the paths
         // that need it, and an async that fails without ever being awaited is
         // an unhandled exception in this service's scope.
-        val fallback = scope.async(Dispatchers.IO) { runCatching { StreamResolver.resolve(videoId) } }
+        val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
+            runCatching { StreamResolver.resolve(videoId) }
+        }
 
         // First past the post. A null because [lookup] won is a module miss; a
         // null because [fallback] won means YouTube has a URL and the modules
@@ -2006,7 +2140,10 @@ class PlaybackService : MediaSessionService() {
                 scrobbleManager?.destroy()
                 scrobbleManager = null
 
-                if (snapshot.lastfmEnabled && snapshot.sessionKey.isNotBlank()) {
+                if (AppSettings.scrobblingAvailable &&
+                    snapshot.lastfmEnabled &&
+                    snapshot.sessionKey.isNotBlank()
+                ) {
                     // Configure LastFM client
                     val endpoint = snapshot.endpoint.ifBlank { LastFM.DEFAULT_API_ENDPOINT }
                     val apiKey = snapshot.apiKey.ifBlank { LastFM.FALLBACK_COMPAT_API_KEY }
@@ -2043,13 +2180,140 @@ class PlaybackService : MediaSessionService() {
         val delaySeconds: Int,
     )
 
+    // ---- Discord Rich Presence -------------------------------------------------
+
+    /**
+     * Keeps the gateway connection in step with the settings that decide whether
+     * there should be one, and re-pushes the presence when the settings that
+     * decide what it *says* change.
+     *
+     * Two collectors rather than one because the two do different work. The
+     * account and the master switch can only be honoured by building or tearing
+     * down a connection; everything else is a field in a payload that can be
+     * re-sent over the connection already open. Combining them would reconnect
+     * the socket every time the user typed a character into a button label.
+     */
+    private fun observeDiscord() {
+        scope.launch {
+            combine(
+                AppSettings.discordToken,
+                AppSettings.discordRpcEnabled,
+            ) { token, enabled -> token.takeIf { enabled && it.isNotBlank() } }
+                .distinctUntilChanged()
+                .collectLatest { token ->
+                    // Torn down before anything is built, so switching accounts
+                    // can't leave the old one's socket up publishing under a
+                    // profile the user has just disconnected.
+                    discordUpdateJob?.cancel()
+                    discordRpc?.let { rpc ->
+                        val wasUp = discordPresenceUp
+                        discordPresenceUp = false
+                        withContext(NonCancellable) {
+                            if (wasUp) runCatching { rpc.close() }
+                            runCatching { rpc.closeRPC() }
+                        }
+                    }
+                    discordRpc = null
+
+                    if (token == null) return@collectLatest
+                    discordRpc = DiscordRPC(this@PlaybackService, token)
+                    // A presence that only appeared at the next track change
+                    // would make turning the switch on look like it had done
+                    // nothing for the length of a song.
+                    player?.takeIf { it.isPlaying }?.let(::pushDiscordPresence)
+                }
+        }
+
+        // The card's own contents, plus the playback rate — which is not
+        // cosmetic here: the timestamps are wall-clock instants with the rate
+        // divided out, so a change to it invalidates a presence already up.
+        scope.launch {
+            // Explicit <Any, _> for the same reason as [observeScrobbling]:
+            // mixed element types, and the reified vararg combine() otherwise
+            // infers an intersection type. Compared as a list rather than a
+            // joined string so two different settings can't stringify alike.
+            combine<Any, List<Any>>(
+                AppSettings.discordUseDetails,
+                AppSettings.discordStatus,
+                AppSettings.discordActivityType,
+                AppSettings.discordActivityName,
+                AppSettings.discordButton1Text,
+                AppSettings.discordButton1Visible,
+                AppSettings.discordButton2Text,
+                AppSettings.discordButton2Visible,
+                AppSettings.playbackSpeed,
+            ) { it.toList() }
+                .distinctUntilChanged()
+                // Dropped so the collector's first emission — which arrives at
+                // startup, before anything is playing — isn't treated as a
+                // change the user made.
+                .drop(1)
+                .collect {
+                    player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
+                }
+        }
+    }
+
+    /**
+     * Publishes the track [exoPlayer] is on as the user's Discord presence.
+     *
+     * A no-op with no connection, which is the ordinary case — most people will
+     * never connect an account, and this is called from the middle of every
+     * track change.
+     */
+    private fun pushDiscordPresence(exoPlayer: ExoPlayer) {
+        val rpc = discordRpc ?: return
+        val song = exoPlayer.currentMediaItem?.toSong() ?: return
+        // Read on the main thread, before the push is handed to IO: by the time
+        // a coroutine gets to run, the queue may have moved on, and ExoPlayer's
+        // state is only legal to read from the thread it was built on.
+        val positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+        val durationMs = exoPlayer.duration.takeIf { it > 0 } ?: 0L
+        val speed = exoPlayer.playbackParameters.speed
+
+        discordUpdateJob?.cancel()
+        discordPresenceUp = true
+        discordUpdateJob = scope.launch(Dispatchers.IO) {
+            rpc.updateSong(
+                song = song,
+                currentPlaybackTimeMillis = positionMs,
+                durationMillis = durationMs,
+                playbackSpeed = speed,
+                useDetails = AppSettings.discordUseDetails.value,
+                status = AppSettings.discordStatus.value,
+                button1Text = AppSettings.discordButton1Text.value,
+                button1Visible = AppSettings.discordButton1Visible.value,
+                button2Text = AppSettings.discordButton2Text.value,
+                button2Visible = AppSettings.discordButton2Visible.value,
+                activityType = AppSettings.discordActivityType.value,
+                activityName = AppSettings.discordActivityName.value,
+            ).onFailure {
+                TrackLog.d("BitChord", "Discord presence failed: ${it.message}", about = song.videoId)
+            }
+        }
+    }
+
+    /**
+     * Takes the presence down but leaves the socket up, so resuming doesn't pay
+     * for a reconnect. Discord clears the card on an activity-less presence.
+     */
+    private fun clearDiscordPresence() {
+        val rpc = discordRpc ?: return
+        if (!discordPresenceUp) return
+        discordPresenceUp = false
+        discordUpdateJob?.cancel()
+        discordUpdateJob = scope.launch(Dispatchers.IO) {
+            runCatching { rpc.close() }
+        }
+    }
+
     /**
      * Submits a finished ListenBrainz listen, but only if the service is
      * actually scrobbling — the settings are read at call time so the helper
      * stays a no-op whenever ListenBrainz is switched off.
      */
     private fun submitListenBrainzFinished(song: Song, startMs: Long, durationMs: Long?) {
-        val lbEnabled = AppSettings.listenBrainzEnabled.value
+        val lbEnabled = AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return
         val endMs = System.currentTimeMillis()
@@ -2060,7 +2324,7 @@ class PlaybackService : MediaSessionService() {
 
     /** Sends a ListenBrainz "now playing" update for the current track. */
     private fun submitListenBrainzPlayingNow(song: Song, positionMs: Long, durationMs: Long?) {
-        val lbEnabled = AppSettings.listenBrainzEnabled.value
+        val lbEnabled = AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return
         scope.launch {
@@ -2103,7 +2367,8 @@ class PlaybackService : MediaSessionService() {
         // should still reach ListenBrainz.
         val lastSong = listenBrainzSong
         if (lastSong != null) {
-            val lbEnabled = AppSettings.listenBrainzEnabled.value
+            val lbEnabled =
+                AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
             val lbToken = AppSettings.listenBrainzToken.value
             if (lbEnabled && lbToken.isNotBlank()) {
                 val lastStart = listenBrainzStartMs
@@ -2117,6 +2382,19 @@ class PlaybackService : MediaSessionService() {
         }
         scrobbleManager?.destroy()
         scrobbleManager = null
+        // Discord, on the same terms as the ListenBrainz submit above: the
+        // service scope is cancelled a few lines down, and a presence left up
+        // would advertise a track that stopped when the process did — until
+        // Discord noticed the socket had gone, which can take minutes.
+        discordRpc?.let { rpc ->
+            discordRpc = null
+            val wasUp = discordPresenceUp
+            discordPresenceUp = false
+            CoroutineScope(Dispatchers.IO).launch {
+                if (wasUp) runCatching { rpc.close() }
+                runCatching { rpc.closeRPC() }
+            }
+        }
         scope.cancel()
         crossfade?.release()
         crossfade = null
@@ -2278,6 +2556,22 @@ class PlaybackService : MediaSessionService() {
          * expected to bind in the ordinary case.
          */
         const val UPGRADE_CROSSFADE_WAIT_TIMEOUT_MS = 20_000L
+
+        /**
+         * How long a transition has to have been over before an upgrade may cut
+         * into the track it handed to.
+         *
+         * Not a second guard on the same thing as
+         * [UPGRADE_CROSSFADE_WAIT_TIMEOUT_MS]'s loop, which only keeps the swap
+         * out of a blend *in flight*. This is about the moment just after one:
+         * the mix resolves, and the music stops a quarter of a second later for
+         * a rebuild the listener has no reason to connect to bitrate. Long
+         * enough for the new track to have established itself as the thing
+         * playing, short enough that an upgrade is not being meaningfully
+         * delayed — and it applies only where a transition actually ran, so the
+         * ordinary swap, minutes from any blend, is as immediate as it was.
+         */
+        const val UPGRADE_AFTER_CROSSFADE_MS = 5_000L
 
         /**
          * How long a replacement gets to report a length before it is

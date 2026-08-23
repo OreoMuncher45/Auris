@@ -8,6 +8,7 @@ import com.music.bitchord.data.model.ArtistPage
 import com.music.bitchord.data.model.HomeFeed
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
+import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
@@ -248,6 +249,13 @@ object YtMusicRepository {
         val songs: List<Song>,
         val continuation: String?,
         val suggested: List<Song> = emptyList(),
+        /**
+         * Whether the release this page describes is in the library. Only the
+         * first page can answer — a continuation carries rows and nothing else
+         * — so it is null from [moreSongs] and must not overwrite what
+         * [browseSongs] already established.
+         */
+        val library: LibraryState? = null,
     )
 
     /**
@@ -269,12 +277,13 @@ object YtMusicRepository {
     }
 
     private fun pageOf(response: JsonObject): SongPage {
+        val library = InnertubeParser.parseLibraryState(response)
         // A playlist page is scoped to its own shelf so its "Suggested
         // tracks" never read as songs the user added — see
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
         InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
-            return SongPage(shelf.songs, shelf.continuation, shelf.suggested)
+            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library)
         }
         return SongPage(
             // One response can name the same track twice — an album page that
@@ -282,6 +291,7 @@ object YtMusicRepository {
             // map used to take care of that; paging by hand means saying so.
             songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId },
             continuation = InnertubeParser.continuationToken(response),
+            library = library,
         )
     }
 
@@ -359,6 +369,13 @@ object YtMusicRepository {
     /** Adds or removes a track from the library; [token] says which. */
     suspend fun setLibraryStatus(token: String): Result<Unit> =
         call("library:feedback") { Innertube.sendFeedback(token) }
+
+    /**
+     * Saves an album or playlist to the library, or removes it. [playlistId] is
+     * the one the page named — see [LibraryState].
+     */
+    suspend fun setSaved(playlistId: String, saved: Boolean): Result<Unit> =
+        call("library:$playlistId") { Innertube.ratePlaylist(playlistId, saved) }
 
     /**
      * The playlists a track can be added to. Not paged: an account with more

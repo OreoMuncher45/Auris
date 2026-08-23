@@ -232,13 +232,14 @@ object AudioCache {
      */
     fun discard(uri: Uri) {
         val exact = keyFactory.buildCacheKey(DataSpec(uri))
+        val about = mediaIdIn(uri)
         val family = uri.getQueryParameter("v")?.let { videoId ->
             cache.keys.filter { it == videoId || it.startsWith("$videoId#") }
         } ?: emptyList()
         (family + exact).distinct().forEach { key ->
             runCatching { cache.removeResource(key) }
-                .onSuccess { TrackLog.d(TAG, "discarded cache entry $key") }
-                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}") }
+                .onSuccess { TrackLog.d(TAG, "discarded cache entry $key", about = about) }
+                .onFailure { TrackLog.d(TAG, "cache entry $key still in use: ${it.message}", about = about) }
         }
     }
 
@@ -262,8 +263,8 @@ object AudioCache {
     fun discardRendition(uri: Uri) {
         val key = keyFactory.buildCacheKey(DataSpec(uri))
         runCatching { cache.removeResource(key) }
-            .onSuccess { TrackLog.d(TAG, "discarded unused rendition $key") }
-            .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}") }
+            .onSuccess { TrackLog.d(TAG, "discarded unused rendition $key", about = mediaIdIn(uri)) }
+            .onFailure { TrackLog.d(TAG, "rendition $key still in use: ${it.message}", about = mediaIdIn(uri)) }
     }
 
     /**
@@ -292,19 +293,22 @@ object AudioCache {
      */
     fun discardBadRendition(uri: Uri, key: String): Boolean {
         if (!::cache.isInitialized) return false
+        val about = mediaIdIn(uri)
         if (key == keyFactory.buildCacheKey(DataSpec(uri))) {
-            TrackLog.d(TAG, "keeping undecodable rendition $key: it is the one playing")
+            TrackLog.d(TAG, "keeping undecodable rendition $key: it is the one playing", about = about)
             return false
         }
         return runCatching { cache.removeResource(key) }
             .onSuccess {
-                TrackLog.d(TAG, "discarded undecodable rendition $key")
+                TrackLog.d(TAG, "discarded undecodable rendition $key", about = about)
                 // Deleting the bytes is only half of it. The head fetch runs once
                 // per track per session, so without this the entry it just made
                 // room for is never refilled and the discard buys nothing.
                 uri.getQueryParameter("v")?.let(analysisHeads::remove)
             }
-            .onFailure { TrackLog.d(TAG, "undecodable rendition $key still in use: ${it.message}") }
+            .onFailure {
+                TrackLog.d(TAG, "undecodable rendition $key still in use: ${it.message}", about = about)
+            }
             .isSuccess
     }
 
@@ -471,7 +475,7 @@ object AudioCache {
         job = videoIds.firstOrNull()?.let { next ->
             scope.launch {
                 if (cacheBytes) {
-                    launch {
+                    launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
                         fetch(next, 0, PRELOAD_BYTES)
                         fetchWhole(next)
@@ -481,7 +485,7 @@ object AudioCache {
                     delay(PREFETCH_DELAY_MS)
                     for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
                         runCatching { StreamResolver.resolve(id) }
-                            .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}") }
+                            .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}", about = id) }
                         delay(QUEUE_RESOLVE_STAGGER_MS)
                     }
                 }
@@ -513,7 +517,7 @@ object AudioCache {
             if (cacheWholeOnce(videoId)) return
             delay(RETRY_DELAY_MS)
         }
-        TrackLog.d(TAG, "stopped short of caching $videoId in full")
+        TrackLog.d(TAG, "stopped short of caching $videoId in full", about = videoId)
     }
 
     /** @return true once every range of [videoId] is on disk. */
@@ -717,8 +721,12 @@ object AudioCache {
         if (held <= 0L) return true
         if (held >= want) return false
         return runCatching { cache.removeResource(videoId) }
-            .onSuccess { TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)") }
-            .onFailure { TrackLog.d(TAG, "partial head for $videoId is in use: ${it.message}") }
+            .onSuccess {
+                TrackLog.d(TAG, "cleared partial analysis head for $videoId ($held of $want)", about = videoId)
+            }
+            .onFailure {
+                TrackLog.d(TAG, "partial head for $videoId is in use: ${it.message}", about = videoId)
+            }
             .isSuccess
     }
 
@@ -746,7 +754,7 @@ object AudioCache {
                 videoId,
                 ContentMetadataMutations().apply { ContentMetadataMutations.setContentLength(this, total) },
             )
-        }.onFailure { TrackLog.d(TAG, "could not record length for $videoId: ${it.message}") }
+        }.onFailure { TrackLog.d(TAG, "could not record length for $videoId: ${it.message}", about = videoId) }
     }
 
     /**
@@ -1056,13 +1064,18 @@ object AudioCache {
         val upstream = upstreamFactory ?: return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
 
+        // Whose track this is, taken off the URI rather than off [cacheKey]:
+        // the key splits a track's renditions apart on purpose, and reading
+        // ahead is the clearest case there is of work logged nowhere near the
+        // track it is for. See [TrackLog.about].
+        val about = mediaIdIn(uri)
         // Read-ahead is the app's largest consumer of bandwidth and, until this
         // line existed, its most invisible: whole tracks were pulled down while
         // a listener waited on a resolve for the track in front of them, and
         // nothing in the log said so. Bracketing it is what makes the overlap
         // between "reading ahead" and "waiting for sound" readable at all.
         val fetchStart = SystemClock.elapsedRealtime()
-        TrackLog.d(TAG, "read-ahead fetching $cacheKey [$position, ${position + length})")
+        TrackLog.d(TAG, "read-ahead fetching $cacheKey [$position, ${position + length})", about = about)
 
         val source = cacheFactory(upstream)
             .apply { if (pinKey) setCacheKeyFactory { cacheKey } }
@@ -1087,12 +1100,13 @@ object AudioCache {
             }
         }.onFailure {
             // Expected on a skip, and never worth failing playback over.
-            TrackLog.d(TAG, "read-ahead stopped for $cacheKey: ${it.message}")
+            TrackLog.d(TAG, "read-ahead stopped for $cacheKey: ${it.message}", about = about)
         }.onSuccess {
             TrackLog.d(
                 TAG,
                 "read-ahead fetched $cacheKey [$position, ${position + length}) in " +
                     "${SystemClock.elapsedRealtime() - fetchStart}ms",
+                about = about,
             )
         }
     }

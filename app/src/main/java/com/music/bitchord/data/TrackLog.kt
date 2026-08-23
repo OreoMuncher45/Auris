@@ -6,11 +6,13 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceResolver
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.CoroutineContext
 
 /**
  * The app's own record of how each track came to be playing, as text you can
@@ -43,6 +45,17 @@ import java.util.concurrent.ConcurrentHashMap
  * everything is one nobody reads to the end of, and none of it has ever been
  * the answer to "why did this song sound wrong".
  *
+ * ### Which lines are whose
+ *
+ * Every line is filed against the track it is about, and reading the log back
+ * is a question about a track rather than about a stretch of time — see
+ * [about] and [forTrack]. This app does most of a track's work nowhere near
+ * the moment that track is playing: it is resolved while the one before it
+ * plays, and the first seconds of every track are spent resolving the *next*
+ * one. So "the last thirty seconds of log" is never the same thing as "this
+ * song's story", and asking for one by way of the other pastes the wrong
+ * song's log almost every time.
+ *
  * Call [d], [w] and [e] exactly where `Log.d`/`w`/`e` would go; they forward
  * to logcat as well, so `adb logcat -s BitChord` is unchanged.
  */
@@ -54,37 +67,61 @@ object TrackLog {
     // reads it (see the class doc), so a release build skips straight to
     // record(), which is what Copy Log actually depends on.
 
-    fun d(tag: String, message: String) {
+    fun d(tag: String, message: String, about: String? = working.get()) {
         if (BuildConfig.DEBUG) Log.d(tag, message)
-        record('D', message)
+        record('D', message, about)
     }
 
-    fun i(tag: String, message: String) {
+    fun i(tag: String, message: String, about: String? = working.get()) {
         if (BuildConfig.DEBUG) Log.i(tag, message)
-        record('I', message)
+        record('I', message, about)
     }
 
-    fun w(tag: String, message: String) {
+    fun w(tag: String, message: String, about: String? = working.get()) {
         if (BuildConfig.DEBUG) Log.w(tag, message)
-        record('W', message)
+        record('W', message, about)
     }
 
-    fun w(tag: String, message: String, error: Throwable) {
+    fun w(tag: String, message: String, error: Throwable, about: String? = working.get()) {
         if (BuildConfig.DEBUG) Log.w(tag, message, error)
-        record('W', "$message\n${error.stackTraceToString()}")
+        record('W', "$message\n${error.stackTraceToString()}", about)
     }
 
-    fun e(tag: String, message: String) {
+    fun e(tag: String, message: String, about: String? = working.get()) {
         if (BuildConfig.DEBUG) Log.e(tag, message)
-        record('E', message)
+        record('E', message, about)
     }
 
-    fun e(tag: String, message: String, error: Throwable) {
+    fun e(tag: String, message: String, error: Throwable, about: String? = working.get()) {
         if (BuildConfig.DEBUG) Log.e(tag, message, error)
-        record('E', "$message\n${error.stackTraceToString()}")
+        record('E', "$message\n${error.stackTraceToString()}", about)
     }
 
-    private class Line(val at: Long, val level: Char, val text: String)
+    // ── Whose line is it ────────────────────────────────────────────────────
+
+    /** The track whose work this thread is doing, if it is doing any. */
+    private val working = ThreadLocal<String?>()
+
+    /**
+     * A coroutine context that files everything logged inside it against [id].
+     *
+     *     scope.async(Dispatchers.IO + TrackLog.about(videoId)) { … }
+     *
+     * The alternative is passing an id down to every call that logs, and the
+     * lines worth having are exactly the ones furthest from anyone who knows
+     * which track they are for: a fetch inside a QuickJS export inside a module
+     * search inside a source ladder. None of those layers has any other use for
+     * a track id, and threading one through all of them to serve a debug button
+     * would be a worse trade than the button is worth.
+     *
+     * Carried as a [kotlinx.coroutines.ThreadContextElement] rather than a bare
+     * thread local because that work hops threads constantly —
+     * `withContext(IO)` for a fetch, `Dispatchers.Default` for the JS engine —
+     * and this follows it, including into every child coroutine.
+     */
+    fun about(id: String?): CoroutineContext = working.asContextElement(id)
+
+    private class Line(val at: Long, val level: Char, val text: String, val track: String?)
 
     private val lines = ArrayDeque<Line>()
 
@@ -97,14 +134,14 @@ object TrackLog {
      * limit that counts them the same either wastes memory or throws away the
      * history that matters.
      */
-    private fun record(level: Char, message: String) {
+    private fun record(level: Char, message: String, about: String?) {
         val text = if (message.length > MAX_LINE_CHARS) {
             message.take(MAX_LINE_CHARS) + "…(${message.length - MAX_LINE_CHARS} more)"
         } else {
             message
         }
         synchronized(lines) {
-            lines.addLast(Line(System.currentTimeMillis(), level, text))
+            lines.addLast(Line(System.currentTimeMillis(), level, text, about))
             held += text.length
             while (held > MAX_HELD_CHARS && lines.isNotEmpty()) {
                 held -= lines.removeFirst().text.length
@@ -117,9 +154,9 @@ object TrackLog {
     /**
      * Wall-clock times at which each track became the current one.
      *
-     * A track's story starts when the queue reached it, not when sound finally
-     * came out: the resolve that decides everything runs before the player
-     * announces the change.
+     * Only a floor for tracks with no lines of their own, now that lines say
+     * which track they are about: a track served whole from the disk cache is
+     * resolved by nobody and would otherwise have no start at all.
      */
     private val startedAt = ConcurrentHashMap<String, Long>()
 
@@ -129,19 +166,36 @@ object TrackLog {
     }
 
     /**
-     * The log for [song], from a little before its track was selected up to
-     * now.
+     * The log for [song]: the lines about that track, plus the ones about
+     * nothing in particular, from where its own story starts.
      *
-     * Falls back to everything held when the start isn't known, which is the
-     * case for the track a cold start resumes on. That is more log rather than
-     * less, and more is the right way to be wrong here.
+     * Both halves of that are the fix for the same bug, and a plain time window
+     * gets both of them wrong:
+     *
+     *  - **Where it starts.** A track is resolved while the track *before* it
+     *    is still playing — that is what read-ahead is — so the resolve that
+     *    decides its source, its bitrate and whether it plays at all sits
+     *    minutes earlier than the moment the queue reached it. No window
+     *    measured back from the selection reaches that.
+     *  - **What is in it.** The first seconds of every track are spent
+     *    resolving the next one, so a window running from the selection to now
+     *    is largely the *following* song's story: its ladder, its client walk,
+     *    its read-ahead. That is what a paste taken a few seconds into a track
+     *    was almost entirely made of.
+     *
+     * Falling back to everything held is still the right way to be wrong for a
+     * track nothing was ever filed against — one served whole from the disk
+     * cache, or the track a cold start resumes on.
      */
     suspend fun forTrack(song: Song, stats: NerdStats.Snapshot?): String = withContext(Dispatchers.Default) {
-        val from = startedAt[song.videoId]?.minus(LEAD_IN_MS)
-        val window = synchronized(lines) {
-            if (from == null) lines.toList() else lines.filter { it.at >= from }
-        }
-        header(song, stats, from, window.size) + "\n" +
+        val held = synchronized(lines) { lines.toList() }
+        val from = listOfNotNull(
+            held.firstOrNull { it.track == song.videoId }?.at,
+            startedAt[song.videoId]?.minus(LEAD_IN_MS),
+        ).minOrNull()
+        val since = held.filter { from == null || it.at >= from }
+        val window = since.filter { it.track == null || it.track == song.videoId }
+        header(song, stats, from, window.size, since.size - window.size) + "\n" +
             window.joinToString("\n") { "${CLOCK.format(Date(it.at))} ${it.level} ${it.text}" } +
             "\n"
     }
@@ -151,8 +205,19 @@ object TrackLog {
     /**
      * What the lines alone can't say: which build produced them, on what, and
      * what the player believed it was playing when the log was taken.
+     *
+     * @param elsewhere how many lines in the same stretch belonged to another
+     *   track and were left out. Stated rather than silently dropped: it is the
+     *   difference between "nothing happened" and "nothing happened *to this
+     *   track*", and the two send a reader looking in opposite places.
      */
-    private fun header(song: Song, stats: NerdStats.Snapshot?, from: Long?, count: Int) = buildString {
+    private fun header(
+        song: Song,
+        stats: NerdStats.Snapshot?,
+        from: Long?,
+        count: Int,
+        elsewhere: Int,
+    ) = buildString {
         appendLine("BitChord log — ${song.title} — ${song.artist}")
         appendLine("id=${song.videoId} duration=${song.durationText ?: "?"} album=${song.albumName ?: "?"}")
         appendLine("playing: ${stats.describe()}")
@@ -162,7 +227,8 @@ object TrackLog {
         )
         appendLine(
             "window: ${from?.let { CLOCK.format(Date(it)) } ?: "everything held"} → " +
-                "${CLOCK.format(Date())} ($count lines)",
+                "${CLOCK.format(Date())} ($count lines" +
+                (if (elsewhere > 0) ", $elsewhere for other tracks left out)" else ")"),
         )
         appendLine("build: ${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_TYPE})")
         appendLine("device: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}")
@@ -190,12 +256,14 @@ object TrackLog {
     private val CLOCK = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
 
     /**
-     * How far back of the track's selection to reach.
+     * How far back of a track's selection to reach when nothing was ever filed
+     * against it — see [startedAt].
      *
-     * The resolve runs on the loader thread before the player reports the item
-     * as current, and on a cold module search that head start is the whole
-     * story — cut it off and the paste starts after the decision it is meant
-     * to explain.
+     * Only a fallback now. It used to be the whole of the window, on the
+     * reasoning that the resolve runs a moment before the player reports the
+     * item as current; what it actually reaches back into is the *previous*
+     * track's playback, and what the track being asked about spent it doing is
+     * usually nothing.
      */
     private const val LEAD_IN_MS = 20_000L
 

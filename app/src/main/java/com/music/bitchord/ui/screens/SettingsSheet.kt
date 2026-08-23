@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
@@ -44,7 +45,6 @@ import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
-import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
@@ -104,6 +104,7 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.DolbyAtmos
+import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
@@ -141,9 +142,9 @@ fun SettingsScreen(
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
@@ -313,16 +314,6 @@ fun SettingsScreen(
                 onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
             )
             RowDivider()
-            SliderRow(
-                icon = Icons.Rounded.Speed,
-                title = "Playback speed",
-                value = "${"%.2f".format(speed)}×",
-                sliderValue = speed,
-                onSliderValue = { AppSettings.setPlaybackSpeed((it * 20).roundToInt() / 20f) },
-                valueRange = 0.5f..2.0f,
-                steps = 29,
-            )
-            RowDivider()
             SettingsRow(
                 icon = Icons.AutoMirrored.Rounded.VolumeOff,
                 title = "Skip silence",
@@ -440,6 +431,28 @@ fun SettingsScreen(
                 onClick = { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
             )
             RowDivider()
+            // Left out where the player won't honour it — a tablet is too wide
+            // for edge-to-edge artwork and keeps the sleeve either way.
+            if (fullBleedArtworkAvailable()) {
+                SettingsRow(
+                    icon = Icons.Rounded.Fullscreen,
+                    title = "Full-screen cover art",
+                    subtitle = "Runs the cover to the edges of the player " +
+                        "instead of a square sleeve",
+                    trailing = {
+                        Switch(
+                            checked = fullBleedArtwork,
+                            onCheckedChange = AppSettings::setFullBleedArtwork,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
+                )
+                RowDivider()
+            }
             SettingsRow(
                 icon = Icons.Rounded.Animation,
                 title = "Animated cover art",
@@ -599,7 +612,7 @@ fun SettingsScreen(
 
         Text(
             text = buildAnnotatedString {
-                append("BitChord $version  ")
+                append("bitchord $version  ")
                 val linkStyles = TextLinkStyles(
                     style = SpanStyle(
                         color = MaterialTheme.colorScheme.primary,

@@ -14,9 +14,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -27,17 +30,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil3.compose.AsyncImage
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.R
+import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
@@ -187,6 +194,57 @@ fun FrostedTopBar(
 }
 
 /**
+ * The account affordance at the right end of the bar.
+ *
+ * It is the signed-in Google account's own photo — the same one YouTube Music
+ * shows there — and tapping it opens Settings, where the account lives. Signed
+ * out, or before the account menu has come back, it falls back to a person
+ * glyph on a filled circle so the tap target never disappears.
+ *
+ * The hairline ring is what keeps a photo with light edges from dissolving into
+ * the bar's glass; it is the same one thumbnails elsewhere carry.
+ */
+@Composable
+fun TopBarAccountButton(
+    account: Account?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // Wrapped in an IconButton so it keeps the 48dp target, the ripple and the
+    // spacing every other action in this bar has.
+    IconButton(onClick = onClick, modifier = modifier) {
+        val photo = account?.thumbnailUrl
+        if (photo != null) {
+            AsyncImage(
+                model = photo,
+                contentDescription = "Settings",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(AVATAR_SIZE)
+                    .clip(CircleShape)
+                    .thumbnailBorder(CircleShape),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(AVATAR_SIZE)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .thumbnailBorder(CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Person,
+                    contentDescription = "Settings",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
  * The refresh indicator: a line along the bottom of the bar, directly under the
  * status bar. It tracks the drag on the way down — filling left to right as the
  * pull approaches the threshold — then sweeps indefinitely once the refresh is
@@ -228,3 +286,11 @@ private fun RefreshLine(refreshing: Boolean, pullFraction: () -> Float, modifier
 }
 
 private val LINE_HEIGHT = 2.5.dp
+
+/**
+ * The account photo's diameter.
+ *
+ * Smaller than an icon's 24dp box: a filled circle carries more weight than a
+ * glyph does, and at 24 it sat heavier in the bar than the wordmark opposite it.
+ */
+private val AVATAR_SIZE = 28.dp

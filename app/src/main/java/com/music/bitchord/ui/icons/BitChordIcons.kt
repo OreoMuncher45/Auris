@@ -309,6 +309,28 @@ object BitChordIcons {
         }.build()
     }
 
+    /**
+     * A tick — the other half of [Plus]. Saving something to the library swaps
+     * one for the other in place, so the two are drawn on the same 14-unit span
+     * and at the same weight; a tick sized to its own bounding box would jump.
+     */
+    val Check: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_check",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(5f, 12.8f); lineTo(9.6f, 17.4f); lineTo(19f, 6.9f)
+            }
+        }.build()
+    }
+
     /** Arrow pointing down into a tray — offline download. */
     val Download: ImageVector by lazy {
         ImageVector.Builder(

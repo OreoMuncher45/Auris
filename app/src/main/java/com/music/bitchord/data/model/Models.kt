@@ -177,6 +177,26 @@ data class DetailPage(
      * than folded into [songs] where they'd read as the user's own picks.
      */
     val suggestedSongs: List<Song> = emptyList(),
+    /**
+     * Whether this release can be saved to the library and whether it already
+     * is — null when the page doesn't offer it at all. Only ever set for an
+     * album or playlist fetched with a session; see [LibraryState].
+     */
+    val library: LibraryState? = null,
+)
+
+/**
+ * Whether an album or playlist is in the library, and the id that changes that.
+ *
+ * YouTube has no "save" verb for a release: a saved album is a *liked* one, and
+ * what gets liked is the playlist behind the page rather than the browse id the
+ * page was fetched with — an `MPREb…` album is backed by an `OLAK5uy_…`
+ * playlist, and liking the browse id does nothing at all. So the id has to be
+ * read off the page rather than derived from what was asked for.
+ */
+data class LibraryState(
+    val playlistId: String,
+    val saved: Boolean,
 )
 
 /** Parsed artist landing page. */

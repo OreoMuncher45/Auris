@@ -155,6 +155,14 @@ fun DetailScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    /**
+     * Saves this release to the account's library, or takes it out —
+     * [DetailPage.library] says which way round. Null hides the control
+     * entirely, which is the answer for a guest and for the pages YouTube never
+     * offers to save; there is nothing to show a signed-out user here that
+     * wouldn't just be refused.
+     */
+    onToggleLibrary: (() -> Unit)? = null,
 ) {
     val songs = (page.songs as? UiState.Success)?.data.orEmpty()
     val isArtist = page.type == BrowseType.ARTIST
@@ -230,6 +238,7 @@ fun DetailScreen(
                         // to fetch — everything on it is already local.
                         onDownload = onDownloadAll.takeUnless { page.browseId.startsWith("local:") },
                         onArtistClick = onArtistClick,
+                        onToggleLibrary = onToggleLibrary,
                     )
                 }
             }
@@ -370,6 +379,7 @@ private fun ReleaseHeader(
     onShuffle: () -> Unit,
     onDownload: ((List<Song>) -> Unit)?,
     onArtistClick: (String, String) -> Unit,
+    onToggleLibrary: (() -> Unit)?,
 ) {
     val (credit, meta) = page.headerLines(trackCount)
     // Every row on a release carries the same credit — see [pageCredit] — so
@@ -440,6 +450,9 @@ private fun ReleaseHeader(
             // Action buttons — live inside the header so there is zero gap
             // between the cover zone and the first song row.
             if (songs.isNotEmpty()) {
+                // Only where YouTube said the release can be saved and the
+                // caller is willing to take the write — see [onToggleLibrary].
+                val library = page.library?.takeIf { onToggleLibrary != null }
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier
@@ -448,6 +461,20 @@ private fun ReleaseHeader(
                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (library != null) {
+                        CircleIconButton(
+                            // A tick, not a filled-in plus: the pair reads as
+                            // "not yet / done", which is what the state is.
+                            icon = if (library.saved) BitChordIcons.Check else BitChordIcons.Plus,
+                            contentDescription = if (library.saved) {
+                                "Remove from library"
+                            } else {
+                                "Add to library"
+                            },
+                            palette = palette,
+                            onClick = { onToggleLibrary?.invoke() },
+                        )
+                    }
                     CircleIconButton(
                         icon = BitChordIcons.Shuffle,
                         contentDescription = "Shuffle",
@@ -457,6 +484,11 @@ private fun ReleaseHeader(
                     PlayPill(
                         palette = palette,
                         onClick = onPlay,
+                        // The pill is the widest thing in the row and the first
+                        // to be squeezed when a third circle joins it, so it
+                        // gives up padding rather than letting the row run off
+                        // the edge of a narrow screen.
+                        horizontalPadding = if (library != null && onDownload != null) 24.dp else 32.dp,
                     )
                     onDownload?.let { download ->
                         CircleIconButton(
@@ -735,6 +767,7 @@ private fun PlayPill(
     palette: ArtworkPalette,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 32.dp,
 ) {
     Row(
         modifier = modifier
@@ -743,7 +776,7 @@ private fun PlayPill(
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 32.dp),
+            .padding(horizontal = horizontalPadding),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {

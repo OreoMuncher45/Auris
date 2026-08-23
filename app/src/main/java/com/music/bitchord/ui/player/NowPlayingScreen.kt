@@ -209,6 +209,16 @@ private val PLAYER_GUTTER = 30.dp
  */
 private val PLAYER_MAX_WIDTH = 560.dp
 
+/**
+ * Whether this screen is narrow enough for the player to run artwork edge to
+ * edge on it — the gate on both the motion-artwork banner and
+ * [AppSettings.fullBleedArtwork]. Public so the settings sheet can leave the
+ * switch out entirely where it would do nothing.
+ */
+@Composable
+fun fullBleedArtworkAvailable(): Boolean =
+    LocalConfiguration.current.screenWidthDp.dp <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
+
 /** Share of a lyric line's own length spent fading out, and its bounds. */
 private const val LYRIC_FADE_FRACTION = 0.28f
 private const val LYRIC_FADE_MIN_MS = 160f
@@ -592,26 +602,38 @@ fun NowPlayingScreen(
         onDispose { context.contentResolver.unregisterContentObserver(observer) }
     }
 
-    // 0 = the ordinary square sleeve, 1 = motion artwork as a full-bleed
-    // banner. Both states collapse the header, but the banner only ever shows
-    // over a settled player: opening the queue or the lyrics hands the sleeve
-    // back its card first.
+    // 0 = the ordinary square sleeve, 1 = the artwork as a full-bleed banner.
+    // Both states collapse the header, but the banner only ever shows over a
+    // settled player: opening the queue or the lyrics hands the sleeve back its
+    // card first.
     val p = if (lyricsOpen) 1f else queueProgress
     // Full-bleed is a phone idiom. Past the width the player is willing to grow
     // to, edge to edge stops meaning "the artwork *is* the screen" and starts
-    // meaning "a video, and separately some controls" — the banner would be
+    // meaning "a picture, and separately some controls" — the banner would be
     // running a foot wider than the column of controls under it. Tablets keep
-    // the sleeve, and the clip plays inside it as before.
-    val screenWidth = LocalConfiguration.current.screenWidthDp.dp
-    val heroMode = CANVAS_HERO_SUPPORTED && screenWidth <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
+    // the sleeve, and a clip plays inside it as before.
+    val heroWidth = fullBleedArtworkAvailable()
+    // A clip's banner needs [CANVAS_HERO_SUPPORTED]: only a RenderEffect can
+    // dissolve a TextureView's bottom edge, and a banner that stops dead
+    // halfway down the screen looks like a bug. A still sleeve is masked in
+    // Compose instead, which works everywhere, so it isn't held to that.
+    val heroMode = CANVAS_HERO_SUPPORTED && heroWidth
+    // Whether there's a still image to blow out — a placeholder tile is a card
+    // or it is nothing, and going full-bleed with one would just tint the top
+    // third of the screen.
+    var artLoaded by remember(song.videoId) { mutableStateOf(false) }
+    val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    // Below API 31 a rendered clip has to hand the card back: the clip can only
+    // play inside the sleeve there, and the sleeve is what the banner fades out.
+    val stillHero = fullBleedArt && heroWidth && (CANVAS_HERO_SUPPORTED || !canvasRendered)
     val heroT by animateFloatAsState(
-        targetValue = if (heroMode && canvasRendered && p < 0.5f) 1f else 0f,
+        targetValue = if (p < 0.5f && ((heroMode && canvasRendered) || (stillHero && artLoaded))) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )
     // How tall that banner is, worked out down in the layout where the sleeve's
-    // own geometry is known. Zero until the first measure, which is fine: the
-    // clip has no frame to show that early either.
+    // own geometry is known. Zero until the first measure, which is fine: there
+    // is nothing to show that early either.
     var heroHeight by remember { mutableStateOf(0.dp) }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
@@ -622,35 +644,84 @@ fun NowPlayingScreen(
         // why the palette is passed as one immutable value.
         MeshGradientBackground(palette = meshColors, trackKey = song.videoId)
 
-        // Motion artwork, edge to edge and running up behind the status bar,
+        // The artwork, edge to edge and running up behind the status bar,
         // dissolving into the backdrop where the sleeve's bottom edge would
         // have been. It lives out here rather than in the sleeve because that
         // is the only way to escape the player's side gutter and its status-bar
         // inset — a banner that stops short of either reads as a misplaced card
         // rather than as the artwork the screen is made of.
-        //
-        // Always composed while there's a clip to play, never gated on [heroT]:
-        // the clip has to be mounted and decoding *before* it can report the
-        // first frame that raises heroT in the first place.
-        if (heroMode && heroHeight > 0.dp) {
-            canvas?.takeIf { p < 0.5f }?.let { clip ->
-                CanvasArtworkPlayer(
-                    canvas = clip,
-                    isPlaying = isPlaying,
-                    onRenderedChanged = { canvasRendered = it },
-                    onFrameCaptured = { canvasFrame = it },
-                    bottomFade = HERO_FADE_FRACTION,
+        if (heroHeight > 0.dp) {
+            // The still sleeve first, so a clip fading in on top of it never
+            // shows the backdrop through the gap between them.
+            //
+            // Kept mounted until the fade has actually run rather than dropped
+            // the moment [p] crosses the collapse threshold: the sleeve behind
+            // it is still transparent at that point, so pulling the banner
+            // straight out leaves a frame or two with no artwork anywhere on
+            // screen before the card catches up.
+            if (stillHero && (p < 0.5f || heroT > 0.001f)) {
+                AsyncImage(
+                    // Decoded at the same size the sleeve asks for, so the two
+                    // share one entry in Coil's cache and one bitmap: the pair
+                    // cross-fade into each other, and asking twice at two sizes
+                    // would decode the same art twice and let the banner fade in
+                    // before its own copy had arrived.
+                    model = ImageRequest.Builder(context)
+                        .data(song.artworkAt(ART_PX))
+                        .size(ART_PX)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
-                        .height(heroHeight),
+                        .height(heroHeight)
+                        .graphicsLayer {
+                            alpha = heroT
+                            // The mask below erases part of what this layer
+                            // drew, which it can only do in a buffer of its own.
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(Color.Black, Color.Transparent),
+                                    startY = size.height * (1f - HERO_FADE_FRACTION),
+                                    endY = size.height,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        },
                 )
             }
 
+            // Motion artwork over it, in the same frame.
+            //
+            // Always composed while there's a clip to play, never gated on
+            // [heroT]: the clip has to be mounted and decoding *before* it can
+            // report the first frame that raises heroT in the first place.
+            if (heroMode) {
+                canvas?.takeIf { p < 0.5f }?.let { clip ->
+                    CanvasArtworkPlayer(
+                        canvas = clip,
+                        isPlaying = isPlaying,
+                        onRenderedChanged = { canvasRendered = it },
+                        onFrameCaptured = { canvasFrame = it },
+                        bottomFade = HERO_FADE_FRACTION,
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .fillMaxWidth()
+                            .height(heroHeight),
+                    )
+                }
+            }
+
             // The clock, the signal bars and the drag handle are all white, and
-            // the banner puts whatever the video happens to open on directly
-            // behind them — a bright frame leaves the top of the screen
-            // unreadable. Faded in with the banner and gone with it.
+            // the banner puts whatever the artwork happens to have up there
+            // directly behind them — a bright frame or a pale sleeve leaves the
+            // top of the screen unreadable. Faded in with the banner and gone
+            // with it.
             if (heroT > 0.01f) {
                 Box(
                     modifier = Modifier
@@ -784,7 +855,8 @@ fun NowPlayingScreen(
                 // background *and* a painter both trying to fill the same
                 // clipped shape is what read as two overlapping squares
                 // whenever there was nothing to paint. One layer, one square.
-                var artLoaded by remember(song.videoId) { mutableStateOf(false) }
+                // [artLoaded] is hoisted to the screen, where the banner needs
+                // it too.
                 Box(
                     modifier = Modifier
                         .offset(x = artStart, y = artTop)
@@ -848,9 +920,15 @@ fun NowPlayingScreen(
                             // Skipping tracks with the transport keeps it sharp
                             // only because the sleeve happens to be full size at
                             // that moment.
+                            //
+                            // Asked for at the source's own size rather than the
+                            // sleeve's: it is the same request the full-bleed
+                            // banner makes, and the banner is taller than the
+                            // sleeve is wide. One ask, one decode, one bitmap for
+                            // both — and nothing to upscale when the two swap.
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(song.artworkAt(ART_PX))
-                                .size(with(LocalDensity.current) { fullArt.roundToPx() })
+                                .size(ART_PX)
                                 .build(),
                             contentDescription = null,
                             // Video thumbnails are 16:9; letterboxing them inside
@@ -942,8 +1020,15 @@ fun NowPlayingScreen(
                 // corners and shadow — no box, no clip, nothing for the art
                 // itself to be cropped by. Just a glyph that fades in with
                 // the drag to hint which way a release would skip.
+                //
+                // Shown under the banner as well as under the card, and it is
+                // the only feedback the drag has there: a card can slide with
+                // the finger, but a full-bleed image sliding would open a strip
+                // of bare backdrop down one edge of the screen. It lands where
+                // the banner has all but dissolved, so it reads against the
+                // backdrop rather than against the artwork.
                 val swipeHintProgress = (abs(swipeSettle) / swipeThreshold)
-                    .coerceIn(0f, 1f) * (1f - p) * (1f - heroT)
+                    .coerceIn(0f, 1f) * (1f - p)
                 if (swipeHintProgress > 0.01f) {
                     val showNext = swipeSettle < 0f
                     val enabled = if (showNext) hasNext else hasPrevious

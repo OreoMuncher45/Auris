@@ -413,6 +413,33 @@ object Innertube {
     }
 
     /**
+     * Saves an album or playlist to the library, or takes it back out.
+     *
+     * The same endpoints [rate] uses, aimed at a playlist instead of a video:
+     * YouTube has no separate "save" verb for a release — a saved album *is* a
+     * liked one, which is why the Library tab's Albums and Playlists shelves and
+     * the account's likes are the same list. [playlistId] is the id the page
+     * itself named, not its browse id; see
+     * [com.music.bitchord.data.model.LibraryState].
+     *
+     * No dislike half, unlike [rate]: nothing in YouTube Music reads a disliked
+     * release, so the only two states worth expressing are saved and not.
+     */
+    suspend fun ratePlaylist(playlistId: String, saved: Boolean) {
+        requireSession()
+        val endpoint = if (saved) "like/like" else "like/removelike"
+        val response = postMusic(endpoint) {
+            putJsonObject("target") { put("playlistId", playlistId) }
+        }
+        // As in [rate]: a refusal arrives as HTTP 200 with an error in the body.
+        response["error"]?.let { error ->
+            val message = error.jsonObject["message"]?.jsonPrimitive?.contentOrNull
+            error("YouTube Music refused the change: ${message ?: error}")
+        }
+        Log.d(TAG, "$endpoint $playlistId -> ${findString(response, "text") ?: "no confirmation"}")
+    }
+
+    /**
      * Adds or removes a track from the library, using a token minted by
      * YouTube for exactly that transition — see [com.music.bitchord.data.model.SongMenu].
      * There is no video-id form of this call; the token *is* the request.

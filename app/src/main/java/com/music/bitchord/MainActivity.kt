@@ -37,7 +37,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -72,6 +71,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.NerdStats
@@ -89,6 +89,9 @@ import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
+import com.music.bitchord.ui.screens.DiscordDialog
+import com.music.bitchord.ui.screens.DiscordDialogHost
+import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
@@ -111,6 +114,7 @@ import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
@@ -165,6 +169,13 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    // Discord Rich Presence: its own page under Account & integrations, its own
+    // full-screen sign-in, and one slot for whichever of its alerts is open.
+    // The alerts live out here rather than on the page because their scrim has
+    // to cover the tab bar and mini player, which are drawn after it.
+    var showDiscord by remember { mutableStateOf(false) }
+    var showDiscordLogin by remember { mutableStateOf(false) }
+    var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
     // Whether the player's album/artist lookup (below, for the current track)
     // is still in flight — read by the long-press sheet so it can show a
@@ -562,7 +573,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling) { viewModel.closeDetail() }
-        BackHandler(enabled = showAccountScrobbling) {
+        BackHandler(enabled = showDiscord) {
+            showDiscord = false
+        }
+        BackHandler(enabled = showAccountScrobbling && !showDiscord) {
             showAccountScrobbling = false
         }
         // One back step out of Settings, or out of any tab but Home, lands on
@@ -578,9 +592,11 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
+        BackHandler(enabled = discordDialog != null) { discordDialog = null }
 
         AnimatedContent(
             targetState = when {
+                showDiscord -> "discord"
                 showAccountScrobbling -> "account_scrobbling"
                 showSettings -> "settings"
                 detail != null -> detail.browseId
@@ -590,8 +606,19 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             modifier = Modifier.hazeSource(hazeState),
             label = "content",
         ) { key ->
-            val page = detailStack.lastOrNull()?.takeIf { it.browseId == key && key != "settings" && key != "account_scrobbling" }
-            if (key == "account_scrobbling") {
+            val page = detailStack.lastOrNull()?.takeIf {
+                it.browseId == key && key != "settings" && key != "account_scrobbling" && key != "discord"
+            }
+            if (key == "discord") {
+                DiscordScreen(
+                    song = player.song,
+                    positionMs = player.positionMs,
+                    durationMs = player.durationMs,
+                    onOpenLogin = { showDiscordLogin = true },
+                    onOpenDialog = { discordDialog = it },
+                    contentPadding = listPadding,
+                )
+            } else if (key == "account_scrobbling") {
                 AccountAndScrobblingScreen(
                     signedIn = signedIn,
                     account = account,
@@ -603,6 +630,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     onSignOut = { viewModel.signOut() },
                     onOpenListenBrainzLogin = { showListenBrainzLogin = true },
                     onOpenLastfmLogin = { showLastfmLogin = true },
+                    onOpenDiscord = { showDiscord = true },
                     contentPadding = listPadding,
                 )
             } else if (key == "settings") {
@@ -662,6 +690,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
                     },
                     onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
+                    // Saving is an account action, so it isn't offered to a
+                    // guest at all — same as the like and add-to-playlist rows
+                    // in the track menu.
+                    onToggleLibrary = if (signedIn) {
+                        { viewModel.toggleLibrary(page.browseId) }
+                    } else {
+                        null
+                    },
                     contentPadding = listPadding,
                 )
             } else when (selectedTab) {
@@ -813,6 +849,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
         FrostedTopBar(
             title = when {
+                showDiscord -> "Discord"
                 showAccountScrobbling -> "Account & scrobbling"
                 showSettings -> "Settings"
                 detail != null -> detail.title
@@ -825,13 +862,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             // Search has no large in-list header to hand the title back to —
             // the field takes that space — so its bar title is always up.
             scrolled = when {
-                showSettings || showAccountScrobbling -> true
+                showSettings || showAccountScrobbling || showDiscord -> true
                 detail != null -> detailScrolled
                 else -> scrolled || selectedTab == TAB_SEARCH
             },
             refreshing = currentFeed != null && currentFeed in refreshing,
             pullFraction = { currentPull?.distanceFraction ?: 0f },
             onBack = when {
+                showDiscord -> ({ showDiscord = false })
                 showAccountScrobbling -> ({ showAccountScrobbling = false })
                 showSettings -> ({ showSettings = false })
                 detail != null -> ({ viewModel.closeDetail(); Unit })
@@ -854,11 +892,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         }
                     }
                 }
-                if (!showSettings && !showAccountScrobbling) IconButton(onClick = { showSettings = true }) {
-                    Icon(
-                        Icons.Rounded.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onBackground,
+                if (!showSettings && !showAccountScrobbling) {
+                    TopBarAccountButton(
+                        account = account,
+                        onClick = { showSettings = true },
                     )
                 }
             },
@@ -1364,6 +1401,49 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     }
                 },
                 onDismiss = { if (!lastfmLoading) showLastfmLogin = false },
+            )
+        }
+
+        // ---- Discord sign-in (full screen WebView) ----
+        if (showDiscordLogin) {
+            BackHandler { showDiscordLogin = false }
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = { showDiscordLogin = false }) {
+                            Icon(
+                                Icons.Rounded.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                        Text(
+                            "Sign in to Discord",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                    DiscordLoginScreen(
+                        onTokenCaptured = { token ->
+                            AppSettings.setDiscordToken(token)
+                            showDiscordLogin = false
+                        },
+                    )
+                }
+            }
+        }
+
+        discordDialog?.let { which ->
+            DiscordDialogHost(
+                which = which,
+                hazeState = hazeState,
+                onDismiss = { discordDialog = null },
             )
         }
     }

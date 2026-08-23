@@ -316,6 +316,29 @@ fun Song.toMediaItem(): MediaItem {
     .build()
 }
 
+/**
+ * Which track a playback URI is for, as a media id — the inverse of the URI
+ * [toMediaItem] builds, as far as the identity goes.
+ *
+ * Needed because most of what this app does to a track happens somewhere that
+ * has only the URI: the resolver runs on ExoPlayer's loader thread with a
+ * DataSpec in hand, and read-ahead means the track being fetched is usually not
+ * the one playing. That is what makes it the answer to "whose log line is this"
+ * — see [com.music.bitchord.data.TrackLog.about].
+ *
+ * Deliberately not the cache key, which looks similar and is not the same
+ * thing: that one splits a track's renditions apart on purpose and spells a
+ * source-backed track differently again, so filing lines under it would scatter
+ * one song's story across several names.
+ */
+fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
+    val configId = uri.getQueryParameter("s")
+    val trackId = uri.getQueryParameter("t")
+    if (configId != null && trackId != null) SourceRegistry.trackKey(configId, trackId) else null
+} else {
+    uri.getQueryParameter("v")
+}
+
 fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
     if (songs.isEmpty()) return
     // A queue started while shuffle is on goes in shuffled rather than being

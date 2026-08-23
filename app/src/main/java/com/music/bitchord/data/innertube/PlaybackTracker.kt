@@ -74,7 +74,7 @@ object PlaybackTracker {
     fun onPlaying(videoId: String) {
         if (session?.videoId == videoId || opening == videoId) return
         opening = videoId
-        scope.launch {
+        scope.launch(TrackLog.about(videoId)) {
             runCatching { open(videoId) }
                 .onFailure { TrackLog.w(TAG, "history registration failed for $videoId: ${it.message}") }
             if (opening == videoId) opening = null
@@ -89,9 +89,11 @@ object PlaybackTracker {
     fun onTrackChanged(positionSeconds: Long) {
         val closing = session ?: return
         session = null
-        scope.launch {
+        scope.launch(TrackLog.about(closing.videoId)) {
             runCatching { flush(closing, positionSeconds) }
-                .onFailure { TrackLog.w(TAG, "final watchtime ping failed: ${it.message}") }
+                .onFailure {
+                    TrackLog.w(TAG, "final watchtime ping failed for ${closing.videoId}: ${it.message}")
+                }
         }
     }
 
@@ -104,7 +106,7 @@ object PlaybackTracker {
         val current = session ?: return
         if (current.videoId != videoId) return
         if (positionSeconds - current.reportedSeconds < REPORT_INTERVAL_SECONDS) return
-        scope.launch {
+        scope.launch(TrackLog.about(videoId)) {
             runCatching { flush(current, positionSeconds) }
                 .onFailure { TrackLog.w(TAG, "watchtime ping failed for $videoId: ${it.message}") }
         }

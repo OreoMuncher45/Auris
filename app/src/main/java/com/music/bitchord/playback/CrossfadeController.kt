@@ -265,6 +265,15 @@ class CrossfadeController(
     private var armDeadline = 0L
 
     /**
+     * When the last transition finished, from [SystemClock.elapsedRealtime], or
+     * zero while none has this session.
+     *
+     * Read through [msSinceTransition] by callers that have to stay off the
+     * session player for a moment *after* a blend as well as during one.
+     */
+    private var settledAt = 0L
+
+    /**
      * Gain the outgoing track was at when the fade was interrupted, so the ramp
      * out starts from where it actually is rather than from full volume.
      */
@@ -284,6 +293,24 @@ class CrossfadeController(
      * this to clear rather than proceed anyway.
      */
     fun isTransitioning(): Boolean = phase != Phase.IDLE
+
+    /**
+     * How long since the last transition finished, or null while none has.
+     *
+     * For the same caller as [isTransitioning], which needs a little more than
+     * that flag can give it. The flag clears on the tick the blend completes,
+     * so a source torn down and rebuilt the moment it clears puts its break in
+     * the audio a few hundred milliseconds after the incoming track finally
+     * stood alone — not a broken blend, but heard as one. A caller that wants
+     * the transition to have been *over* for a while, rather than merely to
+     * have ended, waits this out too.
+     *
+     * Says nothing about a transition still in flight — it reports whatever the
+     * one before it left behind — so [isTransitioning] stays the first question
+     * to ask.
+     */
+    fun msSinceTransition(): Long? =
+        settledAt.takeIf { it != 0L }?.let { SystemClock.elapsedRealtime() - it }
 
     private val listener = object : Player.Listener {
         override fun onPositionDiscontinuity(
@@ -965,7 +992,15 @@ class CrossfadeController(
     }
 
     private fun finish() {
-        if (phase != Phase.IDLE) Log.d(TAG, "finish from $phase")
+        if (phase != Phase.IDLE) {
+            Log.d(TAG, "finish from $phase")
+            // Stamped under this guard rather than beside the assignment at the
+            // bottom, because this function is idempotent and gets called with
+            // nothing in flight: marking every one of those as a transition
+            // just ended would keep pushing the mark forward and hold a waiting
+            // caller off for as long as the calls kept coming.
+            settledAt = SystemClock.elapsedRealtime()
+        }
         AppSettings.smartMixInProgress.value = false
         // Unconditional and idempotent, like the speed reset below: correct
         // whether or not this transition ever filtered anything.
@@ -1170,9 +1205,9 @@ class CrossfadeController(
      * [ENTRY_SHAPE] is why the descent isn't linear. A geometric glide runs from
      * [TransitionFilterProcessor.OFF_HZ] to [topHz], and the bottom half of that
      * range is sub-bass nobody hears a filter in: measured, a plain ride was
-     * down to 118Hz by a third of the way through, which is to say doing nothing
+     * down to 123Hz by a third of the way through, which is to say doing nothing
      * at all for two thirds of the overlap. The exponent spends the travel where
-     * a voice actually is — 455Hz at a sixth of the way in, 270Hz at a third —
+     * a voice actually is — 772Hz at a sixth of the way in, 436Hz at a third —
      * and still arrives at fully open on time.
      */
     private fun entryHighPass(progress: Float, amount: Double, topHz: Double, openBy: Double): Float {
@@ -1416,8 +1451,19 @@ class CrossfadeController(
          * Above the fundamental range of most voices and the body of a snare, so
          * what arrives first is presence and percussion — enough to hear a track
          * coming and lock onto its groove, not enough for a second lead vocal.
+         *
+         * 700Hz was that corner while the outgoing sweep was gentler. It no longer
+         * is: the sweep engages at [FILTER_ENTRY_HZ] and is down to 4kHz a tenth
+         * of the way in, so a 700Hz entry left the two tracks sharing very nearly
+         * three octaves — and sharing them from 529Hz up, which is exactly where a
+         * lead vocal's fundamentals sit. 1.2kHz takes about an octave off the
+         * bottom of that shared band, and it is the octave the collision actually
+         * happens in. What is left of the outgoing track then sits *under* the
+         * arriving one rather than inside it, which is what makes the incoming
+         * track read as a layer landing on top of a darkening one instead of a
+         * second voice in the same space.
          */
-        const val ENTRY_HIGH_PASS_HZ = 700.0
+        const val ENTRY_HIGH_PASS_HZ = 1_200.0
 
         /**
          * How far into the fade the incoming track is fully open again.
@@ -1435,8 +1481,19 @@ class CrossfadeController(
          * Below 1 so the corner lingers in the range a voice occupies instead of
          * dropping straight through it into sub-bass, where a high-pass is
          * inaudible and the clash this exists to prevent is already back.
+         *
+         * 0.35 rather than 0.45 for more of the same, and the effect compounds
+         * across the overlap rather than being a flat offset: on a filter ride the
+         * corner sits a fourteenth higher a tenth of the way in, a quarter higher
+         * at three tenths, a third higher at four. So the hold is back-loaded into
+         * the middle of the blend — where both tracks are near equal gain and the
+         * collision is at its worst — and what gets given up in exchange is the
+         * bottom of the descent, which is a few hundred hertz of sub-bass nobody
+         * hears a high-pass leave. The release into the last of [ENTRY_OPEN_BY] is
+         * correspondingly more of an event, which is the point: the arriving track
+         * opening out is the moment the listener is meant to notice.
          */
-        const val ENTRY_SHAPE = 0.45
+        const val ENTRY_SHAPE = 0.35
 
         /**
          * How far [rideVocalSeparation] closes the outgoing track's top at a
@@ -1453,16 +1510,34 @@ class CrossfadeController(
         /**
          * Where the incoming track's high-pass starts in [rideVocalSeparation].
          *
-         * Lower than [ENTRY_HIGH_PASS_HZ]'s 700Hz, for the same reason the floor
+         * Lower than [ENTRY_HIGH_PASS_HZ]'s 1.2kHz, for the same reason the floor
          * is higher: on a plain crossfade the arriving track has no filter
          * gesture to explain itself with, so it has to sound like it fades in
-         * normally. 450Hz clears the body of a voice while leaving its lower
+         * normally. 700Hz clears the body of a voice while leaving its lower
          * harmonics, which is enough to stop it fighting the outgoing lead.
+         *
+         * Was 450Hz, which fit that description on paper and was mostly inaudible
+         * in practice: a fifth of the way in it was already down to 268Hz, doing
+         * nothing about a collision the vocal model had reported at full strength.
+         * 700Hz is the corner a filter ride itself used to open at, so it is a
+         * known-restrained one rather than a new guess — and keeping this style a
+         * clear step below that one leaves the two ranked the way their tiers are.
          */
-        const val VOCAL_SEPARATION_HIGH_PASS_HZ = 450.0
+        const val VOCAL_SEPARATION_HIGH_PASS_HZ = 700.0
 
-        /** [ENTRY_HIGH_PASS_HZ]'s counterpart for a beat-matched blend: lower, and briefer. */
-        const val BLEND_ENTRY_HIGH_PASS_HZ = 320.0
+        /**
+         * [ENTRY_HIGH_PASS_HZ]'s counterpart for a beat-matched blend: lower, and
+         * briefer.
+         *
+         * Was 320Hz, which the bass swap almost entirely swallowed. The incoming
+         * track is already high-passed at [BASS_SWAP_HZ] until the low end changes
+         * hands and [rideBassSwap] takes whichever corner is higher, so a 320Hz
+         * entry was only above that floor for the first sixth of the blend, and
+         * only ever by a little. 520Hz gives the arriving track an entry gesture
+         * that outlives the bass kill — clear of it until nearly three tenths in —
+         * rather than one hiding inside it.
+         */
+        const val BLEND_ENTRY_HIGH_PASS_HZ = 520.0
 
         /** [ENTRY_OPEN_BY]'s counterpart for a beat-matched blend. */
         const val BLEND_ENTRY_OPEN_BY = 0.45
@@ -1475,8 +1550,13 @@ class CrossfadeController(
          * Still short of [ENTRY_HIGH_PASS_HZ]'s filter-ride treatment. The two
          * tracks are on a shared grid and meant to sound simultaneous; the aim is
          * to stop the two leads occupying one band, not to hide either of them.
+         *
+         * Tracks [BLEND_ENTRY_HIGH_PASS_HZ] upward — 620Hz to 950Hz — so how hard
+         * the two are singing over each other stays the thing that separates a
+         * marginal collision from a head-on one, rather than both converging on
+         * whatever the bass kill was already doing.
          */
-        const val BLEND_ENTRY_CLASH_HIGH_PASS_HZ = 620.0
+        const val BLEND_ENTRY_CLASH_HIGH_PASS_HZ = 950.0
         const val BLEND_ENTRY_CLASH_OPEN_BY = 0.7
 
         /** Where [BLEND_EXIT_FROM] and [BLEND_EXIT_LOW_PASS_HZ] go at a full collision. */

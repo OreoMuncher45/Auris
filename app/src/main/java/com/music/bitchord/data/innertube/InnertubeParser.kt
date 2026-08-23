@@ -5,6 +5,7 @@ import com.music.bitchord.data.model.ArtistPage
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
@@ -640,6 +641,66 @@ object InnertubeParser {
         }
 
     private val LIBRARY_ICONS = setOf("LIBRARY_ADD", "LIBRARY_REMOVE", "LIBRARY_SAVED")
+
+    /**
+     * Whether the album or playlist a browse response describes is in the
+     * library, and the id that would change that — see [LibraryState].
+     *
+     * Both come off the page header, and both have to. A release's save control
+     * is a [toggleButtonRenderer][isSaveToggle] wearing YouTube's bookmark
+     * icons, *not* a like button: every track row on the page carries a
+     * `likeButtonRenderer` aimed at its own `videoId` and the release carries
+     * none at all, so reading a like button here answers for a track. Which is
+     * how the first cut of this came back empty on every page — thirteen like
+     * buttons on an album, every one of them a row's.
+     *
+     * The id is read from the header's *play* button, because it isn't the
+     * browse id the page was fetched with: an `MPREb…` album is backed by an
+     * `OLAK5uy_…` playlist, which the button names as a `watchPlaylistEndpoint`,
+     * while a playlist page names its own raw id as a `watchEndpoint`. One of
+     * the two answers for either kind of page.
+     *
+     * Scoped to the header rather than walked for, which matters more here than
+     * it looks: an album page's "more from this artist" carousel is full of
+     * *other* releases' playlist ids — a dozen of them, ahead of the header in
+     * document order — so a page-wide walk would quietly save the wrong record.
+     *
+     * Null when the header has no save button to read: a continuation, a local
+     * page, an auto-playlist, or a release YouTube marks unsaveable.
+     */
+    fun parseLibraryState(root: JsonElement): LibraryState? {
+        val buttons = collectRenderers(root, "musicResponsiveHeaderRenderer")
+            .firstOrNull()
+            .a("buttons")
+            .orEmpty()
+        val save = buttons.firstNotNullOfOrNull { it.o("toggleButtonRenderer")?.takeIf { b -> b.isSaveToggle } }
+            ?: return null
+        if (save.s("isDisabled") == "true") return null
+        // A play button states the release as a playlist, which is the one
+        // thing on the page that names what saving would act on.
+        val play = buttons.firstNotNullOfOrNull { it.o("musicPlayButtonRenderer").o("playNavigationEndpoint") }
+        return LibraryState(
+            playlistId = play.o("watchPlaylistEndpoint").s("playlistId")
+                ?: play.o("watchEndpoint").s("playlistId")
+                ?: return null,
+            // The toggle carries the answer directly, rather than the
+            // which-icon-leads reading a menu toggle needs: a button that is
+            // *shown* toggled is one whose release is already saved.
+            saved = save.s("isToggled") == "true",
+        )
+    }
+
+    /**
+     * Whether a header toggle is the save-to-library one rather than the
+     * description's expander, told by its icons for the same reason
+     * [isLibraryToggle] is: the label is localised, the icon type never is.
+     *
+     * Bookmarks, not the `LIBRARY_*` icons a track's menu uses — YouTube draws
+     * the two actions differently even though they land in the same library.
+     */
+    private val JsonElement?.isSaveToggle: Boolean
+        get() = o("defaultIcon").s("iconType") == "BOOKMARK_BORDER" ||
+            o("toggledIcon").s("iconType") == "BOOKMARK"
 
     /**
      * The playlists the account can be asked to add a track to.
