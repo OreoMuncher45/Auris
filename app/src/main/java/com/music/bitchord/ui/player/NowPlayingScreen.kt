@@ -912,7 +912,7 @@ fun NowPlayingScreen(
                                     textAlign = TextAlign.Center,
                                 )
                             }
-                            // Only when Smart Fade is actually switched on:
+                            // Only when Automix is actually switched on:
                             // otherwise this would report on analysis nothing is
                             // going to use, which is noise rather than a stat.
                             if (smartFadeOn) {
@@ -921,7 +921,7 @@ fun NowPlayingScreen(
                                     // agree, so the line reads the same way every
                                     // time and the eye can find the half it wants
                                     // without re-parsing the sentence.
-                                    text = "Smart Fade · this song " +
+                                    text = "Automix · this song " +
                                         smartAnalysis.current.label() +
                                         " · next " + smartAnalysis.next.label(),
                                     style = nerdStyle,

@@ -44,66 +44,47 @@ import kotlin.math.sin
  *
  * ## Which player plays what
  *
- * The naive second player is a copy of the queue, and that is the design that
- * fell over before — two players both convinced they own the playlist, two
- * audio focus requests, and a MediaSession whose player keeps changing under
- * it. So the split here is deliberately lopsided:
+ * Two peers, not a player and a helper. Both are full ExoPlayers built the same
+ * way and both can own the queue; at any instant one of them *is* the session
+ * (it backs the MediaSession, holds audio focus and carries the notification)
+ * and the other is idle. They swap roles at every transition.
  *
- *  - **[player]** — the one ExoPlayer that owns the queue, backs the
- *    MediaSession and holds audio focus, exactly as it did before this class
- *    existed. It is the only player the rest of the app ever sees.
- *  - **[ghost]** — a single-item, throwaway player that renders *the tail of
- *    the track being left behind* and nothing else. It has no queue, receives
- *    no user commands, is nobody's source of truth, and can be stopped dead at
- *    any instant without anything needing to be unwound.
+ *  - **[active]** — whichever player the session currently points at. The rest
+ *    of the app only ever sees this one.
+ *  - **[standby]** — the idle player. Between transitions it holds nothing. To
+ *    arm a transition it is loaded with *the queue, positioned on the incoming
+ *    track* at the plan's cue point, and started silently.
  *
- * At the crossfade point the session player **jumps to the next track
- * immediately** and fades up, while the ghost carries the old track's last
- * seconds down to silence. That ordering is the point: the queue index, the
- * metadata, the notification and the UI all flip to the incoming song the
- * moment it becomes audible, instead of trailing the song that is on its way
- * out.
+ * The crucial word is **incoming**. An earlier version of this class put the
+ * *outgoing* track on the second player: the session player jumped ahead to the
+ * next song and the second player carried the old song's tail. That works, but
+ * it forces a moment where both players render *the same audio*, and two
+ * ExoPlayers cannot be started sample-accurately against each other. Whatever
+ * they were misaligned by — measured on real transitions at 9 to 41ms — was
+ * heard as the last instant of the outgoing track playing twice, at the head of
+ * every single crossfade. No amount of tuning removes that; the duplication is
+ * structural.
+ *
+ * Loading the *incoming* track on the standby removes it outright. The two
+ * players never hold the same audio, so there is nothing to align, nothing to
+ * hand over, and no seam to hide. The incoming track is simply already playing,
+ * from exactly the right position, when its fader starts to move.
  *
  * ## The handoff
  *
- * The one seam in this design is the instant the outgoing track stops being
- * rendered by [player] and starts being rendered by [ghost]. Two ExoPlayers
- * cannot be started sample-accurately against each other, so the ghost is
- * armed early and left free-running *silently* alongside the session player
- * while it is walked onto the session player's playhead. Those corrections are
- * free: nobody can hear a muted player being moved. Only once the two agree
- * does [Phase.LAPPING] hand the outgoing track over across [LAP_MS].
+ * Because both players own the queue, finishing a transition is a **role swap**
+ * rather than a seek: nothing is re-buffered, nothing is re-sought, and no audio
+ * is rendered twice. [onHandoff] is what performs it — the service moves the
+ * MediaSession, audio focus, its listeners and its bookkeeping onto the incoming
+ * player.
  *
- * ## Why the walk is two-stage
- *
- * Seeking alone cannot close the gap. A seek lands on a decoded frame boundary
- * — 20-26ms depending on the codec — and where in that frame the target fell is
- * not knowable in advance, so every correction reintroduces up to a frame of
- * error however many times it is repeated. That is why this used to settle for
- * agreeing to within 20ms, and 20ms is precisely the wrong number: it is the
- * classic slapback threshold, the point at which a delayed copy stops colouring
- * a sound and starts being heard as a second copy of it. Two players rendering
- * the same audio 20ms apart for 90ms is a flam, and it was audible at the head
- * of every single transition.
- *
- * So the seek is only the coarse stage, used while the ghost is more than
- * [COARSE_SYNC_MS] out. The fine stage is a *timed rate trim*: the ghost is run
- * [RATE_TRIM] fast or slow for exactly as long as it takes to absorb the
- * measured drift, then put back. That is open-loop on purpose — the audible
- * effect of a rate change lags by the audio track's own buffer, but the lag
- * applies equally to switching it on and to switching it off, so the shift the
- * ghost actually accumulates is the trim times its duration regardless. It has
- * no quantum, so it closes what a seek structurally cannot.
- *
- * ## Why the lap is not equal-power
- *
- * The [LAP_MS] handoff is the one place in this class where both players carry
- * *the same* audio, and correlated signals do not add in power, they add in
- * amplitude: `sin + cos` peaks at √2, so an equal-power lap opened every
- * transition with a +3 dB level bump on the track being left. The lap uses a
- * complementary pair summing to exactly 1 instead — see [lapRise]. The
- * equal-power law is still right for [Phase.FADING], where the two players hold
- * two genuinely different tracks.
+ * It fires as the incoming track's first note sounds, not at the end of the
+ * blend, which keeps the behaviour the old design was built around: the queue
+ * index, the metadata, the notification and the UI all flip to the incoming song
+ * the moment it becomes audible, rather than trailing the song on its way out.
+ * From that instant [outgoing] is the idle player, still audible, being faded
+ * out — which is exactly what the previous design used its tail player for, at
+ * none of the cost.
  *
  * ## Curve
  *
@@ -115,15 +96,27 @@ import kotlin.math.sin
 @UnstableApi
 class CrossfadeController(
     private val scope: CoroutineScope,
-    private val player: ExoPlayer,
-    /** Builds the tail player. Called at most once; the instance is kept warm. */
-    private val newGhost: () -> ExoPlayer,
+    /** The player backing the session right now. Moves at every [onHandoff]. */
+    private val active: () -> ExoPlayer,
+    /** The idle player, which the next transition will load the incoming track onto. */
+    private val standby: () -> ExoPlayer,
     /**
-     * Stored Smart Fade analysis for a media item, or an empty [TrackAnalysis]
+     * Moves the session onto the player that has just started the incoming
+     * track: the MediaSession's player, audio focus, the service's listeners and
+     * everything it books against a track change.
+     *
+     * Called once per transition, at the instant the incoming track becomes
+     * audible. After it returns, [active] must answer `incoming` and [standby]
+     * must answer `outgoing` — this class re-reads neither during a transition,
+     * but everything else in the service does.
+     */
+    private val onHandoff: (outgoing: ExoPlayer, incoming: ExoPlayer) -> Unit,
+    /**
+     * Stored Automix analysis for a media item, or an empty [TrackAnalysis]
      * when there is none yet. This is the seam Phase 1's DSP analyzer plugs
      * into: until analysis finishes, a track reads as "no evidence", which
      * [planTransition] answers with the same fixed-length crossfade this
-     * class always ran before Smart Fade existed.
+     * class always ran before Automix existed.
      */
     private val analysisFor: (MediaItem) -> TrackAnalysis = { TrackAnalysis() },
     /**
@@ -157,21 +150,52 @@ class CrossfadeController(
         /** Nothing in flight; watching for the next transition. */
         IDLE,
 
-        /** Ghost is spinning up on the outgoing track and syncing to the session player. */
+        /**
+         * The standby player is loading the incoming track and buffering to its
+         * cue point. Silent, and nothing has been committed: abandoning here
+         * costs only the standby's decoder.
+         */
         ARMING,
 
-        /** Outgoing track being handed from the session player to the ghost. */
-        LAPPING,
-
-        /** Session player rising on the new track, ghost falling on the old one. */
+        /** Incoming track rising on one player, outgoing falling on the other. */
         FADING,
 
-        /** Something interrupted the fade; the ghost is being ramped out of the way. */
+        /** Something interrupted the fade; the outgoing track is being ramped away. */
         BAILING,
     }
 
     private var phase = Phase.IDLE
-    private var ghost: ExoPlayer? = null
+
+    /**
+     * The player the session was on when this transition began — the one whose
+     * track is being left. Held explicitly rather than re-read through
+     * [standby], because [onHandoff] moves it out from under that name halfway
+     * through the fade and the ramp has to keep driving the same two players it
+     * started with.
+     */
+    private var outgoing: ExoPlayer? = null
+
+    /** The player carrying the track arriving. Becomes the session at [onHandoff]. */
+    private var incoming: ExoPlayer? = null
+
+    /**
+     * Whether [onHandoff] has run for the transition in flight, which is what
+     * decides who owns what if it has to be unwound: before it, [outgoing] is
+     * the session and [incoming] is a silent scratch player; after it, they have
+     * traded places.
+     */
+    private var handedOff = false
+
+    /**
+     * How many items the queue held when the standby was loaded with a copy of
+     * it. AutoPlay appending mid-transition is explicitly allowed, so the
+     * difference is reconciled onto the standby before the swap rather than
+     * being allowed to lose the appended tracks — see [reconcileQueue].
+     */
+    private var queuedItemCount = 0
+
+    /** Which player this class's own listener is currently attached to. */
+    private var listeningTo: ExoPlayer? = null
 
     /** Length of the transition in flight, in ms. Fixed when it begins. */
     private var fadeMs = 0L
@@ -179,8 +203,8 @@ class CrossfadeController(
     /**
      * Where the fade window ends, in the session player's position ms.
      * Standard mode sets this to the track's own duration, which is what
-     * [driveArming] always compared against before Smart Fade existed; a
-     * Smart Fade plan can set it earlier, at an analyzed mix-out anchor, so
+     * [driveArming] always compared against before Automix existed; a
+     * Automix plan can set it earlier, at an analyzed mix-out anchor, so
      * [driveArming] watches this field rather than re-deriving the fade point
      * from [ExoPlayer.getDuration] on every tick.
      */
@@ -189,10 +213,10 @@ class CrossfadeController(
     /**
      * Which setting armed the fade in flight, so [driveFade] knows which one
      * being switched off mid-blend means "stop now" rather than misreading the
-     * other mode's control as the fade having been turned off. Smart Fade
+     * other mode's control as the fade having been turned off. Automix
      * doesn't need [AppSettings.crossfadeSeconds] to be above zero at all —
      * see [considerSmartTransition] — so treating that as still-zero as a
-     * reason to cut a Smart Fade short would end every one of them on its
+     * reason to cut a Automix short would end every one of them on its
      * first tick.
      */
     private var smartFadeActive = false
@@ -200,7 +224,7 @@ class CrossfadeController(
     /**
      * Where the incoming track is cued when the lap hands the queue over, in
      * its own timeline ms. Standard fades always leave this at 0 — a plain
-     * track change starts from the top — and only a Smart Fade plan sets it
+     * track change starts from the top — and only a Automix plan sets it
      * to an analyzed mix-in point instead.
      */
     private var incomingCueTimeMs: Long = 0L
@@ -236,91 +260,28 @@ class CrossfadeController(
         val vocalOverlap: Double = 0.0,
     )
 
-    private var lapStartedAt = 0L
+    private var fadeStartedAt = 0L
     private var bailStartedAt = 0L
     private var armDeadline = 0L
 
     /**
-     * Gain the ghost was at when the fade was interrupted. The ramp out is
-     * scaled by it, because a fade abandoned during [Phase.ARMING] is one where
-     * the ghost is still silent — ramping "down from 1" there would put the
-     * outgoing track on at full volume purely in order to fade it out again.
+     * Gain the outgoing track was at when the fade was interrupted, so the ramp
+     * out starts from where it actually is rather than from full volume.
      */
     private var bailFromGain = 0f
-
-    /**
-     * When the rate trim currently running on the ghost should be lifted, in
-     * elapsed-realtime ms; 0 when none is running.
-     *
-     * The whole of the fine sync stage is this one deadline. Drift is measured
-     * once, converted into how long [RATE_TRIM] needs to be applied to absorb
-     * it, and then simply timed out — no closed loop, because the audio buffer
-     * puts a couple of hundred milliseconds of dead time between a rate change
-     * and its effect on the reported position, which is more than enough for a
-     * proportional controller ticking every [ARM_STEP_MS] to chase its own tail.
-     */
-    private var trimUntil = 0L
-
-    /**
-     * Elapsed-realtime before which a drift reading is still settling and not
-     * worth acting on — set after each seek and after each trim is lifted.
-     * Reading a position that has not caught up yet is how a correction ends up
-     * being applied twice.
-     */
-    private var syncSettleUntil = 0L
-
-    /**
-     * Whether the ghost has been seen playing during this arm, so the first
-     * reading taken off it can be given the same settling time as one taken
-     * after a seek. A position sampled in the first instants of an audio track
-     * is extrapolated rather than measured, and acting on it wastes the coarse
-     * stage's first correction on noise.
-     */
-    private var ghostRunning = false
 
     /** Dedupes the per-tick plan log down to one line per distinct verdict. */
     private var lastPlanVerdict = ""
 
     /**
-     * How far ahead of the session player the ghost is seeked, to cover the time
-     * a seek itself takes to come back. Learned rather than assumed — it varies
-     * with the device and with whether the track is on disk yet.
-     */
-    private var seekLeadMs = 60L
-
-    /**
-     * How long our own `seekToNextMediaItem` gets to be recognised as ours, so
-     * the lap isn't mistaken for the listener reaching for the scrubber.
+     * True while a transition is armed or running.
      *
-     * A window rather than a count of expected callbacks: Media3 reports the
-     * queue moving as both a discontinuity and an item transition, a seek that
-     * turns out to be a no-op reports neither, and a counter that guesses wrong
-     * either swallows the listener's next seek or bails on our own. A window
-     * clears itself however many callbacks turn up.
-     */
-    private var selfMoveUntil = 0L
-
-    /**
-     * Whether the transition now arriving is this class advancing the queue on
-     * the listener's behalf — the crossfade equivalent of a track ending.
-     * Consumed by [PlaybackService], which otherwise has no way to tell our
-     * seek apart from a manual skip and would stop honouring "sleep after this
-     * song".
-     */
-    private var autoAdvance = false
-
-    fun consumeAutoAdvance(): Boolean = autoAdvance.also { autoAdvance = false }
-
-    /**
-     * True while a transition is armed or running on [player] and [ghost].
-     *
-     * For callers about to do something that would otherwise fight this
-     * class for the session player mid-blend — [PlaybackService]'s quality
-     * upgrade is the one that does, since `replaceMediaItem` tears the
-     * current source down and rebuilds it. Interrupting the source
-     * [driveArming] is syncing against, or the one [driveFade] is ramping,
-     * breaks the blend rather than merely delaying it, so such a caller
-     * should wait for this to clear rather than proceed anyway.
+     * For callers about to do something that would otherwise fight this class
+     * for the session player mid-blend — [PlaybackService]'s quality upgrade is
+     * the one that does, since `replaceMediaItem` tears the current source down
+     * and rebuilds it. Doing that to either player mid-transition breaks the
+     * blend rather than merely delaying it, so such a caller should wait for
+     * this to clear rather than proceed anyway.
      */
     fun isTransitioning(): Boolean = phase != Phase.IDLE
 
@@ -331,8 +292,9 @@ class CrossfadeController(
             reason: Int,
         ) {
             // The listener moving the playhead is something no half-finished
-            // crossfade should survive; the lap's own seek is not.
-            if (reason == Player.DISCONTINUITY_REASON_SEEK && !ourOwnMove()) bail()
+            // crossfade should survive. Nothing this class does registers here
+            // any more: the handoff is a role swap, not a seek.
+            if (reason == Player.DISCONTINUITY_REASON_SEEK) bail()
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -344,17 +306,30 @@ class CrossfadeController(
                 // playing item doesn't change: extending the queue mid-fade is
                 // harmless and shouldn't cost the listener the blend.
                 Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> bail()
-                Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> if (!ourOwnMove()) bail()
+                Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> bail()
             }
         }
 
         override fun onPlayerError(error: PlaybackException) = bail()
     }
 
-    private fun ourOwnMove(): Boolean = SystemClock.elapsedRealtime() < selfMoveUntil
+    /**
+     * Keeps [listener] on whichever player is the session.
+     *
+     * It has to move rather than sit on both: arming loads a whole queue onto
+     * the standby, which Media3 reports as the playlist changing, and a listener
+     * attached there would read that as the queue being replaced out from under
+     * the very transition it is setting up.
+     */
+    private fun listenTo(target: ExoPlayer) {
+        if (listeningTo === target) return
+        listeningTo?.removeListener(listener)
+        target.addListener(listener)
+        listeningTo = target
+    }
 
     fun start() {
-        player.addListener(listener)
+        listenTo(active())
         scope.launch {
             while (isActive) {
                 tick()
@@ -362,7 +337,6 @@ class CrossfadeController(
                     when (phase) {
                         Phase.IDLE -> IDLE_STEP_MS
                         Phase.ARMING -> ARM_STEP_MS
-                        Phase.LAPPING -> LAP_STEP_MS
                         Phase.FADING -> FADE_STEP_MS
                         Phase.BAILING -> BAIL_STEP_MS
                     },
@@ -372,12 +346,11 @@ class CrossfadeController(
     }
 
     fun release() {
-        player.removeListener(listener)
-        player.volume = 1f
+        listeningTo?.removeListener(listener)
+        listeningTo = null
+        active().volume = 1f
         AppSettings.smartMixInProgress.value = false
         filters.open()
-        ghost?.release()
-        ghost = null
     }
 
     // ---- Entry points -------------------------------------------------------
@@ -392,11 +365,9 @@ class CrossfadeController(
      * ignoring the button rather than as a transition — the point of pressing
      * next is usually to stop hearing the current track.
      *
-     * Called before the skip is carried out, so the tail is already on its way
-     * down as the new track starts. The listener would catch the resulting seek
-     * anyway, but only outside [SELF_MOVE_WINDOW_MS]; a press landing inside
-     * that window would be mistaken for the lap's own move and leave the ghost
-     * running over the new track. Saying so explicitly closes that gap.
+     * Called before the skip is carried out, so the outgoing track is already on
+     * its way down as the new one starts, and the listener's own seek lands on a
+     * player this class has finished with.
      */
     fun onSkipRequested() {
         if (phase != Phase.IDLE) bail()
@@ -405,12 +376,14 @@ class CrossfadeController(
     // ---- Ticker -------------------------------------------------------------
 
     private fun tick() {
-        // A pause has to take the tail with it, or the track being faded out
-        // carries on alone over a stopped player. Mirrored every tick rather
-        // than handled as an event, so audio focus loss, the sleep timer and
-        // the pause button all get the same treatment for free.
-        if (phase == Phase.ARMING || phase == Phase.LAPPING || phase == Phase.FADING) {
-            ghost?.playWhenReady = player.playWhenReady
+        // A pause has to take the other player with it, or one half of the blend
+        // carries on alone over a stopped one. Mirrored every tick rather than
+        // handled as an event, so audio focus loss, the sleep timer and the
+        // pause button all get the same treatment for free. Which player follows
+        // which flips at the handoff: before it the standby shadows the session,
+        // after it the outgoing tail does.
+        if (phase == Phase.FADING || phase == Phase.BAILING) {
+            outgoing?.playWhenReady = incoming?.playWhenReady ?: true
         }
 
         // Every tick, not only when a transition can be planned. This used to
@@ -425,7 +398,6 @@ class CrossfadeController(
         when (phase) {
             Phase.IDLE -> considerAutoTransition()
             Phase.ARMING -> driveArming()
-            Phase.LAPPING -> driveLap()
             Phase.FADING -> driveFade()
             Phase.BAILING -> driveBail()
         }
@@ -433,6 +405,7 @@ class CrossfadeController(
 
     /** Arms a crossfade as the playing track runs out. */
     private fun considerAutoTransition() {
+        val player = active()
         if (!player.isPlaying) return
         // Repeating one track would crossfade it into itself.
         if (player.repeatMode == Player.REPEAT_MODE_ONE) return
@@ -447,7 +420,7 @@ class CrossfadeController(
         val duration = player.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
 
-        // Smart Fade is its own on/off, independent of the manual crossfade
+        // Automix is its own on/off, independent of the manual crossfade
         // length: it decides its own duration from each pair of tracks (beats,
         // tempo, structure), so requiring a nonzero [AppSettings.crossfadeSeconds]
         // first would tie an automatic feature to a manual one it doesn't use.
@@ -461,16 +434,16 @@ class CrossfadeController(
         if (fade <= 0L) return
 
         val remaining = duration - player.currentPosition
-        // Arm early: the ghost needs time to spin up and settle into sync
-        // before it is any use, and that work has to be finished by the time
-        // the fade is due rather than started then.
+        // Arm early: the standby has to open the incoming track and buffer to
+        // its cue point, and that work has to be finished by the time the fade
+        // is due rather than started then.
         if (remaining > fade + ARM_LEAD_MS) return
 
         begin(fade, endMs = duration, smart = false)
     }
 
     /**
-     * Arms a Smart Fade transition once its plan says the playhead is close
+     * Arms a Automix transition once its plan says the playhead is close
      * enough to start arming for it.
      *
      * Reads the plan's timing (where the fade starts and how long it runs),
@@ -485,6 +458,7 @@ class CrossfadeController(
      * equal-power gain curve.
      */
     private fun considerSmartTransition(duration: Long) {
+        val player = active()
         val currentItem = player.currentMediaItem ?: return
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
@@ -617,6 +591,7 @@ class CrossfadeController(
      * gating reintroduces the staleness this exists to remove.
      */
     private fun publishAnalysisState() {
+        val player = active()
         val currentItem = player.currentMediaItem
         val nextIndex = player.nextMediaItemIndex
         val nextItem = if (nextIndex == C.INDEX_UNSET) null else player.getMediaItemAt(nextIndex)
@@ -676,7 +651,7 @@ class CrossfadeController(
      * from the moment the queue is set.
      */
     private fun nextItemDurationMs(nextIndex: Int, item: MediaItem): Long {
-        val timeline = player.currentTimeline
+        val timeline = active().currentTimeline
         if (!timeline.isEmpty) {
             timeline.getWindow(nextIndex, Timeline.Window()).durationMs
                 .takeIf { it != C.TIME_UNSET && it > 0 }
@@ -708,8 +683,19 @@ class CrossfadeController(
     )
 
     /**
-     * Spins the ghost up on the outgoing track and walks it into sync with the
-     * session player.
+     * Loads the standby player with the queue, positioned on the incoming track
+     * at the plan's cue point, and leaves it buffering there silently.
+     *
+     * Nothing is committed here. The standby is a scratch player until
+     * [startFade] runs, so a queue edit, a skip or a pause arriving during
+     * arming costs nothing but the decoder it was holding.
+     *
+     * The cue point is reached by *starting there* rather than by seeking:
+     * `setMediaItems` takes the position the item is to begin at, so the
+     * incoming track opens at its analyzed mix-in point with no seek, no
+     * discontinuity and no frame-rounding. Same for the beatmatch stretch, which
+     * is applied before a note has been rendered rather than being switched on
+     * underneath one already playing.
      */
     private fun begin(
         fade: Long,
@@ -719,8 +705,11 @@ class CrossfadeController(
         playbackRate: Double = 1.0,
         renderStyle: Render = Render(),
     ): Boolean {
-        val outgoing = player.currentMediaItem ?: return false
-        val ghost = warmGhost() ?: return false
+        val out = active()
+        val into = standby()
+        if (out === into) return false
+        val nextIndex = out.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return false
 
         fadeMs = fade
         fadeEndMs = endMs
@@ -729,208 +718,115 @@ class CrossfadeController(
         incomingPlaybackRate = playbackRate
         render = renderStyle
         armDeadline = SystemClock.elapsedRealtime() + ARM_TIMEOUT_MS
-        syncSettleUntil = 0L
-        trimUntil = 0L
-        ghostRunning = false
+        handedOff = false
+        outgoing = out
+        incoming = into
 
-        // Taken from the session player rather than from settings: these two
-        // change how fast a position advances against the wall clock, and the
-        // whole handoff rests on the pair agreeing about where they are. Also
-        // clears any rate trim left on the ghost by the previous transition.
-        ghost.skipSilenceEnabled = player.skipSilenceEnabled
-        ghost.playbackParameters = player.playbackParameters
+        val items = (0 until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        queuedItemCount = items.size
 
         Log.d(
             TAG,
             "arm ${if (smart) "smart" else "standard"} fade=${fade}ms end=${endMs}ms " +
-                "cue=${incomingCueTimeMs}ms rate=$incomingPlaybackRate at=${player.currentPosition}ms " +
+                "cue=${incomingCueTimeMs}ms rate=$incomingPlaybackRate at=${out.currentPosition}ms " +
                 "style=${render.style} bassSwap=${render.bassSwap}@${render.bassSwapFraction} " +
                 "sweep=${render.filterSweep}",
         )
 
-        ghost.setMediaItem(outgoing)
-        ghost.seekTo(player.currentPosition + seekLeadMs)
-        ghost.volume = 0f
-        ghost.playWhenReady = true
-        ghost.prepare()
+        // Carried across so the incoming track inherits the listener's own
+        // settings rather than whatever the standby was left on last time.
+        into.skipSilenceEnabled = out.skipSilenceEnabled
+        into.repeatMode = out.repeatMode
+        into.shuffleModeEnabled = out.shuffleModeEnabled
+        // Stacks on top of the listener's speed control rather than replacing
+        // it, so a beatmatched transition and "play everything at 1.25x" don't
+        // fight each other. Undone in [finish].
+        into.setPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
+        into.volume = 0f
+        into.setMediaItems(items, nextIndex, incomingCueTimeMs)
+        // Buffers without sounding. Started for real in [startFade].
+        into.playWhenReady = false
+        into.prepare()
 
         phase = Phase.ARMING
         return true
     }
 
+    /**
+     * Waits for the standby to have the incoming track ready at its cue point,
+     * and for the outgoing track to reach the fade.
+     *
+     * There is nothing to align here — the two players hold different songs — so
+     * this is only ever waiting on a buffer.
+     */
     private fun driveArming() {
-        val ghost = ghost ?: return bail()
+        val out = outgoing ?: return bail()
+        val into = incoming ?: return bail()
         if (!stillWorthFading()) return bail()
+        // Paused while armed: the transition is no longer imminent, and holding
+        // a prepared decoder open against a stopped player is worse than arming
+        // again when playback resumes.
+        if (!out.playWhenReady) return bail()
 
-        val now = SystemClock.elapsedRealtime()
-        val expired = now > armDeadline
-        val running = ghost.isPlaying
+        val expired = SystemClock.elapsedRealtime() > armDeadline
+        val ready = into.playbackState == Player.STATE_READY
 
-        // A ghost that never got going has no tail to hand the track to, and
-        // lapping onto silence would be the very hole this class exists to get
-        // rid of. Give up instead and let the track change plainly.
-        if (expired && !running) return bail()
-
-        // A position read off an audio track that has only just opened is
-        // extrapolated, not measured, so the first reading gets the same grace
-        // as one taken straight after a seek.
-        if (running && !ghostRunning) {
-            ghostRunning = true
-            syncSettleUntil = now + SEEK_SETTLE_MS
-            Log.d(TAG, "ghost up ${now - armDeadline + ARM_TIMEOUT_MS}ms after arm")
-        }
-
-        val aligned = running && walkIntoSync(ghost, now)
+        // A standby that never got the incoming track ready has nothing to fade
+        // up. Give up and let the queue move on plainly rather than fading into
+        // silence.
+        if (expired && !ready) return bail()
 
         // Wait for the track to actually reach the fade point. [fadeEndMs] is
-        // the track's own duration in standard mode, or a Smart Fade plan's
+        // the track's own duration in standard mode, or a Automix plan's
         // analyzed mix-out anchor when it ends before the file does.
-        val atFadePoint = fadeEndMs <= 0L || fadeEndMs - player.currentPosition <= fadeMs
-
+        val atFadePoint = fadeEndMs <= 0L || fadeEndMs - out.currentPosition <= fadeMs
         if (!atFadePoint) return
-        // Out of time to keep tidying up: a slightly ragged handoff still beats
-        // no crossfade at all.
-        if (aligned || expired) startLap()
+        if (ready) startFade()
     }
 
     /**
-     * One step of walking the silent ghost onto the session player's playhead.
-     * Returns true once the two are close enough that handing the track over is
-     * inaudible.
+     * Starts the incoming track and moves the session onto it.
      *
-     * Coarse stage first — a seek, for anything further out than
-     * [COARSE_SYNC_MS], since a rate trim would take seconds to cover that much
-     * ground. Fine stage second, because a seek cannot finish the job: it lands
-     * on a frame boundary and the rounding is fresh noise on every attempt.
+     * The handoff happens *here*, as the first note sounds, not at the end of
+     * the blend. Everything hanging off the session player — queue index,
+     * metadata, the notification, the UI, audio focus — flips to the incoming
+     * song the moment it becomes audible, rather than trailing the song on its
+     * way out. From this point [outgoing] is the idle player, still audible,
+     * being faded away.
      */
-    private fun walkIntoSync(ghost: ExoPlayer, now: Long): Boolean {
-        // A trim in flight is a correction that has already been decided; the
-        // ghost is deliberately running at the wrong rate until it expires, so
-        // its position means nothing to anyone until then.
-        if (trimUntil != 0L) {
-            if (now < trimUntil) return false
-            clearTrim()
-            syncSettleUntil = now + TRIM_SETTLE_MS
-            return false
-        }
-        if (now < syncSettleUntil) return false
+    private fun startFade() {
+        val out = outgoing ?: return bail()
+        val into = incoming ?: return bail()
 
-        val drift = ghost.currentPosition - player.currentPosition
-        if (abs(drift) <= SYNC_TOLERANCE_MS) return true
+        // AutoPlay may have appended to the queue since the standby was loaded
+        // with a copy of it; those tracks would otherwise be lost at the swap.
+        reconcileQueue(out, into)
 
-        if (abs(drift) > COARSE_SYNC_MS) {
-            // Whatever the last seek overshot or undershot by is exactly what
-            // the next one should compensate for, so the lead tunes itself to
-            // this device rather than to a guessed constant.
-            seekLeadMs = (seekLeadMs - drift).coerceIn(0L, MAX_SEEK_LEAD_MS)
-            ghost.seekTo(player.currentPosition + seekLeadMs)
-            syncSettleUntil = now + SEEK_SETTLE_MS
-            Log.d(TAG, "walk seek drift=${drift}ms lead=${seekLeadMs}ms")
-            return false
-        }
+        into.volume = 0f
+        into.playWhenReady = true
+        fadeStartedAt = SystemClock.elapsedRealtime()
 
-        // A ghost that is behind has to run fast to catch up, and vice versa.
-        // The duration is what does the work: [RATE_TRIM] for `drift / RATE_TRIM`
-        // milliseconds shifts the ghost by exactly `drift`.
-        applyTrim(ghost, faster = drift < 0L)
-        trimUntil = now + (abs(drift) / RATE_TRIM).roundToLong().coerceAtMost(MAX_TRIM_MS)
-        Log.d(TAG, "walk trim drift=${drift}ms for ${trimUntil - now}ms")
-        return false
-    }
+        Log.d(TAG, "handoff at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
 
-    /**
-     * Runs the ghost [RATE_TRIM] off the session player's rate. Inaudible by
-     * construction: this is only ever applied during [Phase.ARMING], where the
-     * ghost's volume is zero.
-     */
-    private fun applyTrim(ghost: ExoPlayer, faster: Boolean) {
-        val base = player.playbackParameters
-        ghost.playbackParameters = base.withSpeed(base.speed * (if (faster) 1f + RATE_TRIM else 1f - RATE_TRIM))
-    }
+        // Before the swap, so the listener follows the session rather than
+        // firing on a player this class is about to demote.
+        listenTo(into)
+        handedOff = true
+        onHandoff(out, into)
 
-    /** Puts the ghost back on the session player's exact rate. Idempotent. */
-    private fun clearTrim() {
-        trimUntil = 0L
-        ghost?.playbackParameters = player.playbackParameters
-    }
-
-    private fun startLap() {
-        val ghost = ghost ?: return bail()
-        // The single number that says whether a transition will be heard
-        // starting or just heard: how far apart the two copies of the outgoing
-        // track are at the instant one hands over to the other. Anything up to
-        // [SYNC_TOLERANCE_MS] fuses; a slapback becomes audible around 20ms.
-        val late = SystemClock.elapsedRealtime() > armDeadline
-        Log.d(
-            TAG,
-            "lap drift=${ghost.currentPosition - player.currentPosition}ms lead=${seekLeadMs}ms" +
-                if (late) " (TIMED OUT — walk never converged)" else "",
-        )
-        // Whatever the walk was still doing, the two players have to be running
-        // at the same rate through a handoff and for the tail afterwards.
-        clearTrim()
-        lapStartedAt = SystemClock.elapsedRealtime()
-        phase = Phase.LAPPING
-    }
-
-    /**
-     * Hands the outgoing track from the session player to the ghost.
-     *
-     * Both are rendering the same audio at the same position here, so this is
-     * kept as short as it can be while still being a ramp rather than a cut —
-     * long enough to swallow any residual misalignment, too short for the two
-     * copies to comb against each other audibly. It uses [lapRise] rather than
-     * the equal-power pair for the same reason: the two signals are the same
-     * signal, so their gains have to sum to one, not to one in power.
-     */
-    private fun driveLap() {
-        val ghost = ghost ?: return bail()
-        // Pausing in the few tens of milliseconds it takes to hand the track
-        // over means nothing has been handed over yet: the session player still
-        // has the track, so give it back rather than advancing a queue the
-        // listener has just stopped.
-        if (!player.playWhenReady) return bail()
-
-        val progress = (SystemClock.elapsedRealtime() - lapStartedAt).toFloat() / LAP_MS
-
-        if (progress < 1f) {
-            player.volume = lapFall(progress)
-            ghost.volume = lapRise(progress)
-            return
+        // The outgoing player holds the whole queue too, and a standard
+        // crossfade runs right up to its track's natural end — at which point
+        // ExoPlayer would do what it always does and advance to the next item,
+        // starting the incoming song a second time, on top of itself, out of the
+        // player that is supposed to be going quiet. Truncating the queue at the
+        // playing item turns that into STATE_ENDED, which [driveFade] already
+        // reads as the tail being spent. Safe to discard: [into] is the
+        // authoritative queue from here, and this player is retired seconds
+        // later anyway.
+        if (out.mediaItemCount > out.currentMediaItemIndex + 1) {
+            out.removeMediaItems(out.currentMediaItemIndex + 1, out.mediaItemCount)
         }
 
-        ghost.volume = 1f
-        player.volume = 0f
-        // The ghost has the old track. The session player is free to become the
-        // new one — and everything hanging off it (queue index, metadata, the
-        // notification, the UI) moves to the incoming song right here, while
-        // its first note is still fading up.
-        // Only a track running out ever gets this far, so the queue moving
-        // here is always the crossfade standing in for a track ending.
-        autoAdvance = true
-        selfMoveUntil = SystemClock.elapsedRealtime() + SELF_MOVE_WINDOW_MS
-        // A Smart Fade plan cues the incoming track to its own analyzed mix-in
-        // point rather than 0 — landing on the beat grid, not the file's cold
-        // open — so this seeks straight to that position in the same call
-        // that moves the queue forward, instead of using
-        // [Player.seekToNextMediaItem] (which always lands on 0) and then
-        // correcting with a second seek that would itself be visible as a
-        // discontinuity.
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex != C.INDEX_UNSET && incomingCueTimeMs > 0L) {
-            player.seekTo(nextIndex, incomingCueTimeMs)
-        } else {
-            player.seekToNextMediaItem()
-        }
-        // Stacks on top of the listener's own speed control rather than
-        // replacing it, so a beatmatched transition and "play everything at
-        // 1.25x" don't fight each other. Restored in [finish].
-        if (incomingPlaybackRate != 1.0) {
-            player.setPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
-        }
-        // Raised here rather than at [begin], because ARMING is silent: nothing
-        // is mixing until the two tracks are actually audible over each other,
-        // which is what the next line starts.
         AppSettings.smartMixInProgress.value = isRealMix()
         // The queue has just moved on, so the marker's fractions now refer to a
         // track the session player is no longer showing a position for.
@@ -939,15 +835,39 @@ class CrossfadeController(
     }
 
     /**
+     * Copies onto the standby anything appended to the queue while it was
+     * arming.
+     *
+     * AutoPlay extending the queue mid-transition is explicitly allowed — it
+     * doesn't change the playing item, so it has never been a reason to drop a
+     * blend. Under the old design that was free, because only one player ever
+     * held the queue. Now the standby is carrying a copy taken at arm time, and
+     * that copy is what survives the swap, so the difference has to be carried
+     * across or the appended tracks simply vanish when the roles change.
+     *
+     * Only a pure append is reconciled. Anything else — a queue replaced, an
+     * item removed or moved — changes what the incoming track *is*, and
+     * [listener] has already bailed the transition for it.
+     */
+    private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer) {
+        val appended = (queuedItemCount until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        if (appended.isEmpty()) return
+        into.addMediaItems(appended)
+        queuedItemCount = out.mediaItemCount
+        Log.d(TAG, "reconciled ${appended.size} appended item(s) onto the incoming player")
+    }
+
+    /**
      * The crossfade proper.
      *
      * Driven off the *incoming* track's position rather than off a clock, so a
      * pause parks the transition where it stands and resuming picks it back up
-     * — no timer to reconcile, and no ghost left hanging at half volume while
-     * the session player waits.
+     * — no timer to reconcile, and neither player left hanging at half volume
+     * while the other waits.
      */
     private fun driveFade() {
-        val ghost = ghost ?: return bail()
+        val out = outgoing ?: return bail()
+        val player = incoming ?: return bail()
         // The incoming track gets the same say over the length as the outgoing
         // one did, so a long crossfade into a short track tightens rather than
         // swallowing it. Its duration is often still unknown when the fade
@@ -957,7 +877,7 @@ class CrossfadeController(
         // Fade plan already sized itself independently of that setting, and
         // may be running with it at zero.
         // Measured from where the incoming track was *cued*, not from zero. A
-        // Smart Fade plan can drop it in mid-arrangement, and reading its raw
+        // Automix plan can drop it in mid-arrangement, and reading its raw
         // position as elapsed-fade would put a cue at 0:45 instantly past the
         // end of an 8-second fade — finishing the blend on its first tick and
         // landing as an abrupt cut, which is precisely the failure a cued
@@ -967,47 +887,45 @@ class CrossfadeController(
             ?.minus(incomingCueTimeMs)
             ?.coerceAtLeast(0L)
         val incomingCap = remainingIncoming?.div(3) ?: Long.MAX_VALUE
-        val span = (minOf(fadeMs, incomingCap) - LAP_MS).coerceAtLeast(1L)
+        val span = minOf(fadeMs, incomingCap).coerceAtLeast(1L)
         val elapsed = (player.currentPosition - incomingCueTimeMs).coerceAtLeast(0L)
         val progress = (elapsed.toFloat() / span).coerceIn(0f, 1f)
 
         player.volume = riseGain(progress)
-        ghost.volume = fallGain(progress)
-        // Only here, never during ARMING or LAPPING: those two phases have both
-        // players rendering the *same* audio at the same position, and filtering
-        // one copy and not the other would comb them against each other. From
-        // FADING onwards the session player is the incoming track and the ghost
-        // is the outgoing one, which is exactly the split [filters] describes.
+        out.volume = fallGain(progress)
+        // Only from here, never during ARMING: the standby is silent until the
+        // handoff, and [filters] describes the split between the track arriving
+        // and the track leaving, which only exists once both are audible.
         rideFilters(progress)
 
         // Whichever comes first: the fade running its course, the old track
         // genuinely ending, the tail failing outright, or whichever setting
         // armed this fade being switched off mid-blend. Checked against the
-        // setting that actually started it — a Smart Fade normally runs with
+        // setting that actually started it — a Automix normally runs with
         // [configuredFadeMs] at zero, and reading that as "turned off" would
-        // end every Smart Fade on its first tick.
+        // end every Automix on its first tick.
         val settingSwitchedOff = if (smartFadeActive) {
             !AppSettings.smartFadeEnabled.value
         } else {
             configuredFadeMs() <= 0L
         }
         val done = progress >= 1f ||
-            ghost.playbackState == Player.STATE_ENDED ||
-            ghost.playbackState == Player.STATE_IDLE ||
+            out.playbackState == Player.STATE_ENDED ||
+            out.playbackState == Player.STATE_IDLE ||
             settingSwitchedOff
         if (done) finish()
     }
 
-    /** Ramps the ghost out rather than cutting it, so an interruption has no click in it. */
+    /** Ramps the outgoing track away rather than cutting it, so an interruption has no click in it. */
     private fun driveBail() {
-        val ghost = ghost
-        if (ghost == null) {
+        val out = outgoing
+        if (out == null) {
             finish()
             return
         }
         val progress = (SystemClock.elapsedRealtime() - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
-            ghost.volume = bailFromGain * fallGain(progress)
+            out.volume = bailFromGain * fallGain(progress)
             return
         }
         finish()
@@ -1016,63 +934,91 @@ class CrossfadeController(
     // ---- Lifecycle of a transition -----------------------------------------
 
     /**
-     * Abandons whatever is in flight. Safe to call from anywhere, at any phase:
-     * the session player is always the one holding the queue, so there is never
-     * a half-applied state to put back — only a ghost to fade out and a volume
-     * to restore.
+     * Abandons whatever is in flight.
+     *
+     * What has to be put back depends entirely on whether [startFade] got as far
+     * as swapping the roles. Before the handoff the session player is untouched
+     * and the standby is a silent scratch player, so there is nothing to unwind
+     * at all — [finish] just retires it. After the handoff the session has
+     * already moved and cannot be moved back (the incoming track is playing and
+     * has been announced), so the only thing left is to take the outgoing track
+     * away gracefully.
      */
     private fun bail() {
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
         Log.d(TAG, "bail from $phase")
-        player.volume = 1f
         AppSettings.smartMixInProgress.value = false
-        // Glided open rather than snapped: the session player is still audible
-        // here, and if the bail caught a bass swap mid-handover its low end is
+        if (!handedOff) {
+            // Nothing was ever audible; no ramp to run.
+            finish()
+            return
+        }
+        // Glided open rather than snapped: the incoming track is audible here,
+        // and if the bail caught a bass swap mid-handover its low end is
         // currently lifted out. Dropping a 24 dB/octave filter in one buffer is
         // the click this ramp exists to avoid.
         filters.open()
-        autoAdvance = false
-        bailFromGain = ghost?.volume ?: 0f
+        incoming?.volume = 1f
+        bailFromGain = outgoing?.volume ?: 0f
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
     }
 
     private fun finish() {
         if (phase != Phase.IDLE) Log.d(TAG, "finish from $phase")
-        player.volume = 1f
         AppSettings.smartMixInProgress.value = false
         // Unconditional and idempotent, like the speed reset below: correct
         // whether or not this transition ever filtered anything.
         filters.open()
         render = Render()
-        // Undoes whatever [driveLap] stacked on for a beatmatched handoff —
-        // unconditional and idempotent, so this is correct whether or not a
-        // stretch was ever actually applied (a standard fade, or a Smart Fade
-        // that never reached FADING, both leave the listener's own speed
-        // control untouched anyway).
-        player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
-        incomingPlaybackRate = 1.0
-        // After the speed reset above, so the ghost is handed the rate the
-        // listener actually asked for rather than a beatmatch's stretch.
-        clearTrim()
-        ghost?.let {
-            it.volume = 0f
-            it.stop()
-            it.clearMediaItems()
+
+        if (handedOff) {
+            // The roles have already traded: the incoming player is the session
+            // and owns the queue from here, and the outgoing one is spare.
+            incoming?.let {
+                it.volume = 1f
+                // Undoes whatever [begin] stacked on for a beatmatched handoff.
+                // Unconditional and idempotent, so this is correct whether or
+                // not a stretch was ever actually applied.
+                it.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            }
+            outgoing?.let(::retire)
+        } else {
+            // The transition never became audible, so the session player never
+            // moved and the standby is the one to throw away.
+            outgoing?.volume = 1f
+            incoming?.let(::retire)
         }
-        selfMoveUntil = 0L
+
+        outgoing = null
+        incoming = null
+        handedOff = false
+        queuedItemCount = 0
+        incomingCueTimeMs = 0L
+        incomingPlaybackRate = 1.0
         phase = Phase.IDLE
     }
 
     /** Still a next track, still playing, still switched on — by whichever setting armed this one. */
     private fun stillWorthFading(): Boolean {
         val stillOn = if (smartFadeActive) AppSettings.smartFadeEnabled.value else configuredFadeMs() > 0L
-        return stillOn && player.hasNextMediaItem()
+        return stillOn && (outgoing ?: active()).hasNextMediaItem()
     }
 
-    private fun warmGhost(): ExoPlayer? {
-        ghost?.let { return it }
-        return runCatching { newGhost() }.getOrNull()?.also { ghost = it }
+    /**
+     * Puts a player back in the drawer: emptied, silent no longer, and on the
+     * listener's own playback rate again.
+     *
+     * The volume matters as much as the emptying. A player left at the gain it
+     * faded out on is the next transition's *incoming* player, and it would
+     * arrive already turned down — so the reset is part of retiring it, not part
+     * of preparing it.
+     */
+    private fun retire(player: ExoPlayer) {
+        player.stop()
+        player.clearMediaItems()
+        player.volume = 1f
+        player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
     }
 
     // ---- Numbers ------------------------------------------------------------
@@ -1327,7 +1273,7 @@ class CrossfadeController(
      * into its arrangement instead of its first frame, or a tempo stretch. The
      * case this exists to exclude is the fallback — an unanalysed pair, cued at
      * 0:00, fading equal-power — which is indistinguishable from what the app
-     * did before Smart Fade existed and would be a lie to advertise.
+     * did before Automix existed and would be a lie to advertise.
      */
     private fun isRealMix(): Boolean = smartFadeActive && (
         render.style == TransitionStyle.DJ_BLEND ||
@@ -1343,25 +1289,12 @@ class CrossfadeController(
     private fun fallGain(progress: Float): Float =
         cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
 
-    /**
-     * Equal-*gain* pair for the lap: [lapRise] + [lapFall] = 1 exactly.
-     *
-     * The equal-power law above is the right one for two different tracks,
-     * whose sum is a power sum. It is the wrong one here. During [Phase.LAPPING]
-     * both players hold the same audio at the same position, so the two gains
-     * add as amplitudes and `sin + cos` reaches √2 at the midpoint — a +3 dB
-     * swell on the outgoing track at the head of every transition, which is a
-     * thing that plainly does not happen when a song is left to play on its own.
-     *
-     * Raised cosine rather than a straight line so the ramp has no corner at
-     * either end: over [LAP_MS] a linear pair's kinks are a modulation sharp
-     * enough to hear as a tick, and shaping the pair costs nothing since it
-     * still sums to one everywhere.
-     */
-    private fun lapRise(progress: Float): Float =
-        (1f - cos(progress.coerceIn(0f, 1f) * PI.toFloat())) / 2f
-
-    private fun lapFall(progress: Float): Float = 1f - lapRise(progress)
+    // There is deliberately no second, equal-gain pair here any more. It existed
+    // for the handoff of a track from one player to the other, where the two
+    // signals were the same signal and so summed in amplitude rather than in
+    // power. Nothing in this class renders the same audio twice now, so every
+    // gain it applies is a gain against a genuinely different track, and
+    // equal-power is right everywhere.
 
     private companion object {
         const val TAG = "BitChordCrossfade"
@@ -1374,33 +1307,21 @@ class CrossfadeController(
          */
         const val DEFAULT_SMART_FALLBACK_SECONDS = 6.0
 
-        /**
-         * Handoff of the outgoing track between the two players.
-         *
-         * Was 90ms, which is long enough for a listener to resolve the two
-         * copies as two copies rather than as one slightly thickened one. It is
-         * the one window in a transition where doubled audio exists at all, so
-         * it wants to be as short as a gain ramp can be without becoming a step:
-         * 45ms is several times longer than the few milliseconds a raised-cosine
-         * ramp needs to be click-free, and still gives [LAP_STEP_MS] enough ticks
-         * to draw the curve rather than a staircase.
-         */
-        const val LAP_MS = 45L
-
         /** Ramp used when a fade is interrupted. */
         const val BAIL_MS = 120L
 
         /**
-         * Head start the ghost gets to spin up and settle into sync.
+         * Head start the standby gets to open the incoming track and buffer to
+         * its cue point.
          *
-         * Was 2s, sized for the coarse stage alone. The fine stage spends real
-         * time by design — absorbing 20ms of drift at [RATE_TRIM] takes half a
-         * second, and it may need a second pass — and running out of head start
-         * means lapping on the [ARM_TIMEOUT_MS] escape hatch with whatever drift
-         * happened to be left, which is the behaviour being fixed. The extra
-         * second is silent decoding of a track already in the cache.
+         * Sized for a *stream being opened*, which is the only thing arming
+         * waits on now — there is no alignment to converge. Usually instant, as
+         * the next track has normally been read ahead onto disk by the time it
+         * matters, but a cold one has to be resolved and fetched, and a
+         * transition that arrives before its incoming track is ready is one that
+         * gets dropped.
          */
-        const val ARM_LEAD_MS = 3_000L
+        const val ARM_LEAD_MS = 4_000L
 
         /**
          * States in which a track is measured well enough to be *entered* on.
@@ -1418,59 +1339,11 @@ class CrossfadeController(
         )
 
         /**
-         * How closely the two players must agree on position before the lap.
-         *
-         * Was 20ms, which is the seek stage's floor and also, unhelpfully,
-         * roughly where a delayed copy of a sound stops being heard as
-         * colouration and starts being heard as a second copy. Below about
-         * 10ms the two copies fuse; 8ms leaves margin for the couple of
-         * milliseconds of jitter in a reported audio position without asking
-         * the walk to chase noise it cannot remove.
+         * Longest a transition will wait on an incoming track that will not
+         * become ready. Past this the queue is left to move on plainly, which is
+         * a missed crossfade rather than a broken one.
          */
-        const val SYNC_TOLERANCE_MS = 8L
-
-        /**
-         * Drift above which the walk seeks rather than trims. Comfortably clear
-         * of a decoded frame — the seek stage's own resolution — so the coarse
-         * stage is never asked to make a correction finer than it can land, and
-         * a trim is never asked to cover a distance that would take it most of
-         * a second.
-         */
-        const val COARSE_SYNC_MS = 40L
-
-        /**
-         * How far off the session player's rate the ghost is run to close the
-         * last few milliseconds. Small enough that the time stretch never has to
-         * do anything drastic, large enough to absorb a [COARSE_SYNC_MS] drift
-         * inside the head start.
-         */
-        const val RATE_TRIM = 0.04f
-
-        /** Ceiling on a single trim, so one bad reading cannot park the ghost off-rate. */
-        const val MAX_TRIM_MS = 1_200L
-
-        /** Time a seek is given to land before the resulting position is judged. */
-        const val SEEK_SETTLE_MS = 250L
-
-        /**
-         * Time a lifted trim is given before the resulting position is judged.
-         * Longer than a seek's, because what has to drain here is the audio
-         * track's own buffer: the ghost keeps moving at the old rate for as long
-         * as there is audio in it written at that rate.
-         */
-        const val TRIM_SETTLE_MS = 300L
-
-        const val MAX_SEEK_LEAD_MS = 500L
-
-        /**
-         * Longest the lap will wait on a ghost that won't sync. Kept just past
-         * [ARM_LEAD_MS] so a ghost that cannot be walked into place delays the
-         * transition by half a second rather than by two.
-         */
-        const val ARM_TIMEOUT_MS = 3_500L
-
-        /** How long the lap's own seek stays recognisable as ours. */
-        const val SELF_MOVE_WINDOW_MS = 150L
+        const val ARM_TIMEOUT_MS = 12_000L
 
         /**
          * Where the outgoing low-pass sits the instant a filter ride begins.
@@ -1633,10 +1506,13 @@ class CrossfadeController(
         const val BLEND_EXIT_LOW_PASS_HZ = 2_200.0
 
         const val IDLE_STEP_MS = 250L
-        const val ARM_STEP_MS = 40L
 
-        /** Halved with [LAP_MS], so the handoff still gets ~9 steps to ramp over. */
-        const val LAP_STEP_MS = 5L
+        /**
+         * Arming only waits on a buffer now — nothing is being converged — so
+         * this is about how promptly the fade can start once the incoming track
+         * is ready, not about a control loop's step size.
+         */
+        const val ARM_STEP_MS = 40L
         const val FADE_STEP_MS = 30L
         const val BAIL_STEP_MS = 15L
     }

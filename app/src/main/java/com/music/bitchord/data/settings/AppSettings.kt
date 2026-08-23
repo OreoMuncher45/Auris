@@ -67,7 +67,7 @@ object AppSettings {
     val crossfadeSeconds = MutableStateFlow(0)
 
     /**
-     * Lets Smart Fade's analyzer decide the transition's timing and length
+     * Lets Automix's analyzer decide the transition's timing and length
      * from each track's tempo, energy and structure, replacing the fixed
      * [crossfadeSeconds] window rather than needing it set to anything first
      * — [crossfadeSeconds] only matters here as a fallback while a pair is
@@ -160,7 +160,7 @@ object AppSettings {
     val audioSessionId = MutableStateFlow(0)
 
     /**
-     * True only while a Smart Fade transition that is actually *mixing* is
+     * True only while a Automix transition that is actually *mixing* is
      * audible — one that beat-matched, cued the incoming track into its
      * arrangement, or rode a filter.
      *
@@ -531,7 +531,7 @@ object AppSettings {
 }
 
 /**
- * Where one track stands in Smart Fade's analysis.
+ * Where one track stands in Automix's analysis.
  *
  * The three no-result states are kept apart because they call for different
  * reactions: [WAITING] resolves itself once bytes arrive, [ANALYSING] resolves

@@ -752,7 +752,7 @@ object AudioCache {
     /**
      * True once every byte of [uri]'s rendition is on disk.
      *
-     * Smart Fade's analyzer needs this before it can safely decode a track: a
+     * Automix's analyzer needs this before it can safely decode a track: a
      * partially fetched file may not even have a parsable container, and
      * analysing the head of a track whose tail hasn't arrived would produce a
      * grid for audio the listener will never reach through that transition.
@@ -817,7 +817,7 @@ object AudioCache {
     }
 
     /**
-     * One rendition of a recording, as Smart Fade's analyzer sees it.
+     * One rendition of a recording, as Automix's analyzer sees it.
      *
      * [key] is a cache key, not a URI: the point of this type is to name a
      * rendition the *player* is not using, which no URI in hand refers to.
@@ -953,9 +953,9 @@ object AudioCache {
         override fun createDataSource(): DataSource = object : DataSource {
             override fun addTransferListener(transferListener: TransferListener) {}
             override fun open(dataSpec: DataSpec): Long =
-                throw IOException("Smart Fade analysis reads only cached bytes; no upstream is wired up")
+                throw IOException("Automix analysis reads only cached bytes; no upstream is wired up")
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
-                throw IOException("Smart Fade analysis reads only cached bytes; no upstream is wired up")
+                throw IOException("Automix analysis reads only cached bytes; no upstream is wired up")
             override fun getUri(): Uri? = null
             override fun close() {}
         }

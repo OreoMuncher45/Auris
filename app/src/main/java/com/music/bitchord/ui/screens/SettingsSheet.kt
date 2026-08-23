@@ -276,7 +276,7 @@ fun SettingsScreen(
         }
 
         SettingsGroup(header = "Playback") {
-            // Smart Fade decides its own length from each pair of tracks —
+            // Automix decides its own length from each pair of tracks —
             // tempo, key, structure — so it replaces the manual slider rather
             // than needing it set to anything first.
             if (!smartFade) {
@@ -294,7 +294,7 @@ fun SettingsScreen(
             }
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
-                title = "Smart Fade",
+                title = "Automix",
                 subtitle = if (smartFade) {
                     "Blends every transition, timed automatically from each track"
                 } else {

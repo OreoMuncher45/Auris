@@ -54,7 +54,7 @@ fun ThinSlider(
      */
     mixing: Boolean = false,
     /**
-     * Span of the track, as fractions of its duration, that the next Smart Fade
+     * Span of the track, as fractions of its duration, that the next Automix
      * transition is planned to occupy. Drawn as a brighter stretch of the
      * unplayed bar so the mix is visible before it arrives.
      */
@@ -133,7 +133,7 @@ fun ThinSlider(
                 }
             }
             val filled = size.width * value.coerceIn(0f, 1f)
-            if (filled > 0f) {
+            if (filled > 0f && !mixing) {
                 drawRoundRect(
                     color = activeColor,
                     size = Size(filled.coerceAtLeast(size.height), size.height),
@@ -183,7 +183,7 @@ private fun MixSheen(height: Dp) {
         animationSpec = infiniteRepeatable(
             // Long enough to read as a sweep rather than a flicker, and slow
             // enough not to compete with the music for attention.
-            animation = tween(durationMillis = 1_700, easing = LinearEasing),
+            animation = tween(durationMillis = 500, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "mixSheenPhase",
@@ -201,7 +201,7 @@ private fun MixSheen(height: Dp) {
             brush = Brush.linearGradient(
                 colorStops = arrayOf(
                     0f to Color.Transparent,
-                    0.5f to Color.White.copy(alpha = 0.6f),
+                    0.5f to Color.White.copy(alpha = 0.95f),
                     1f to Color.Transparent,
                 ),
                 start = Offset(centre - band / 2f, 0f),
@@ -213,4 +213,4 @@ private fun MixSheen(height: Dp) {
 }
 
 /** Width of the travelling highlight, as a fraction of the whole bar. */
-private const val BAND_FRACTION = 0.22f
+private const val BAND_FRACTION = 0.7f

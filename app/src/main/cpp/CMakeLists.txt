@@ -1,4 +1,4 @@
-# Native analysis front end for Smart Fade.
+# Native analysis front end for Automix.
 #
 # Phase 1: whole-track DSP analysis (tempo/key/energy/structure via
 # autocorrelation, no ML model). Phase 2 adds the log-mel front end the

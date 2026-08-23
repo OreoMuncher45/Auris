@@ -12,7 +12,7 @@ import kotlin.math.min
 import kotlin.math.tan
 
 /**
- * The filter a track rides through a Smart Fade transition: a low-pass that can
+ * The filter a track rides through a Automix transition: a low-pass that can
  * close over the outgoing track, and a high-pass that can lift the low end out
  * of one side of a blend.
  *

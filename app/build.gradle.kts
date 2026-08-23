@@ -48,7 +48,7 @@ android {
         // Lossless/HQ module index URL — empty string if not configured.
         buildConfigField("String", "MODULE_INDEX_URL", "\"${moduleIndexUrl}\"")
 
-        // Smart Fade's DSP analyzer (native/analyzer). 64-bit only: minSdk 26
+        // Automix's DSP analyzer (native/analyzer). 64-bit only: minSdk 26
         // already postdates the 64-bit requirement, so a 32-bit slice would
         // double the native payload for devices that do not exist in the
         // install base.
@@ -185,7 +185,7 @@ dependencies {
     // ---- JS module execution: QuickJS VM for Convx-style source plugins ----
     implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
 
-    // ---- Smart Fade: on-device beat/downbeat model (Beat This!, MIT-licensed) ----
+    // ---- Automix: on-device beat/downbeat model (Beat This!, MIT-licensed) ----
     // The full android artifact, not onnxruntime-mobile: mobile only loads .ort
     // files, which would put an offline conversion step between the model and
     // the app for a saving that does not matter in a self-distributed APK.
