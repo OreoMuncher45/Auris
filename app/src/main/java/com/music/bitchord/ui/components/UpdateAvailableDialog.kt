@@ -119,7 +119,7 @@ fun UpdateAvailableDialog(
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    text = "BitChord $version is available to download.",
+                    text = "bitchord $version is available to download.",
                     modifier = Modifier.padding(top = 4.dp),
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontSize = 13.sp,

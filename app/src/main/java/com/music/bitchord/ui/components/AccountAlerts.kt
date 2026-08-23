@@ -3,19 +3,26 @@ package com.music.bitchord.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -151,6 +159,231 @@ fun LastfmLoginAlert(
         )
         AlertRule()
         AlertAction(label = "Cancel", emphasised = false, onClick = onDismiss, enabled = !loading)
+    }
+}
+
+/**
+ * Manual token entry, for when the in-app login can't run — a WebView an OEM
+ * has broken, or a token lifted from a desktop client.
+ *
+ * [error] carries back what the verification attempt said, because a token that
+ * was mistyped or has expired is indistinguishable from one that works until
+ * Discord is asked about it.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun DiscordTokenAlert(
+    hazeState: HazeState,
+    tokenInput: String,
+    onTokenInputChange: (String) -> Unit,
+    error: String?,
+    loading: Boolean,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "Discord Token",
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = error
+                    ?: "Paste your Discord account token. It stays on this device, " +
+                    "encrypted, and is only ever sent to Discord.",
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            AlertTextField(
+                value = tokenInput,
+                onValueChange = onTokenInputChange,
+                placeholder = "Token",
+                enabled = !loading,
+                isPassword = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (tokenInput.isNotBlank()) onSave() }),
+            )
+        }
+        AlertRule()
+        AlertAction(
+            label = if (loading) "Checking..." else "Save",
+            emphasised = true,
+            onClick = onSave,
+            enabled = !loading && tokenInput.isNotBlank(),
+        )
+        AlertRule()
+        AlertAction(label = "Cancel", emphasised = false, onClick = onDismiss, enabled = !loading)
+    }
+}
+
+/**
+ * One free-text presence field — an activity name, a button label.
+ *
+ * [message] is where the caller explains the field, including which `{...}`
+ * variables it accepts, since that is the only place a user would find out.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun TextValueAlert(
+    hazeState: HazeState,
+    title: String,
+    message: String,
+    placeholder: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = message,
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            AlertTextField(
+                value = value,
+                onValueChange = onValueChange,
+                placeholder = placeholder,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { onSave() }),
+            )
+        }
+        AlertRule()
+        AlertAction(label = "Save", emphasised = true, onClick = onSave)
+        AlertRule()
+        AlertAction(label = "Cancel", emphasised = false, onClick = onDismiss)
+    }
+}
+
+/**
+ * Single-select list, ticked like [LyricsSourcesDialog] rather than with radio
+ * buttons — same reasoning: a column of Material radios would be the one
+ * Material thing left on an otherwise Apple-shaped alert.
+ *
+ * Picking commits immediately and closes, so there is no Save action to reach
+ * for; Cancel is the only one, and it's the dismiss.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun <T> ChoiceAlert(
+    hazeState: HazeState,
+    title: String,
+    message: String?,
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    detail: (T) -> String? = { null },
+    onSelect: (T) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            if (message != null) {
+                Text(
+                    text = message,
+                    modifier = Modifier.padding(top = 4.dp),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        options.forEach { option ->
+            AlertRule()
+            ChoiceRow(
+                label = label(option),
+                detail = detail(option),
+                checked = option == selected,
+                onClick = { onSelect(option) },
+            )
+        }
+        AlertRule()
+        AlertAction(label = "Cancel", emphasised = false, onClick = onDismiss)
+    }
+}
+
+@Composable
+private fun ChoiceRow(
+    label: String,
+    detail: String?,
+    checked: Boolean,
+    onClick: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = ACTION_HEIGHT)
+            // iOS washes the whole row instead of drawing a ripple inside it.
+            .background(
+                if (pressed) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.09f) else Color.Transparent,
+            )
+            .clickable(
+                indication = null,
+                interactionSource = interactionSource,
+                onClick = onClick,
+            )
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (detail != null) {
+                Text(
+                    text = detail,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp, lineHeight = 15.sp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        if (checked) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = "Selected",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(19.dp),
+            )
+        }
     }
 }
 

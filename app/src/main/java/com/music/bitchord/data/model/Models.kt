@@ -38,6 +38,19 @@ data class Song(
      * that need it — see [com.music.bitchord.playback.toMediaItem].
      */
     val localPath: String? = null,
+    /**
+     * What a non-YouTube source says it can serve this recording at, as one of
+     * `LOSSLESS`, `HIGH` or `LOW` — null for every row that didn't come from
+     * one.
+     *
+     * Carried on the row rather than discovered at stream time because it is
+     * the only thing that distinguishes two catalogues holding the same track,
+     * and the choice between them has to be made *before* either is asked for
+     * a URL. Without it the picker was blind: a Deezer row and a 16-bit FLAC
+     * row looked identical, the FLAC lost a tie-break on artist spelling, and
+     * the track played as a 128kbps MP3.
+     */
+    val sourceQuality: String? = null,
 )
 
 /**
@@ -164,6 +177,26 @@ data class DetailPage(
      * than folded into [songs] where they'd read as the user's own picks.
      */
     val suggestedSongs: List<Song> = emptyList(),
+    /**
+     * Whether this release can be saved to the library and whether it already
+     * is — null when the page doesn't offer it at all. Only ever set for an
+     * album or playlist fetched with a session; see [LibraryState].
+     */
+    val library: LibraryState? = null,
+)
+
+/**
+ * Whether an album or playlist is in the library, and the id that changes that.
+ *
+ * YouTube has no "save" verb for a release: a saved album is a *liked* one, and
+ * what gets liked is the playlist behind the page rather than the browse id the
+ * page was fetched with — an `MPREb…` album is backed by an `OLAK5uy_…`
+ * playlist, and liking the browse id does nothing at all. So the id has to be
+ * read off the page rather than derived from what was asked for.
+ */
+data class LibraryState(
+    val playlistId: String,
+    val saved: Boolean,
 )
 
 /** Parsed artist landing page. */

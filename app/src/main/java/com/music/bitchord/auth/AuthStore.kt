@@ -2,14 +2,19 @@ package com.music.bitchord.auth
 
 import android.content.Context
 import android.content.SharedPreferences
-import android.util.Log
+import com.music.bitchord.data.DebugLog as Log
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 
 /**
- * Encrypted-at-rest storage for the YouTube Music session cookie.
- * That cookie is the *only* credential this app holds — the Google password
- * is typed into accounts.google.com inside the WebView and never reaches us.
+ * Encrypted-at-rest storage for credentials.
+ *
+ * Two live here: the YouTube Music session cookie, and — if the user turns on
+ * the Discord integration — that account's own bearer token. Neither is a
+ * password: the Google one is typed into accounts.google.com inside a WebView,
+ * and the Discord one is read out of a completed login session. But both grant
+ * full access to their account, so they don't go in the plain prefs the
+ * scrobbler tokens use.
  *
  * Keystore init fails on a handful of OEM builds, so it degrades to plain
  * prefs rather than crashing on launch.
@@ -38,9 +43,16 @@ class AuthStore(context: Context) {
     val isSignedIn: Boolean
         get() = cookie?.contains("SAPISID") == true
 
-    fun signOut() = prefs.edit().clear().apply()
+    /** The Discord account's bearer token. See DiscordRPC for why a user token. */
+    var discordToken: String?
+        get() = prefs.getString(KEY_DISCORD_TOKEN, null)
+        set(value) = prefs.edit().putString(KEY_DISCORD_TOKEN, value).apply()
+
+    /** Signs out of YouTube Music only — the Discord login is a separate account. */
+    fun signOut() = prefs.edit().remove(KEY_COOKIE).apply()
 
     private companion object {
         const val KEY_COOKIE = "cookie"
+        const val KEY_DISCORD_TOKEN = "discord_token"
     }
 }

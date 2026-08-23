@@ -1,6 +1,6 @@
 package com.music.bitchord.data.innertube
 
-import android.util.Log
+import com.music.bitchord.data.DebugLog as Log
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
@@ -238,6 +238,20 @@ object Innertube {
         }
 
     /**
+     * The typeahead list YouTube Music's own search box shows for a
+     * half-typed query — query strings, not results.
+     *
+     * A different endpoint from [search] rather than a cheap mode of it, and
+     * far cheaper than one: the response is a few hundred bytes of text with
+     * no shelves, thumbnails or playback endpoints in it, which is what makes
+     * it affordable per keystroke where a search is not.
+     */
+    suspend fun searchSuggestions(input: String): JsonObject =
+        postMusic("music/get_search_suggestions") {
+            put("input", input)
+        }
+
+    /**
      * The `player` response for [videoId] as seen by [client] — the audio
      * formats and whatever it takes to unlock them.
      *
@@ -410,6 +424,33 @@ object Innertube {
         // one line is the difference between "the call was made" and "the
         // call did something".
         Log.d(TAG, "$endpoint $videoId -> ${findString(response, "text") ?: "no confirmation"}")
+    }
+
+    /**
+     * Saves an album or playlist to the library, or takes it back out.
+     *
+     * The same endpoints [rate] uses, aimed at a playlist instead of a video:
+     * YouTube has no separate "save" verb for a release — a saved album *is* a
+     * liked one, which is why the Library tab's Albums and Playlists shelves and
+     * the account's likes are the same list. [playlistId] is the id the page
+     * itself named, not its browse id; see
+     * [com.music.bitchord.data.model.LibraryState].
+     *
+     * No dislike half, unlike [rate]: nothing in YouTube Music reads a disliked
+     * release, so the only two states worth expressing are saved and not.
+     */
+    suspend fun ratePlaylist(playlistId: String, saved: Boolean) {
+        requireSession()
+        val endpoint = if (saved) "like/like" else "like/removelike"
+        val response = postMusic(endpoint) {
+            putJsonObject("target") { put("playlistId", playlistId) }
+        }
+        // As in [rate]: a refusal arrives as HTTP 200 with an error in the body.
+        response["error"]?.let { error ->
+            val message = error.jsonObject["message"]?.jsonPrimitive?.contentOrNull
+            error("YouTube Music refused the change: ${message ?: error}")
+        }
+        Log.d(TAG, "$endpoint $playlistId -> ${findString(response, "text") ?: "no confirmation"}")
     }
 
     /**

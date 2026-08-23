@@ -1,4 +1,4 @@
 <resources>
-    <string name="app_name">BitChord</string>
+    <string name="app_name">bitchord</string>
     <string name="playback_channel_name">Now playing</string>
 </resources>

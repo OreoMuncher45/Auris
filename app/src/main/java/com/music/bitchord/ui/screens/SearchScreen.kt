@@ -2,6 +2,7 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,9 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -28,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -76,7 +78,9 @@ fun SearchScreen(
     onSongSwipe: (Song) -> Unit,
     onBrowseClick: (BrowseItem) -> Unit,
     history: List<String>,
+    suggestions: List<String>,
     onSubmit: () -> Unit,
+    onSuggestionClick: (String) -> Unit,
     onHistoryClick: (String) -> Unit,
     onHistoryRemove: (String) -> Unit,
     onHistoryClear: () -> Unit,
@@ -84,83 +88,168 @@ fun SearchScreen(
     contentPadding: PaddingValues,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     // Re-tapping the search tab from the nav bar increments focusTrigger;
     // respond by focusing the field and opening the keyboard.
     LaunchedEffect(focusTrigger) {
         if (focusTrigger > 0) focusRequester.requestFocus()
     }
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxSize(),
-        contentPadding = contentPadding,
-    ) {
-        item {
+    // A non-empty suggestion list means the field is mid-edit — see
+    // MainViewModel.suggestions. Nothing below it is worth showing while it is
+    // up: the results are for whatever was searched before this edit began,
+    // and so are the filter tabs above them.
+    val suggesting = suggestions.isNotEmpty()
+    Column(modifier = modifier.fillMaxSize()) {
+        // Search field and filter tabs stay fixed at the top, outside the
+        // scrolling list, so they're always reachable rather than scrolling
+        // away with the results or recent searches beneath them.
+        Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
             SearchField(
                 query = query,
                 onQueryChange = onQueryChange,
                 onSubmit = onSubmit,
                 focusRequester = focusRequester,
-                modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 8.dp),
+                modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp),
             )
-        }
-        // The filters only mean something once there is a result set to narrow;
-        // they stay up for an empty or failed search too, or picking a filter
-        // that finds nothing would take away the control needed to leave it.
-        if (results != null) {
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.padding(bottom = 6.dp),
-                ) {
-                    items(SearchFilter.entries) { entry ->
-                        FilterPill(
-                            label = entry.label,
-                            selected = entry == filter,
-                            onClick = { onFilterChange(entry) },
-                        )
-                    }
-                }
+            // The filters only mean something once there is a result set to narrow;
+            // they stay up for an empty or failed search too, or picking a filter
+            // that finds nothing would take away the control needed to leave it.
+            if (results != null && !suggesting) {
+                SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
             }
         }
 
-        when (results) {
-            null -> if (history.isEmpty()) {
-                item { MessageState("Search millions of songs on YouTube Music.") }
-            } else {
-                recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
-            }
-            is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
-            is UiState.Error -> item { MessageState(results.message) }
-            is UiState.Success -> {
-                // Tapping a track plays the tracks around it, not the browse rows.
-                val tracks = results.data
-                    .filterIsInstance<SearchResult.Track>()
-                    .map { it.song }
-                itemsIndexed(results.data) { index, row ->
-                    when (row) {
-                        is SearchResult.Track -> SongRow(
-                            song = row.song,
-                            onClick = {
-                                onSongClick(tracks, tracks.indexOf(row.song).coerceAtLeast(0))
-                            },
-                            onLongPress = { onSongLongPress(row.song) },
-                            onSwipeToQueue = { onSongSwipe(row.song) },
-                        )
-                        is SearchResult.Browse -> BrowseRow(
-                            item = row.item,
-                            onClick = { onBrowseClick(row.item) },
-                        )
-                    }
-                    if (index < results.data.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
-                            thickness = 0.5.dp,
-                            color = MaterialTheme.colorScheme.outline,
-                        )
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+        ) {
+            when {
+                suggesting -> searchSuggestions(
+                    suggestions = suggestions,
+                    // Picking one is done typing, so the keyboard comes down
+                    // with it and the results get the whole screen.
+                    onClick = { term ->
+                        onSuggestionClick(term)
+                        focusManager.clearFocus()
+                    },
+                    onFill = onQueryChange,
+                )
+                results == null -> if (history.isEmpty()) {
+                    item { MessageState("Search millions of songs on YouTube Music.") }
+                } else {
+                    recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
+                }
+                results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
+                results is UiState.Error -> item { MessageState(results.message) }
+                results is UiState.Success -> {
+                    // Tapping a track plays the tracks around it, not the browse rows.
+                    val tracks = results.data
+                        .filterIsInstance<SearchResult.Track>()
+                        .map { it.song }
+                    itemsIndexed(results.data) { index, row ->
+                        when (row) {
+                            is SearchResult.Track -> SongRow(
+                                song = row.song,
+                                onClick = {
+                                    onSongClick(tracks, tracks.indexOf(row.song).coerceAtLeast(0))
+                                },
+                                onLongPress = { onSongLongPress(row.song) },
+                                onSwipeToQueue = { onSongSwipe(row.song) },
+                            )
+                            is SearchResult.Browse -> BrowseRow(
+                                item = row.item,
+                                onClick = { onBrowseClick(row.item) },
+                            )
+                        }
+                        if (index < results.data.lastIndex) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
+                                thickness = 0.5.dp,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * What YouTube would complete the half-typed query to, in place of the results
+ * while it is being typed.
+ *
+ * The first row is the text as typed, put there by the view model rather than
+ * taken from YouTube's answer, so running exactly what was asked for is always
+ * the nearest row to the keyboard rather than something the thumb has to aim
+ * past.
+ */
+private fun LazyListScope.searchSuggestions(
+    suggestions: List<String>,
+    onClick: (String) -> Unit,
+    onFill: (String) -> Unit,
+) {
+    itemsIndexed(suggestions, key = { _, term -> "suggest:$term" }) { index, term ->
+        SuggestionRow(
+            term = term,
+            // The lead row *is* what's in the field, so there is nothing to
+            // fill it with and the arrow would be a no-op button.
+            onFill = if (index == 0) null else ({ onFill(term) }),
+            onClick = { onClick(term) },
+        )
+    }
+}
+
+/**
+ * One typeahead row: tap the text to search it, or the arrow to put it in the
+ * field and carry on typing — the pair YouTube, Google and every mobile
+ * keyboard's own suggestion strip use, and the reason a longer completion
+ * isn't a dead end when it's only nearly right.
+ */
+@Composable
+private fun SuggestionRow(term: String, onFill: (() -> Unit)?, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = PAGE_GUTTER, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(16.dp))
+        Text(
+            text = term,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (onFill != null) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onFill),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.NorthWest,
+                    contentDescription = "Edit \"$term\"",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        } else {
+            // Keeps the text column the same width as the rows below, so the
+            // lead row doesn't sit a touch wider than its completions.
+            Spacer(Modifier.width(40.dp))
         }
     }
 }
@@ -294,33 +383,47 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit) {
     }
 }
 
-/** Fully rounded pill; Material's FilterChip can't be padded this tightly. */
+/**
+ * Filter pills rather than a tab row: squarish rounded rectangles, the selected
+ * one inverted. They scroll horizontally so a long label set never squeezes the
+ * text, and the gutter padding sits inside the scroll so it scrolls with them.
+ */
 @Composable
-private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
+private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter) -> Unit) {
+    Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(percent = 50))
-            .background(
-                if (selected) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.surfaceVariant
-                },
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium,
-            color = if (selected) {
-                MaterialTheme.colorScheme.onPrimary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            },
-        )
+        SearchFilter.entries.forEach { entry ->
+            val selected = entry == filter
+            Box(
+                modifier = Modifier
+                    .clip(FILTER_PILL_SHAPE)
+                    .background(
+                        if (selected) MaterialTheme.colorScheme.onBackground
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                    )
+                    .clickable { onFilterChange(entry) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = entry.label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (selected) MaterialTheme.colorScheme.background
+                    else MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
+
+/** Rounded, but well short of a capsule — the corner reads as a cut, not a curve. */
+private val FILTER_PILL_SHAPE = RoundedCornerShape(12.dp)
 
 @Composable
 private fun SearchField(
@@ -331,22 +434,39 @@ private fun SearchField(
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
+    // Both ways of saying "search this" do the same two things, so they're
+    // written once here rather than twice.
+    val submit = {
+        onSubmit()
+        focusManager.clearFocus()
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             // Fixed height prevents the row from growing when text is entered
             .height(46.dp)
             .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
-            .padding(horizontal = 12.dp),
+            // Asymmetric: the magnifier is a button now and wants a real touch
+            // target, so it's given the room by pulling the field's own start
+            // padding in rather than by pushing the glyph and the text along.
+            .padding(start = 8.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // The search button. It reads as one — a magnifier at the head of a
+        // text field is the search affordance on every platform — and now that
+        // pressing it is the only thing that runs a search, leaving it
+        // decorative would mean the keyboard's own key was the single way in.
         Icon(
             Icons.Rounded.Search,
-            contentDescription = null,
+            contentDescription = "Search",
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(enabled = query.isNotBlank(), onClick = submit)
+                .padding(6.dp),
         )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(4.dp))
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
@@ -364,12 +484,7 @@ private fun SearchField(
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(
-                    onSearch = {
-                        onSubmit()
-                        focusManager.clearFocus()
-                    },
-                ),
+                keyboardActions = KeyboardActions(onSearch = { submit() }),
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester),

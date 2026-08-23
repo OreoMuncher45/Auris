@@ -7,8 +7,10 @@ import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.YtMusicRepository
-import com.music.bitchord.data.lyrics.LrcLib
 import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsRepository
+import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.innertube.StreamResolver
@@ -17,6 +19,7 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
+import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
@@ -29,6 +32,9 @@ import com.music.bitchord.data.settings.SearchHistory
 import android.util.LruCache
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -41,6 +47,8 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import com.music.bitchord.data.sources.SourceKind
+import com.music.bitchord.data.sources.SourceRegistry
 import java.util.concurrent.atomic.AtomicLong
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -80,16 +88,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _filter = MutableStateFlow(SearchFilter.SONGS)
     val filter: StateFlow<SearchFilter> = _filter.asStateFlow()
 
+    /**
+     * What the search page offers while a query is being typed, led by the
+     * query itself.
+     *
+     * Non-empty *is* the signal that the field is mid-edit, so the screen
+     * needs no second flag: these rows are shown in place of the results
+     * whenever there are any, and cleared the moment a search is actually run
+     * — see [submitSearch], [searchFor].
+     *
+     * Element 0 is always the raw text as typed. It's put there by the
+     * keystroke itself rather than taken from the response, so the row the
+     * thumb is already heading for is correct before the network answers, and
+     * stays correct if it never does — YouTube's list never contains the
+     * half-typed text, only completions of it.
+     */
+    private val _suggestions = MutableStateFlow<List<String>>(emptyList())
+    val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
+
     // The search pipeline's own state. Declared here, above [init], because
     // that is where the collector is started from and a property declared
     // below it would still be null when it runs. See [startSearchPipeline].
 
     /**
-     * Buffered so a keystroke is never lost, and [BufferOverflow.DROP_OLDEST]
-     * so a fast typist's backlog collapses to the query they ended on rather
-     * than being worked through one at a time.
+     * Buffered so an emission is never lost to a collector that happens to be
+     * mid-search, and [BufferOverflow.DROP_OLDEST] because when two arrive
+     * together the later one is the one meant.
      */
     private val searchRequests = MutableSharedFlow<SearchRequest>(
+        extraBufferCapacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * The same arrangement as [searchRequests], for the typeahead — where the
+     * drop policy earns its keep rather than just being safe: this one really
+     * does take a keystroke each, and a fast typist's backlog should collapse
+     * to the prefix they ended on instead of being worked through a letter at
+     * a time.
+     */
+    private val suggestRequests = MutableSharedFlow<String>(
         extraBufferCapacity = 1,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
@@ -97,20 +135,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val newestRequestId = AtomicLong(0L)
 
     /**
-     * Results of recent searches, so a query typed before is answered without
-     * asking again.
+     * Results of recent searches, so a query searched before is answered
+     * without asking again. That covers the two ways a query is repeated most:
+     * a filter tab, which re-runs the same text against a different tab and
+     * then usually goes back, and a term tapped out of the recent searches.
      *
-     * Its real work is [prefixMatch]: typing "blinding" runs through five
-     * queries on the way, and each one's results are a good enough answer for
-     * the next keystroke to be worth showing while the real one is in flight.
-     * That is the difference between a list that refines as you type and one
-     * that blanks to a spinner on every letter.
+     * Its other half is [prefixMatch], which is what the typeahead makes worth
+     * keeping: picking "coldplay yellow" off a list is normally preceded by
+     * having searched "coldplay", and those results are close enough to leave
+     * up for the moment the narrower one takes rather than blanking the page
+     * to a spinner.
      */
     private val searchCache = LruCache<String, List<SearchResult>>(SEARCH_CACHE_ENTRIES)
 
     /** Synced lyrics for whatever is playing; null while unknown or absent. */
     private val _lyrics = MutableStateFlow<List<LyricLine>?>(null)
     val lyrics: StateFlow<List<LyricLine>?> = _lyrics.asStateFlow()
+
+    /** Which of the four databases [lyrics] came from, for the panel's credit. */
+    private val _lyricsSource = MutableStateFlow<LyricsSource?>(null)
+    val lyricsSource: StateFlow<LyricsSource?> = _lyricsSource.asStateFlow()
 
     /**
      * Whether the lookup for the current track has finished. [lyrics] alone
@@ -122,22 +166,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lyricsChecked: StateFlow<Boolean> = _lyricsChecked.asStateFlow()
 
     private var lyricsJob: Job? = null
-    private var lyricsFor: String? = null
+
+    /**
+     * What the loaded lyrics are for. Both the track *and* the settings that
+     * chose them, so switching a source on or off re-runs the lookup rather
+     * than leaving the last answer sitting on a player that would now find a
+     * different one.
+     */
+    private var lyricsFor: Pair<String, Set<LyricsSource>>? = null
 
     /** Called as the playing track changes; cheap no-op when already loaded. */
-    fun loadLyrics(videoId: String, title: String, artist: String, durationMs: Long) {
-        if (lyricsFor == videoId) return
-        lyricsFor = videoId
+    fun loadLyrics(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+        album: String? = null,
+    ) {
+        val sources = if (AppSettings.syncedLyrics.value) {
+            AppSettings.lyricsSources.value
+        } else {
+            emptySet()
+        }
+        val key = videoId to sources
+        if (lyricsFor == key) return
+        lyricsFor = key
         _lyrics.value = null
-        _lyricsChecked.value = false
+        _lyricsSource.value = null
         lyricsJob?.cancel()
+        if (sources.isEmpty()) {
+            // Switched off, or every source unticked. Nothing to look up, and
+            // nothing to say about it — the player drops the lyric strip
+            // rather than reporting a track with no lyrics.
+            _lyricsChecked.value = true
+            return
+        }
+        _lyricsChecked.value = false
         if (durationMs <= 0L) {
             // Duration arrives a beat after the track does; wait for it.
             lyricsFor = null
             return
         }
         lyricsJob = viewModelScope.launch {
-            _lyrics.value = LrcLib.lyrics(title, artist, durationMs)
+            val found =
+                LyricsRepository.lyrics(videoId, title, artist, durationMs, album, sources)
+            _lyrics.value = found?.lines
+            _lyricsSource.value = found?.source
             _lyricsChecked.value = true
         }
     }
@@ -288,6 +362,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             LikeStatus.DISLIKE
         },
     )
+
+    /**
+     * Saves the album or playlist [browseId] to the library, or takes it out.
+     *
+     * Written to the screen first and rolled back if YouTube refuses, for the
+     * same reason [setLike] is: it is one tap on a page the user is looking at,
+     * and a control that waits on a round trip before it changes reads as a tap
+     * that missed.
+     *
+     * A page with no [DetailPage.library] is one YouTube never offered to save
+     * — a local page, an auto-playlist, a generated mix — and the UI has no
+     * control on it to have been tapped, so this is a no-op rather than a guess.
+     */
+    fun toggleLibrary(browseId: String) {
+        if (!requireSignIn()) return
+        val current = _detailStack.value.firstOrNull { it.browseId == browseId }?.library ?: return
+        val target = !current.saved
+        setSavedOnPage(browseId, target)
+        viewModelScope.launch {
+            if (YtMusicRepository.setSaved(current.playlistId, target).isSuccess) {
+                // The Library tab's Albums/Playlists shelf is now out of date.
+                libraryStale = true
+            } else {
+                setSavedOnPage(browseId, current.saved)
+            }
+        }
+    }
+
+    /**
+     * Restates whether a page is saved. By id rather than by index: the user may
+     * have pushed or popped pages while the write was in flight.
+     */
+    private fun setSavedOnPage(browseId: String, saved: Boolean) {
+        _detailStack.value = _detailStack.value.map { page ->
+            val library = page.library
+            if (page.browseId != browseId || library == null) {
+                page
+            } else {
+                page.copy(library = library.copy(saved = saved))
+            }
+        }
+    }
 
     /**
      * The open track menu's account state, or null while it is still being
@@ -517,6 +633,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         startSearchPipeline()
+        startSuggestPipeline()
         loadHome()
         loadExplore()
         if (_signedIn.value) {
@@ -669,8 +786,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val searchHistory: StateFlow<List<String>> = SearchHistory.recent
 
     fun onQueryChange(value: String) {
+        val previous = _query.value
         _query.value = value
-        runSearch()
+        if (value.isBlank()) {
+            // Emptying the field is how the recent searches are got back to,
+            // so it takes down the suggestions and the results together.
+            // Nothing in flight can still be waiting to overwrite the latter:
+            // the id it would be checked against has already moved past it.
+            newestRequestId.incrementAndGet()
+            _results.value = null
+            _suggestions.value = emptyList()
+            return
+        }
+        // The previous keystroke's completions are left up beneath the new
+        // lead row while the fresh ones are fetched — the same reasoning as
+        // [prefixMatch]: they were right a letter ago, and a list that
+        // collapses to one row on every letter is what makes a typeahead feel
+        // broken. Text that isn't a continuation of what they were for (the
+        // whole field replaced at once, say) drops them instead of showing
+        // completions of a query that's gone.
+        val stale = if (value.startsWith(previous, true) || previous.startsWith(value, true)) {
+            _suggestions.value.drop(1)
+        } else {
+            emptyList()
+        }
+        _suggestions.value = listOf(value) + stale.filterNot { it.equals(value, true) }
+        suggestRequests.tryEmit(value)
     }
 
     /**
@@ -681,9 +822,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun recordSearch() = SearchHistory.record(_query.value)
 
-    /** Re-runs a term picked out of the history, and floats it back to the top. */
+    /**
+     * The search button — the keyboard's search action, or the magnifier in
+     * the field. The only thing that runs a search for text the user typed:
+     * keystrokes themselves ask for suggestions and nothing more, so a query
+     * is fetched once, when they say it's finished, instead of once per
+     * prefix on the way to it.
+     */
+    fun submitSearch() {
+        recordSearch()
+        _suggestions.value = emptyList()
+        runSearch()
+    }
+
+    /**
+     * Runs a term the user picked out of a list rather than typed — a recent
+     * search, or one of [suggestions] — and floats it to the top of the
+     * history. Picking is as deliberate as submitting, so it searches on the
+     * spot.
+     */
     fun searchFor(term: String) {
         _query.value = term
+        _suggestions.value = emptyList()
         SearchHistory.record(term)
         runSearch()
     }
@@ -699,18 +859,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Every keystroke, as a request the pipeline below decides what to do with.
+     * A search asked for, as a request the pipeline below decides what to do
+     * with.
      *
      * [requestId] is what makes a late answer harmless: a response is only
      * written to the screen if its id is still the newest one asked for.
      */
-    private data class SearchRequest(val query: String, val filter: SearchFilter, val requestId: Long)
+    private data class SearchRequest(
+        val query: String,
+        val filter: SearchFilter,
+        val requestId: Long,
+    )
 
     private fun cacheKey(query: String, filter: SearchFilter) = "${filter.name}:$query"
 
     /**
-     * The results of the longest earlier query this one starts with — what was
-     * on screen a keystroke ago, near enough to leave up meanwhile.
+     * The results of the longest earlier query this one starts with — near
+     * enough to leave up while the narrower search runs.
      */
     private fun prefixMatch(query: String, filter: SearchFilter): List<SearchResult>? {
         val prefix = "${filter.name}:"
@@ -737,19 +902,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * The search pipeline, started once and left running for the lifetime of
      * the view model.
      *
-     * The point of it being one long-lived collector is that a keystroke no
-     * longer cancels the request before it. Cancelling a call mid-flight tears
-     * down its socket, and on a pooled HTTP client that is felt by whatever
-     * picks that connection up next — which is how typing a word could end in
-     * "Software caused connection abort" for a request that was never itself
-     * in any trouble. [debounce] collapses a burst of keystrokes into one
-     * query before any request is made, and [collectLatest] only abandons a
-     * search once a genuinely newer one has survived that window.
+     * The point of it being one long-lived collector is that a new search no
+     * longer cancels the request before it out of a fresh coroutine.
+     * Cancelling a call mid-flight tears down its socket, and on a pooled HTTP
+     * client that is felt by whatever picks that connection up next — which is
+     * how one search could end in "Software caused connection abort" for a
+     * request that was never itself in any trouble.
+     *
+     * There is no debounce here any more, and nothing to absorb: a search is
+     * only ever asked for by a deliberate act — the search button, a
+     * suggestion or history row, a filter tab — so the request that arrives is
+     * already the one the user meant, and making them wait out a timer for it
+     * would be a delay with nothing behind it. Typing asks
+     * [startSuggestPipeline] for completions instead and leaves the results
+     * alone.
      */
-    @OptIn(FlowPreview::class)
     private fun startSearchPipeline() = viewModelScope.launch {
         searchRequests
-            .debounce(SEARCH_DEBOUNCE_MS)
             .collectLatest { request ->
                 val key = cacheKey(request.query, request.filter)
                 // Something to look at immediately: the exact answer if this
@@ -760,23 +929,116 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _results.value = cached?.let { UiState.Success(it) } ?: UiState.Loading
                 if (exact != null) return@collectLatest
 
+                // Search is YouTube's alone. A module is a *substitution*
+                // layer, not a catalogue to browse: it never has cover art,
+                // radio, related tracks or an album page, so its rows arrived
+                // in the results list looking like YouTube's and then behaved
+                // nothing like them. Every track found here takes the ordinary
+                // YouTube path and is handed to the module at playback time —
+                // see [SourceResolver.substituteForYouTube] — which upgrades
+                // the ones it holds without any of them having to be a
+                // separate row to pick between.
                 val result = YtMusicRepository.search(request.query, request.filter)
-                // A search the user has already typed past shouldn't land on
-                // screen, whether it succeeded or failed.
+                // A search that has been superseded shouldn't land on screen,
+                // whether it succeeded or failed.
                 if (request.requestId != newestRequestId.get()) return@collectLatest
                 _results.value = result.fold(
-                    onSuccess = { rows ->
-                        if (rows.isEmpty()) {
-                            UiState.Error("No results")
-                        } else {
-                            searchCache.put(key, rows)
-                            prefetchTopResult(rows)
-                            UiState.Success(rows)
-                        }
-                    },
-                    onFailure = { UiState.Error(it.friendly()) },
+                    onSuccess = { rows -> published(rows, key) },
+                    onFailure = { failure -> UiState.Error(failure.friendly()) },
                 )
             }
+    }
+
+    /**
+     * The typeahead pipeline, alongside [startSearchPipeline] and for the same
+     * structural reason — one long-lived collector rather than a coroutine per
+     * keystroke, so a lookup the user has typed past doesn't take a pooled
+     * socket down with it.
+     *
+     * This one *does* debounce, and that isn't the timer that was taken off the
+     * search. It's two orders of magnitude shorter, and it's paid for by the
+     * request behind it being a few hundred bytes rather than a full page of
+     * results — a burst of keystrokes shouldn't each cost a round trip, but the
+     * gap has to be short enough that the list is up before the next letter is
+     * typed. Nothing is waiting on it either way: the row the user typed is
+     * already on screen from the keystroke itself.
+     *
+     * A failure is left on the floor. There is no worthwhile way to report
+     * "couldn't suggest anything" in a list of suggestions, and the typed text
+     * is standing there as a working first row regardless.
+     */
+    @OptIn(FlowPreview::class)
+    private fun startSuggestPipeline() = viewModelScope.launch {
+        // Whether a list for [input] is still wanted. False once the field has
+        // moved on: typed further, or searched — which empties [_suggestions],
+        // and a late answer writing to it would reopen the suggestions over
+        // the results the user is by then reading.
+        fun stillWanted(input: String) =
+            _query.value == input && _suggestions.value.isNotEmpty()
+
+        suggestRequests
+            .debounce(SUGGEST_DEBOUNCE_MS)
+            .collectLatest { input ->
+                if (!stillWanted(input)) return@collectLatest
+                val fetched = YtMusicRepository.searchSuggestions(input).getOrNull()
+                    ?: return@collectLatest
+                // Asked again on the way back; the field is live throughout.
+                if (!stillWanted(input)) return@collectLatest
+                _suggestions.value = listOf(input) +
+                    fetched.filterNot { it.equals(input, ignoreCase = true) }
+            }
+    }
+
+    /** Caches and publishes one result list. */
+    private fun published(rows: List<SearchResult>, key: String): UiState<List<SearchResult>> {
+        if (rows.isEmpty()) return UiState.Error("No results")
+        searchCache.put(key, rows)
+        prefetchTopResult(rows)
+        return UiState.Success(rows)
+    }
+
+    /**
+     * The enabled non-YouTube sources, asked at the same time and returned
+     * split at YouTube's own place in the order.
+     *
+     * The split is what makes the Sources screen's ordering visible where it
+     * matters most. A library server ranked above YouTube puts its own copies
+     * at the top of the results — which is the whole point of ranking it there —
+     * and one ranked below appears under them instead.
+     *
+     * Only the Songs filter fans out: albums, artists and playlists are
+     * browse-shaped, and [MusicSource] deliberately answers for tracks only.
+     */
+    private suspend fun sourceResults(
+        query: String,
+        filter: SearchFilter,
+    ): Pair<List<SearchResult>, List<SearchResult>> = coroutineScope {
+        if (filter != SearchFilter.SONGS) return@coroutineScope emptyList<SearchResult>() to emptyList()
+        val active = SourceRegistry.active()
+        val youtubeRank = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
+            .let { if (it < 0) active.size else it }
+
+        val answers = active
+            .filter { it.kind != SourceKind.YOUTUBE }
+            .map { source ->
+                source to async {
+                    // Per-source, so one slow or unreachable server delays the
+                    // results by at most this much rather than for as long as
+                    // its socket takes to give up.
+                    runCatching {
+                        withTimeout(SOURCE_SEARCH_TIMEOUT_MS) { source.search(query, SOURCE_SEARCH_LIMIT) }
+                    }.getOrDefault(emptyList())
+                }
+            }
+
+        val above = mutableListOf<SearchResult>()
+        val below = mutableListOf<SearchResult>()
+        answers.forEach { (source, job) ->
+            val rows = job.await().map { SearchResult.Track(it) }
+            val rank = active.indexOfFirst { it.configId == source.configId }
+            if (rank in 0 until youtubeRank) above += rows else below += rows
+        }
+        above to below
     }
 
     /**
@@ -799,12 +1061,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         /**
-         * Short enough that it reads as instant, long enough that a word typed
-         * at speed is one request rather than one per letter.
+         * How long a keystroke waits before the typeahead is asked about it.
+         *
+         * Not the search's timer — searches aren't on a timer any more. This
+         * one only stops a fast typist spending a round trip per letter, so it
+         * wants to be as short as it can be while still collapsing a burst:
+         * long enough that "cold" isn't four lookups, short enough that the
+         * list is up by the time the thumb has left the key.
          */
-        const val SEARCH_DEBOUNCE_MS = 80L
+        const val SUGGEST_DEBOUNCE_MS = 180L
 
         const val SEARCH_CACHE_ENTRIES = 100
+
+        /**
+         * How long any one source gets to answer a search.
+         *
+         * Short on purpose: these run alongside the YouTube search, and their
+         * only job is to be *there* when it lands. A home server reached over
+         * a VPN that takes eight seconds has effectively not answered, and
+         * holding the whole result list for it would make search feel worse
+         * for the sake of results the user can still get by searching again.
+         */
+        const val SOURCE_SEARCH_TIMEOUT_MS = 4000L
+
+        /** Enough to be worth scrolling, short enough not to bury YouTube's own rows. */
+        const val SOURCE_SEARCH_LIMIT = 12
     }
 
     fun openDetail(
@@ -835,11 +1116,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var more: String? = null
             /** Tracks YouTube offers to round the playlist out — see [DetailPage.suggestedSongs]. */
             var suggested: List<Song> = emptyList()
+            /** Whether this release is already saved — see [DetailPage.library]. */
+            var library: LibraryState? = null
             val state = when {
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Downloads/BitChord")
+                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
                     else UiState.Success(songs)
                 }
                 browseId == "local:all" -> {
@@ -875,6 +1158,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             } else {
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl)
+                                library = page.library
                                 UiState.Success(page.songs.withArtwork(thumbnailUrl))
                             }
                         },
@@ -891,6 +1175,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         thumbnailUrl = artwork ?: it.thumbnailUrl,
                         title = name ?: it.title,
                         suggestedSongs = suggested,
+                        library = library,
                     )
                 } else {
                     it
@@ -908,7 +1193,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val state: UiState<List<Song>> = when (browseId) {
                 "local:downloads" -> {
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Downloads/BitChord")
+                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
                     else UiState.Success(songs)
                 }
                 "local:all" -> {

@@ -37,7 +37,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -65,22 +64,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.SearchFilter
+import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ThemeMode
+import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
+import com.music.bitchord.ui.screens.DiscordDialog
+import com.music.bitchord.ui.screens.DiscordDialogHost
+import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
@@ -103,13 +114,16 @@ import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopFadeBlur
+import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.screens.DetailScreen
+import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.SearchScreen
@@ -145,14 +159,23 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel()) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showNowPlaying by remember { mutableStateOf(false) }
     var showLogin by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
+    var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    // Discord Rich Presence: its own page under Account & integrations, its own
+    // full-screen sign-in, and one slot for whichever of its alerts is open.
+    // The alerts live out here rather than on the page because their scrim has
+    // to cover the tab bar and mini player, which are drawn after it.
+    var showDiscord by remember { mutableStateOf(false) }
+    var showDiscordLogin by remember { mutableStateOf(false) }
+    var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
     // Whether the player's album/artist lookup (below, for the current track)
     // is still in flight — read by the long-press sheet so it can show a
@@ -183,12 +206,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // once-per-launch popup version of the same news. `updateDialogShown`
     // rides out configuration changes on rememberSaveable so a rotation
     // doesn't bring it back — only a fresh launch does.
-    //
-    // Held until Home has settled. The GitHub check almost always returns
-    // first, and an alert thrown over a page of skeletons reads as something
-    // having gone wrong rather than as an aside — quite apart from its glass
-    // having nothing worth frosting yet. Error counts as settled: the page has
-    // stopped moving either way, and the news is still worth delivering.
     var updateDialogShown by rememberSaveable { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
@@ -198,7 +215,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
      * a beat before the popup does — they're one piece of news, and staggering
      * them made the top bar look like it had caught something the app hadn't.
      */
-    val updateNotice = updateAvailable?.takeIf { homeState !is UiState.Loading }
+    val updateNotice = updateAvailable
 
     LaunchedEffect(updateNotice) {
         if (updateNotice != null && !updateDialogShown) {
@@ -214,10 +231,18 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val account by viewModel.account.collectAsStateWithLifecycle()
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
+    val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
+    val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
+    // Local Music has no artwork to wash the bar in, so it renders with a
+    // plain status bar rather than the artwork-driven blur other detail
+    // pages (album/artist/playlist) get. Downloads is the same page, and the
+    // tab row it now carries sits directly under the bar, so it needs the same
+    // treatment — an artwork blur over it would tint the tabs.
+    val isLocalDetail = detail?.browseId?.startsWith("local:") == true
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
@@ -226,7 +251,23 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // selected. A pushed album/artist page (from the player, search, etc.)
     // should surface above it rather than being hidden behind it.
     LaunchedEffect(detail) { if (detail != null) showSettings = false }
-    LaunchedEffect(showSettings) { if (!showSettings) showAccountScrobbling = false }
+    LaunchedEffect(showSettings) {
+        if (!showSettings) {
+            showAccountScrobbling = false
+        }
+    }
+
+    // The Downloads page is a snapshot of the folder, taken when it was opened.
+    // Saving a track or deleting one while it is on screen changes what belongs
+    // on it — and now that the page groups by artist and album, a stale list is
+    // stale counts and a missing row in three places rather than one. So it is
+    // taken again whenever the record of what's on disk changes.
+    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    LaunchedEffect(savedDownloads, detail?.browseId) {
+        if (detail?.browseId == "local:downloads") {
+            viewModel.reloadLocalDetail("local:downloads")
+        }
+    }
 
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
@@ -242,13 +283,17 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // added the moment repeat-all is turned on.
     var autoplaySeed by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(autoplay, player.queueIndex, player.queue.size, player.song?.videoId, player.repeatMode) {
-        val current = player.song?.videoId
-        if (!autoplay || current == null) return@LaunchedEffect
+        val song = player.song
+        val current = song?.videoId
+        if (!autoplay || song == null || current == null) return@LaunchedEffect
         if (player.repeatMode == Player.REPEAT_MODE_ALL) return@LaunchedEffect
         if (player.queueIndex < player.queue.lastIndex) return@LaunchedEffect
         if (autoplaySeed == current) return@LaunchedEffect
         autoplaySeed = current
-        YtMusicRepository.radio(current).onSuccess { related ->
+        // Radio is YouTube's, and only YouTube's — a module track's id means
+        // nothing to it. See [youtubeSeedFor].
+        val seed = youtubeSeedFor(song) ?: return@LaunchedEffect
+        YtMusicRepository.radio(seed).onSuccess { related ->
             val extra = QueueBuilder.extend(player.queue, related, RADIO_BATCH)
             if (extra.isNotEmpty()) {
                 // Swapped for the catalogue audio track before it ever
@@ -264,8 +309,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
-    LaunchedEffect(player.song?.videoId, player.durationMs) {
-        player.song?.let { viewModel.loadLyrics(it.videoId, it.title, it.artist, player.durationMs) }
+    // Keyed on the lyric settings too, so turning a source on or off applies to
+    // the track already playing rather than only the next one.
+    val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
+    val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
+    LaunchedEffect(player.song?.videoId, player.durationMs, syncedLyricsEnabled, lyricsSources) {
+        player.song?.let {
+            viewModel.loadLyrics(it.videoId, it.title, it.artist, player.durationMs, it.albumName)
+        }
     }
 
     val homeListState = rememberLazyListState()
@@ -395,7 +446,9 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             autoplaySeed = resolved.videoId
             controller?.playSongs(listOf(resolved), 0)
             showNowPlaying = true
-            YtMusicRepository.radio(resolved.videoId).onSuccess { related ->
+            // Radio is YouTube's, and only YouTube's — see [youtubeSeedFor].
+            val seed = youtubeSeedFor(resolved) ?: return@launch
+            YtMusicRepository.radio(seed).onSuccess { related ->
                 // The user may have moved on while the mix was loading.
                 if (controller?.currentMediaItem?.mediaId != resolved.videoId) return@onSuccess
                 val extra = QueueBuilder.extend(listOf(resolved), related, RADIO_BATCH)
@@ -431,10 +484,13 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             }
         }
     }
+    val onSongSwipe: (Song) -> Unit = { song ->
+        if (AppSettings.swipeToPlayNext.value) playNext(song) else addToQueue(song)
+    }
 
     // ---- Downloads ----
     // Two permissions, and never both on one device: writing to the shared
-    // Downloads folder needs storage access below API 29 and none at all from
+    // Music folder needs storage access below API 29 and none at all from
     // 29 on, where MediaStore grants an app its own rows; notifications are
     // only asked for from API 33. So the branches below are mutually exclusive
     // by SDK level, and nothing here can stack two dialogs on each other.
@@ -451,7 +507,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             songs.isEmpty() -> Unit
             granted -> songs.forEach { Downloads.enqueue(context, it) }
             // The one case where refusing is fatal: below API 29 there is no
-            // other way to reach the Downloads folder.
+            // other way to reach the Music folder.
             else -> Toast
                 .makeText(context, "Storage access is needed to save songs", Toast.LENGTH_SHORT)
                 .show()
@@ -532,7 +588,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling) { viewModel.closeDetail() }
-        BackHandler(enabled = showAccountScrobbling) {
+        BackHandler(enabled = showDiscord) {
+            showDiscord = false
+        }
+        BackHandler(enabled = showAccountScrobbling && !showDiscord) {
             showAccountScrobbling = false
         }
         // One back step out of Settings, or out of any tab but Home, lands on
@@ -548,9 +607,11 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
+        BackHandler(enabled = discordDialog != null) { discordDialog = null }
 
         AnimatedContent(
             targetState = when {
+                showDiscord -> "discord"
                 showAccountScrobbling -> "account_scrobbling"
                 showSettings -> "settings"
                 detail != null -> detail.browseId
@@ -560,8 +621,19 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             modifier = Modifier.hazeSource(hazeState),
             label = "content",
         ) { key ->
-            val page = detailStack.lastOrNull()?.takeIf { it.browseId == key && key != "settings" && key != "account_scrobbling" }
-            if (key == "account_scrobbling") {
+            val page = detailStack.lastOrNull()?.takeIf {
+                it.browseId == key && key != "settings" && key != "account_scrobbling" && key != "discord"
+            }
+            if (key == "discord") {
+                DiscordScreen(
+                    song = player.song,
+                    positionMs = player.positionMs,
+                    durationMs = player.durationMs,
+                    onOpenLogin = { showDiscordLogin = true },
+                    onOpenDialog = { discordDialog = it },
+                    contentPadding = listPadding,
+                )
+            } else if (key == "account_scrobbling") {
                 AccountAndScrobblingScreen(
                     signedIn = signedIn,
                     account = account,
@@ -573,6 +645,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     onSignOut = { viewModel.signOut() },
                     onOpenListenBrainzLogin = { showListenBrainzLogin = true },
                     onOpenLastfmLogin = { showLastfmLogin = true },
+                    onOpenDiscord = { showDiscord = true },
                     contentPadding = listPadding,
                 )
             } else if (key == "settings") {
@@ -585,15 +658,50 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     },
                     onSignOut = { viewModel.signOut() },
                     onAccountScrobbling = { showAccountScrobbling = true },
+                    onLyricsSources = { showLyricsSources = true },
+                    contentPadding = listPadding,
+                )
+            } else if (page != null && page.browseId.startsWith("local:")) {
+                // Local Music and Downloads — both the tabbed Songs / Artists /
+                // Albums view. Two folders of tracks already on the device, so
+                // there is nothing to tell them apart on screen beyond what is
+                // in them and what to say when that is nothing.
+                val localState = page.songs
+                val localSongs = (localState as? com.music.bitchord.data.model.UiState.Success)
+                    ?.data.orEmpty()
+                LocalMusicScreen(
+                    songs = localSongs,
+                    onSongClick = play,
+                    onSongLongPress = { songActions = it },
+                    onSongSwipe = onSongSwipe,
+                    onShuffle = { songs ->
+                        QueueShuffle.enableForNextQueue()
+                        play(songs, songs.indices.random())
+                    },
+                    emptyMessage = (localState as? com.music.bitchord.data.model.UiState.Error)
+                        ?.message,
                     contentPadding = listPadding,
                 )
             } else if (page != null) {
+                // An album page's rows carry no album name of their own — the
+                // release is billed once, in the header the rows hang under — so
+                // the page title is stamped on as they leave for the download
+                // queue or the track menu. Without it every track saved from an
+                // album arrives in the Downloads folder with nothing to group it
+                // under, and its Albums tab stays empty however much is in it.
+                val withAlbum: (Song) -> Song = { song ->
+                    if (page.type == BrowseType.ALBUM) {
+                        song.copy(albumName = song.albumName ?: page.title)
+                    } else {
+                        song
+                    }
+                }
                 DetailScreen(
                     page = page,
                     listState = detailListState,
                     onSongClick = play,
-                    onSongLongPress = { songActions = it },
-                    onSongSwipe = addToQueue,
+                    onSongLongPress = { songActions = withAlbum(it) },
+                    onSongSwipe = onSongSwipe,
                     onShuffle = { songs ->
                         // Shuffle goes on first so the queue is built shuffled
                         // as it is set — the random pick here only decides
@@ -612,11 +720,19 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             )
                         }
                     },
-                    onDownloadAll = startDownload,
+                    onDownloadAll = { songs -> startDownload(songs.map(withAlbum)) },
                     onArtistClick = { id, name ->
                         viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
                     },
                     onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
+                    // Saving is an account action, so it isn't offered to a
+                    // guest at all — same as the like and add-to-playlist rows
+                    // in the track menu.
+                    onToggleLibrary = if (signedIn) {
+                        { viewModel.toggleLibrary(page.browseId) }
+                    } else {
+                        null
+                    },
                     contentPadding = listPadding,
                 )
             } else when (selectedTab) {
@@ -698,7 +814,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         }
                     },
                     onSongLongPress = { songActions = it },
-                    onSongSwipe = addToQueue,
+                    onSongSwipe = onSongSwipe,
                     onBrowseClick = { item ->
                         viewModel.recordSearch()
                         viewModel.openDetail(
@@ -710,7 +826,12 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         )
                     },
                     history = searchHistory,
-                    onSubmit = viewModel::recordSearch,
+                    suggestions = searchSuggestions,
+                    onSubmit = viewModel::submitSearch,
+                    // A suggestion and a recent search are the same act — a
+                    // term picked out of a list rather than typed — so they run
+                    // through the same path and both land in the history.
+                    onSuggestionClick = viewModel::searchFor,
                     onHistoryClick = viewModel::searchFor,
                     onHistoryRemove = viewModel::removeSearch,
                     onHistoryClear = viewModel::clearSearchHistory,
@@ -757,7 +878,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         // A detail page's artwork runs up under the status bar, so the bar
         // there is a fade rather than a pane — see [TopFadeBlur]. Drawn before
         // the bar so the bar's own content sits on top of it.
-        val isDetailVisible = detail != null && !showSettings && !showAccountScrobbling
+        val isDetailVisible = detail != null && !isLocalDetail && !showSettings && !showAccountScrobbling
         if (isDetailVisible) {
             TopFadeBlur(
                 hazeState = hazeState,
@@ -768,6 +889,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
         FrostedTopBar(
             title = when {
+                showDiscord -> "Discord"
                 showAccountScrobbling -> "Account & scrobbling"
                 showSettings -> "Settings"
                 detail != null -> detail.title
@@ -776,17 +898,18 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                 }
             },
             hazeState = hazeState,
-            ownBackdrop = detail == null,
+            ownBackdrop = detail == null || isLocalDetail,
             // Search has no large in-list header to hand the title back to —
             // the field takes that space — so its bar title is always up.
             scrolled = when {
-                showSettings || showAccountScrobbling -> true
+                showSettings || showAccountScrobbling || showDiscord -> true
                 detail != null -> detailScrolled
                 else -> scrolled || selectedTab == TAB_SEARCH
             },
             refreshing = currentFeed != null && currentFeed in refreshing,
             pullFraction = { currentPull?.distanceFraction ?: 0f },
             onBack = when {
+                showDiscord -> ({ showDiscord = false })
                 showAccountScrobbling -> ({ showAccountScrobbling = false })
                 showSettings -> ({ showSettings = false })
                 detail != null -> ({ viewModel.closeDetail(); Unit })
@@ -809,11 +932,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         }
                     }
                 }
-                if (!showSettings && !showAccountScrobbling) IconButton(onClick = { showSettings = true }) {
-                    Icon(
-                        Icons.Rounded.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onBackground,
+                if (!showSettings && !showAccountScrobbling) {
+                    TopBarAccountButton(
+                        account = account,
+                        onClick = { showSettings = true },
                     )
                 }
             },
@@ -922,7 +1044,47 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     },
                     onNext = { controller?.seekToNextMediaItem() },
                     onPrevious = { controller?.seekToPrevious() },
-                    onSeek = { controller?.seekTo(it) },
+                    onSeekFraction = { fraction ->
+                        controller?.let { player ->
+                            // Read at the moment of the seek, not from the
+                            // polled snapshot the screen draws with: a track
+                            // change updates the current item before it updates
+                            // the duration, so a fraction dropped seconds after
+                            // a transition would otherwise be scaled by the
+                            // previous song's length.
+                            val duration = player.duration
+                            if (duration > 0) {
+                                player.seekTo(
+                                    (fraction * duration).toLong()
+                                        .coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L)),
+                                )
+                            }
+                        }
+                    },
+                    onSeek = { target ->
+                        controller?.let { player ->
+                            // Clamped here rather than at each caller because
+                            // not every caller can clamp. The scrubber's target
+                            // is a fraction of the duration and cannot overrun,
+                            // but a tapped lyric line seeks to a timestamp from
+                            // whichever transcription matched on title, artist
+                            // and duration — and a match against a slightly
+                            // longer master puts every line late, so a tap near
+                            // the end asks for a position past the end of this
+                            // stream. Media3 answers that by clamping to the
+                            // final millisecond, which ends the track and starts
+                            // the next one: tapping the last line of a song
+                            // skipped it.
+                            val duration = player.duration
+                            player.seekTo(
+                                if (duration > 0) {
+                                    target.coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L))
+                                } else {
+                                    target.coerceAtLeast(0L)
+                                },
+                            )
+                        }
+                    },
                     queue = player.queue,
                     queueIndex = player.queueIndex,
                     hasPrevious = player.hasPrevious,
@@ -989,6 +1151,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         viewModel.openDetail(id, song.artist, "Artist", null, BrowseType.ARTIST)
                     },
                     lyrics = lyrics,
+                    lyricsSource = lyricsSource,
                     lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
                     onClearQueue = {
                         // Keep what's playing; drop everything queued after it.
@@ -1080,6 +1243,26 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     resolvingLinks = fromPlayer && linksLoading,
                     showSleepTimer = fromPlayer,
                     onShare = share.takeIf { fromPlayer },
+                    onCopyLog = if (fromPlayer) {
+                        {
+                            songActions = null
+                            scope.launch {
+                                val text = TrackLog.forTrack(song, NerdStats.current.value)
+                                clipboard.setText(AnnotatedString(text))
+                                // The line count, not just "copied": it is the
+                                // one thing the system's own paste confirmation
+                                // doesn't say, and an empty log is a real
+                                // outcome worth seeing rather than a silent one.
+                                Toast.makeText(
+                                    context,
+                                    "Log copied · ${text.lineSequence().count()} lines",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        }
+                    } else {
+                        null
+                    },
                 )
             }
         }
@@ -1196,6 +1379,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             }
         }
 
+        if (showLyricsSources) {
+            BackHandler { showLyricsSources = false }
+            LyricsSourcesDialog(
+                hazeState = hazeState,
+                onDismiss = { showLyricsSources = false },
+            )
+        }
+
         if (showListenBrainzLogin) {
             var tokenInput by remember { mutableStateOf(listenBrainzToken) }
             ListenBrainzTokenAlert(
@@ -1252,6 +1443,49 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                 onDismiss = { if (!lastfmLoading) showLastfmLogin = false },
             )
         }
+
+        // ---- Discord sign-in (full screen WebView) ----
+        if (showDiscordLogin) {
+            BackHandler { showDiscordLogin = false }
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = { showDiscordLogin = false }) {
+                            Icon(
+                                Icons.Rounded.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                        Text(
+                            "Sign in to Discord",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                    }
+                    DiscordLoginScreen(
+                        onTokenCaptured = { token ->
+                            AppSettings.setDiscordToken(token)
+                            showDiscordLogin = false
+                        },
+                    )
+                }
+            }
+        }
+
+        discordDialog?.let { which ->
+            DiscordDialogHost(
+                which = which,
+                hazeState = hazeState,
+                onDismiss = { discordDialog = null },
+            )
+        }
     }
 }
 
@@ -1260,6 +1494,46 @@ private fun tween(durationMillis: Int) =
 
 /** How many tracks a station pulls in at a time. */
 private const val RADIO_BATCH = 20
+
+/**
+ * How far short of the end a seek is allowed to land.
+ *
+ * Seeking to the final millisecond is indistinguishable from the track running
+ * out, so it starts the next song — which is not what anyone dragging to the end
+ * of the bar, or tapping the last line of a lyric, is asking for. A second back
+ * from the end plays the outro instead.
+ */
+private const val SEEK_END_GUARD_MS = 1_000L
+
+/**
+ * A YouTube video id to seed a radio station from, for a track that may not
+ * have one of its own.
+ *
+ * Radio, related tracks and the home feed are YouTube's alone — see
+ * [SourceKind.YOUTUBE][com.music.bitchord.data.sources.SourceKind.YOUTUBE].
+ * A track played from module *search* carries a
+ * [SourceRegistry.trackKey] as its media id, which means nothing to
+ * Innertube: handing one to [YtMusicRepository.radio] gets an empty mix
+ * back, which is why AutoPlay quietly stopped extending the queue after a
+ * module search result. Looking the recording up on YouTube by name gives
+ * the station something it can actually seed from, and the mix that comes
+ * back is YouTube's — those tracks then take the ordinary YouTube path and
+ * get substituted individually if a module happens to hold them.
+ *
+ * Null when the track isn't on YouTube at all, which is a real answer: no
+ * station rather than a station for the wrong song.
+ */
+private suspend fun youtubeSeedFor(song: Song): String? {
+    if (SourceRegistry.parseTrackKey(song.videoId) == null) return song.videoId
+    val target = TrackMatcher.targetOf(song)
+    val query = TrackMatcher.queries(target).firstOrNull() ?: return null
+    return YtMusicRepository.search(query, SearchFilter.SONGS)
+        .getOrNull()
+        ?.filterIsInstance<SearchResult.Track>()
+        ?.map { it.song }
+        ?.let { TrackMatcher.best(it, target) }
+        ?.videoId
+}
 
 /**
  * How far a detail page scrolls before its title moves up into the bar.

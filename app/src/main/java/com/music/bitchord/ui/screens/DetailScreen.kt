@@ -35,8 +35,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,6 +64,8 @@ import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.CARD_ART_PX
@@ -80,6 +85,7 @@ import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlin.math.roundToInt
@@ -149,10 +155,40 @@ fun DetailScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
+    /**
+     * Saves this release to the account's library, or takes it out —
+     * [DetailPage.library] says which way round. Null hides the control
+     * entirely, which is the answer for a guest and for the pages YouTube never
+     * offers to save; there is nothing to show a signed-out user here that
+     * wouldn't just be refused.
+     */
+    onToggleLibrary: (() -> Unit)? = null,
 ) {
     val songs = (page.songs as? UiState.Success)?.data.orEmpty()
     val isArtist = page.type == BrowseType.ARTIST
     val palette = rememberArtworkPalette(page.thumbnailUrl)
+
+    // Animated cover art on the header, the same feature the player has.
+    // Albums only: a playlist's artwork is a collage and an artist page's is a
+    // photograph, and neither is something a label publishes a canvas for.
+    val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    // The credit line the header shows is the artist as far as the catalogue
+    // services are concerned. A browse card's subtitle sometimes omits it, in
+    // which case the tracks themselves know who it is.
+    val credit = remember(page.subtitle, songs) {
+        page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
+    }
+    var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
+    LaunchedEffect(page.browseId, page.title, credit, canvasEnabled) {
+        if (!canvasEnabled || page.type != BrowseType.ALBUM) {
+            canvas = null
+            return@LaunchedEffect
+        }
+        // As on the player: the credit fills in once the tracks load, so this
+        // can run twice. Keep a clip that is already playing if the second
+        // pass comes back empty.
+        canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
+    }
 
     val pageHaze = remember { HazeState() }
     // The artwork is drawn behind the list rather than in it, so both need to
@@ -165,6 +201,7 @@ fun DetailScreen(
         PageBackground(
             page = page,
             palette = palette,
+            canvas = canvas,
             artHeight = artHeight,
             listState = listState,
             hazeState = pageHaze,
@@ -201,6 +238,7 @@ fun DetailScreen(
                         // to fetch — everything on it is already local.
                         onDownload = onDownloadAll.takeUnless { page.browseId.startsWith("local:") },
                         onArtistClick = onArtistClick,
+                        onToggleLibrary = onToggleLibrary,
                     )
                 }
             }
@@ -341,6 +379,7 @@ private fun ReleaseHeader(
     onShuffle: () -> Unit,
     onDownload: ((List<Song>) -> Unit)?,
     onArtistClick: (String, String) -> Unit,
+    onToggleLibrary: (() -> Unit)?,
 ) {
     val (credit, meta) = page.headerLines(trackCount)
     // Every row on a release carries the same credit — see [pageCredit] — so
@@ -411,6 +450,9 @@ private fun ReleaseHeader(
             // Action buttons — live inside the header so there is zero gap
             // between the cover zone and the first song row.
             if (songs.isNotEmpty()) {
+                // Only where YouTube said the release can be saved and the
+                // caller is willing to take the write — see [onToggleLibrary].
+                val library = page.library?.takeIf { onToggleLibrary != null }
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier
@@ -419,6 +461,20 @@ private fun ReleaseHeader(
                     horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (library != null) {
+                        CircleIconButton(
+                            // A tick, not a filled-in plus: the pair reads as
+                            // "not yet / done", which is what the state is.
+                            icon = if (library.saved) BitChordIcons.Check else BitChordIcons.Plus,
+                            contentDescription = if (library.saved) {
+                                "Remove from library"
+                            } else {
+                                "Add to library"
+                            },
+                            palette = palette,
+                            onClick = { onToggleLibrary?.invoke() },
+                        )
+                    }
                     CircleIconButton(
                         icon = BitChordIcons.Shuffle,
                         contentDescription = "Shuffle",
@@ -428,6 +484,11 @@ private fun ReleaseHeader(
                     PlayPill(
                         palette = palette,
                         onClick = onPlay,
+                        // The pill is the widest thing in the row and the first
+                        // to be squeezed when a third circle joins it, so it
+                        // gives up padding rather than letting the row run off
+                        // the edge of a narrow screen.
+                        horizontalPadding = if (library != null && onDownload != null) 24.dp else 32.dp,
                     )
                     onDownload?.let { download ->
                         CircleIconButton(
@@ -484,6 +545,7 @@ private fun ArtistHeader(page: DetailPage, palette: ArtworkPalette, artHeight: D
 private fun PageBackground(
     page: DetailPage,
     palette: ArtworkPalette,
+    canvas: CanvasArtwork?,
     artHeight: Dp,
     listState: LazyListState,
     hazeState: HazeState,
@@ -510,6 +572,18 @@ private fun PageBackground(
                     .matchParentSize()
                     .background(palette.elevated),
             )
+
+            // Above the still art but below both gradients, so the scrim and
+            // the wash that blend the header into the page still sit over it.
+            // Always running: unlike the player's sleeve there is no transport
+            // here to follow, and the page is only up while it's being read.
+            canvas?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = true,
+                    modifier = Modifier.matchParentSize(),
+                )
+            }
 
             // Shade under the glass bar. Drawn in the page's own tint rather
             // than in black, so the back arrow — which is themed, not always
@@ -693,6 +767,7 @@ private fun PlayPill(
     palette: ArtworkPalette,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    horizontalPadding: Dp = 32.dp,
 ) {
     Row(
         modifier = modifier
@@ -701,7 +776,7 @@ private fun PlayPill(
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
             .clickable(onClick = onClick)
-            .padding(horizontal = 32.dp),
+            .padding(horizontal = horizontalPadding),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
