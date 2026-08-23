@@ -20,10 +20,10 @@ import kotlin.math.max
  *
  * Best-effort throughout, deliberately: the cover fetch is a network call
  * that can fail for reasons that have nothing to do with the download that
- * already succeeded, and [Mp4Tagger] / [WebmTagger] both already fall back to
- * returning their input unchanged on anything they don't recognise. Every
- * step here is caught rather than left to propagate, because a download this
- * runs after has already landed — a tagging failure should cost the tags,
+ * already succeeded, and [Mp4Tagger], [WebmTagger] and [FlacTagger] all fall
+ * back to returning their input unchanged on anything they don't recognise.
+ * Every step here is caught rather than left to propagate, because a download
+ * this runs after has already landed — a tagging failure should cost the tags,
  * not the file.
  */
 object MediaTagger {
@@ -33,8 +33,19 @@ object MediaTagger {
     /** Long side of the embedded cover — plenty for a lock screen or a car head unit, without ballooning the file. */
     private const val COVER_MAX_SIDE = 1000
 
+    /**
+     * The containers there is a tagger for.
+     *
+     * A download can land as something else — `.wav` from a source that serves
+     * it, see [DownloadStore.storable] — and that file keeps the tags its
+     * filename carries and nothing more. Worth having no tagger for rather than
+     * a half-written one: a WAV's metadata lives in RIFF chunks that a good
+     * number of players ignore outright.
+     */
+    private val TAGGABLE = setOf("m4a", "webm", "flac")
+
     fun embed(context: Context, uri: Uri, track: Song, extension: String) {
-        if (extension != "m4a" && extension != "webm") return
+        if (extension !in TAGGABLE) return
         val original = readAll(context, uri) ?: return
         val cover = fetchCover(track)
 
@@ -48,6 +59,14 @@ object MediaTagger {
                     cover?.bytes,
                     coverIsPng = false,
                 )
+                "flac" -> FlacTagger.tag(
+                    original,
+                    track.title,
+                    track.artist,
+                    track.albumName,
+                    cover?.bytes,
+                    cover?.mime ?: "image/jpeg",
+                )
                 else -> WebmTagger.tag(
                     original,
                     track.title,
@@ -59,7 +78,7 @@ object MediaTagger {
             }
         }.getOrNull() ?: return
 
-        // Both taggers hand back the same array reference when there was
+        // Every tagger hands back the same array reference when there was
         // nothing safe to do — cheaper than a byte comparison, and exact
         // where it matters: it means "don't touch the file that just finished
         // downloading" rather than "these bytes happen to be equal".

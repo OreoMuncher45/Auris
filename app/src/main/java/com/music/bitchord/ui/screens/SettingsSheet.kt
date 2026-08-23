@@ -295,11 +295,11 @@ fun SettingsScreen(
             }
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
-                title = "Automix",
+                title = "Automix [BETA]",
                 subtitle = if (smartFade) {
-                    "Blends every transition, timed automatically from each track"
+                    "Blends every transition, timed automatically from each track. Turn off if facing overheating or lag."
                 } else {
-                    "Times and blends transitions automatically, no slider needed"
+                    "Times and blends transitions automatically, no slider needed. May not work as expected in low-mid range devices."
                 },
                 trailing = {
                     Switch(

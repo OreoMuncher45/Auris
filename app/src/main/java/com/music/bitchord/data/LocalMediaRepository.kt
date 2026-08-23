@@ -122,7 +122,8 @@ object LocalMediaRepository {
 
         val filled = appDownloads.map { song ->
             if (song.albumName != null) return@map song
-            val album = scanned[song.localUri]?.albumName ?: return@map song
+            val uri = song.localUri ?: return@map song
+            val album = scanned[uri]?.albumName ?: return@map song
             song.copy(albumName = album)
         }
 

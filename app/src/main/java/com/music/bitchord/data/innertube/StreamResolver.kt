@@ -456,8 +456,6 @@ object StreamResolver {
      */
     class Stream(val url: String, val kbps: Int, val mimeType: String) {
 
-        val isOpus: Boolean get() = "opus" in mimeType.lowercase()
-
         /**
          * The container these bytes are actually in, which is not always what
          * names them.
@@ -471,10 +469,14 @@ object StreamResolver {
          * `.opus`, and an `.opus` file is expected to be Ogg — which is how a
          * perfectly good download ends up refusing to open in half the players
          * on the device.
+         *
+         * Downloads no longer reach the WebM branch — [resolveForDownload]
+         * takes MP4 or nothing — but playback still hands Opus around, and a
+         * file an older build already wrote is still a `.webm` this app has to
+         * be able to describe.
          */
         val downloadExtension: String
             get() = when {
-                isOpus || "webm" in mimeType -> "webm"
                 "mp4" in mimeType || "m4a" in mimeType -> "m4a"
                 else -> "webm"
             }
@@ -486,20 +488,36 @@ object StreamResolver {
 
     /**
      * As [resolve], but for a file being kept rather than a stream being heard:
-     * the best Opus on offer, whatever the quality ceiling says.
+     * the best AAC on offer, whatever the quality ceiling says.
      *
-     * Two passes, and the second one almost never runs. Opus is demanded across
-     * *every* client before any of them is allowed to answer with AAC, because
-     * a per-client "Opus or else the next client" walk would settle for the
-     * first client that had only AAC while a later one held Opus all along.
-     * Player responses are shared between the passes, so the second costs the
-     * probes again but not the round trips.
+     * The format is not a preference here, it is the only option. Every
+     * adaptive audio format YouTube offers is either AAC in MP4 or Opus (or
+     * Vorbis) in WebM, and Android's media store will not mint a row in the
+     * audio collection for `audio/webm` — measured on-device as
+     * `IllegalArgumentException: Unsupported MIME type audio/webm` out of
+     * `ContentResolver.insert`, thrown before a single byte had been fetched.
+     * So every download this app offered failed, and Opus being the better
+     * codec of the two never got to matter.
+     *
+     * Which is why there is no "best available" fallback below any more. A
+     * walk that ends by taking whatever the last client offered ends by
+     * taking WebM, and a WebM the store refuses is not a worse download, it
+     * is no download — so running out of AAC is a failure with a sentence
+     * attached rather than something to work around. It is not a common one:
+     * the AAC ladder is on essentially every track, rather more reliably than
+     * Opus was.
+     *
+     * MP4 is still demanded across *every* client before any of them is
+     * allowed to give up, because a per-client walk cannot tell a client that
+     * has no MP4 from a client that has been refused the track. Player
+     * responses are shared between the passes, so the second costs the probes
+     * again but not the round trips.
      *
      * Nothing here touches [recent]. That cache exists to keep ExoPlayer's
      * re-opens off the network, and its entries are picked under the quality
-     * ceiling — seeding it with an unbudgeted Opus URL would quietly hand a
-     * capped connection the stream it was capped to avoid, and reading from it
-     * would hand a download whatever bitrate playback happened to settle for.
+     * ceiling — seeding it with an unbudgeted URL would quietly hand a capped
+     * connection the stream it was capped to avoid, and reading from it would
+     * hand a download whatever bitrate playback happened to settle for.
      *
      * The whole thing is attempted twice, for the case where a client is turned
      * away with "Sign in to confirm you're not a bot": [playerStream] mints a
@@ -514,21 +532,29 @@ object StreamResolver {
      *
      * Which is why extraction sits behind both. When every client is refusing
      * — the observed state, with the VR clients bot-checked and iOS minting
-     * Opus URLs that 403 — [resolve] still gets audio, because it falls through
-     * to NewPipe and re-derives the URL itself. A download reaching the same
-     * wall has to do the same thing or it fails while the track it is refusing
-     * to save is audibly playing.
+     * URLs that 403 — [resolve] still gets audio, because it falls through to
+     * NewPipe and re-derives the URL itself. A download reaching the same wall
+     * has to do the same thing or it fails while the track it is refusing to
+     * save is audibly playing.
      */
-    suspend fun resolveForDownload(videoId: String): Stream = withContext(TrackLog.about(videoId)) {
+    suspend fun resolveForDownload(videoId: String): Stream {
+        val stream = downloadStream(videoId)
+        // Belt and braces on the one invariant the media store enforces for us,
+        // and enforces badly: everything in [downloadStream] selects for MP4,
+        // and this is where a format that somehow slipped through says so in a
+        // sentence rather than three frames away as an insert failure.
+        check(stream.downloadExtension == "m4a") { "Can't save ${stream.mimeType} — try again" }
+        return stream
+    }
+
+    private suspend fun downloadStream(videoId: String): Stream = withContext(TrackLog.about(videoId)) {
         init
 
-        // Whether any client offered Opus at all, as distinct from whether one
+        // Whether any client offered AAC at all, as distinct from whether one
         // could be turned into a working URL. Those are different failures and
-        // only one of them is a reason to accept a worse format: a track that
-        // genuinely has no Opus is a fact about the track, while Opus that
-        // won't probe is a bad afternoon on Google's side, and quietly saving
-        // AAC because of the latter would hand back a permanently worse file
-        // for a temporary reason.
+        // only one of them is worth telling someone to try again about: a track
+        // no client has an MP4 for will not have one in five minutes either,
+        // while an MP4 that won't probe is a bad afternoon on Google's side.
         var offered = false
 
         repeat(DOWNLOAD_ATTEMPTS) { attempt ->
@@ -539,39 +565,27 @@ object StreamResolver {
             // across attempts would make every attempt after the first a
             // no-op.
             val responses = mutableMapOf<PlayerClient, JsonObject>()
-            playerStream(videoId, { response -> pickOpus(response)?.also { offered = true } }, responses)
+            playerStream(videoId, { response -> pickAac(response)?.also { offered = true } }, responses)
                 ?.let { return@withContext it }
         }
 
         // Not "try again later" — every client being refused at once is a state
         // that lasts hours, and it is precisely the state [resolve] extracts its
-        // way out of. Asking for Opus specifically, because this is still a
-        // download: the failsafe is a different route to the bytes, not a
-        // licence to take a worse format.
-        TrackLog.w(TAG, "no client minted a usable Opus URL for $videoId; extracting")
+        // way out of. Still asking for MP4, because this is still a download:
+        // the failsafe is a different route to the bytes, not a licence to
+        // fetch a container that cannot then be saved.
+        TrackLog.w(TAG, "no client minted a usable MP4 URL for $videoId; extracting")
         runCatching {
             newPipeStream(videoId) { candidates ->
-                candidates.filter { it.second.isOpus }
+                candidates.filter { it.second.isM4a }
                     .maxByOrNull { it.first }?.second
                     ?.also { offered = true }
             }
         }.onSuccess { return@withContext it }
-            .onFailure { TrackLog.w(TAG, "extraction found no Opus for $videoId: ${it.message}") }
+            .onFailure { TrackLog.w(TAG, "extraction found no MP4 for $videoId: ${it.message}") }
 
-        if (offered) {
-            error("Opus wasn't available for this track just now — try again")
-        }
-
-        TrackLog.w(TAG, "nothing offered Opus for $videoId; taking the best available")
-        playerStream(videoId, ::pickBest)
-            ?: newPipeStream(videoId) { candidates ->
-                // Reached only when no client answered at all, so this is
-                // re-deriving the formats from scratch rather than picking
-                // over the ones already rejected — Opus is still worth asking
-                // for here, and still worth doing without.
-                val opus = candidates.filter { it.second.isOpus }
-                opus.ifEmpty { candidates }.maxByOrNull { it.first }?.second
-            }
+        if (offered) error("Couldn't reach a downloadable copy just now — try again")
+        error("No downloadable audio for this track")
     }
 
     /**
@@ -711,12 +725,12 @@ object StreamResolver {
         val mimeType: String,
     ) {
         /**
-         * YouTube's Opus is always carried in WebM — there is no Opus-in-MP4
-         * on this endpoint — so the codec is what the mime type names after
-         * the container, and matching on the word is enough to tell it from
-         * the AAC ladder sitting beside it.
+         * YouTube's Opus is always carried in WebM and its AAC always in MP4 —
+         * there is no Opus-in-MP4 on this endpoint — so the container the mime
+         * type names is enough to tell the two ladders apart, and the container
+         * is the thing a download actually cares about.
          */
-        val isOpus: Boolean get() = "opus" in mimeType.lowercase()
+        val isAac: Boolean get() = "mp4" in mimeType.lowercase()
     }
 
     private fun audioFormats(response: JsonObject): List<Audio> =
@@ -740,7 +754,11 @@ object StreamResolver {
         pickForQuality(audioFormats(response).map { it.kbps to it })
 
     /**
-     * What a download wants: the best Opus there is, and nothing else.
+     * What a download wants: the best AAC there is, and nothing else.
+     *
+     * MP4 rather than the better codec because it is the only container the
+     * media store will accept for the audio collection — see
+     * [resolveForDownload].
      *
      * No ceiling is applied. The quality setting exists to budget a *stream* —
      * bytes spent on a track being listened to once, over and over — and a file
@@ -749,12 +767,8 @@ object StreamResolver {
      * force would bake a temporary decision about mobile data into a permanent
      * artefact.
      */
-    private fun pickOpus(response: JsonObject): Audio? =
-        audioFormats(response).filter { it.isOpus }.maxByOrNull { it.kbps }
-
-    /** The fallback for the rare track that no client offers Opus for. */
-    private fun pickBest(response: JsonObject): Audio? =
-        audioFormats(response).maxByOrNull { it.kbps }
+    private fun pickAac(response: JsonObject): Audio? =
+        audioFormats(response).filter { it.isAac }.maxByOrNull { it.kbps }
 
     private fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.content
 
@@ -1178,21 +1192,24 @@ object StreamResolver {
      * `MediaFormat.WEBMA_OPUS` — what YouTube's Opus arrives as — carries the
      * mime type `audio/webm`, identical to the Vorbis-in-WebM entry beside it.
      * Accurate about the bytes, and useless for telling the codec apart, which
-     * is what [isOpus] is for.
+     * is what [isM4a] is asked of the format for instead.
      */
     private val AudioStream.mime: String get() = format?.mimeType.orEmpty()
 
     /**
-     * Whether these bytes are Opus, asked of the format rather than its name.
+     * Whether these bytes are AAC in MP4, asked of the format rather than its
+     * name.
      *
-     * The tempting version of this is a substring match for "opus" on [mime],
-     * and it silently never matches: the format that means Opus says
-     * `audio/webm`. A download demanding Opus then concludes the track hasn't
-     * any and fails — while playback, which asks only for the best bitrate,
-     * takes the same stream and plays it as Opus.
+     * The name would in fact do here — `MediaFormat.M4A` reports `audio/mp4`,
+     * the same thing the player endpoint calls it — but the enum is what
+     * actually carries the answer, and the sibling case is a standing warning
+     * against reading these mime types as codecs: the format that means Opus
+     * says `audio/webm`, so a download demanding Opus by name concluded the
+     * track hadn't any and fell through, while playback took the very same
+     * stream and played it as Opus.
      */
-    private val AudioStream.isOpus: Boolean
-        get() = format == MediaFormat.WEBMA_OPUS || format == MediaFormat.OPUS
+    private val AudioStream.isM4a: Boolean
+        get() = format == MediaFormat.M4A
 
     // ---- Cache --------------------------------------------------------------
 

@@ -257,6 +257,18 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         }
     }
 
+    // The Downloads page is a snapshot of the folder, taken when it was opened.
+    // Saving a track or deleting one while it is on screen changes what belongs
+    // on it — and now that the page groups by artist and album, a stale list is
+    // stale counts and a missing row in three places rather than one. So it is
+    // taken again whenever the record of what's on disk changes.
+    val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    LaunchedEffect(savedDownloads, detail?.browseId) {
+        if (detail?.browseId == "local:downloads") {
+            viewModel.reloadLocalDetail("local:downloads")
+        }
+    }
+
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
@@ -649,9 +661,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     onLyricsSources = { showLyricsSources = true },
                     contentPadding = listPadding,
                 )
-            } else if (page != null && page.browseId == "local:all") {
-                // Local Music folder — show the tabbed Songs / Artists / Albums view.
-                val localSongs = (page.songs as? com.music.bitchord.data.model.UiState.Success)?.data.orEmpty()
+            } else if (page != null && page.browseId.startsWith("local:")) {
+                // Local Music and Downloads — both the tabbed Songs / Artists /
+                // Albums view. Two folders of tracks already on the device, so
+                // there is nothing to tell them apart on screen beyond what is
+                // in them and what to say when that is nothing.
+                val localState = page.songs
+                val localSongs = (localState as? com.music.bitchord.data.model.UiState.Success)
+                    ?.data.orEmpty()
                 LocalMusicScreen(
                     songs = localSongs,
                     onSongClick = play,
@@ -661,14 +678,29 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         QueueShuffle.enableForNextQueue()
                         play(songs, songs.indices.random())
                     },
+                    emptyMessage = (localState as? com.music.bitchord.data.model.UiState.Error)
+                        ?.message,
                     contentPadding = listPadding,
                 )
             } else if (page != null) {
+                // An album page's rows carry no album name of their own — the
+                // release is billed once, in the header the rows hang under — so
+                // the page title is stamped on as they leave for the download
+                // queue or the track menu. Without it every track saved from an
+                // album arrives in the Downloads folder with nothing to group it
+                // under, and its Albums tab stays empty however much is in it.
+                val withAlbum: (Song) -> Song = { song ->
+                    if (page.type == BrowseType.ALBUM) {
+                        song.copy(albumName = song.albumName ?: page.title)
+                    } else {
+                        song
+                    }
+                }
                 DetailScreen(
                     page = page,
                     listState = detailListState,
                     onSongClick = play,
-                    onSongLongPress = { songActions = it },
+                    onSongLongPress = { songActions = withAlbum(it) },
                     onSongSwipe = onSongSwipe,
                     onShuffle = { songs ->
                         // Shuffle goes on first so the queue is built shuffled
@@ -688,7 +720,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             )
                         }
                     },
-                    onDownloadAll = startDownload,
+                    onDownloadAll = { songs -> startDownload(songs.map(withAlbum)) },
                     onArtistClick = { id, name ->
                         viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
                     },

@@ -202,9 +202,77 @@ object SourceResolver {
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         for (source in rankedAbove(youtube.configId, active)) {
             if (!source.kind.canServeLossless) continue
-            val stream = matchAndStream(source, target, request, patient = true) ?: continue
+            val stream = matchAndStream(
+                source, target, request, waitForAll = true, strictLength = true,
+            ) ?: continue
             if (!worthSwapping(stream.format, playing)) continue
             TrackLog.d(TAG, "upgrade found: '${target.title}' at ${stream.format.summary} from ${source.displayName}")
+            return stream
+        }
+        return null
+    }
+
+    /**
+     * The lossless copy of a track about to be downloaded, or null when nothing
+     * configured has one worth keeping.
+     *
+     * The download path has never come through here. It resolves YouTube
+     * directly — see
+     * [resolveForDownload][com.music.bitchord.data.innertube.StreamResolver.resolveForDownload]
+     * — so someone with a FLAC server ranked above YouTube was *streaming* the
+     * FLAC and *downloading* a transcode of the same recording. This closes that
+     * gap, and it is the only search in this class whose result becomes a file.
+     *
+     * Being a file is what makes it the strictest search here:
+     *
+     *  - **The ceiling is absolute.** [requestForNow] returning anything but
+     *    [StreamRequest.Lossless] ends this rather than being read as "serve
+     *    what you can". A stream is a few megabytes and a FLAC is thirty-five,
+     *    and the setting that would be overspent is the one attached to a bill.
+     *  - **A format that stated nothing is refused**, unlike [streamBest]'s
+     *    [statesNothingLossy] allowance. Playback can hand an undescribed URL to
+     *    the decoder and let it work the codec out; a download has to *name the
+     *    file* before the first byte lands, and an unstated codec is nothing to
+     *    name it after.
+     *  - **A [SourceStream.belowRequest] settle-for is refused too** — implied by
+     *    the same check, since that flag is only ever set on a format that
+     *    already failed to be lossless. Keeping a module's lossy transcode
+     *    forever would trade one lossy copy for another and give up the more
+     *    reliable fetch to do it.
+     *
+     * @param target the recording to look for, off the row being downloaded. A
+     *   blank title can only produce a wrong match; a null runtime is allowed
+     *   and costs the length check rather than the search.
+     */
+    suspend fun forDownload(target: TrackMatcher.Target): SourceStream? {
+        if (target.title.isBlank()) return null
+        if (requestForNow() !is StreamRequest.Lossless) return null
+        val active = SourceRegistry.active()
+        // YouTube can be switched off, and a download still goes to it when
+        // nothing here answers — the download path never consults this list. So
+        // an absent YouTube means everything enabled outranks it, which is
+        // already what [rankedAbove] says about a config that isn't in the list.
+        val youtubeId = active.firstOrNull { it.kind == SourceKind.YOUTUBE }?.configId
+        for (source in rankedAbove(youtubeId.orEmpty(), active)) {
+            if (!source.kind.canServeLossless) continue
+            val stream = matchAndStream(
+                source,
+                target,
+                StreamRequest.Lossless,
+                waitForAll = true,
+                strictLength = target.durationSec != null,
+            ) ?: continue
+            if (stream.format.isLossless != true) {
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName} offered ${stream.format.summary} to download; not keeping that",
+                )
+                continue
+            }
+            TrackLog.d(
+                TAG,
+                "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+            )
             return stream
         }
         return null
@@ -280,24 +348,36 @@ object SourceResolver {
      * answer is what made a source look like it was missing half of what it
      * had. A source that *throws* still gets no second chance: that is its
      * server having a problem, and asking it again differently won't fix it.
+     *
+     * @param waitForAll holds a multi-backend search open for every backend
+     *   instead of answering from whichever of them are quick — affordable only
+     *   when nobody is waiting on the first note.
+     * @param strictLength requires a candidate's runtime to agree with
+     *   [target]'s to within [UPGRADE_DRIFT_SEC]. Kept apart from [waitForAll]
+     *   because it is only meaningful when the target *has* a runtime:
+     *   [TrackMatcher.withinSeconds] answers false for every candidate against a
+     *   null one, so asking for this against a target that never carried a
+     *   duration is not a strict search but an empty one.
      */
     private suspend fun matchAndStream(
         source: MusicSource,
         target: TrackMatcher.Target,
         request: StreamRequest,
-        patient: Boolean = false,
+        waitForAll: Boolean = false,
+        strictLength: Boolean = false,
     ): SourceStream? {
         for (query in TrackMatcher.queries(target)) {
             val candidates = attempt(source) {
-                source.search(query, limit = MATCH_CANDIDATES, waitForAll = patient)
+                source.search(query, limit = MATCH_CANDIDATES, waitForAll = waitForAll)
             } ?: return null
             var matches = TrackMatcher.ranked(candidates, target)
-            // The extra bar for an upgrade: the replacement has to be the same
-            // *length* as what is playing, to the second or so. A title and an
-            // artist can agree across two different edits of a song; a runtime
-            // that agrees this closely is one recording, and nothing else is
-            // worth cutting a listener's audio for.
-            if (patient) {
+            // The extra bar for standing in for one specific recording: the
+            // replacement has to be the same *length*, to the second or so. A
+            // title and an artist can agree across two different edits of a
+            // song; a runtime that agrees this closely is one recording, and
+            // nothing else is worth cutting a listener's audio for — or filing
+            // on their device under the name of the track they asked for.
+            if (strictLength) {
                 matches = matches.filter { TrackMatcher.withinSeconds(it, target, UPGRADE_DRIFT_SEC) }
             }
             if (matches.isEmpty()) continue

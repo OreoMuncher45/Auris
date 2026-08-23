@@ -9,6 +9,9 @@ import androidx.core.content.ContextCompat
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,9 +19,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
+import java.io.OutputStream
 
 /** Where a track is between "not on this device" and "on it". */
 sealed interface DownloadState {
@@ -317,10 +322,10 @@ object Downloads {
             // title is where "(Official Video)" lives, and that would be baked
             // into a filename this app never gets to correct.
             val track = runCatching { YtMusicRepository.resolveAudio(song) }.getOrDefault(song)
-            val stream = StreamResolver.resolveForDownload(track.videoId)
-            Log.d(TAG, "downloading $id at ${stream.kbps}kbps (${stream.mimeType})")
+            val route = routeFor(track)
+            Log.d(TAG, "downloading $id as .${route.extension} (${route.describe})")
 
-            val name = DownloadStore.fileNameFor(track, stream.downloadExtension)
+            val name = DownloadStore.fileNameFor(track, route.extension)
             // Already there from a previous run the record lost track of —
             // adopt it rather than writing a second copy beside it.
             val alreadyThere = DownloadStore.existing(context, name)
@@ -331,17 +336,17 @@ object Downloads {
                 return@withContext
             }
 
-            val destination = DownloadStore.begin(context, name, stream.downloadMimeType)
+            val destination = DownloadStore.begin(context, name, route.mimeType)
             pending = destination
             destination.openStream().use { sink ->
-                Downloader.fetch(track.videoId, stream, sink) { written, total ->
+                route.write(sink) { written, total ->
                     _active.value = _active.value +
                         (id to DownloadState.Running(written.toFloat() / total))
                 }
             }
             val savedUri = destination.commit()
             pending = null
-            MediaTagger.embed(context, savedUri, track, stream.downloadExtension)
+            MediaTagger.embed(context, savedUri, track, route.extension)
             remember(song, track, savedUri)
             clear(id)
             Log.d(TAG, "saved $name")
@@ -354,6 +359,86 @@ object Downloads {
             Log.w(TAG, "download failed for $id: ${e.message}", e)
             fail(id, e.friendly())
         }
+    }
+
+    /**
+     * One resolved download: what to call the file, what to tell the store it
+     * is, and how to fill it.
+     *
+     * Exists so [run] has one linear body rather than two nearly-identical
+     * ones. Everything after the bytes are chosen — the duplicate check, the
+     * pending row, the commit, the tagging, the abort on failure — is the same
+     * work whichever server the audio came from, and the two routes differ only
+     * in these four answers.
+     */
+    private class Route(
+        val extension: String,
+        val mimeType: String,
+        /** For the log line, so a download's provenance is on the record. */
+        val describe: String,
+        val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
+    )
+
+    /**
+     * Where this download's bytes are coming from.
+     *
+     * A configured source gets asked first, and YouTube is what happens when
+     * none of them can serve it — see [SourceResolver.forDownload] for what
+     * "can" means, which is narrower here than it is for playback.
+     */
+    private suspend fun routeFor(track: Song): Route {
+        lossless(track)?.let { (stream, storable) ->
+            return Route(
+                extension = storable.extension,
+                mimeType = storable.mimeType,
+                describe = stream.format.summary,
+                write = { sink, onProgress ->
+                    Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
+                },
+            )
+        }
+        val stream = StreamResolver.resolveForDownload(track.videoId)
+        return Route(
+            extension = stream.downloadExtension,
+            mimeType = stream.downloadMimeType,
+            describe = "${stream.kbps}kbps ${stream.mimeType}",
+            write = { sink, onProgress -> Downloader.fetch(track.videoId, stream, sink, onProgress) },
+        )
+    }
+
+    /**
+     * The lossless stream to keep for [track], with how to file it — or null,
+     * which is not a failure, just YouTube's turn.
+     *
+     * Bounded, because a module search waits on every backend it has (see
+     * `ModuleSource.SEARCH_PATIENT_MS`) and does that once per query the matcher
+     * offers. For a track no module holds, that is the whole queue stopped for
+     * the better part of a minute on the way to a download that was always
+     * going to be YouTube's. `PlaybackService.SUBSTITUTE_TIMEOUT_MS` bounds the
+     * same search for the same reason.
+     *
+     * The [DownloadStore.storable] check belongs here rather than inside the
+     * resolver: the resolver's job is finding the best audio, and whether this
+     * device will keep a file of that codec is a question about Android.
+     */
+    private suspend fun lossless(track: Song): Pair<SourceStream, DownloadStore.Storable>? {
+        val stream = withTimeoutOrNull(LOSSLESS_LOOKUP_MS) {
+            try {
+                SourceResolver.forDownload(TrackMatcher.targetOf(track))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "lossless lookup failed for ${track.videoId}: ${e.message}")
+                null
+            }
+        } ?: return null
+
+        val storable = DownloadStore.storable(stream.format.codec)
+        if (storable == null) {
+            Log.d(TAG, "nothing to file a '${stream.format.codec}' as; taking YouTube for ${track.videoId}")
+            return null
+        }
+        return stream to storable
     }
 
     /** Back to "not downloaded" — used for success, where [saved] takes over, and for cancellation. */
@@ -369,11 +454,31 @@ object Downloads {
      * A failure a user can read. The message on an [error] raised in this
      * package is already written for them; anything else is a network fault
      * with a class name for a message.
+     *
+     * [IllegalArgumentException] is in here because of one that wasn't: the
+     * media store throws it for a MIME type it won't accept, and for a while
+     * every download on this device failed that way and reported itself as a
+     * connection problem. The message it carries is not written for a user, but
+     * `Unsupported MIME type audio/webm` at least sends someone looking in the
+     * right direction.
      */
     private fun Exception.friendly(): String = when {
-        this is IllegalStateException && !message.isNullOrBlank() -> message!!
+        (this is IllegalStateException || this is IllegalArgumentException) &&
+            !message.isNullOrBlank() -> message!!
         else -> "Download failed — check your connection"
     }
+
+    /**
+     * How long a lossless lookup may hold a download up before it goes to
+     * YouTube regardless.
+     *
+     * Matched to `PlaybackService.SUBSTITUTE_TIMEOUT_MS`, which bounds the same
+     * search on the playback side. Generous, because nothing is waiting on the
+     * first note here and a found FLAC is worth some patience — but finite,
+     * because the alternative is the queue stalled per track on modules that
+     * simply do not have it.
+     */
+    private const val LOSSLESS_LOOKUP_MS = 20_000L
 
     /** Dropped when the sheet is reopened; a failure is worth showing once. */
     fun dismissFailure(videoId: String) {
