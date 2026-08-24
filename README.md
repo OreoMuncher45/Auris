@@ -41,6 +41,17 @@ BitChord doesn't use YouTube's official Data API. Instead it:
 6. Matches a source's result to the track you actually asked for with `TrackMatcher` (title, artist, album, duration and recording identity), rather than the title-only matching earlier versions used.
 7. Analyses audio on-device for Automix through a native C++ analyzer over JNI (`app/src/main/cpp`) — tempo/beat tracking, mel and vocal spectrograms, resampling — with two quantised ONNX models (`beat_this_int8`, `vocals_umxhq_int8`) run by ONNX Runtime. Nothing is uploaded; results are cached in `AnalysisStore`.
 
+## Download
+
+Grab the latest signed APK from the [Releases](../../releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+
+## ☕ Support
+
+BitChord is free and always will be — if it's earned a spot in your rotation, you can chip in here:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/kushagrasinghx)
+[![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/kuxhagrasingh)
+
 ## Tech stack
 
 | Layer | Choice |
@@ -61,10 +72,6 @@ BitChord doesn't use YouTube's official Data API. Instead it:
 | Downloads / tagging | Hand-rolled MP4/WebM/FLAC muxers — no external metadata library |
 
 Minimum SDK 26, target/compile SDK 36, Kotlin, portrait-only. Native code ships for `arm64-v8a` and `x86_64` only — minSdk 26 already postdates the 64-bit requirement, so a 32-bit slice would double the native payload for devices that aren't in the install base.
-
-## Download
-
-Grab the latest signed APK from the [Releases](../../releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
 
 ## Building from source
 
@@ -119,12 +126,6 @@ app/src/main/
 Contributions are welcome — bug fixes, features, or cleanup. Open a PR, or open an [issue](../../issues) first for anything sizable so it can be discussed before you put work into it.
 
 Found a bug or have a feature request? [File an issue](../../issues/new) with as much detail as you can (device, Android version, steps to reproduce, logs if you have them).
-
-## ☕ Support
-
-BitChord is free and always will be — if it's earned a spot in your rotation, you can chip in here:
-
-[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/kushagrasinghx)
 
 ## ⚖️ Disclaimer & Legal Notice
 
