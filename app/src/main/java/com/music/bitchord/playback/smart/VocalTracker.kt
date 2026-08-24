@@ -27,6 +27,8 @@ import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -127,7 +129,6 @@ class VocalTracker(private val context: Context) {
      * cover a transition overlap plus padding. Shorter input is zero-padded; longer is refused
      * rather than chunked, because a transition never needs more than one window.
      */
-    @Suppress("UNCHECKED_CAST")
     fun track(left: FloatArray, right: FloatArray, rate: Double): FloatArray? {
         if (!VocalSpectrogram.available) return null
         val resampledLeft = MelSpectrogram.resample(left, rate, VocalSpectrogram.sampleRate) ?: return null
@@ -143,14 +144,33 @@ class VocalTracker(private val context: Context) {
 
         return runCatching {
             val bins = spectrogram.bins
-            val padded = padToFixedFrames(spectrogram.values, bins, spectrogram.frames)
+            // Direct, and sized for the model rather than for the input, so the
+            // ~16MB of mix never lands on the Java heap and ORT reads it where it
+            // lies instead of copying it into native memory. Both matter: this
+            // runs on devices whose whole Java heap is 256MB, and the two copies
+            // this replaces were together enough to end the process.
+            val backing = ByteBuffer
+                .allocateDirect(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES)
+                .order(ByteOrder.nativeOrder())
+            fillFixedFrames(backing.asFloatBuffer(), spectrogram.values, bins, spectrogram.frames)
             val environment = OrtEnvironment.getEnvironment()
             val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
 
-            OnnxTensor.createTensor(environment, FloatBuffer.wrap(padded), shape).use { tensor ->
+            // A fresh view per reader rather than rewinding one: FloatBuffer's own
+            // rewind() and position(int) are Java 9 covariant overrides that
+            // Android's FloatBuffer does not declare, so they compile against the
+            // current SDK and throw NoSuchMethodError on the API 28 devices this
+            // has to run on. asFloatBuffer() hands back a view at position 0 and
+            // has been there since API 1.
+            OnnxTensor.createTensor(environment, backing.asFloatBuffer(), shape).use { tensor ->
                 active.run(mapOf(active.inputNames.first() to tensor)).use { outputs ->
-                    val target = (outputs.get(0).value as Array<Array<Array<FloatArray>>>)[0]
-                    val curve = reduceToBandCurve(padded, target, bins, spectrogram.frames)
+                    // The output tensor's buffer, not `outputs.get(0).value`: that
+                    // property boxes this [1, 2, bins, FIXED_FRAMES] result into
+                    // one FloatArray per bin per channel — 4098 objects and ~16MB
+                    // per call — when the only thing read from it is a band
+                    // average.
+                    val target = (outputs.get(0) as OnnxTensor).floatBuffer
+                    val curve = reduceToBandCurve(backing.asFloatBuffer(), target, bins, spectrogram.frames)
                     Log.d(
                         TAG,
                         "vocal mask ${spectrogram.frames} frames in " +
@@ -163,22 +183,27 @@ class VocalTracker(private val context: Context) {
     }
 
     /**
-     * Zero-pads to the model's fixed width.
+     * Writes the spectrogram into the model's fixed width, zero-padding each bin's tail.
      *
      * The stride changes as well as the length: the source is stored at `frames` per bin and the
      * model wants [FIXED_FRAMES], so this is a re-stride rather than an append.
+     *
+     * Sequential relative puts only. Seeking to each bin's start would be the obvious way to write
+     * it, but that needs `FloatBuffer.position(int)`, which Android declares on `Buffer` alone;
+     * writing the pad out explicitly keeps every call on a member that has existed since API 1.
      */
-    private fun padToFixedFrames(values: FloatArray, bins: Int, frames: Int): FloatArray {
-        if (frames == FIXED_FRAMES) return values
-        val padded = FloatArray(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES)
+    private fun fillFixedFrames(into: FloatBuffer, values: FloatArray, bins: Int, frames: Int) {
+        if (frames == FIXED_FRAMES) {
+            into.put(values)
+            return
+        }
+        val pad = FloatArray(FIXED_FRAMES - frames)
         for (channel in 0 until VocalSpectrogram.CHANNELS) {
             for (bin in 0 until bins) {
-                val from = (channel * bins + bin) * frames
-                val to = (channel * bins + bin) * FIXED_FRAMES
-                values.copyInto(padded, to, from, from + frames)
+                into.put(values, (channel * bins + bin) * frames, frames)
+                into.put(pad)
             }
         }
-        return padded
     }
 
     /**
@@ -190,8 +215,8 @@ class VocalTracker(private val context: Context) {
      * folding it in would drag every short window toward silence.
      */
     private fun reduceToBandCurve(
-        mix: FloatArray,
-        target: Array<Array<FloatArray>>,
+        mix: FloatBuffer,
+        target: FloatBuffer,
         bins: Int,
         usableFrames: Int,
     ): FloatArray {
@@ -207,9 +232,13 @@ class VocalTracker(private val context: Context) {
             var count = 0
             for (channel in 0 until VocalSpectrogram.CHANNELS) {
                 for (bin in lowBin..highBin) {
-                    val mixValue = mix[(channel * bins + bin) * FIXED_FRAMES + frame]
+                    // Both buffers carry the model's [1, 2, bins, FIXED_FRAMES]
+                    // layout, so one index reads the same cell of each. Absolute
+                    // get, so neither view's position matters.
+                    val index = (channel * bins + bin) * FIXED_FRAMES + frame
+                    val mixValue = mix.get(index)
                     if (mixValue <= 1e-6f) continue
-                    val ratio = target[channel][bin][frame] / mixValue
+                    val ratio = target.get(index) / mixValue
                     sum += ratio.coerceIn(0f, 1f)
                     count += 1
                 }

@@ -17,18 +17,37 @@ data class LyricWord(val startMs: Long, val endMs: Long, val text: String)
  * [words] is populated only by the providers that carry word-level timing
  * (BetterLyrics, LyricsPlus, SimpMusic's rich sync). LRCLIB has none, so a
  * line from there highlights whole; see [isWordSynced].
+ *
+ * [sungUntilMs] is the line's own end where a line-synced provider states one,
+ * which is what lets an interlude be told apart from a slowly sung line.
  */
 data class LyricLine(
     val timeMs: Long,
     val text: String,
     val words: List<LyricWord> = emptyList(),
+    val sungUntilMs: Long? = null,
 ) {
     val isGap: Boolean get() = text.isEmpty()
 
     val isWordSynced: Boolean get() = words.isNotEmpty()
 
-    /** When the last word finishes, or [timeMs] when the line isn't word-synced. */
-    val endMs: Long get() = words.lastOrNull()?.endMs ?: timeMs
+    /**
+     * Whether anything actually told us when the singing stops, rather than
+     * only when it starts. Word timings carry it, and so does a provider that
+     * stamps the line's own end ([sungUntilMs]).
+     *
+     * The distance to the next line's stamp is *not* evidence of an end: that
+     * distance is the line's own slot, and on a line-synced source it is
+     * routinely ten seconds for a line sung over all ten of them.
+     */
+    val hasKnownEnd: Boolean get() = words.isNotEmpty() || sungUntilMs != null
+
+    /**
+     * When the last word finishes — or the line's own end where the provider
+     * gave one, or [timeMs] when nothing did. Check [hasKnownEnd] before
+     * reading a silence out of this.
+     */
+    val endMs: Long get() = words.lastOrNull()?.endMs ?: sungUntilMs ?: timeMs
 
     /**
      * How far through the line the singing has got, 0..1, as a fractional

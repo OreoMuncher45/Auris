@@ -519,6 +519,78 @@ class SourcesTest {
         )
     }
 
+    // ---- Stream URLs a module should not be trusted with --------------------
+
+    /**
+     * The August 2026 Tidal fault: the module pasted its own origin into the
+     * path of the URL it was building, and the server 404'd every one. Rejected
+     * on sight so the resolver walks on to the next source instead of spending
+     * a playback attempt discovering it.
+     */
+    @Test
+    fun `rejects a stream URL carrying a second copy of its own origin`() {
+        val blob = "eyJhbGciOiJIUzI1NiJ9"
+        assertTrue(
+            ModuleSource.malformed(
+                "https://sp-ad-fa.audio.tidal.com/mediatracks/$blob/" +
+                    "https://sp-ad-fa.audio.tidal.com/mediatracks/$blob/0.mp4?token=1756000000~c2ln",
+            ),
+        )
+        // The URL the module meant to send, which must still be played.
+        assertFalse(
+            ModuleSource.malformed(
+                "https://sp-ad-fa.audio.tidal.com/mediatracks/$blob/0.mp4?token=1756000000~c2ln",
+            ),
+        )
+    }
+
+    /**
+     * Two schemes in a URL is not the fault — handing a proxy its target is a
+     * legitimate thing for a module to do, in the query or in the path, and
+     * refusing those would take working catalogues offline.
+     */
+    @Test
+    fun `accepts a URL that passes another URL along to a proxy`() {
+        assertFalse(ModuleSource.malformed("https://cdn.example.com/get?url=https://real.host/f.flac"))
+        assertFalse(ModuleSource.malformed("https://cdn.example.com/https://real.host/f.flac"))
+    }
+
+    /**
+     * The Xiaomi report, which failed a step earlier than the doubled URL: the
+     * player threw `HttpDataSourceException: Malformed URL` out of OkHttp's
+     * parser without making a request. Anything that parser refuses has to be
+     * refused here too, or it becomes an unplayable track.
+     */
+    @Test
+    fun `rejects a stream URL the player's own parser would refuse`() {
+        assertTrue(ModuleSource.malformed("/mediatracks/blob/0.mp4"))
+        assertTrue(ModuleSource.malformed("sp-ad-fa.audio.tidal.com/mediatracks/blob/0.mp4"))
+        assertTrue(ModuleSource.malformed("bitchord://watch?v=rpemDBaFK0c"))
+        assertTrue(ModuleSource.malformed(""))
+        // A module returning its error text, or nothing, in the URL field.
+        assertTrue(ModuleSource.malformed("undefined"))
+        assertTrue(ModuleSource.malformed("null"))
+    }
+
+    /**
+     * A module gets to name a server, not a file on this device. Anything but
+     * http(s) is refused, so a module cannot have the player read local storage
+     * on its behalf.
+     */
+    @Test
+    fun `refuses to let a module point the player at anything but http`() {
+        assertTrue(ModuleSource.malformed("file:///data/data/com.music.bitchord/files/x.flac"))
+        assertTrue(ModuleSource.malformed("content://media/external/audio/media/42"))
+        assertTrue(ModuleSource.malformed("ftp://cdn.example.com/f.mp3"))
+    }
+
+    @Test
+    fun `accepts an origin with no path of its own`() {
+        // Nothing duplicated and the parser is happy; whether a server answers
+        // it is for the server to say.
+        assertFalse(ModuleSource.malformed("https://sp-ad-fa.audio.tidal.com"))
+    }
+
     // ---- Quality tiers -----------------------------------------------------
 
     /**

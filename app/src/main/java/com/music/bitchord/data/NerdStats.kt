@@ -211,5 +211,43 @@ object NerdStats {
                 ?.second?.let { declared[it] }
     }
 
+    /**
+     * Drops everything measured about the last player, because there isn't one
+     * any more.
+     *
+     * All of this describes a stream that a particular player was reading, and
+     * it is scoped to the *process* while the player it describes is scoped to
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService] — which the
+     * app being closed destroys while leaving the process alive to be reused.
+     * Nothing else clears it: [current] is nulled when the queue moves on, and
+     * a service standing back up is not the queue moving on.
+     *
+     * Measured, with the process surviving throughout — one log buffer holds
+     * both halves:
+     *
+     * ```
+     *   15:12:11  upgraded to FLAC at 4759ms      ← last session
+     *   ——— app closed, service destroyed ———
+     *   15:13:38  AdEKgwUqPKI <- audio/opus       ← played from the cache
+     * ```
+     *
+     * Between those two lines the Now Playing screen read "Lossless" over a
+     * player that had not been handed a single byte, and the nerd stats sheet
+     * read `audio/opus · 160 kbps (source said: FLAC)` afterwards. Both are the
+     * same fact: [Snapshot.isLossless] falls back to [Snapshot.claimed] while
+     * the decoder has not spoken, and the claim came from a stream that had
+     * stopped existing a minute earlier.
+     *
+     * @see com.music.bitchord.playback.QualityUpgrade.forgetLastSession for the
+     *   half of this that decides whether the track gets its lossless copy back
+     *   rather than merely how it is labelled.
+     */
+    fun forgetLastSession() {
+        current.value = null
+        racingLossless.value = emptySet()
+        picked.clear()
+        declared.clear()
+    }
+
     private const val MAX_REMEMBERED = 64
 }

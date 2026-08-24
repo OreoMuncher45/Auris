@@ -40,20 +40,35 @@ open class KizzyRPC(
 
     fun closeRPC() {
         discordWebSocket.close()
+        discordApiClient.close()
     }
 
     fun isRpcRunning(): Boolean {
         return discordWebSocket.isWebSocketConnected()
     }
 
+    /**
+     * Tells the gateway that conditions have changed and it is worth trying
+     * again now — a network coming back, typically.
+     *
+     * Connects if nothing is connected, and cuts short a reconnect backoff that
+     * has climbed while there was no network to reconnect over.
+     */
+    fun wakeUp() {
+        discordWebSocket.connect()
+        discordWebSocket.retryNow()
+    }
+
+    /**
+     * Clears the card by publishing a presence with no activities.
+     *
+     * Routed through the socket's own clear rather than sent as a plain presence
+     * so that it becomes the payload a later reconnect replays: otherwise the
+     * last *song* stays queued, and a socket that dropped while paused comes
+     * back advertising a track that stopped minutes ago.
+     */
     open suspend fun close() {
-        if (!isRpcRunning()) {
-            discordWebSocket.connect()
-        }
-        val presence = Presence(
-            activities = emptyList(),
-        )
-        discordWebSocket.sendActivity(presence)
+        discordWebSocket.clearActivity()
     }
 
     suspend fun setActivity(
@@ -76,9 +91,11 @@ open class KizzyRPC(
         status: String? = "online",
         since: Long? = null,
     ) {
-        if (!isRpcRunning()) {
-            discordWebSocket.connect()
-        }
+        // Kicked off before the artwork is mirrored below, so a handshake the
+        // push is going to need anyway overlaps the round trip to Discord's CDN
+        // instead of queueing behind it. A no-op when a session is already up.
+        discordWebSocket.connect()
+        discordWebSocket.retryNow()
 
         val resolveExternal: suspend (String) -> String? = { image ->
             if (applicationId.isNullOrBlank()) {

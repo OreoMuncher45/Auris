@@ -71,8 +71,10 @@ object QualityUpgrade {
          * What the listener is actually hearing — the yardstick a lossy
          * candidate is measured against in [SourceResolver.worthSwapping].
          * Known by the time a track is marked pending: whichever stream won
-         * the race has already named its format. Null only when nothing did,
-         * and an unknown floor is one nothing lossy clears.
+         * the race has already named its format, and a track adopted from the
+         * cache without a race has one measured for it — see
+         * [adoptUnresolved]. Null only when neither could, and an unknown
+         * floor is one nothing lossy clears.
          */
         val playing: StreamFormat? = null,
     )
@@ -202,8 +204,10 @@ object QualityUpgrade {
      * A swapped-in stream that fails to serve its bytes costs a cut in the
      * audio and a recovery, and the search that produced it is deterministic —
      * ask again and the same catalogue returns the same dead URL. Nothing here
-     * expires: the entry is worth exactly as long as the queue that holds the
-     * track, and the map is cleared with the rest when the process goes.
+     * expires on a timer: the entry is worth exactly as long as the player that
+     * broke on it, and [forgetLastSession] is what draws that line. It used to
+     * read "cleared with the rest when the process goes", which is a lifetime
+     * this map does not have — see there.
      */
     private val refused = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
@@ -264,20 +268,39 @@ object QualityUpgrade {
      * rest of the session and every session after it, while a freshly queued
      * copy of the same song upgraded within seconds.
      *
-     * The floor is deliberately left unknown. A lossy stream from the cache
-     * cannot say what bitrate it is — YouTube's WebM and MP4 containers carry
-     * no bitrate field, and there is no resolver figure to fall back on here
-     * because there was no resolve — so [SourceResolver.worthSwapping] is given
-     * a null and treats it as a floor nothing lossy clears. Only genuine
-     * lossless cuts into a cached track, which is the conservative half of the
-     * feature and the half the disk copy cannot already be.
-     *
      * @param playingMime what the *decoder* says about the bytes it is being
      *   fed, and it must be this track's — see
      *   [PlaybackService.audioFormatFor][com.music.bitchord.playback.PlaybackService].
      *   The one thing worth not doing here is hunting a lossless copy of a
      *   track that is already playing one, which is exactly what a cache entry
      *   written by a previous session's successful upgrade holds.
+     * @param playing how good those bytes are, for
+     *   [SourceResolver.worthSwapping] to weigh candidates against — measured
+     *   off the decoder or off the cache entry's own size, never from a
+     *   resolver figure, because there was no resolve.
+     *
+     *   This used to be hardcoded null, on the reasoning that a lossy stream
+     *   from the cache cannot say what bitrate it is and an unknown floor is
+     *   the conservative choice. It is not conservative; it is a floor nothing
+     *   lossy clears, which quietly narrowed the whole path to lossless-only.
+     *   Measured on the track that was reported — 'The Night We Met', upgraded
+     *   to Tidal's AAC 320 in one session and restarted into its YouTube Opus:
+     *
+     *   ```
+     *     17:39:47.471  90DKXLbzLto <- audio/opus 48.0kHz bitrate n/a
+     *     17:39:47.518  is playing from cache and was never resolved; looking…
+     *     17:39:55      three candidates, each "offered 320 kbps; looking further"
+     *     ——— nothing ———
+     *   ```
+     *
+     *   The second look ran, found the same 320kbps copy it had swapped in
+     *   twenty minutes earlier, and [SourceResolver.worthSwapping] dropped all
+     *   three on `playing?.kbps ?: return false`. There is no lossless copy of
+     *   that track behind any configured module — the one advertising FLAC in
+     *   search serves AAC from its stream endpoint — so the listener got the
+     *   "Upgrading Quality" badge, then silence on it, then Opus for the rest
+     *   of the session. Against the real floor the gain is 320 − ~160, which
+     *   clears [SourceResolver.worthSwapping]'s minimum twice over.
      * @return true if the track is now pending, i.e. worth calling
      *   [lookAgain] for.
      */
@@ -286,6 +309,7 @@ object QualityUpgrade {
         uri: Uri,
         target: TrackMatcher.Target,
         playingMime: String?,
+        playing: StreamFormat?,
     ): Boolean {
         if (!couldStillUpgrade(mediaId, uri)) return false
         // [asked] is set only on the two *verdicts* below, not on adoption.
@@ -312,11 +336,12 @@ object QualityUpgrade {
             asked += mediaId
             return false
         }
-        pending[mediaId] = Pending(target, inFlight = null, playing = null)
+        pending[mediaId] = Pending(target, inFlight = null, playing = playing)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
-            "'${target.title}' is playing from cache and was never resolved; looking for a better copy",
+            "'${target.title}' is playing ${playing?.summary ?: "an unmeasured stream"} from cache " +
+                "and was never resolved; looking for a better copy",
             about = mediaId,
         )
         return true
@@ -432,6 +457,59 @@ object QualityUpgrade {
         shelved.remove(mediaId)
         auditioning -= mediaId
         NerdStats.onLosslessRaceEnd(mediaId)
+    }
+
+    /**
+     * Abandons the second look for every track at once, because the player all
+     * of it was about is gone.
+     *
+     * Everything in this file is scoped to the *process*, and the player it
+     * describes is scoped to [PlaybackService][PlaybackService]. Those are not
+     * the same lifetime: closing the app destroys the service — by
+     * `onTaskRemoved`, or by the session simply being stopped — and Android
+     * routinely keeps the process to stand a new one up in. So a second service
+     * inherits the first one's verdicts, and the one verdict that matters is
+     * [asked].
+     *
+     * That is the whole of "it never comes back to lossless again". Measured on
+     * one track, with the process surviving throughout — a single log buffer
+     * holds both halves:
+     *
+     * ```
+     *   15:12:06  auditioning upgraded AdEKgwUqPKI … (FLAC)
+     *   15:12:11  upgraded to FLAC at 4759ms       ← and so: asked += AdEKgwUqPKI
+     *   ——— app closed, service destroyed, process kept ———
+     *   15:13:38  AdEKgwUqPKI <- audio/opus 48.0kHz
+     *             (no second look, no search, nothing)
+     * ```
+     *
+     * The restored track plays the lossy copy for a reason that is correct on
+     * its own: the rendition marker lives on the item URI, [LastPlayed] does not
+     * store it, and the base cache entry still holds YouTube's fully-fetched
+     * Opus — so the bytes come straight off disk with no resolve at all. What is
+     * supposed to happen next is [adoptUnresolved], which exists for precisely
+     * that track and says so. It never ran: [couldStillUpgrade] found the id in
+     * [asked], put there by last session's *successful* upgrade, and refused.
+     * And because [asked] never expires, skipping away and back could not clear
+     * it either.
+     *
+     * So the sets that are meant to outlive a queue movement are given the one
+     * boundary they were missing. Called before the queue is restored, which
+     * makes a warm restart behave like a cold one — see
+     * [PlaybackService.onCreate].
+     *
+     * [StreamChoice] is deliberately *not* reset alongside this. It records
+     * which source is filling each on-disk cache entry, those entries outlive
+     * the process, and letting a fresh resolve pick a different source for a
+     * half-filled one is the corruption it was written to prevent.
+     */
+    fun forgetLastSession() {
+        // Via [forget] rather than by clearing the maps, so a track still being
+        // auditioned or still holding a live lookup is torn down properly — and
+        // so the badge for it goes out with it.
+        (pending.keys + forced.keys + shelved.keys + auditioning).forEach(::forget)
+        asked.clear()
+        refused.clear()
     }
 
     // ── Handing the stream to the player ────────────────────────────────────

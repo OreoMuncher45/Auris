@@ -73,7 +73,25 @@ class ChunkedDataSource(
         if (dataSpec.length != C.LENGTH_UNSET.toLong() || total == null) {
             passthrough = true
             chunkOpen = true
-            return upstream.open(dataSpec)
+            // Reported, not just thrown. Nothing but googlevideo carries `clen`,
+            // so every module stream comes through this branch — and this was
+            // the one open in the app whose refusal was neither logged nor
+            // handed anywhere. A dead Tidal URL surfaced as a bare
+            // ExoPlaybackException with not one line naming the server that
+            // produced it or the status it produced.
+            try {
+                return upstream.open(dataSpec)
+            } catch (e: Exception) {
+                if (e !is InterruptedIOException) {
+                    // `host` is null exactly when the URL was too broken to
+                    // parse, which is the case most in need of naming — so fall
+                    // back to the string itself rather than logging "null".
+                    val who = dataSpec.uri.host ?: dataSpec.uri.toString().take(120)
+                    TrackLog.w(TAG, "$who refused the stream: ${e.message}")
+                    report(dataSpec, e)
+                }
+                throw e
+            }
         }
 
         passthrough = false
@@ -104,14 +122,25 @@ class ChunkedDataSource(
                 // This is the only place a refusal of the *real* fetch is seen.
                 // Left here it is just a failed track; handed back, it is the
                 // one piece of evidence that retiring the client rests on.
-                if (e is HttpDataSource.InvalidResponseCodeException) {
-                    StreamResolver.onPlaybackRefused(spec.uri.toString(), e.responseCode)
-                }
+                report(spec, e)
             }
             throw e
         }
         chunkRemaining = length
         chunkOpen = true
+    }
+
+    /**
+     * Hands a refusal back to whoever minted the URL that was refused.
+     *
+     * [StreamResolver] sorts out whether the URL was one of its own — see
+     * [StreamResolver.onPlaybackRefused]. Anything that isn't a refusal, or
+     * isn't from a client it models, costs nothing here.
+     */
+    private fun report(spec: DataSpec, e: Exception) {
+        if (e is HttpDataSource.InvalidResponseCodeException) {
+            StreamResolver.onPlaybackRefused(spec.uri.toString(), e.responseCode)
+        }
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {

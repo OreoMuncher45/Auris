@@ -65,7 +65,11 @@ object TtmlLyrics {
             // Line-synced TTML: a <p> with a stamp and bare text, no spans.
             val text = paragraph.textContent?.trim().orEmpty()
             val begin = time(paragraph.getAttribute("begin")) ?: return null
-            return if (text.isEmpty()) null else LyricLine(begin, text)
+            if (text.isEmpty()) return null
+            // The paragraph's own end is the only thing that says when the
+            // singing stops, so carry it — a break can't be found without it.
+            val end = time(paragraph.getAttribute("end"))?.takeIf { it > begin }
+            return LyricLine(timeMs = begin, text = text, sungUntilMs = end)
         }
 
         // Prefer the paragraph's own stamp: Apple sets it a hair before the

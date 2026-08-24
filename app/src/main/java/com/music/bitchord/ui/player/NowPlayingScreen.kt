@@ -462,6 +462,17 @@ fun NowPlayingScreen(
     // still sleeve's.
     var canvasRendered by remember(song.videoId) { mutableStateOf(false) }
     var canvasFrame by remember(song.videoId) { mutableStateOf<Bitmap?>(null) }
+    // How much of the still artwork the clip is covering, reported by the clip
+    // itself. Read from a draw scope rather than in composition: it moves every
+    // frame of the fade, and the still art it governs is an AsyncImage whose
+    // request is rebuilt on each pass and so would not be skipped.
+    val canvasCover = remember(song.videoId) { mutableFloatStateOf(0f) }
+    // The one thing about it worth recomposing for: whether the clip is opaque
+    // enough that the still frame under it can go entirely. Derived, so this
+    // flips twice across a fade instead of once per frame of it.
+    val stillCovered by remember(song.videoId) {
+        derivedStateOf { canvasCover.floatValue > 0.999f }
+    }
     val meshColors = rememberArtworkColors(song.thumbnailUrl, canvasFrame)
     LaunchedEffect(song.videoId, song.albumName, canvasEnabled) {
         if (!canvasEnabled) {
@@ -607,17 +618,22 @@ fun NowPlayingScreen(
     // settled player: opening the queue or the lyrics hands the sleeve back its
     // card first.
     val p = if (lyricsOpen) 1f else queueProgress
+    val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     // Full-bleed is a phone idiom. Past the width the player is willing to grow
     // to, edge to edge stops meaning "the artwork *is* the screen" and starts
     // meaning "a picture, and separately some controls" — the banner would be
     // running a foot wider than the column of controls under it. Tablets keep
     // the sleeve, and a clip plays inside it as before.
-    val heroWidth = fullBleedArtworkAvailable()
-    // A clip's banner needs [CANVAS_HERO_SUPPORTED]: only a RenderEffect can
-    // dissolve a TextureView's bottom edge, and a banner that stops dead
-    // halfway down the screen looks like a bug. A still sleeve is masked in
-    // Compose instead, which works everywhere, so it isn't held to that.
-    val heroMode = CANVAS_HERO_SUPPORTED && heroWidth
+    //
+    // One question for the still cover and the clip both, rather than two that
+    // could disagree — and they did, twice over. Dissolving a TextureView's
+    // bottom edge needs a RenderEffect, so below API 31 the clip was held in its
+    // sleeve while the cover behind it went edge to edge, and the artwork
+    // changed shape the moment a clip arrived. In the other direction the clip
+    // ignored [fullBleedArt] entirely, so turning the setting off still left a
+    // clip running the full screen. CanvasArtworkPlayer masks itself on every
+    // API level now, and both layers answer to this.
+    val heroMode = fullBleedArt && fullBleedArtworkAvailable()
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
@@ -630,13 +646,16 @@ fun NowPlayingScreen(
     // it, fading in as Coil fades in everywhere else.
     var heroSettled by remember { mutableStateOf(false) }
     LaunchedEffect(artLoaded) { if (artLoaded) heroSettled = true }
-    val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
-    // Below API 31 a rendered clip has to hand the card back: the clip can only
-    // play inside the sleeve there, and the sleeve is what the banner fades out.
-    val stillHero = fullBleedArt && heroWidth && (CANVAS_HERO_SUPPORTED || !canvasRendered)
+    // The clip that gets the banner, if any. Hoisted because the still frame
+    // underneath keys its handover on exactly what is mounted here: both are
+    // decided in the same composition pass, so opening the queue or the lyrics —
+    // which takes the clip away — brings the still frame back in the very frame
+    // the clip goes, instead of a frame later with the sleeve behind it still
+    // transparent and no artwork anywhere.
+    val heroClip = canvas?.takeIf { heroMode && p < 0.5f }
     val heroT by animateFloatAsState(
         targetValue = if (
-            p < 0.5f && ((heroMode && canvasRendered) || (stillHero && (artLoaded || heroSettled)))
+            heroMode && p < 0.5f && (canvasRendered || artLoaded || heroSettled)
         ) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
@@ -662,14 +681,26 @@ fun NowPlayingScreen(
         // rather than as the artwork the screen is made of.
         if (heroHeight > 0.dp) {
             // The still sleeve first, so a clip fading in on top of it never
-            // shows the backdrop through the gap between them.
+            // shows the backdrop through the gap between them — and only until
+            // that fade has run. Both layers carry the same bottom gradient, so
+            // a still frame left lit under a settled clip is not hidden by it:
+            // down in the fade the clip is only part-opaque, and what shows
+            // through it there is the cover art rather than the backdrop. That
+            // is the artwork and the clip on screen at once.
             //
-            // Kept mounted until the fade has actually run rather than dropped
-            // the moment [p] crosses the collapse threshold: the sleeve behind
-            // it is still transparent at that point, so pulling the banner
-            // straight out leaves a frame or two with no artwork anywhere on
-            // screen before the card catches up.
-            if (stillHero && (p < 0.5f || heroT > 0.001f)) {
+            // So it is dropped outright once the clip is opaque, rather than
+            // held at alpha 0: nothing under a full-bleed clip is ever visible,
+            // and a full-screen AsyncImage kept mounted for no one is a bitmap
+            // and a layer the compositor still has to carry.
+            //
+            // Kept mounted through the handover in either direction rather than
+            // dropped the moment [p] crosses the collapse threshold: the sleeve
+            // behind it is still transparent at that point, so pulling the
+            // banner straight out leaves a frame or two with no artwork anywhere
+            // on screen before the card catches up.
+            if (heroMode && !(stillCovered && heroClip != null) &&
+                (p < 0.5f || heroT > 0.001f)
+            ) {
                 AsyncImage(
                     // Decoded at the same size the sleeve asks for, so the two
                     // share one entry in Coil's cache and one bitmap: the pair
@@ -687,7 +718,11 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .height(heroHeight)
                         .graphicsLayer {
-                            alpha = heroT
+                            // Hands its opacity to the clip as the clip takes
+                            // over, and takes it straight back if there is no
+                            // clip mounted to hand it to.
+                            alpha = heroT *
+                                (1f - if (heroClip != null) canvasCover.floatValue else 0f)
                             // The mask below erases part of what this layer
                             // drew, which it can only do in a buffer of its own.
                             compositingStrategy = CompositingStrategy.Offscreen
@@ -712,12 +747,13 @@ fun NowPlayingScreen(
             // [heroT]: the clip has to be mounted and decoding *before* it can
             // report the first frame that raises heroT in the first place.
             if (heroMode) {
-                canvas?.takeIf { p < 0.5f }?.let { clip ->
+                heroClip?.let { clip ->
                     CanvasArtworkPlayer(
                         canvas = clip,
                         isPlaying = isPlaying,
                         onRenderedChanged = { canvasRendered = it },
                         onFrameCaptured = { canvasFrame = it },
+                        onCoverChanged = { canvasCover.floatValue = it },
                         bottomFade = HERO_FADE_FRACTION,
                         modifier = Modifier
                             .align(Alignment.TopStart)

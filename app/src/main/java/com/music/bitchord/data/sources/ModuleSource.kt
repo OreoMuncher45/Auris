@@ -13,6 +13,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 /**
  * A [MusicSource] backed by one or more Convx-compatible JS module plugins.
@@ -233,6 +234,14 @@ class ModuleSource(
                 TrackLog.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")
                 return@withContext null
             }
+            if (malformed(url)) {
+                TrackLog.w(
+                    TAG,
+                    "${config.displayName}: $moduleId returned a malformed URL for " +
+                        "$upstreamId; skipping it — ${url.take(120)}",
+                )
+                return@withContext null
+            }
 
             val trackMeta = streamResponse.track
             SourceStream(
@@ -318,6 +327,95 @@ class ModuleSource(
 
     internal companion object {
         const val TAG = "BitChord"
+
+        /**
+         * Whether a module's stream URL is one no server could answer, decided
+         * without asking one.
+         *
+         * A module is somebody else's JavaScript against somebody else's
+         * backend, and when either has a bad day the damage lands here as a URL
+         * that is syntactically fine and semantically nonsense. The case this is
+         * written for, seen on the Tidal backend of `claudo-tidal` in August
+         * 2026 on two unrelated devices:
+         *
+         * ```
+         *   https://sp-ad-fa.audio.tidal.com/mediatracks/<blob>/
+         *   https://sp-ad-fa.audio.tidal.com/mediatracks/<blob>/0.mp4?token=<exp>~<sig>
+         * ```
+         *
+         * — its own origin pasted in twice, the second copy sitting in the path
+         * of the first. Tidal answered 404 to every one. Not an expiry, which is
+         * the other thing a signed URL does: the signature decodes to a single
+         * copy of `/mediatracks/<blob>/` and was minted an hour before use.
+         *
+         * Nor is it the whole module going down for a while. Three seconds after
+         * the URL above, the same module answered the same `LOSSLESS` request
+         * for a different track with a clean Lossless URL that played — so the
+         * fault belongs to *one of the backends a module can resolve to*, and
+         * one bad URL says nothing about the next. Which is why this is a test
+         * on the URL in hand and nothing is remembered between calls.
+         *
+         * Caught here rather than downstream because here it is free: no
+         * network, no playback attempt, and returning null is already how this
+         * class says "I don't have this after all", so [SourceResolver] moves to
+         * the next candidate, the next source, and finally to YouTube without a
+         * listener hearing anything go wrong. That pays off on both paths this
+         * feeds — the live resolve, where the alternative was a track that never
+         * played at all, and the mid-song upgrade, where one doubled URL cost
+         * four seconds of audition retries before being dropped.
+         *
+         * Repair is possible and is deliberately not done. The duplicated prefix
+         * is removable and the token proves what the answer should be, so this
+         * could hand the player a working FLAC rather than leaving it on Opus.
+         * It stays a rejection because reconstructing the intent behind somebody
+         * else's broken output is a liability the app would then own forever,
+         * and the price of refusing is one quality tier on affected tracks
+         * instead of silence.
+         *
+         * Deliberately narrower than "contains two schemes". A URL that passes a
+         * target to a proxy — `https://cdn/get?url=https://real/f.flac`, or the
+         * same thing in the path — holds two schemes and is perfectly good, and
+         * some modules are entitled to hand one over. What is never good is a
+         * URL carrying a *second copy of its own origin*, which is what a
+         * concatenation against the wrong base produces and what a proxy
+         * pointing somewhere else cannot.
+         *
+         * ### The other half: URLs the player cannot even parse
+         *
+         * The doubled URL is well formed, which is why it reached a server and
+         * came back 404. A separate report — a Xiaomi on Android 14, and only
+         * four lines of it — failed one step earlier:
+         *
+         * ```
+         *   HttpDataSource$HttpDataSourceException: Malformed URL
+         *     at OkHttpDataSource.makeRequest
+         * ```
+         *
+         * That message is OkHttp's for a string its own parser refused, so no
+         * request was ever made. Nothing between here and there edits the URL,
+         * so whatever the module returned could not be parsed as http — a
+         * relative path, a scheme OkHttp doesn't speak, an unescaped space, an
+         * error string in the `streamUrl` field. The empty check above caught
+         * only the blank case.
+         *
+         * So the test is [okhttp3.HttpUrl]'s own, not a hand-rolled one: the
+         * question is precisely "will the layer that opens this accept it", and
+         * the only answer that can't drift from the truth is that layer's
+         * parser, which is already on the classpath and is what threw.
+         */
+        fun malformed(url: String): Boolean {
+            // The gate the player itself will apply, asked here where refusing
+            // is free. Restricting modules to http(s) as a side effect is not
+            // unwelcome: a module cannot hand the player `file:///data/data/…`
+            // and have it read local storage on the module's behalf.
+            if (url.toHttpUrlOrNull() == null) return true
+            // Parseable, and dead anyway.
+            val schemeEnd = url.indexOf("://")
+            if (schemeEnd < 0) return false
+            val originEnd = url.indexOf('/', schemeEnd + 3)
+            if (originEnd < 0) return false
+            return url.indexOf(url.substring(0, originEnd), originEnd) >= 0
+        }
 
         /**
          * The three tiers every Convx-compatible module speaks, whatever it
