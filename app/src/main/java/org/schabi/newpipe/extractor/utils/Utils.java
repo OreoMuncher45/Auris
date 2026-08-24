@@ -6,6 +6,11 @@
  * exists at all, and keep any future edits confined to them so the file stays
  * diffable against the tag it came from.
  *
+ * This copy does not merely sit alongside the jar's: app/build.gradle.kts strips
+ * Utils.class out of the NewPipeExtractor artifact, because two definitions of one
+ * class cannot both reach dex merging in a release build. Removing that strip task
+ * breaks prodRelease, not just this file.
+ *
  * Upstream:
  * https://github.com/TeamNewPipe/NewPipeExtractor/blob/v0.26.3/extractor/src/main/java/org/schabi/newpipe/extractor/utils/Utils.java
  */
