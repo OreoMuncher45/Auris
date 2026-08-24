@@ -978,6 +978,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             FloatingBottomBar(
                 tabs = tabs,
                 selectedIndex = selectedTab,
+                hazeState = hazeState,
                 onTabSelected = { index ->
                     // Re-tapping the search tab while already on it focuses the
                     // input field and opens the keyboard rather than resetting.
