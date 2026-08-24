@@ -123,7 +123,7 @@ fun FloatingBottomBar(
                 } else {
                     Modifier.hazeEffect(
                         state = hazeState,
-                        style = HazeMaterials.thin(container),
+                        style = HazeMaterials.regular(container),
                     )
                 },
             )
