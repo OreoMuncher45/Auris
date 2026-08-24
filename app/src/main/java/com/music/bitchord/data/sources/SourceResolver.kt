@@ -205,7 +205,20 @@ object SourceResolver {
             val stream = matchAndStream(
                 source, target, request, waitForAll = true, strictLength = true,
             ) ?: continue
-            if (!worthSwapping(stream.format, playing)) continue
+            if (!worthSwapping(stream.format, playing)) {
+                // Named rather than skipped silently. This is the one refusal
+                // in the upgrade path that discards a stream already found,
+                // matched and length-checked, and a `continue` here reads in
+                // the log exactly like a source having nothing — which is how
+                // a null [playing] came to quietly turn the whole cached-track
+                // path lossless-only for a while without leaving a trace.
+                TrackLog.d(
+                    TAG,
+                    "${source.displayName}'s ${stream.format.summary} isn't worth swapping " +
+                        "'${target.title}' off ${playing?.summary ?: "an unmeasured stream"}",
+                )
+                continue
+            }
             TrackLog.d(TAG, "upgrade found: '${target.title}' at ${stream.format.summary} from ${source.displayName}")
             return stream
         }

@@ -436,6 +436,22 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
+        // First, because everything below assumes it is standing up fresh and
+        // one of the two ways this service starts does not give it that.
+        //
+        // A cold start runs in a new process, where the session-scoped state
+        // these two hold is empty anyway. A *warm* one doesn't: closing the app
+        // destroys the service while Android keeps the process to reuse, so
+        // without this a second service inherits the first one's idea of what
+        // was playing and what has already been asked about. That cost the
+        // reported bug all three of its symptoms — a badge reading "Lossless"
+        // over a player holding no bytes, and a track that had been upgraded to
+        // FLAC playing its cached Opus with no second look, permanently, because
+        // its id was still recorded as answered. Both are documented where the
+        // state lives.
+        NerdStats.forgetLastSession()
+        QualityUpgrade.forgetLastSession()
+
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
                 .setChannelId(CHANNEL_ID)
@@ -550,7 +566,7 @@ class PlaybackService : MediaSessionService() {
                 // source enabled from Settings mid-track flips the branch
                 // above under a half-filled cache entry, and the entry would
                 // then be finished by a different file.
-                StreamChoice.remember(videoId, SourceStream(streamUrl, headers = headers))
+                StreamChoice.remember(videoId, SourceStream(streamUrl, headers = headers), substituted = false)
                 return@Factory dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
                     .setHttpRequestHeaders(headers)
@@ -565,7 +581,7 @@ class PlaybackService : MediaSessionService() {
             when (won) {
                 is Resolved.Module -> {
                     NerdStats.onSourceStream(videoId, won.stream.format)
-                    StreamChoice.remember(videoId, won.stream)
+                    StreamChoice.remember(videoId, won.stream, substituted = true)
                     dataSpec.buildUpon()
                         .setUri(Uri.parse(won.stream.url))
                         .setHttpRequestHeaders(won.stream.headers)
@@ -581,7 +597,7 @@ class PlaybackService : MediaSessionService() {
                 // again while the fallback plays.
                 is Resolved.YouTube -> {
                     val headers = PlayerClient.forStreamUrl(won.url).mediaHeaders()
-                    StreamChoice.remember(videoId, SourceStream(won.url, headers = headers))
+                    StreamChoice.remember(videoId, SourceStream(won.url, headers = headers), substituted = false)
                     dataSpec.buildUpon()
                         .setUri(Uri.parse(won.url))
                         .setHttpRequestHeaders(headers)
@@ -953,9 +969,28 @@ class PlaybackService : MediaSessionService() {
             error,
             about = mediaId,
         )
-        if (attempts > MAX_RECOVERIES) {
+        // Giving up on the *retry*, not on everything below it.
+        //
+        // A track that has exhausted its attempts is not finished with.
+        // [recoveries] is cleared the moment any track becomes current, so the
+        // listener who presses play again gets a fresh count — and used to get,
+        // along with it, the exact URL that had just failed three times.
+        // [StreamChoice] outlives this method by [StreamChoice.TTL_MS], and the
+        // resolving factory reads it *before* it resolves anything, so the
+        // replay failed instantly and in silence: no resolve logged, no lookup
+        // attempted, and none of the refusals recorded below ever consulted,
+        // because reaching them means getting as far as resolving. Fifteen
+        // minutes of a track that cannot be played and does not even try, which
+        // to the listener is a track that is permanently broken. Reported as
+        // "sometimes songs don't play even if I've played it before", and the
+        // 1.4 log of one shows it exactly — a selection, five seconds, a 404,
+        // and not one resolver line in between.
+        //
+        // So everything from here to the discard runs either way, and only the
+        // seek-and-prepare at the end is skipped.
+        val givingUp = attempts > MAX_RECOVERIES
+        if (givingUp) {
             TrackLog.w("BitChord", "$mediaId has failed $attempts times; leaving it alone", about = mediaId)
-            return
         }
         // The upgraded rendition goes with the cache entry it lived in, so the
         // marker on the URI would otherwise point at nothing.
@@ -974,12 +1009,41 @@ class PlaybackService : MediaSessionService() {
         // leaving the old claim behind is how a badge earned by a FLAC ends up
         // sitting over the Opus that replaced it.
         NerdStats.clearDeclared(mediaId)
+        // A track that died on a substituted stream died on the *substitution*,
+        // and the retry must not be free to make the same one again. The lookup
+        // behind it is deterministic and, by the second attempt, cached — so it
+        // wins the race against YouTube by the same margin it won it the first
+        // time and hands back the identical dead URL, until [MAX_RECOVERIES]
+        // stops trying. That is a track that never plays at all while a working
+        // YouTube URL sits in [StreamResolver]'s cache, resolved and unused.
+        // The same reasoning as [QualityUpgrade.refuseUpgrades] above, for the
+        // substitution that happens *before* the first note rather than after.
+        // Read before the forget below, which is what clears the evidence.
+        uri?.getQueryParameter("v")?.takeIf(StreamChoice::isSubstitute)?.let { videoId ->
+            StreamChoice.refuseSubstitutes(videoId)
+            TrackLog.w(
+                "BitChord",
+                "$videoId broke on a substituted stream; YouTube serves it for now",
+                about = mediaId,
+            )
+            // And no swapping back to it mid-song either: the second look asks
+            // the same catalogues the same question and would cut the audio that
+            // just recovered to land on the same refusal.
+            QualityUpgrade.refuseUpgrades(videoId)
+        }
         uri?.getQueryParameter("v")?.let(StreamChoice::forget)
         scope.launch(TrackLog.about(mediaId)) {
             // Long enough for the released source to let go of the cache keys
             // about to be removed, short enough to read as a stutter.
             delay(RECOVERY_DELAY_MS)
             uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it) } }
+            // The bytes go even when nothing is going to be prepared after
+            // them. A half-filled entry whose owner has just been forgotten is
+            // the seam this file's [StreamChoice] note is about: the next play
+            // resolves freely, lands on a different source, and streams it into
+            // the middle of the last one. Releasing the choice without dropping
+            // the bytes would trade one stuck track for a corrupt one.
+            if (givingUp) return@launch
             withContext(Dispatchers.Main) {
                 val player = this@PlaybackService.player ?: return@withContext
                 if (player.currentMediaItem?.mediaId != mediaId) return@withContext
@@ -1106,7 +1170,7 @@ class PlaybackService : MediaSessionService() {
             // the cached-track path, was refused by it for being pending, and
             // lost its upgrade until the next progress sample came round.
             if (!QualityUpgrade.isPending(mediaId) &&
-                (uri == null || !adoptCachedTrack(mediaId, uri))
+                (uri == null || !adoptCachedTrack(mediaId, uri, playingSeconds))
             ) {
                 return@launch
             }
@@ -1148,14 +1212,18 @@ class PlaybackService : MediaSessionService() {
      *    never been a candidate for substitution. Reproduced here because this
      *    path skips that resolver entirely; without it the second look would
      *    spend data replacing a file the user deliberately saved.
+     *
+     * @param durationSec the runtime the decoder reports, waited for by the
+     *   caller — needed here to turn the size of the cache entry into a
+     *   bitrate. See [cachedFloor].
      */
-    private suspend fun adoptCachedTrack(mediaId: String, uri: Uri): Boolean {
-        val mime = withContext(Dispatchers.Main) {
+    private suspend fun adoptCachedTrack(mediaId: String, uri: Uri, durationSec: Int?): Boolean {
+        val format = withContext(Dispatchers.Main) {
             player
                 ?.takeIf { it.currentMediaItem?.mediaId == mediaId && audioFormatFor == mediaId }
                 ?.audioFormat
-                ?.sampleMimeType
         } ?: return false
+        val mime = format.sampleMimeType ?: return false
         val videoId = uri.getQueryParameter("v") ?: return false
         val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
         if (downloaded) return false
@@ -1164,7 +1232,46 @@ class PlaybackService : MediaSessionService() {
             uri = uri,
             target = SourceResolver.targetIn(uri),
             playingMime = mime,
+            playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
         )
+    }
+
+    /**
+     * How good the bytes already on disk are, in the only terms a track nothing
+     * resolved can be measured in.
+     *
+     * Two measurements, in order of directness:
+     *
+     *  - **What the decoder says.** `Format.bitrate` is populated for the
+     *    containers that carry the field, which for what BitChord plays means
+     *    MP4/AAC — the 320kbps copy a module served last session reports itself
+     *    exactly.
+     *  - **What the cache entry weighs.** Opus in WebM, which is what YouTube
+     *    serves and so what most base entries hold, states no bitrate at all;
+     *    but the rendition's full length is recorded in the cache index, and
+     *    bytes over seconds *is* a bitrate. Slightly high, because container
+     *    overhead counts toward the byte total and not toward the audio — which
+     *    errs toward leaving the track alone, the right direction for a figure
+     *    that decides whether to cut into playing audio.
+     *
+     * Null only when neither is available: an entry whose content length was
+     * never recorded, or a runtime the decoder never reported. That is the old
+     * behaviour of this path, and it is now the exception rather than the rule.
+     *
+     * The codec is deliberately not filled in. [StreamFormat.isLossless] reads
+     * it, and a name carried over from the decoder's mime type would have to be
+     * translated to be recognised — where being wrong means claiming a cached
+     * stream is already lossless and abandoning the upgrade. Only the bitrate
+     * is wanted here; [QualityUpgrade.adoptUnresolved] settles the lossless
+     * question separately, from the mime type itself.
+     */
+    private fun cachedFloor(uri: Uri, format: Format, durationSec: Int?): StreamFormat? {
+        format.bitrate.takeIf { it != Format.NO_VALUE && it > 0 }?.let {
+            return StreamFormat(kbps = it / 1000)
+        }
+        val seconds = durationSec?.takeIf { it > 0 } ?: return null
+        val bytes = AudioCache.contentLengthOf(uri).takeIf { it > 0 } ?: return null
+        return StreamFormat(kbps = (bytes * 8 / seconds / 1000).toInt())
     }
 
     /** Where the playing track stands, read off the player in one hop. */
@@ -1765,6 +1872,17 @@ class PlaybackService : MediaSessionService() {
         videoId: String,
         target: TrackMatcher.Target,
     ): Resolved {
+        // A substitute already broke this track once — see
+        // [StreamChoice.refuseSubstitutes]. Racing the modules again would find
+        // the same catalogue holding the same unplayable URL, so there is
+        // nothing to race: YouTube is the one answer here that hasn't failed.
+        // Skipped entirely rather than merely deprioritised, because a lookup
+        // that loses is handed to [QualityUpgrade] rather than dropped, and
+        // handing over the search that just cost three attempts would only
+        // schedule a fourth.
+        if (StreamChoice.substitutesRefused(videoId)) {
+            return Resolved.YouTube(StreamResolver.resolve(videoId))
+        }
         NerdStats.onLosslessRaceStart(videoId)
         // Both legs are parented to the service's scope rather than to the
         // caller, so neither inherits whose track this is — see
@@ -2208,8 +2326,22 @@ class PlaybackService : MediaSessionService() {
                     discordRpc?.let { rpc ->
                         val wasUp = discordPresenceUp
                         discordPresenceUp = false
-                        withContext(NonCancellable) {
-                            if (wasUp) runCatching { rpc.close() }
+                        // On IO, not on this collector's main thread: the
+                        // teardown closes a socket, and closing one gracefully
+                        // — which is what flushes the presence-clear queued on
+                        // the line above — blocks until the frame is away.
+                        //
+                        // Bounded, and that is the point rather than a
+                        // precaution. This runs on the way to *replacing*
+                        // [discordRpc], so for as long as it takes the field is
+                        // null and the feature is off: a teardown that hung —
+                        // which one waiting on an unreachable socket did — read
+                        // to the user as a switch that had stopped working
+                        // altogether until the app was restarted.
+                        withContext(Dispatchers.IO + NonCancellable) {
+                            withTimeoutOrNull(DISCORD_TEARDOWN_TIMEOUT_MS) {
+                                if (wasUp) runCatching { rpc.close() }
+                            }
                             runCatching { rpc.closeRPC() }
                         }
                     }
@@ -2250,6 +2382,32 @@ class PlaybackService : MediaSessionService() {
                 .drop(1)
                 .collect {
                     player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
+                }
+        }
+
+        // A network coming back, which is the other half of surviving a spell in
+        // the background: the gateway heals itself, but its retry backoff climbs
+        // to a minute, and a listener who walked back into Wi-Fi shouldn't watch
+        // a blank profile for that long. Nudging it here collapses the wait.
+        //
+        // [AppSettings.meteredConnection] is null only while there is no active
+        // network, so null -> non-null is exactly "we are online again". A
+        // metered/unmetered flip is worth acting on too: the socket does not
+        // survive a transport handover, and the old one may not have noticed yet.
+        scope.launch {
+            AppSettings.meteredConnection
+                .drop(1)
+                .collect { metered ->
+                    if (metered == null) return@collect
+                    val rpc = discordRpc ?: return@collect
+                    withContext(Dispatchers.IO) { runCatching { rpc.wakeUp() } }
+                    // Re-pushed rather than left to the gateway's own replay,
+                    // because a handover can strand the socket in a state where
+                    // it believes it is still connected: the push is what makes
+                    // it prove otherwise.
+                    if (discordPresenceUp) {
+                        player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
+                    }
                 }
         }
     }
@@ -2391,7 +2549,9 @@ class PlaybackService : MediaSessionService() {
             val wasUp = discordPresenceUp
             discordPresenceUp = false
             CoroutineScope(Dispatchers.IO).launch {
-                if (wasUp) runCatching { rpc.close() }
+                withTimeoutOrNull(DISCORD_TEARDOWN_TIMEOUT_MS) {
+                    if (wasUp) runCatching { rpc.close() }
+                }
                 runCatching { rpc.closeRPC() }
             }
         }
@@ -2476,6 +2636,17 @@ class PlaybackService : MediaSessionService() {
 
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
+
+        /**
+         * How long a Discord teardown may spend clearing the presence before the
+         * socket is closed out from under it.
+         *
+         * Closing the gateway ends the session, which clears the card on
+         * Discord's side anyway — the explicit clear only makes it immediate. So
+         * this is a bound on politeness, not on correctness, and it is short
+         * because whatever is tearing down is waiting on it.
+         */
+        const val DISCORD_TEARDOWN_TIMEOUT_MS = 3_000L
 
         /**
          * Size of each range the player fetches. The same figure read-ahead

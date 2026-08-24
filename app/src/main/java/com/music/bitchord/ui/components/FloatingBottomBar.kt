@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -51,6 +50,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlin.math.roundToInt
 
 data class BottomTab(
@@ -58,21 +61,18 @@ data class BottomTab(
     val icon: ImageVector,
 )
 
+@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun FloatingBottomBar(
     tabs: List<BottomTab>,
     selectedIndex: Int,
     onTabSelected: (Int) -> Unit,
+    hazeState: HazeState,
     modifier: Modifier = Modifier,
 ) {
     val pillShape = RoundedCornerShape(percent = 50)
     val container = MaterialTheme.colorScheme.surface
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val glass = if (reduceDynamicBlur) {
-        container
-    } else {
-        container.copy(alpha = if (container.luminance() >= 0.5f) 0.6f else 0.65f)
-    }
 
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val haptics = LocalHapticFeedback.current
@@ -117,7 +117,16 @@ fun FloatingBottomBar(
             .padding(bottom = 2.dp)
             .fillMaxWidth()
             .clip(pillShape)
-            .background(glass)
+            .then(
+                if (reduceDynamicBlur) {
+                    Modifier.background(container)
+                } else {
+                    Modifier.hazeEffect(
+                        state = hazeState,
+                        style = HazeMaterials.regular(container),
+                    )
+                },
+            )
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), pillShape)
             .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {

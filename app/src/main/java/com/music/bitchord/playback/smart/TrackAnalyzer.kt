@@ -654,36 +654,34 @@ class TrackAnalyzer(context: Context, private val cache: AudioCache) {
     private class WholeTrack(val analysis: TrackAnalysis?, val decodedShort: Boolean = false)
 
     /**
-     * The whole-track pass. A null [WholeTrack.analysis] means "not now, try
-     * again"; see the short-decode guard below, which is the one condition that
-     * produces a confident-looking analysis that is wrong by minutes rather than
-     * merely absent, and the only one that counts as a strike.
+     * What Pass 1 came back with.
+     *
+     * [decodedShort] has to survive the return rather than collapsing into a null [features]: it is
+     * the same distinction [WholeTrack.decodedShort] draws, between a broken copy and no copy, and
+     * only one of the two is a strike.
      */
-    private fun analyze(trackId: String, uri: Uri, durationSeconds: Double): WholeTrack {
-        val rendition = chooseRendition(trackId, uri, durationSeconds) ?: return WholeTrack(null)
-        // Recorded before the outcome is known, because what this gates is
-        // whether a *written-off* track is worth reopening, and the answer is
-        // only ever "yes" for a copy that has not been read yet. Recording it on
-        // success alone would leave a failure looking permanently reopenable and
-        // re-decode the same file on every tick.
-        triedRenditions.add(rendition.key)
-        fun openSource(): MediaDataSource? = cache.renditionDataSource(uri, rendition)
+    private class Structural(
+        val features: TrackFeatures.Features?,
+        val decodedShort: Boolean = false,
+    )
 
-        var effectiveDuration = durationSeconds
-        if (!effectiveDuration.isFinite() || effectiveDuration <= 0) {
-            effectiveDuration = openSource()?.use(AudioDecoder::containerDurationSeconds) ?: 0.0
-        }
-        if (effectiveDuration <= 0) {
-            Log.d(TAG, "Skipping $trackId: cached media has no duration")
-            return WholeTrack(empty(trackId, 0.0))
-        }
-
-        // Pass 1 (Phase 1, DSP-only): the analyzer needs the whole track — the energy curve,
-        // phrase structure and mix-out anchor all read the tail, not just a window of it — at its
-        // own low sample rate, so this is a much smaller decode than a full-rate pass would be.
+    /**
+     * Decodes the whole track and reduces it to DSP features.
+     *
+     * A method rather than a block in [analyze] for a reason that is about memory, not tidiness —
+     * see the call site. Everything it decodes is dead by the time it returns, and returning is
+     * what makes that true of the heap as well as of the program.
+     */
+    private fun structure(
+        trackId: String,
+        uri: Uri,
+        rendition: AudioCache.Rendition,
+        openSource: () -> MediaDataSource?,
+        effectiveDuration: Double,
+    ): Structural {
         val structRate = TrackFeatures.sampleRate
         val decoded = openSource()?.use { AudioDecoder.decodeRegion(it, 0.0, effectiveDuration) }
-            ?: return WholeTrack(empty(trackId, effectiveDuration))
+            ?: return Structural(null)
         val (pcm, _) = decoded
 
         // A decode that stops early is indistinguishable, downstream, from a
@@ -734,18 +732,59 @@ class TrackAnalyzer(context: Context, private val cache: AudioCache) {
                 triedRenditions.remove(rendition.key)
                 shortDecodes.remove(trackId)
             }
-            return WholeTrack(null, decodedShort = true)
+            return Structural(null, decodedShort = true)
         }
 
         val samples = if (abs(pcm.sampleRate - structRate) > 1.0) {
-            TrackFeatures.resample(pcm.samples, pcm.sampleRate, structRate)
-                ?: return WholeTrack(empty(trackId, effectiveDuration))
+            TrackFeatures.resample(pcm.samples, pcm.sampleRate, structRate) ?: return Structural(null)
         } else {
             pcm.samples
         }
 
-        val features = TrackFeatures.analyze(samples, effectiveDuration)
-            ?: return WholeTrack(empty(trackId, effectiveDuration))
+        return Structural(TrackFeatures.analyze(samples, effectiveDuration))
+    }
+
+    /**
+     * The whole-track pass. A null [WholeTrack.analysis] means "not now, try
+     * again"; see the short-decode guard below, which is the one condition that
+     * produces a confident-looking analysis that is wrong by minutes rather than
+     * merely absent, and the only one that counts as a strike.
+     */
+    private fun analyze(trackId: String, uri: Uri, durationSeconds: Double): WholeTrack {
+        val rendition = chooseRendition(trackId, uri, durationSeconds) ?: return WholeTrack(null)
+        // Recorded before the outcome is known, because what this gates is
+        // whether a *written-off* track is worth reopening, and the answer is
+        // only ever "yes" for a copy that has not been read yet. Recording it on
+        // success alone would leave a failure looking permanently reopenable and
+        // re-decode the same file on every tick.
+        triedRenditions.add(rendition.key)
+        fun openSource(): MediaDataSource? = cache.renditionDataSource(uri, rendition)
+
+        var effectiveDuration = durationSeconds
+        if (!effectiveDuration.isFinite() || effectiveDuration <= 0) {
+            effectiveDuration = openSource()?.use(AudioDecoder::containerDurationSeconds) ?: 0.0
+        }
+        if (effectiveDuration <= 0) {
+            Log.d(TAG, "Skipping $trackId: cached media has no duration")
+            return WholeTrack(empty(trackId, 0.0))
+        }
+
+        // Pass 1 (Phase 1, DSP-only): the analyzer needs the whole track — the energy curve,
+        // phrase structure and mix-out anchor all read the tail, not just a window of it — at its
+        // own low sample rate, so this is a much smaller decode than a full-rate pass would be.
+        //
+        // In a frame of its own, and handing back only the features, because of what it allocates
+        // to get them: the whole track decoded to mono at the container's rate (35 MB for a
+        // 3.5-minute song) plus the resampled copy the DSP reads (8 MB). Neither is touched again
+        // after this line, but a local holding either stays reachable to the end of the method, and
+        // the rest of the method is Pass 2 — the most allocation-heavy part of the analysis.
+        // Measured on the API 28 emulator: those two buffers were 43 MB of an 82 MB live set, still
+        // held while the models ran, in a process that was reaching a 256 MB heap limit and had
+        // died on it. Returning is what releases them — a `val` cannot be nulled, and a narrower
+        // scope alone does not make ART treat one as dead.
+        val structural = structure(trackId, uri, rendition, ::openSource, effectiveDuration)
+        if (structural.decodedShort) return WholeTrack(null, decodedShort = true)
+        val features = structural.features ?: return WholeTrack(empty(trackId, effectiveDuration))
 
         // Pass 2 (Phases 2 and 3, models): the Beat This! grid and the open-unmix vocal mask, over
         // the head and tail only. A transition only ever reads the tail of the outgoing track and
@@ -862,14 +901,45 @@ class TrackAnalyzer(context: Context, private val cache: AudioCache) {
             return null
         }
 
+        val seconds = stereo.left.size / stereo.sampleRate
+        // In a frame of its own so the full-rate mono downmix is released before either model runs.
+        // It is 23 MB for this window at 48 kHz — the same size as each of the two channels it
+        // averages — and it is read exactly twice, to make the resampled model input and the DSP
+        // one. As a local it would nonetheless stay reachable through `tracker.track` and
+        // `vocalMask` below, which is where the analysis allocates most heavily and where the
+        // process was dying. Same reasoning [derived] already had, one level further out.
+        val inputs = regionInputs(stereo, seconds, deriveFeatures)
+
+        return Region(
+            grid = inputs.forModel?.let { tracker.track(it, offsetSeconds = actualStart) },
+            vocalMask = features?.let { vocalMask(stereo, it, actualStart) },
+            seconds = seconds,
+            features = inputs.derived,
+        )
+    }
+
+    /** A region's model input, and its DSP features when the caller asked for them. */
+    private class RegionInputs(val forModel: FloatArray?, val derived: TrackFeatures.Features?)
+
+    /**
+     * Reduces a decoded region to the buffers the models and the DSP actually read.
+     *
+     * Both come off one full-rate mono downmix, which is why they are made together rather than on
+     * demand: that downmix is the largest single allocation in the analysis, and returning is the
+     * only way to be rid of it before the models run.
+     */
+    private fun regionInputs(
+        stereo: AudioDecoder.StereoPcm,
+        seconds: Double,
+        deriveFeatures: Boolean,
+    ): RegionInputs {
         val mono = FloatArray(stereo.left.size) { index -> (stereo.left[index] + stereo.right[index]) * 0.5f }
-        val resampled = if (abs(stereo.sampleRate - MelSpectrogram.sampleRate) > 1.0) {
+        val forModel = if (abs(stereo.sampleRate - MelSpectrogram.sampleRate) > 1.0) {
             MelSpectrogram.resample(mono, stereo.sampleRate, MelSpectrogram.sampleRate)
         } else {
             mono
         }
 
-        val seconds = stereo.left.size / stereo.sampleRate
         // Derived here rather than by the caller so the mono buffer is still
         // live: handing it back would keep several megabytes reachable for the
         // rest of the analysis, which is the one thing this function exists to
@@ -885,12 +955,7 @@ class TrackAnalyzer(context: Context, private val cache: AudioCache) {
             null
         }
 
-        return Region(
-            grid = resampled?.let { tracker.track(it, offsetSeconds = actualStart) },
-            vocalMask = features?.let { vocalMask(stereo, it, actualStart) },
-            seconds = seconds,
-            features = derived,
-        )
+        return RegionInputs(forModel, derived)
     }
 
     /**

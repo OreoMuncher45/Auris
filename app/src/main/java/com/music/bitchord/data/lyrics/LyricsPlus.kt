@@ -103,7 +103,13 @@ object LyricsPlus {
                     words = words,
                 )
                 // Some sources are only line-synced; still worth showing.
-                !line.text.isNullOrBlank() -> LyricLine(start, line.text.trim())
+                // The line's duration is the only end it gets, and without it
+                // an interlude can't be told from a slowly sung line.
+                !line.text.isNullOrBlank() -> LyricLine(
+                    timeMs = start,
+                    text = line.text.trim(),
+                    sungUntilMs = line.duration?.takeIf { it > 0 }?.let { start + it },
+                )
                 else -> null
             }
         }.sortedBy { it.timeMs }.withInstrumentalGaps()

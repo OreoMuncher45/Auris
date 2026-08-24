@@ -1,14 +1,20 @@
 package com.music.bitchord.ui.player
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BlendMode
+import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.os.Build
 import android.view.TextureView
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
@@ -18,7 +24,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
@@ -63,6 +71,20 @@ fun CanvasArtworkPlayer(
     onRenderedChanged: (Boolean) -> Unit = {},
     /** A single frame off the playing clip, for callers that want to re-tint around it. */
     onFrameCaptured: (Bitmap) -> Unit = {},
+    /**
+     * How much of whatever is behind the clip it is currently hiding: 0 while
+     * nothing is drawn, ramping to 1 as the first frame fades in, and back down
+     * if it drops out again.
+     *
+     * A caller that stacks a still image under the clip needs this to take that
+     * image back out from under it, and cannot get there from
+     * [onRenderedChanged] alone — that fires when the fade *starts*. It matters
+     * most with [bottomFade]: one gradient over each of two stacked layers
+     * leaves the lower one showing through the upper one instead of the backdrop
+     * showing through both, so the still art stays half-visible over the clip
+     * for as long as it is left lit underneath.
+     */
+    onCoverChanged: (Float) -> Unit = {},
     /**
      * Share of the clip's height, measured up from its bottom edge, over which
      * it dissolves to nothing — 0 for a hard edge. See [setBottomFade] for why
@@ -157,9 +179,17 @@ fun CanvasArtworkPlayer(
         label = "canvasAlpha",
     )
 
+    // Published rather than left for the caller to mirror with a second
+    // animation off [onRenderedChanged]: one fade, one account of how far along
+    // it is. Zeroed on the way out, or a caller would be left holding something
+    // hidden behind a clip that is no longer mounted.
+    val reportCover by rememberUpdatedState(onCoverChanged)
+    LaunchedEffect(Unit) { snapshotFlow { alpha }.collect { reportCover(it) } }
+    DisposableEffect(Unit) { onDispose { reportCover(0f) } }
+
     AndroidView(
         factory = { viewContext ->
-            TextureView(viewContext).apply {
+            val texture = TextureView(viewContext).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -169,15 +199,30 @@ fun CanvasArtworkPlayer(
                 isOpaque = false
                 this.alpha = 0f
                 player.setVideoTextureView(this)
-                textureView = this
+            }
+            textureView = texture
+            // Wrapped on every API level so there is one view tree to reason
+            // about: below API 31 the frame is what draws [bottomFade], and
+            // above it the frame is just a box around the texture.
+            FadingBottomFrame(viewContext).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                addView(texture)
             }
         },
-        update = { view ->
+        update = { frame ->
+            val view = frame.getChildAt(0) as TextureView
             // Set on the view itself. A Compose alpha layer over a TextureView
             // is not reliably composited, and this is the same fade either way.
             view.alpha = alpha
             view.centerCrop(bounds, clipAspect)
-            if (CANVAS_HERO_SUPPORTED) view.setBottomFade(bottomFade, bounds)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                view.setBottomFade(bottomFade, bounds)
+            } else {
+                frame.fadeFraction = bottomFade
+            }
         },
         modifier = modifier.onSizeChanged { bounds = it },
     )
@@ -213,10 +258,8 @@ private fun TextureView.centerCrop(bounds: IntSize, clipAspect: Float) {
  * lands on the layer around the video and leaves the video's own hard edge
  * exactly where it was.
  *
- * [RenderEffect] is API 31+. Below that the effect is skipped, which is why
- * [CANVAS_HERO_SUPPORTED] gates the full-bleed treatment: a banner running off
- * the top of the screen and stopping dead halfway down it looks like a bug,
- * where the same clip inside its sleeve looks intentional.
+ * [RenderEffect] is API 31+; below that [FadingBottomFrame] does the same job
+ * the older way, with a saveLayer and a Porter-Duff mask.
  */
 @RequiresApi(Build.VERSION_CODES.S)
 private fun TextureView.setBottomFade(fraction: Float, bounds: IntSize) {
@@ -246,8 +289,70 @@ private fun TextureView.setBottomFade(fraction: Float, bounds: IntSize) {
     )
 }
 
-/** Whether motion artwork can be given the full-bleed treatment — see [setBottomFade]. */
-val CANVAS_HERO_SUPPORTED = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+/**
+ * The pre-[Build.VERSION_CODES.S] bottom fade: the same dissolve
+ * [setBottomFade] gets from a [RenderEffect], done the way it was done before
+ * there was one.
+ *
+ * Draw the child into an offscreen layer, paint a gradient over that layer with
+ * [PorterDuff.Mode.DST_IN], then compose the result down. Because the layer is
+ * this group's — not the TextureView's own node — the video frames are inside it
+ * by the time the mask lands, which is exactly what a Compose blend over the
+ * texture cannot achieve.
+ *
+ * It costs a full-screen offscreen buffer per frame, so it stays off entirely
+ * while [fadeFraction] is zero: with no fade asked for this is a plain
+ * FrameLayout and `dispatchDraw` takes the ordinary path.
+ */
+private class FadingBottomFrame(context: Context) : FrameLayout(context) {
+    /** Share of the height, from the bottom, over which the child dissolves. */
+    var fadeFraction: Float = 0f
+        set(value) {
+            val clamped = value.coerceIn(0f, 1f)
+            if (clamped == field) return
+            field = clamped
+            // A software layer would defeat the point — the texture has to stay
+            // hardware-composited — so this is only ever the invalidate.
+            gradient = null
+            invalidate()
+        }
+
+    private val maskPaint = Paint().apply {
+        xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+    }
+    private var gradient: LinearGradient? = null
+    private var gradientHeight = 0
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        gradient = null
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        val fade = fadeFraction
+        if (fade <= 0.001f || height == 0) {
+            super.dispatchDraw(canvas)
+            return
+        }
+        val shader = gradient?.takeIf { gradientHeight == height } ?: LinearGradient(
+            0f,
+            height * (1f - fade),
+            0f,
+            height.toFloat(),
+            android.graphics.Color.BLACK,
+            android.graphics.Color.TRANSPARENT,
+            Shader.TileMode.CLAMP,
+        ).also {
+            gradient = it
+            gradientHeight = height
+        }
+        maskPaint.shader = shader
+        val layer = canvas.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
+        super.dispatchDraw(canvas)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), maskPaint)
+        canvas.restoreToCount(layer)
+    }
+}
 
 /**
  * Apple serves HLS, Tidal and the community index serve MP4. Naming the type

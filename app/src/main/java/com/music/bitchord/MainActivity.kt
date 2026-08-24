@@ -64,6 +64,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -977,6 +978,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             FloatingBottomBar(
                 tabs = tabs,
                 selectedIndex = selectedTab,
+                hazeState = hazeState,
                 onTabSelected = { index ->
                     // Re-tapping the search tab while already on it focuses the
                     // input field and opens the keyboard rather than resetting.
@@ -1029,6 +1031,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             ModalBottomSheet(
                 onDismissRequest = { showNowPlaying = false },
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                // The player fills the screen and paints its own background to
+                // the very top, so the sheet's default 28.dp top corners would
+                // only cut two notches out of the artwork behind the status bar.
+                shape = RectangleShape,
                 containerColor = Color.Transparent,
                 dragHandle = null,
                 contentWindowInsets = { WindowInsets(0, 0, 0, 0) },

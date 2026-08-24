@@ -33,6 +33,7 @@ import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerManager
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
+import java.io.IOException
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -367,6 +368,23 @@ object StreamResolver {
                 }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: LinkageError) {
+            // Every strategy above either runs third-party extraction code or
+            // drives YouTube's player JavaScript, so any of them can turn out to
+            // have been compiled against an API this OS version does not carry.
+            // That arrives as an Error, which the clause below does not catch and
+            // no caller of this function catches either — ExoPlayer's loader
+            // thread least of all, which is where it surfaced as a process kill
+            // rather than a failed track. Converted here, at the one point every
+            // strategy passes through, so the answer is the same wherever the
+            // linkage failure came from.
+            TrackLog.w(
+                TAG,
+                "resolve hit a linkage failure for $videoId after " +
+                    "${SystemClock.elapsedRealtime() - resolveStart}ms: ${e.javaClass.name}: ${e.message}",
+                e,
+            )
+            throw IOException("Stream resolution cannot run on this device: $e", e)
         } catch (e: Exception) {
             // The one path out of here that said nothing at all. A resolve that
             // throws is handed to ExoPlayer as a load error, which retries it on
@@ -643,22 +661,47 @@ object StreamResolver {
                 }
                 responses[client] = response
 
-                val format = select(response) ?: continue
+                // Answered, but with nothing this app can use. Logged because
+                // the two ways that happens are worth telling apart and the
+                // timings alone cannot: a client that offers no acceptable
+                // format never reaches [streamUrl], so both cases look
+                // identical from outside — a `player()` line and then silence.
+                val format = select(response)
+                if (format == null) {
+                    TrackLog.d(TAG, "${client.clientName} offered no usable format for $videoId")
+                    refused(videoId, client)
+                    continue
+                }
                 val url = timed("$videoId ${client.clientName} streamUrl") {
                     streamUrl(videoId, format)?.let { patchClientVersion(it, client.clientVersion) }
-                } ?: continue
+                }
+                if (url == null) {
+                    TrackLog.d(
+                        TAG,
+                        "${client.clientName} offered ${format.mimeType} for $videoId but its URL could not be unlocked",
+                    )
+                    refused(videoId, client)
+                    continue
+                }
 
                 val verdict = timed("$videoId ${client.clientName} probe") { probe(url) }
                 TrackLog.d(TAG, "TIMING $videoId ${client.clientName} total: ${SystemClock.elapsedRealtime() - clientStart}ms")
                 when (verdict) {
                     Probe.OK -> {
                         TrackLog.d(TAG, "resolved $videoId via ${client.clientName} @ ${format.kbps}kbps")
+                        served(client)
                         preferred = client
                         return Stream(url, format.kbps, format.mimeType)
                     }
                     // The client itself is being refused this track; don't
                     // spend another round trip on it for a while.
-                    Probe.REFUSED -> standDown(videoId, client)
+                    Probe.REFUSED -> {
+                        standDown(videoId, client)
+                        refused(videoId, client)
+                    }
+                    // Nobody answered, so this says nothing about the client —
+                    // deliberately not counted as a refusal, or a bad minute on
+                    // the connection would stand down clients that are fine.
                     Probe.UNREACHABLE -> Unit
                 }
                 // Which format was rejected, not just that one was: the same
@@ -690,8 +733,17 @@ object StreamResolver {
                 // three seconds and in twenty. Standing a refused client down
                 // for everything, not just for one video, cuts both the wait
                 // and the volume that provokes the throttling.
-                if (e is Innertube.UnplayableException && e.looksLikeBotCheck) {
-                    standDownEverywhere(client)
+                //
+                // A phrase match is the right test only when it matches, and it
+                // is one sentence of Google's wording away from not. On this
+                // emulator TVHTML5 is turned away with "The page needs to be
+                // reloaded." every track — the same refusal, worded so as to
+                // contain none of "bot", "unusual traffic" or "sign in" — and so
+                // was asked again for every track of the session. Any refusal
+                // therefore also counts toward [refused], which needs no
+                // vocabulary because it waits for the repetition instead.
+                if (e is Innertube.UnplayableException) {
+                    if (e.looksLikeBotCheck) standDownEverywhere(client) else refused(videoId, client)
                 }
                 TrackLog.w(TAG, "${client.clientName} failed for $videoId: ${e.message}")
             }
@@ -1011,6 +1063,53 @@ object StreamResolver {
     }
 
     /**
+     * Which tracks each client has been refused since it last served one.
+     *
+     * [standDownEverywhere] is the right answer for a client that has stopped
+     * being served, and reading the refusal is the hard part: Google says no in
+     * whatever words it likes, and only some of them are recognisable. So this
+     * does not try to read it. A client asked for one track and refused has
+     * told us about that track; a client asked for three different tracks and
+     * refused all three, without serving anything in between, has told us about
+     * itself — whatever the wording. Videos rather than a count because one
+     * track can put the same client through this twice (see [resolveForDownload],
+     * which walks for AAC and then for anything), and two refusals of the same
+     * track are one piece of evidence.
+     */
+    private val refusalsByClient = ConcurrentHashMap<String, MutableSet<String>>()
+
+    /**
+     * How much evidence is enough. Low, because the cost of being wrong is
+     * bounded by [STAND_DOWN_MS] and the cost of being slow is paid on every
+     * track: three tracks of the walk, then the rest of the ten minutes going
+     * straight to what works.
+     */
+    private const val REFUSALS_BEFORE_STANDING_DOWN = 3
+
+    /** A client answered about [videoId], and the answer was no use. */
+    private fun refused(videoId: String, client: PlayerClient) {
+        val refusedTracks = refusalsByClient.computeIfAbsent(key(client)) {
+            ConcurrentHashMap.newKeySet<String>()
+        }
+        refusedTracks.add(videoId)
+        if (refusedTracks.size >= REFUSALS_BEFORE_STANDING_DOWN) {
+            // Cleared as it escalates, so that when the stand-down expires the
+            // client is owed a fresh [REFUSALS_BEFORE_STANDING_DOWN] tracks
+            // rather than being stood down again by the first one.
+            refusalsByClient.remove(key(client))
+            standDownEverywhere(client)
+        }
+    }
+
+    /**
+     * A client served a track, so what came before it was about those tracks
+     * rather than about the client.
+     */
+    private fun served(client: PlayerClient) {
+        refusalsByClient.remove(key(client))
+    }
+
+    /**
      * A client refused the session rather than the track — see [playerStream].
      *
      * Shares [standDownUntil] and its expiry with the per-track case, under a
@@ -1053,6 +1152,13 @@ object StreamResolver {
      */
     fun onPlaybackRefused(url: String, responseCode: Int) {
         if (responseCode !in REFUSAL_CODES) return
+        // Only googlevideo's URLs say anything about a [PlayerClient]. Anything
+        // else — a module's stream URL, a downloaded file — carries no `c`
+        // parameter, and [PlayerClient.forStreamUrl] answers IOS for a URL it
+        // can't read rather than nothing. So without this, a Tidal URL
+        // answering 404 stands down the client that mints most of YouTube's,
+        // and the next YouTube track pays for a failure on a different server.
+        if (url.toHttpUrlOrNull()?.host?.endsWith("googlevideo.com") != true) return
         val client = PlayerClient.forStreamUrl(url)
         // Keyed by videoId, and the fetch only knows the googlevideo URL it was
         // handed; the map is a latency cache of a few dozen entries, so finding
@@ -1104,6 +1210,21 @@ object StreamResolver {
                 return extractStream(videoId, select)
             } catch (e: CancellationException) {
                 throw e
+            } catch (e: LinkageError) {
+                // Not a failed extraction — a method or class the extractor was
+                // compiled against that this OS version does not have, which is
+                // the same answer every time and so is not worth the remaining
+                // attempts. It reaches here as an Error rather than an Exception,
+                // and an Error let past this point does not fail the track: it
+                // unwinds through ExoPlayer's loader thread, where nothing is
+                // catching it, and takes the process with it. That is what a
+                // NoSuchMethodError out of NewPipe's URL codec did on every
+                // Android below 13 — see the note in the vendored
+                // `org.schabi.newpipe.extractor.utils.Utils`. Reported as an
+                // Exception so the layers above treat it as the load failure it
+                // is, with the type name kept because the message alone ("No
+                // static method ...") reads like nothing.
+                throw IOException("Extractor cannot run on this device: $e", e)
             } catch (e: Exception) {
                 // Worth another go rather than worth giving up on: the common
                 // failure here is a shaped or cut-off watch page, which is a

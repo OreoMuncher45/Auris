@@ -166,6 +166,90 @@ class WordSyncTest {
         assertEquals(32_529L, line.words[1].endMs)
     }
 
+    // ---- Instrumental breaks -------------------------------------------------
+
+    private fun lineSynced(vararg rows: Triple<Long, Long?, String>) = LyricsPlus.parse(
+        LyricsPlus.Response(
+            type = "Line",
+            lyrics = rows.map { (time, duration, text) ->
+                LyricsPlus.Line(time = time, duration = duration, text = text, syllabus = emptyList())
+            },
+        ),
+    )
+
+    /**
+     * "Qayde Se", as LyricsPlus actually serves it: `type: Line`, empty
+     * syllabus, and each line's duration running right up to the next stamp.
+     * Ten seconds between stamps is one line sung over ten seconds, not a
+     * ten-second break, so nothing but the intro should be marked.
+     */
+    @Test
+    fun `a slowly sung line-synced song gets no break between its lines`() {
+        val lines = lineSynced(
+            Triple(19_740L, 10_020L, "दिल जला के मुस्कुराने की जो आदत हुई है मुझे"),
+            Triple(29_760L, 9_910L, "लग रहा है, क़ायदे से अब मोहब्बत हुई है मुझे"),
+            Triple(39_670L, 10_000L, "मेरी तुम्हीं से है जवाब-दारी"),
+        )
+        // Only the 19.7s run-up before the first word.
+        assertEquals(1, lines.count { it.isGap })
+        assertTrue(lines.first().isGap)
+        assertEquals(3, lines.sung().size)
+    }
+
+    /**
+     * The bug this guards: a break stamped at the same millisecond as a line
+     * shadows it forever, because the cursor takes the *last* line whose stamp
+     * has passed. Every line would show as a note and none would light up.
+     */
+    @Test
+    fun `no break ever shares a stamp with the line it follows`() {
+        val lines = lineSynced(
+            Triple(19_740L, 10_020L, "one"),
+            Triple(29_760L, 9_910L, "two"),
+            Triple(39_670L, 10_000L, "three"),
+        )
+        val sungStamps = lines.sung().map { it.timeMs }.toSet()
+        val clashes = lines.filter { it.isGap && it.timeMs in sungStamps }
+        assertEquals(emptyList<LyricLine>(), clashes)
+    }
+
+    /** With no duration to go on, the distance to the next stamp proves nothing. */
+    @Test
+    fun `a line-synced source with no durations gets no synthesised breaks`() {
+        val lines = lineSynced(
+            Triple(1_000L, null, "one"),
+            Triple(20_000L, null, "two"),
+        )
+        assertEquals(0, lines.count { it.isGap })
+    }
+
+    /** A stated end well short of the next line is a real break, and is drawn. */
+    @Test
+    fun `a stated line end short of the next stamp is marked as a break`() {
+        val lines = lineSynced(
+            Triple(1_000L, 2_000L, "before the solo"),
+            Triple(30_000L, 2_000L, "after the solo"),
+        )
+        val gap = lines.single { it.isGap && it.timeMs > 0 }
+        // The note lands when the singing stopped, not when the next line was due.
+        assertEquals(3_000L, gap.timeMs)
+    }
+
+    /** Same for line-synced TTML, where the end lives on the `<p>`. */
+    @Test
+    fun `line-synced ttml takes its break from the paragraph end`() {
+        val lines = TtmlLyrics.parse(
+            """
+            <tt><body><div>
+              <p begin="1.0" end="3.0">before the solo</p>
+              <p begin="30.0" end="32.0">after the solo</p>
+            </div></body></tt>
+            """.trimIndent(),
+        )
+        assertEquals(2, lines.sung().size)
+        assertEquals(3_000L, lines.single { it.isGap && it.timeMs > 0 }.timeMs)
+    }
+
     // ---- The sweep's own arithmetic -----------------------------------------
 
     private val line = LyricLine(
