@@ -93,8 +93,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         val sessionKey = AppSettings.lastfmSessionKey.value
         if (sessionKey.isBlank()) return
         val endpoint = AppSettings.lastfmEndpoint.value.ifBlank { LastFM.DEFAULT_API_ENDPOINT }
-        val apiKey = AppSettings.lastfmApiKey.value.ifBlank { LastFM.FALLBACK_COMPAT_API_KEY }
-        val secret = AppSettings.lastfmSecret.value.ifBlank { LastFM.FALLBACK_COMPAT_SECRET }
+        val apiKey = AppSettings.lastfmApiKey.value.trim()
+        val secret = AppSettings.lastfmSecret.value.trim()
+        if (apiKey.isBlank() || secret.isBlank()) return
         LastFM.configure(
             endpoint = endpoint,
             apiKey = apiKey,

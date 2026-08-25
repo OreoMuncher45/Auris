@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.lyrics.LyricsSource
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -158,24 +159,8 @@ object AppSettings {
 
     // ── Scrobbling ──────────────────────────────────────────────────────
 
-    /**
-     * Whether the scrobbling integrations are offered at all.
-     *
-     * Off for now: Last.fm and ListenBrainz are shelved until a later version,
-     * and this is the one switch that shelves them — the settings rows dim
-     * and the submit paths in
-     * [PlaybackService][com.music.bitchord.playback.PlaybackService] go quiet.
-     * Without the second half of that, a device that had Last.fm connected
-     * before would keep scrobbling behind a screen saying the feature is gone.
-     *
-     * Nothing here clears the stored keys or toggles, so an account that was
-     * connected comes back exactly as it was.
-     *
-     * A plain `val` rather than a `const val` on purpose: a const would be
-     * folded away and every gate below would compile to a "condition is always
-     * false" warning.
-     */
-    val scrobblingAvailable = false
+    /** One release gate shared by the settings UI and the playback service. */
+    val scrobblingAvailable = true
 
     val lastfmEnabled = MutableStateFlow(false)
     val lastfmUsername = MutableStateFlow("")
@@ -305,11 +290,11 @@ object AppSettings {
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
         lastfmUsername.value = prefs.getString(KEY_LASTFM_USERNAME, "").orEmpty()
         lastfmSessionKey.value = prefs.getString(KEY_LASTFM_SESSION_KEY, "").orEmpty()
-        lastfmApiKey.value = prefs.getString(KEY_LASTFM_API_KEY, "").orEmpty()
-        lastfmSecret.value = prefs.getString(KEY_LASTFM_SECRET, "").orEmpty()
+        lastfmApiKey.value = prefs.getString(KEY_LASTFM_API_KEY, "").orEmpty().ifBlank { BuildConfig.LASTFM_API_KEY }
+        lastfmSecret.value = prefs.getString(KEY_LASTFM_SECRET, "").orEmpty().ifBlank { BuildConfig.LASTFM_SECRET }
         lastfmEndpoint.value = prefs.getString(KEY_LASTFM_ENDPOINT, "").orEmpty()
         lastfmScrobbleEnabled.value = prefs.getBoolean(KEY_LASTFM_SCROBBLE_ENABLED, false)
-        lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false)
+        lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
         scrobbleMinDuration.value = prefs.getInt(KEY_SCROBBLE_MIN_DURATION, 30)
         scrobbleDelayPercent.value = prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f)
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
@@ -556,10 +541,15 @@ object AppSettings {
 
     fun setLastfmScrobbleEnabled(value: Boolean) {
         lastfmScrobbleEnabled.value = value
-        prefs.edit().putBoolean(KEY_LASTFM_SCROBBLE_ENABLED, value).apply()
+        if (!value) lastfmNowPlaying.value = false
+        prefs.edit()
+            .putBoolean(KEY_LASTFM_SCROBBLE_ENABLED, value)
+            .putBoolean(KEY_LASTFM_NOW_PLAYING, if (value) lastfmNowPlaying.value else false)
+            .apply()
     }
 
     fun setLastfmNowPlaying(value: Boolean) {
+        if (!lastfmScrobbleEnabled.value && value) return
         lastfmNowPlaying.value = value
         prefs.edit().putBoolean(KEY_LASTFM_NOW_PLAYING, value).apply()
     }
