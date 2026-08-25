@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
@@ -245,11 +246,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * them ([likeStatuses]) means a tap shows immediately without the library
      * having to be re-fetched, and a later refresh can't undo it.
      */
-    private val _likeOverrides = MutableStateFlow<Map<String, LikeStatus>>(emptyMap())
-
     /** Every rating known for this account: the library's, then this session's. */
     val likeStatuses: StateFlow<Map<String, LikeStatus>> =
-        combine(_library, _likeOverrides) { library, overrides ->
+        combine(_library, LikeState.overrides) { library, overrides ->
             val liked = (library as? UiState.Success)?.data?.likedSongs
                 ?.associate { it.videoId to LikeStatus.LIKE }
                 .orEmpty()
@@ -271,7 +270,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!requireSignIn()) return
         val previous = likeStatusOf(videoId)
         if (previous == status) return
-        _likeOverrides.value += (videoId to status)
+        LikeState.set(videoId, status)
         viewModelScope.launch {
             YtMusicRepository.rate(videoId, status).fold(
                 onSuccess = {
@@ -285,7 +284,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (unliked) forgetFromLibrary(videoId)
                 },
                 onFailure = {
-                    _likeOverrides.value += (videoId to previous)
+                    LikeState.set(videoId, previous)
                 },
             )
         }
@@ -438,9 +437,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _songMenu.value = menu
             val stated = menu.likeStatus
             if (stated != null && stated != LikeStatus.INDIFFERENT &&
-                videoId !in _likeOverrides.value
+                videoId !in LikeState.overrides.value
             ) {
-                _likeOverrides.value += (videoId to stated)
+                LikeState.set(videoId, stated)
             }
         }
     }
@@ -1313,7 +1312,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _library.value = UiState.Loading
         // Ratings and playlists belong to the account that just left; keeping
         // them would show the next signed-in user someone else's hearts.
-        _likeOverrides.value = emptyMap()
+        LikeState.clear()
         _playlists.value = emptyList()
         _songMenu.value = null
         loadHome()

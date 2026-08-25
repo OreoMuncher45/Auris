@@ -79,16 +79,12 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
-import com.music.bitchord.data.model.SearchFilter
-import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ThemeMode
-import com.music.bitchord.data.sources.SourceRegistry
-import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
@@ -101,6 +97,7 @@ import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.dropAutoplayTracks
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
+import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.download.DownloadStore
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.PlaylistActionsSheet
@@ -134,9 +131,6 @@ import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.ui.theme.SystemBarIcons
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -303,41 +297,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val player = rememberPlayerState(controller)
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
 
-    // AutoPlay: once the queue reaches its last track, extend it with YouTube
-    // Music's radio mix for that song so playback carries on by itself.
-    //
-    // Repeat-all is left out of the trigger: its whole point is to loop the
-    // queue as it stands, which AutoPlay extending it forever would defeat —
-    // the queue would never actually reach the end repeat-all is meant to
-    // wrap from. See onCycleRepeat, which drops whatever AutoPlay has already
-    // added the moment repeat-all is turned on.
-    var autoplaySeed by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(autoplay, player.queueIndex, player.queue.size, player.song?.videoId, player.repeatMode) {
-        val song = player.song
-        val current = song?.videoId
-        if (!autoplay || song == null || current == null) return@LaunchedEffect
-        if (player.repeatMode == Player.REPEAT_MODE_ALL) return@LaunchedEffect
-        if (player.queueIndex < player.queue.lastIndex) return@LaunchedEffect
-        if (autoplaySeed == current) return@LaunchedEffect
-        autoplaySeed = current
-        // Radio is YouTube's, and only YouTube's — a module track's id means
-        // nothing to it. See [youtubeSeedFor].
-        val seed = youtubeSeedFor(song) ?: return@LaunchedEffect
-        YtMusicRepository.radio(seed).onSuccess { related ->
-            val extra = QueueBuilder.extend(player.queue, related, RADIO_BATCH)
-            if (extra.isNotEmpty()) {
-                // Swapped for the catalogue audio track before it ever
-                // reaches the queue — see YtMusicRepository.resolveAudio.
-                val resolved = coroutineScope {
-                    extra.map { async { YtMusicRepository.resolveAudio(it) } }.awaitAll()
-                }
-                controller?.addMediaItems(
-                    resolved.map { it.copy(fromAutoplay = true).toMediaItem() },
-                )
-            }
-        }
-    }
-
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off applies to
     // the track already playing rather than only the next one.
@@ -421,17 +380,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
     val scope = rememberCoroutineScope()
 
-    /**
-     * A video-tagged [Song] is swapped for its catalogue audio release
-     * before the queue, the notification or YouTube's own history ever see
-     * it — see [YtMusicRepository.resolveAudio]. Plain songs pass through
-     * this untouched and unawaited (`isVideo` is false, so the suspend call
-     * returns immediately), so this costs nothing on the common path.
-     */
-    suspend fun List<Song>.resolvedForQueue(): List<Song> = coroutineScope {
-        map { async { YtMusicRepository.resolveAudio(it) } }.awaitAll()
-    }
-
     val play: (List<Song>, Int) -> Unit = { songs, index ->
         scope.launch {
             val starting = YtMusicRepository.resolveAudio(songs[index])
@@ -468,31 +416,10 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
      * where the surrounding list *is* the thing the user asked for.
      */
     val playRadio: (Song) -> Unit = { song ->
-        // Claim the AutoPlay seed up front: a one-track queue is already at its
-        // end, so that effect would otherwise fetch the same radio in parallel.
-        autoplaySeed = song.videoId
         scope.launch {
             val resolved = YtMusicRepository.resolveAudio(song)
-            autoplaySeed = resolved.videoId
             controller?.playSongs(listOf(resolved), 0)
             showNowPlaying = true
-            // Radio is YouTube's, and only YouTube's — see [youtubeSeedFor].
-            val seed = youtubeSeedFor(resolved) ?: return@launch
-            YtMusicRepository.radio(seed).onSuccess { related ->
-                // The user may have moved on while the mix was loading.
-                if (controller?.currentMediaItem?.mediaId != resolved.videoId) return@onSuccess
-                val extra = QueueBuilder.extend(listOf(resolved), related, RADIO_BATCH)
-                if (extra.isNotEmpty()) {
-                    // The station's own mix, which the queue files under
-                    // AutoPlay just like the tracks it appends later — only the
-                    // seed was actually asked for.
-                    controller?.addMediaItems(
-                        extra.resolvedForQueue().map {
-                            it.copy(fromAutoplay = true).toMediaItem()
-                        },
-                    )
-                }
-            }
         }
     }
     val addToQueue: (Song) -> Unit = { song ->
@@ -1142,25 +1069,16 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             // tracks are the opposite of that — an endless supply
                             // of new ones — so they come back out first. Native
                             // REPEAT_MODE_ALL then wraps a plain queue exactly as
-                            // it should, and the LaunchedEffect above leaves it be
-                            // for as long as repeat-all stays on.
+                            // it should, and the service's AutoPlay loader leaves
+                            // it be for as long as repeat-all stays on.
                             if (next == Player.REPEAT_MODE_ALL) it.dropAutoplayTracks()
                             it.repeatMode = next
                         }
                     },
                     onToggleAutoplay = {
-                        val on = !autoplay
-                        AppSettings.setAutoplay(on)
-                        if (on) {
-                            // Let the effect above seed a mix for the track
-                            // playing now, instead of passing over it as one it
-                            // has already extended.
-                            autoplaySeed = null
-                        } else {
-                            // Switching it off takes the mix back out of the
-                            // queue — what's left is what was actually asked for.
-                            controller?.dropAutoplayTracks()
-                        }
+                        // PlaybackService owns the setting and queue extension so
+                        // this path and the notification use exactly one loader.
+                        controller?.toggleAutoplay()
                     },
                     onJumpTo = { controller?.seekToDefaultPosition(it) },
                     onRemoveFromQueue = { controller?.removeMediaItem(it) },
@@ -1527,9 +1445,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 private fun tween(durationMillis: Int) =
     androidx.compose.animation.core.tween<Float>(durationMillis)
 
-/** How many tracks a station pulls in at a time. */
-private const val RADIO_BATCH = 20
-
 /**
  * How far short of the end a seek is allowed to land.
  *
@@ -1539,36 +1454,6 @@ private const val RADIO_BATCH = 20
  * from the end plays the outro instead.
  */
 private const val SEEK_END_GUARD_MS = 1_000L
-
-/**
- * A YouTube video id to seed a radio station from, for a track that may not
- * have one of its own.
- *
- * Radio, related tracks and the home feed are YouTube's alone — see
- * [SourceKind.YOUTUBE][com.music.bitchord.data.sources.SourceKind.YOUTUBE].
- * A track played from module *search* carries a
- * [SourceRegistry.trackKey] as its media id, which means nothing to
- * Innertube: handing one to [YtMusicRepository.radio] gets an empty mix
- * back, which is why AutoPlay quietly stopped extending the queue after a
- * module search result. Looking the recording up on YouTube by name gives
- * the station something it can actually seed from, and the mix that comes
- * back is YouTube's — those tracks then take the ordinary YouTube path and
- * get substituted individually if a module happens to hold them.
- *
- * Null when the track isn't on YouTube at all, which is a real answer: no
- * station rather than a station for the wrong song.
- */
-private suspend fun youtubeSeedFor(song: Song): String? {
-    if (SourceRegistry.parseTrackKey(song.videoId) == null) return song.videoId
-    val target = TrackMatcher.targetOf(song)
-    val query = TrackMatcher.queries(target).firstOrNull() ?: return null
-    return YtMusicRepository.search(query, SearchFilter.SONGS)
-        .getOrNull()
-        ?.filterIsInstance<SearchResult.Track>()
-        ?.map { it.song }
-        ?.let { TrackMatcher.best(it, target) }
-        ?.videoId
-}
 
 /**
  * How far a detail page scrolls before its title moves up into the bar.

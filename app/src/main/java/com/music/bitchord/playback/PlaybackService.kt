@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
 import androidx.media3.common.AudioAttributes
@@ -28,18 +29,27 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import androidx.media3.session.SessionCommand
+import androidx.media3.session.SessionError
+import androidx.media3.session.SessionResult
+import com.google.common.util.concurrent.Futures
+import com.google.common.util.concurrent.ListenableFuture
 import com.music.bitchord.MainActivity
 import com.music.bitchord.R
 import com.music.bitchord.data.Http
+import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.scrobbling.ListenBrainzManager
@@ -75,6 +85,12 @@ import kotlinx.coroutines.TimeoutCancellationException
 
 /** Past this point in a track, back restarts it instead of skipping to the previous one. */
 const val BACK_RESTARTS_AFTER_MS = 10_000L
+
+/** Session command used by both the player UI and the media notification. */
+const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
+
+/** Session command used by the media notification's Shuffle button. */
+const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 
 /**
  * Background playback via Media3. A [MediaSessionService] gives us the media
@@ -171,6 +187,55 @@ class PlaybackService : MediaSessionService() {
     private var discordPresenceUp = false
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /** Commands exposed as the secondary buttons on the media notification. */
+    private val favoriteCommand = SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY)
+    private val autoplayCommand = SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY)
+    private val shuffleCommand = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
+
+    private var favoriteActionJob: Job? = null
+    private var autoplayLoadJob: Job? = null
+    private var autoplaySeed: String? = null
+
+    private val sessionCallback = object : MediaSession.Callback {
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+        ): MediaSession.ConnectionResult {
+            // The media notification controller is a normal Media3 controller. Its custom
+            // buttons are omitted unless their commands are explicitly available.
+            val commands = MediaSession.ConnectionResult.DEFAULT_SESSION_COMMANDS
+                .buildUpon()
+                .add(favoriteCommand)
+                .add(autoplayCommand)
+                .add(shuffleCommand)
+                .build()
+            return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
+                .setAvailableSessionCommands(commands)
+                .build()
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: SessionCommand,
+            args: Bundle,
+        ): ListenableFuture<SessionResult> {
+            when (customCommand.customAction) {
+                ACTION_TOGGLE_AUTOPLAY -> toggleAutoplayFromNotification()
+                ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromNotification()
+                ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.mediaId?.let {
+                    toggleFavoriteFromNotification(it)
+                }
+                else -> return Futures.immediateFuture(
+                    SessionResult(SessionError.ERROR_NOT_SUPPORTED),
+                )
+            }
+            // The actual YouTube rating is asynchronous. The command itself has been accepted;
+            // the notification is refreshed when the network write completes.
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
+    }
 
     /**
      * Everything the service books against the player it is currently on.
@@ -305,6 +370,11 @@ class PlaybackService : MediaSessionService() {
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
                 reason = reason,
             )
+            autoplayLoadJob?.cancel()
+            autoplayLoadJob = null
+            autoplaySeed = null
+            loadAutoplayForCurrentTrack()
+            mediaSession?.setCustomLayout(notificationButtons())
         }
 
         /**
@@ -343,6 +413,12 @@ class PlaybackService : MediaSessionService() {
             }
         }
 
+        override fun onRepeatModeChanged(repeatMode: Int) {
+            // Turning repeat-all back off can leave the current item at the end
+            // of the queue, which is the same trigger as a normal transition.
+            loadAutoplayForCurrentTrack()
+        }
+
         /**
          * AutoPlay appends to the queue after the transition that ran it
          * dry, so the track to read ahead for often only exists once the
@@ -353,6 +429,9 @@ class PlaybackService : MediaSessionService() {
             // session is currently pointed at.
             val exoPlayer = player ?: return
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
+            if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                mediaSession?.setCustomLayout(notificationButtons())
+            }
         }
     }
 
@@ -480,6 +559,21 @@ class PlaybackService : MediaSessionService() {
                 .build()
                 .apply { setSmallIcon(R.drawable.ic_notification_logo) },
         )
+
+        // The player screen toggles QueueShuffle directly on its MediaController.
+        // Observe the shared state here so the notification's Shuffle icon and
+        // label follow that toggle immediately as well.
+        scope.launch {
+            QueueShuffle.enabled
+                .collectLatest {
+                    mediaSession?.setCustomLayout(notificationButtons())
+                }
+        }
+        scope.launch {
+            LikeState.overrides.collectLatest {
+                mediaSession?.setCustomLayout(notificationButtons())
+            }
+        }
 
         // No user agent on the factory: the right one depends on which client
         // minted the URL, so it is set per request below. Setting it here as
@@ -663,6 +757,7 @@ class PlaybackService : MediaSessionService() {
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
         exoPlayer.addListener(playbackListener)
+        loadAutoplayForCurrentTrack()
 
         // Only the analytics listener reports the format the audio renderer was
         // configured with. Treated as a trigger rather than a source: the
@@ -703,7 +798,135 @@ class PlaybackService : MediaSessionService() {
         mediaSession = MediaSession.Builder(this, SessionPlayer(exoPlayer, controller))
             .setId(SESSION_ID)
             .setSessionActivity(sessionActivity())
+            .setCallback(sessionCallback)
             .build()
+        mediaSession?.setCustomLayout(notificationButtons())
+    }
+
+    /** The one custom layout advertised to all Media3 control surfaces. */
+    private fun notificationButtons(): List<CommandButton> {
+        val autoplay = CommandButton.Builder(CommandButton.ICON_UNDEFINED)
+            .setSessionCommand(autoplayCommand)
+            .setIconResId(R.drawable.ic_autoplay)
+            .setDisplayName("AutoPlay")
+            .build()
+        val favorite = CommandButton.Builder(
+            if (LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE) {
+                CommandButton.ICON_HEART_FILLED
+            } else {
+                CommandButton.ICON_HEART_UNFILLED
+            },
+        )
+            .setSessionCommand(favoriteCommand)
+            .setDisplayName("Favorite")
+            .build()
+        val shuffleEnabled = QueueShuffle.enabled.value
+        val shuffle = CommandButton.Builder(
+            if (shuffleEnabled) {
+                CommandButton.ICON_SHUFFLE_ON
+            } else {
+                CommandButton.ICON_SHUFFLE_OFF
+            },
+        )
+            .setSessionCommand(shuffleCommand)
+            .setDisplayName(if (shuffleEnabled) "Shuffle off" else "Shuffle on")
+            .build()
+        return listOf(favorite, autoplay, shuffle)
+    }
+
+    private fun toggleShuffleFromNotification() {
+        player?.let(QueueShuffle::toggle)
+        mediaSession?.setCustomLayout(notificationButtons())
+    }
+
+    private fun toggleAutoplayFromNotification() {
+        val enabled = !AppSettings.autoplay.value
+        AppSettings.setAutoplay(enabled)
+        if (enabled) {
+            autoplayLoadJob?.cancel()
+            autoplayLoadJob = null
+            autoplaySeed = null
+            loadAutoplayForCurrentTrack()
+        } else {
+            autoplayLoadJob?.cancel()
+            autoplayLoadJob = null
+            autoplaySeed = null
+            dropAutoplayTracksFromQueue()
+        }
+        mediaSession?.setCustomLayout(notificationButtons())
+    }
+
+    /** Starts the same radio extension used by the player when AutoPlay is enabled. */
+    private fun loadAutoplayForCurrentTrack() {
+        val exoPlayer = player ?: return
+        if (!AppSettings.autoplay.value ||
+            exoPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+            exoPlayer.hasNextMediaItem()
+        ) {
+            return
+        }
+        val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        if (autoplaySeed == current.videoId) return
+        autoplaySeed = current.videoId
+        autoplayLoadJob = scope.launch {
+            val existing = (0 until exoPlayer.mediaItemCount)
+                .map { exoPlayer.getMediaItemAt(it).toSong() }
+            loadAutoplayTracks(existing, current)
+                .onSuccess { resolved ->
+                    val activePlayer = player ?: return@onSuccess
+                    if (!AppSettings.autoplay.value ||
+                        activePlayer.currentMediaItem?.mediaId != current.videoId ||
+                        activePlayer.hasNextMediaItem()
+                    ) {
+                        return@onSuccess
+                    }
+                    val stillPlaying = player ?: return@onSuccess
+                    if (!AppSettings.autoplay.value ||
+                        stillPlaying.currentMediaItem?.mediaId != current.videoId ||
+                        stillPlaying.hasNextMediaItem()
+                    ) {
+                        return@onSuccess
+                    }
+                    stillPlaying.addMediaItems(
+                        resolved.map { it.toMediaItem() },
+                    )
+                }
+                .onFailure {
+                    TrackLog.w("BitChord", "notification autoplay failed: ${it.message}", about = current.videoId)
+                }
+        }
+    }
+
+    private fun dropAutoplayTracksFromQueue() {
+        val exoPlayer = player ?: return
+        for (index in exoPlayer.mediaItemCount - 1 downTo exoPlayer.currentMediaItemIndex + 1) {
+            if (exoPlayer.getMediaItemAt(index).fromAutoplay) {
+                exoPlayer.removeMediaItem(index)
+            }
+        }
+    }
+
+    private fun toggleFavoriteFromNotification(videoId: String) {
+        favoriteActionJob?.cancel()
+        val previous = LikeState.overrides.value[videoId] ?: LikeStatus.INDIFFERENT
+        val target = if (previous == LikeStatus.LIKE) {
+            LikeStatus.INDIFFERENT
+        } else {
+            LikeStatus.LIKE
+        }
+
+        // Match the player UI: update both surfaces immediately, then reconcile
+        // the optimistic state with YouTube in the background.
+        LikeState.set(videoId, target)
+        mediaSession?.setCustomLayout(notificationButtons())
+        favoriteActionJob = scope.launch {
+            YtMusicRepository.rate(videoId, target)
+                .onFailure {
+                    LikeState.set(videoId, previous)
+                    mediaSession?.setCustomLayout(notificationButtons())
+                    TrackLog.w("BitChord", "notification favorite failed: ${it.message}", about = videoId)
+                }
+        }
     }
 
     /**
@@ -2700,6 +2923,7 @@ class PlaybackService : MediaSessionService() {
 
         const val CHANNEL_ID = "bitchord_playback"
         const val SESSION_ID = "BitChordPlayback"
+        const val ACTION_TOGGLE_FAVORITE = "com.music.bitchord.action.TOGGLE_FAVORITE"
 
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L
