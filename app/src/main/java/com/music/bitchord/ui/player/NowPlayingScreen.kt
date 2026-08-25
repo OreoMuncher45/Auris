@@ -39,7 +39,9 @@ import androidx.compose.animation.core.animateDpAsState
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -137,6 +139,8 @@ import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
@@ -208,6 +212,25 @@ private val PLAYER_GUTTER = 30.dp
  * are narrower than this, so for them it does nothing.
  */
 private val PLAYER_MAX_WIDTH = 560.dp
+/**
+ * How far a tall screen is allowed to push the transport from the blocks either
+ * side of it.
+ *
+ * The spare height has to land somewhere, and above and below the play button is
+ * where it reads as room rather than as a hole. Past this it stops reading as one
+ * group of controls, so the rest goes back to the artwork block.
+ */
+private val CONTROL_GAP_SPREAD_MAX = 48.dp
+/**
+ * The spread [NowPlayingScreen] settled on the last time it was laid out.
+ *
+ * It follows from the window and nothing else, so it is the same answer on every
+ * open — and the player is torn down with its sheet, so without this the first
+ * frame of each open would show the unspread spacing and then step to the real
+ * one. A plain var because that is all it is: a cache of a measurement, not
+ * state anything observes.
+ */
+private var lastControlSpread: Dp = 0.dp
 
 /**
  * Whether this screen is narrow enough for the player to run artwork edge to
@@ -446,6 +469,7 @@ fun NowPlayingScreen(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    val haptics = rememberHaptics()
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -797,9 +821,18 @@ fun NowPlayingScreen(
                         onDragStart = { total = 0f },
                         onDragCancel = { swipeOffset = 0f },
                         onDragEnd = {
+                            // The same two buzzes the transport glyphs give, so
+                            // swiping the sleeve and tapping skip feel like one
+                            // gesture with two spellings.
                             when {
-                                total <= -swipeThreshold && hasNext -> onNext()
-                                total >= swipeThreshold && hasPrevious -> onPrevious()
+                                total <= -swipeThreshold && hasNext -> {
+                                    haptics.play(Haptic.SkipNext)
+                                    onNext()
+                                }
+                                total >= swipeThreshold && hasPrevious -> {
+                                    haptics.play(Haptic.SkipPrevious)
+                                    onPrevious()
+                                }
                             }
                             swipeOffset = 0f
                         },
@@ -860,6 +893,10 @@ fun NowPlayingScreen(
             // collapse is a waste of a subscription.
             val smartFadeOn by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
             val smartAnalysis by AppSettings.smartAnalysis.collectAsStateWithLifecycle()
+            // Height the artwork block below turns out not to need, spent by the
+            // controls at the foot of the screen. Filled in from inside the box,
+            // where the sleeve's real size is known; see [lastControlSpread].
+            var controlSpread by remember { mutableStateOf(lastControlSpread) }
             BoxWithConstraints(
                 modifier = Modifier
                     .weight(1f)
@@ -875,10 +912,36 @@ fun NowPlayingScreen(
                 // credits down across the scrubber on anything but a phone.
                 val fullArt = minOf(maxWidth, maxHeight - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(THUMB_SIZE)
-                // Artwork and the title row travel together as one block, so
-                // the pair sits centred while the queue is closed.
-                val groupTop = ((maxHeight - fullArt - ART_TITLE_GAP - HEADER_HEIGHT) / 2)
+                // What's left over once the sleeve, the gap and the credits have
+                // had theirs. A few dp on a phone; the better part of a
+                // centimetre on anything taller, and since the group is centred,
+                // half of it used to land between the credits and the lyric strip
+                // as one wide hole in the middle of the controls.
+                val slack = (maxHeight - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(0.dp)
+                // Handed to the two gaps around the transport row instead, which
+                // is where a tall screen should be doing its breathing.
+                //
+                // Added to rather than assigned: the spread is what makes this box
+                // shorter, so the slack measured here is already net of it. Adding
+                // makes it a fixed point — it reaches the full slack in one step
+                // and then stops moving, where assigning would hand the space
+                // over and take it straight back on the following frame.
+                //
+                // Left alone while the lyrics panel is up: the spacers it feeds
+                // aren't in the tree then, so the slack would never come back
+                // down and this would climb without bound.
+                if (!lyricsOpen) {
+                    SideEffect {
+                        controlSpread = (controlSpread + slack)
+                            .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
+                        lastControlSpread = controlSpread
+                    }
+                }
+                // Artwork and the title row travel together as one block, so
+                // the pair sits centred while the queue is closed. Only whatever
+                // slack the controls couldn't take is left to centre it in.
+                val groupTop = slack / 2
                 val artSize = lerp(fullArt, THUMB_SIZE, p)
                 val artTop = lerp(groupTop, 0.dp, p)
                 // Expanded and height-bound, the sleeve is narrower than the
@@ -1142,6 +1205,7 @@ fun NowPlayingScreen(
                             contentDescription = if (liked) "Remove from Liked Music" else "Like",
                             onClick = onToggleLike,
                             active = liked,
+                            haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
                         )
                         Spacer(Modifier.width(8.dp))
                     }
@@ -1255,6 +1319,10 @@ fun NowPlayingScreen(
                     scrubValue = it
                 },
                 onValueChangeFinished = {
+                    // On release only. Ticking the whole way along the bar turns
+                    // a scrub into a rattle, and the beat that matters is the one
+                    // that says where the playhead landed.
+                    haptics.play(Haptic.Select)
                     pendingSeek = scrubValue
                     onSeekFraction(scrubValue)
                     scrubbing = false
@@ -1330,28 +1398,68 @@ fun NowPlayingScreen(
 
             if (lyricsOpen) {
                 Spacer(Modifier.height(16.dp))
-                // Where these particular lyrics came from. This spot used to
-                // hold a Close button, which the sleeve above already does —
-                // and with four databases behind the panel, whose timings you
-                // are looking at is the more useful thing to know. Not a
-                // control: nothing to press, it just says who to credit.
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(percent = 50))
-                        .background(Color.White.copy(alpha = 0.10f))
-                        .padding(horizontal = 18.dp, vertical = 8.dp),
+                // The credit, and beside it the way out. Tapping the sleeve
+                // above also closes the panel, but that is an invisible target
+                // you have to be told about; the button says so. With four
+                // databases behind the panel, whose timings you are looking at
+                // is worth the room the credit takes next to it.
+                Row(
+                    // Measured at the pill's own height so the button can be
+                    // sized off it rather than off a number that happens to
+                    // match today: the pill is as tall as the label's line
+                    // height plus its padding, which moves with the font scale,
+                    // and the circle has to keep matching it when it does.
+                    modifier = Modifier.height(IntrinsicSize.Min),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = lyricsSource?.let { "Lyrics by ${it.label}" }
-                            ?: "No lyrics found",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(percent = 50))
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = lyricsSource?.let { "Lyrics by ${it.label}" }
+                                ?: "No lyrics found",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White.copy(alpha = 0.7f),
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            // Height from the row, width from the height: a
+                            // circle, not an oval, whatever the pill measures.
+                            .fillMaxHeight()
+                            .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.10f))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) {
+                                haptics.play(Haptic.Tap)
+                                lyricsOpen = false
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = "Close lyrics",
+                            tint = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
                 Spacer(Modifier.height(20.dp))
             } else {
 
-            Spacer(Modifier.height(14.dp))
+            // The transport rides midway between the two blocks it separates:
+            // the scrubber above it, and the volume bar and toggle row below,
+            // which sit close enough together to read as one. Both of its own
+            // gaps take half the spread, so on a tall screen it holds the
+            // centre rather than drifting up under the seek bar.
+            Spacer(Modifier.height(14.dp + controlSpread / 2))
 
             // ---- Transport ----
             Row(
@@ -1367,6 +1475,7 @@ fun NowPlayingScreen(
                     // Lit whenever back has something to do — either a track to
                     // step to, or enough elapsed for it to restart this one.
                     enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
+                    haptic = Haptic.SkipPrevious,
                 )
                 // While the stream URL resolves and buffers, the play glyph
                 // would be a lie — show progress instead.
@@ -1386,6 +1495,7 @@ fun NowPlayingScreen(
                         contentDescription = if (isPlaying) "Pause" else "Play",
                         size = 62.dp,
                         onClick = onPlayPause,
+                        haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
                     )
                 }
                 TransportGlyph(
@@ -1394,6 +1504,7 @@ fun NowPlayingScreen(
                     size = 46.dp,
                     onClick = onNext,
                     enabled = hasNext,
+                    haptic = Haptic.SkipNext,
                 )
             }
 
@@ -1402,9 +1513,9 @@ fun NowPlayingScreen(
             // the toggle row below it close the gap instead of leaving a
             // blank strip where the volume bar used to be.
             if (hideVolumeBar) {
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(24.dp + controlSpread / 2))
             } else {
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(18.dp + controlSpread / 2))
 
                 // ---- Volume ----
                 Row(
@@ -1460,6 +1571,7 @@ fun NowPlayingScreen(
                     contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
                     onClick = onToggleShuffle,
                     highlighted = shuffleEnabled,
+                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                 )
                 BottomGlyph(
                     icon = if (repeatMode == Player.REPEAT_MODE_ONE) {
@@ -1474,12 +1586,21 @@ fun NowPlayingScreen(
                     },
                     onClick = onCycleRepeat,
                     highlighted = repeatMode != Player.REPEAT_MODE_OFF,
+                    // Three states, so the buzz tracks the edges of the cycle:
+                    // leaving off rises, returning to off falls, and the step
+                    // between the two repeat modes is just a selection.
+                    haptic = when (repeatMode) {
+                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
+                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
+                        else -> Haptic.Select
+                    },
                 )
                 BottomGlyph(
                     icon = BitChordIcons.Infinity,
                     contentDescription = if (autoplayEnabled) "AutoPlay on" else "AutoPlay off",
                     onClick = onToggleAutoplay,
                     highlighted = autoplayEnabled,
+                    haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                 )
                 BottomGlyph(
                     icon = Icons.AutoMirrored.Rounded.QueueMusic,
@@ -1489,6 +1610,7 @@ fun NowPlayingScreen(
                         queueOpen = !queueOpen
                     },
                     highlighted = queueOpen,
+                    haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
                 )
             }
 
@@ -2180,7 +2302,9 @@ private fun CircleGlyph(
     contentDescription: String,
     onClick: () -> Unit,
     active: Boolean = false,
+    haptic: Haptic = Haptic.Tap,
 ) {
+    val haptics = rememberHaptics()
     val discAlpha by animateFloatAsState(
         targetValue = if (active) 0.34f else 0.18f,
         label = "glyphDisc",
@@ -2193,8 +2317,10 @@ private fun CircleGlyph(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
-            ),
+            ) {
+                haptics.play(haptic)
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -2218,7 +2344,9 @@ private fun TransportGlyph(
     size: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    haptic: Haptic = Haptic.Tap,
 ) {
+    val haptics = rememberHaptics()
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
     val alpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.3f,
@@ -2232,8 +2360,10 @@ private fun TransportGlyph(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 enabled = enabled,
-                onClick = onClick,
-            ),
+            ) {
+                haptics.play(haptic)
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -2251,7 +2381,9 @@ private fun BottomGlyph(
     contentDescription: String,
     onClick: () -> Unit,
     highlighted: Boolean = false,
+    haptic: Haptic = Haptic.Tap,
 ) {
+    val haptics = rememberHaptics()
     Box(
         modifier = Modifier
             .size(44.dp)
@@ -2262,8 +2394,10 @@ private fun BottomGlyph(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
-            ),
+            ) {
+                haptics.play(haptic)
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(

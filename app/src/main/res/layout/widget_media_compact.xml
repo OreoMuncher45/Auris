@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The 2×2 widget, and the shape either widget takes when it is narrower than
+  MediaWidget.WIDE_LAYOUT_MIN_DP: full-bleed artwork with three transport buttons
+  centred in a band at the foot of it. No title here — three glyphs and a cover
+  is all that fits in two cells without crowding.
+
+  The band is the *only* thing laid over the artwork; the blur that makes it
+  readable is baked into the bitmap widget_art shows, because RemoteViews has no
+  way to blur anything at runtime. Its height therefore has to match the region
+  MediaWidgetArt blurred, which is why both read @dimen/widget_band_compact.
+
+  The band is deliberately not clickable, so a tap on its empty space falls
+  through to widget_art beneath and opens the app, like a tap anywhere else on
+  the cover.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_art">
+
+    <!--
+      fitXY, not centerCrop: the bitmap is composited at the widget's exact pixel
+      size with the cover already centre-cropped into it, so this is a 1:1 blit.
+      Asking for centerCrop here would crop a second time, and the blurred band —
+      which is pinned to the bitmap's bottom edge — would be the first thing to
+      be cropped off.
+    -->
+    <ImageView
+        android:id="@+id/widget_art"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/widget_artwork"
+        android:scaleType="fitXY" />
+
+    <LinearLayout
+        android:id="@+id/widget_band"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/widget_band_compact"
+        android:layout_gravity="bottom"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingLeft="@dimen/widget_band_padding"
+        android:paddingRight="@dimen/widget_band_padding">
+
+        <ImageView
+            android:id="@+id/widget_previous"
+            android:layout_width="@dimen/widget_button_compact"
+            android:layout_height="@dimen/widget_button_compact"
+            android:background="@drawable/widget_transport_button"
+            android:contentDescription="@string/widget_previous"
+            android:padding="9dp"
+            android:src="@drawable/ic_widget_previous" />
+
+        <ImageView
+            android:id="@+id/widget_toggle"
+            android:layout_width="@dimen/widget_button_compact"
+            android:layout_height="@dimen/widget_button_compact"
+            android:background="@drawable/widget_transport_button"
+            android:contentDescription="@string/widget_play"
+            android:padding="9dp"
+            android:src="@drawable/ic_widget_play" />
+
+        <ImageView
+            android:id="@+id/widget_next"
+            android:layout_width="@dimen/widget_button_compact"
+            android:layout_height="@dimen/widget_button_compact"
+            android:background="@drawable/widget_transport_button"
+            android:contentDescription="@string/widget_next"
+            android:padding="9dp"
+            android:src="@drawable/ic_widget_next" />
+    </LinearLayout>
+</FrameLayout>

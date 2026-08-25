@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
@@ -19,9 +20,14 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 import kotlin.math.abs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -127,7 +133,19 @@ fun SongRow(
      * wash it stops being legible as a second line and starts disappearing.
      */
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    /**
+     * What the badge on an already-downloaded row is tinted, or null to leave
+     * those rows unmarked.
+     *
+     * Null is for the Downloads page itself, where every row qualifies and the
+     * badge would say nothing. The colour is a parameter for the same reason
+     * [subtitleColor] is: a page tinted from its artwork draws its accent from
+     * the sleeve, and the theme's primary against that wash is exactly the
+     * kind of thing that reads as pasted on.
+     */
+    downloadedTint: Color? = MaterialTheme.colorScheme.primary,
 ) {
+    val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
     var boxWidth by remember { mutableFloatStateOf(0f) }
 
@@ -137,6 +155,7 @@ fun SongRow(
                 val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
                 // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
                 if (abs(offset) >= boxWidth * 0.45f) {
+                    haptics.play(Haptic.Select)
                     onSwipeToQueue()
                 }
             }
@@ -147,8 +166,32 @@ fun SongRow(
     swipeStateHolder.value = swipeState
 
     if (onSwipeToQueue == null) {
-        SongRowContent(song, onClick, onLongPress, modifier, trackNumber, subtitleColor)
+        SongRowContent(song, onClick, onLongPress, modifier, trackNumber, subtitleColor, downloadedTint)
         return
+    }
+
+    // The row reveals "Queue" from the first pixel of the drag, but it only
+    // *commits* past 45% of the width — so without this the label is a promise
+    // the finger can't check. One light tick at the crossing is the whole point:
+    // let go now and it queues.
+    LaunchedEffect(swipeState, boxWidth) {
+        if (boxWidth <= 0f) return@LaunchedEffect
+        val armAt = boxWidth * 0.45f
+        var armed = false
+        snapshotFlow { try { swipeState.requireOffset() } catch (e: Exception) { 0f } }
+            .collect { offset ->
+                val travelled = abs(offset)
+                when {
+                    !armed && travelled >= armAt -> {
+                        armed = true
+                        haptics.play(Haptic.Tick)
+                    }
+                    // Silent, and with hysteresis: dragging back under the line
+                    // re-arms, but so does the spring-back after a successful
+                    // queue, and that must not buzz the same gesture twice.
+                    armed && travelled < armAt * 0.8f -> armed = false
+                }
+            }
     }
 
     SwipeToDismissBox(
@@ -163,6 +206,7 @@ fun SongRow(
             modifier = Modifier.background(rowBackground),
             trackNumber = trackNumber,
             subtitleColor = subtitleColor,
+            downloadedTint = downloadedTint,
         )
     }
 }
@@ -223,6 +267,7 @@ private fun SongRowContent(
     modifier: Modifier = Modifier,
     trackNumber: Int? = null,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    downloadedTint: Color? = MaterialTheme.colorScheme.primary,
 ) {
     Row(
         modifier = modifier
@@ -270,6 +315,9 @@ private fun SongRowContent(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (downloadedTint != null) {
+            DownloadedBadge(song.videoId, downloadedTint)
+        }
         song.durationText?.let {
             Spacer(Modifier.width(8.dp))
             Text(
@@ -296,6 +344,32 @@ private fun SongRowContent(
             }
         }
     }
+}
+
+/**
+ * The mark on a row whose track is already on disk.
+ *
+ * Sized under the row's "more" glyph on purpose: this is a statement about the
+ * track, not something to press, and a status mark that matches an affordance
+ * in weight invites a tap that does nothing.
+ *
+ * Reads [Downloads.saved] rather than touching the filesystem — a list cannot
+ * afford a file check per row, and the map is kept honest by the disk check
+ * every real read of a download goes through. The cost of that trade is a row
+ * that can claim a file a file manager has since deleted, until something asks
+ * for it and the record is pruned.
+ */
+@Composable
+fun DownloadedBadge(videoId: String, tint: Color, modifier: Modifier = Modifier) {
+    val saved by Downloads.saved.collectAsStateWithLifecycle()
+    if (videoId !in saved) return
+    Spacer(Modifier.width(8.dp))
+    Icon(
+        Icons.Rounded.DownloadDone,
+        contentDescription = "Downloaded",
+        tint = tint,
+        modifier = modifier.size(16.dp),
+    )
 }
 
 /**

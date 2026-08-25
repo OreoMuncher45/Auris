@@ -25,6 +25,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -260,7 +261,20 @@ private fun Song.matchQuery(): String = buildString {
 
 fun Song.toMediaItem(): MediaItem {
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
-    val uriString = localUri ?: when {
+    // A row from search or a playlist carries no file of its own, but the track
+    // may still be on disk from a download — see [Downloads.saved].
+    //
+    // Answered *here*, where the item is built, rather than in the player's
+    // stream resolver, because everything downstream decides what to do by the
+    // scheme the item arrives with: [AudioCache.playbackFactory] sends file and
+    // content URIs past the disk cache instead of writing a second copy of
+    // them, and DefaultDataSource picks ContentDataSource off the same scheme.
+    // A local URI substituted further down lands inside the half of the chain
+    // that only speaks HTTP, where OkHttp rejects it as a malformed URL — which
+    // is what a downloaded track played from search used to do, four times over,
+    // before giving up.
+    val offlineUri = localUri ?: Downloads.saved.value[videoId]
+    val uriString = offlineUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
         // Title, artist and runtime ride along in the URI because they are what
         // a cross-source match is made on, and the resolver runs on ExoPlayer's
@@ -310,11 +324,11 @@ fun Song.toMediaItem(): MediaItem {
             // back a null duration, [LastPlayed] stored a null, and the restored
             // queue lost the `&d=` its matching depends on.
             .apply {
-                if (fromAutoplay || localUri != null || durationText != null) {
+                if (fromAutoplay || offlineUri != null || durationText != null) {
                     setExtras(
                         bundleOf(
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
-                            EXTRA_LOCAL_URI to localUri,
+                            EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
                             EXTRA_DURATION to durationText,
                         ),

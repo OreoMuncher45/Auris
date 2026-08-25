@@ -90,6 +90,8 @@ import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.playback.PlayerDeepLink
+import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.dropAutoplayTracks
@@ -135,6 +137,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Before the composition, so a cold launch from a widget's artwork has
+        // the request already standing by the time BitChordApp first reads it.
+        PlayerDeepLink.consume(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val darkTheme = when (theme) {
@@ -147,6 +152,19 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    /**
+     * The other half of the relay. This activity is `singleTask`, so once it is
+     * running a second tap on the widget does not rebuild anything — it arrives
+     * here, and [onCreate] never runs again.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Replaces what getIntent() returns, so the extra this consumes is the
+        // one that just arrived and not the one the task was started with.
+        setIntent(intent)
+        PlayerDeepLink.consume(intent)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -157,6 +175,18 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val hazeState = remember { HazeState() }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showNowPlaying by remember { mutableStateOf(false) }
+    // The far end of the relay from a widget's artwork. Cleared here rather than
+    // where it was set, so the request is spent by being served — see
+    // [PlayerDeepLink.handled]. The sheet itself is gated on there being a track,
+    // so on a cold launch this simply arms it and it opens as the controller
+    // connects.
+    val openPlayerRequested by PlayerDeepLink.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(openPlayerRequested) {
+        if (openPlayerRequested) {
+            showNowPlaying = true
+            PlayerDeepLink.handled()
+        }
+    }
     var showLogin by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showAccountScrobbling by remember { mutableStateOf(false) }

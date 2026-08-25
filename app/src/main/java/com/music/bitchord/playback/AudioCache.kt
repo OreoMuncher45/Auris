@@ -23,6 +23,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -455,6 +456,12 @@ object AudioCache {
         // typically a good deal closer than googlevideo anyway.
         //
         val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
+            // A track already on disk needs no reading ahead, and read-ahead
+            // speaks only to googlevideo: warming one would spend mobile data
+            // fetching a second copy of a file the listener deliberately saved,
+            // then cache it under a key playback is never going to ask for —
+            // it plays the download instead. See [Song.toMediaItem].
+            .filter { it !in Downloads.saved.value }
         // With substitution possible, only the *bytes* half drops out. Read-
         // ahead builds its own spec below from an id alone and carries none of
         // the title and artist a substitution is matched on — so it resolves

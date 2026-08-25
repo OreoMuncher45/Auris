@@ -12,6 +12,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Touch feedback. The system's own haptics switch is honoured on top of
+         this, so granting it doesn't override a user who turned buzzing off. -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- Reading local audio files across the device -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
@@ -100,6 +104,45 @@
             android:name=".download.DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!--
+          Home-screen widgets. Two providers so the picker lists a 2×2 and a 4×2,
+          both of which are the same widget resized — see MediaWidget.
+
+          Not exported, which is correct for a widget provider despite the
+          launcher being the one that talks to it: the system delivers
+          APPWIDGET_UPDATE to providers regardless, and the button PendingIntents
+          are sent with this app's own identity. Exporting them would only make
+          the update broadcast reachable by anything on the device.
+        -->
+        <receiver
+            android:name=".widget.MediaWidgetSquare"
+            android:exported="false"
+            android:label="@string/widget_square_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_media_square" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.MediaWidgetWide"
+            android:exported="false"
+            android:label="@string/widget_wide_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_media_wide" />
+        </receiver>
+
+        <!-- The transport buttons. Reached only by this app's own PendingIntents. -->
+        <receiver
+            android:name=".widget.MediaWidgetActions"
+            android:exported="false" />
     </application>
 
 </manifest>
