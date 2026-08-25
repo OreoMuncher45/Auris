@@ -7,7 +7,11 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.view.View
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
+import androidx.annotation.RequiresApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -123,6 +127,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -224,11 +229,11 @@ private val CONTROL_GAP_SPREAD_MAX = 48.dp
 /**
  * The spread [NowPlayingScreen] settled on the last time it was laid out.
  *
- * It follows from the window and nothing else, so it is the same answer on every
- * open — and the player is torn down with its sheet, so without this the first
- * frame of each open would show the unspread spacing and then step to the real
- * one. A plain var because that is all it is: a cache of a measurement, not
- * state anything observes.
+ * It follows from the window, so it is very nearly the same answer on every open
+ * — and the player is torn down with its sheet, so without this the first frame
+ * of each open would show the unspread gaps and then step to the real ones. Only
+ * a head start: the frame after re-derives it either way. A plain var because
+ * that is all it is, a cache of a measurement, not state anything observes.
  */
 private var lastControlSpread: Dp = 0.dp
 
@@ -526,7 +531,36 @@ fun NowPlayingScreen(
     var lyricsOpen by remember { mutableStateOf(false) }
     LaunchedEffect(song.videoId) { lyricsOpen = false }
 
+    // Back out of the lyrics panel to the player, and only from the player
+    // itself out to the mini player.
+    //
+    // The BackHandler can't do that on its own. The player is a
+    // ModalBottomSheet, and from API 33 the sheet puts its own dismiss
+    // straight onto the window's OnBackInvokedDispatcher when its layout
+    // attaches — at PRIORITY_DEFAULT, which is also where the dialog
+    // dispatcher that every BackHandler in here feeds ends up. Equal
+    // priority, and the platform picks whichever registered last: the
+    // sheet's, every time. So back put the whole player away with the panel
+    // still open on top of it.
+    //
+    // Outranking it while the panel is open is the fix, and only while it is
+    // open: shut, the sheet keeps its own back handling and with it the
+    // predictive-back shrink, which is the right animation for a gesture
+    // that really is dismissing the player. Below 33 there is no window
+    // dispatcher to outrank and the BackHandler is already the newest
+    // callback on the dialog's, so it wins there unaided.
     BackHandler(enabled = lyricsOpen) { lyricsOpen = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, lyricsOpen) {
+            val callback = if (lyricsOpen) {
+                OverlayBack.register(view) { lyricsOpen = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
 
     // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
     val queueProgress by animateFloatAsState(
@@ -904,44 +938,65 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
             ) {
+                // The height this box would have if the controls at the foot of
+                // the screen were at their natural size. They aren't: they are
+                // holding [controlSpread] of extra gap, which came out of here,
+                // so adding it back cancels the only thing down there that
+                // depends on what is decided up here.
+                //
+                // The sleeve and the slack below are both worked out from this
+                // rather than from the box as it actually stands, and that is
+                // what keeps the hand-off from creeping. Measured off the real
+                // height, granting the gaps 20dp came back as a box 20dp
+                // shorter and read as a *further* 20dp going spare — so any
+                // moment the controls were briefly shorter than usual (a track
+                // change, where the lyric strip drops back to its loading line,
+                // or coming back from the lyrics panel, where the strip is
+                // rebuilt from scratch) was pocketed for good. The gaps
+                // ratcheted open a little at a time and the sleeve paid for it.
+                val roomy = maxHeight + if (lyricsOpen) 0.dp else controlSpread
                 // The sleeve is square, so it is bounded by whichever of the
                 // two axes runs out first: the player's width on a phone, or —
                 // on a tablet, where there is width to spare — the height left
                 // over once the credits row and the gap above it have had
                 // theirs. Sizing it off the width alone is what pushed the
                 // credits down across the scrubber on anything but a phone.
-                val fullArt = minOf(maxWidth, maxHeight - ART_TITLE_GAP - HEADER_HEIGHT)
+                val wantArt = minOf(maxWidth, roomy - ART_TITLE_GAP - HEADER_HEIGHT)
+                // Held to what the box has actually got, for the single frame it
+                // takes the gaps below to catch up with a change in their own
+                // height: a sleeve a few dp under for one frame is a better
+                // failure than a credits row overhanging the lyric strip.
+                val fullArt = minOf(wantArt, maxHeight - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(THUMB_SIZE)
                 // What's left over once the sleeve, the gap and the credits have
                 // had theirs. A few dp on a phone; the better part of a
                 // centimetre on anything taller, and since the group is centred,
                 // half of it used to land between the credits and the lyric strip
                 // as one wide hole in the middle of the controls.
-                val slack = (maxHeight - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
+                val slack = (roomy - wantArt - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(0.dp)
                 // Handed to the two gaps around the transport row instead, which
                 // is where a tall screen should be doing its breathing.
                 //
-                // Added to rather than assigned: the spread is what makes this box
-                // shorter, so the slack measured here is already net of it. Adding
-                // makes it a fixed point — it reaches the full slack in one step
-                // and then stops moving, where assigning would hand the space
-                // over and take it straight back on the following frame.
+                // Assigned, not added to: [slack] is stated in terms the spread
+                // cannot move, so this is the whole answer in one step, and it
+                // gives the room back just as readily when the controls grow
+                // into it again.
                 //
                 // Left alone while the lyrics panel is up: the spacers it feeds
-                // aren't in the tree then, so the slack would never come back
-                // down and this would climb without bound.
+                // aren't in the tree then, so there would be nothing to apply it.
                 if (!lyricsOpen) {
                     SideEffect {
-                        controlSpread = (controlSpread + slack)
-                            .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
+                        controlSpread = slack.coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
                         lastControlSpread = controlSpread
                     }
                 }
                 // Artwork and the title row travel together as one block, so
-                // the pair sits centred while the queue is closed. Only whatever
-                // slack the controls couldn't take is left to centre it in.
-                val groupTop = slack / 2
+                // the pair sits centred while the queue is closed — in whatever
+                // the controls couldn't take, which on all but the tallest
+                // screens is nothing.
+                val groupTop = (maxHeight - fullArt - ART_TITLE_GAP - HEADER_HEIGHT)
+                    .coerceAtLeast(0.dp) / 2
                 val artSize = lerp(fullArt, THUMB_SIZE, p)
                 val artTop = lerp(groupTop, 0.dp, p)
                 // Expanded and height-bound, the sleeve is narrower than the
@@ -3075,4 +3130,35 @@ private fun TrackAnalysisState.label(): String = when (this) {
     TrackAnalysisState.ANALYSING -> "analysing…"
     TrackAnalysisState.WAITING -> "waiting"
     TrackAnalysisState.FAILED -> "failed"
+}
+
+/**
+ * A back callback that outranks whatever else the window has registered —
+ * here, the sheet the player is drawn in. See the call site in
+ * [NowPlayingScreen] for why it takes that.
+ *
+ * Everything that names an `android.window` type lives in this object so those
+ * classes, which don't exist below API 33, are only ever *loaded* on a device
+ * that has them: the callback comes back as [Any] rather than as the platform
+ * interface for the same reason. Gating the calls on [Build.VERSION.SDK_INT]
+ * is very likely enough by itself; this way it can't come down to how eagerly
+ * a particular runtime resolves a reference it is never going to use.
+ */
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+private object OverlayBack {
+    /** The registered callback, to hand back to [unregister]; null if it couldn't be. */
+    fun register(view: View, onBack: () -> Unit): Any? {
+        val dispatcher = view.findOnBackInvokedDispatcher() ?: return null
+        val callback = OnBackInvokedCallback { onBack() }
+        dispatcher.registerOnBackInvokedCallback(
+            OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+            callback,
+        )
+        return callback
+    }
+
+    fun unregister(view: View, callback: Any?) {
+        if (callback !is OnBackInvokedCallback) return
+        view.findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(callback)
+    }
 }
