@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import android.content.ComponentName
 import android.net.Uri
+import android.os.Bundle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -17,6 +18,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.Song
@@ -66,6 +68,14 @@ fun rememberMediaController(): MediaController? {
         }
     }
     return controller
+}
+
+/** Routes the player-screen AutoPlay button through the playback service. */
+fun MediaController.toggleAutoplay() {
+    sendCustomCommand(
+        SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY),
+        Bundle.EMPTY,
+    )
 }
 
 /** Mirrors the controller into Compose state, polling position while playing. */

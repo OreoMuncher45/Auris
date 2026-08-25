@@ -218,6 +218,7 @@ object YtMusicRepository {
 
             val likedSongs = liked.await()
             val likedIds = likedSongs.mapTo(HashSet()) { it.videoId }
+            LikeState.seedLiked(likedIds)
             LibraryPage(
                 likedSongs = likedSongs,
                 // Thumbs-up'd tracks are also in the library feed; only what
