@@ -30,9 +30,10 @@ import kotlin.math.roundToInt
  * be resized across the whole range. What they differ in is the size they arrive
  * at. Which of the two layouts a given instance draws is decided from its
  * *measured* width ([WIDE_LAYOUT_MIN_DP]), not from which provider it came from,
- * so a square dragged out to four cells picks up the track text and a wide one
- * squeezed back to two loses it, instead of either being stuck with a layout its
- * size doesn't suit.
+ * so a square dragged out to four cells sets its title beside the buttons and
+ * picks up the artist, and a wide one squeezed back to two stacks the title over
+ * them instead — rather than either being stuck with a layout its size doesn't
+ * suit.
  *
  * Everything visual except the transport itself is one bitmap, drawn by
  * [MediaWidgetArt] — see there for why the blur has to work that way.
@@ -91,12 +92,14 @@ abstract class MediaWidget : AppWidgetProvider() {
     companion object {
 
         /**
-         * The measured width at which the track text is worth showing.
+         * The measured width at which the track is worth setting beside the
+         * transport rather than above it.
          *
          * The wide layout spends 158dp on chrome — 14dp of leading padding, three
          * 44dp buttons, 4dp trailing, 8dp between text and buttons — so below
          * roughly 230dp the title is a stub, and the compact layout, which gives
-         * that width back to the cover, reads better.
+         * that width back to the title by putting it on its own line, reads
+         * better.
          *
          * Set at the midpoint between a three-cell span (180dp) and a four-cell
          * one (250dp) rather than at either end. Cells are not really 70dp on
@@ -174,15 +177,17 @@ abstract class MediaWidget : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, layout)
             art?.let { views.setImageViewBitmap(R.id.widget_art, it) }
 
+            // Both layouts carry the title; only the wide one has room for the
+            // artist beneath it.
+            views.setTextViewText(
+                R.id.widget_title,
+                if (snapshot.hasTrack) {
+                    snapshot.title
+                } else {
+                    context.getString(R.string.widget_nothing_played)
+                },
+            )
             if (size.wide) {
-                views.setTextViewText(
-                    R.id.widget_title,
-                    if (snapshot.hasTrack) {
-                        snapshot.title
-                    } else {
-                        context.getString(R.string.widget_nothing_played)
-                    },
-                )
                 views.setTextViewText(R.id.widget_artist, snapshot.artist)
                 views.setViewVisibility(
                     R.id.widget_artist,

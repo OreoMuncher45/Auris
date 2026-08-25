@@ -803,13 +803,14 @@ class PlaybackService : MediaSessionService() {
         mediaSession?.setCustomLayout(notificationButtons())
     }
 
-    /** The one custom layout advertised to all Media3 control surfaces. */
+    /**
+     * The one custom layout advertised to all Media3 control surfaces.
+     *
+     * AutoPlay is deliberately not here. It stays a player-screen control: the
+     * session command remains available so [toggleAutoplay] still routes through
+     * this service, it just isn't offered as a notification button.
+     */
     private fun notificationButtons(): List<CommandButton> {
-        val autoplay = CommandButton.Builder(CommandButton.ICON_UNDEFINED)
-            .setSessionCommand(autoplayCommand)
-            .setIconResId(R.drawable.ic_autoplay)
-            .setDisplayName("AutoPlay")
-            .build()
         val favorite = CommandButton.Builder(
             if (LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE) {
                 CommandButton.ICON_HEART_FILLED
@@ -831,7 +832,7 @@ class PlaybackService : MediaSessionService() {
             .setSessionCommand(shuffleCommand)
             .setDisplayName(if (shuffleEnabled) "Shuffle off" else "Shuffle on")
             .build()
-        return listOf(favorite, autoplay, shuffle)
+        return listOf(favorite, shuffle)
     }
 
     private fun toggleShuffleFromNotification() {

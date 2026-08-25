@@ -16,10 +16,11 @@
   widget is supposed to reach. 288dp clears four cells anywhere while staying
   well under five (320dp nominal), so the range on offer is the intended one.
 
-  previewLayout points at the real layout, which previews itself: widget_art
-  carries no bitmap until a provider fills one in, so the root's gradient shows
-  through and the picker sees a cover with the transport on it. previewImage is
-  the fallback for hosts below API 31, which don't inflate previewLayout at all.
+  previewLayout points at a copy of the real layout carrying stand-in text, for
+  the same reason the 4×2's does: widget_art holds no bitmap until a provider
+  fills one in, so the root's gradient shows through and the picker sees a cover
+  with the transport on it — but the title would be blank. previewImage is the
+  fallback for hosts below API 31, which don't inflate previewLayout at all.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/widget_square_description"
@@ -29,7 +30,7 @@
     android:minResizeWidth="110dp"
     android:minWidth="110dp"
     android:previewImage="@drawable/widget_preview_square"
-    android:previewLayout="@layout/widget_media_compact"
+    android:previewLayout="@layout/widget_media_compact_preview"
     android:resizeMode="horizontal"
     android:targetCellHeight="2"
     android:targetCellWidth="2"

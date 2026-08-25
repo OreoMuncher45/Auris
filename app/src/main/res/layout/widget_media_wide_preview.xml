@@ -6,8 +6,7 @@
   A copy of widget_media_wide with stand-in text, and only because of the text:
   the real layout already previews itself correctly — widget_art carries no
   bitmap until a provider fills it, so the root's gradient background shows
-  through — which is why the 2×2 widget points previewLayout straight at
-  widget_media_compact instead of duplicating it here.
+  through. widget_media_compact_preview exists for the same reason.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"

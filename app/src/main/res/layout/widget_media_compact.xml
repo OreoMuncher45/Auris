@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The 2×2 widget, and the shape either widget takes when it is narrower than
-  MediaWidget.WIDE_LAYOUT_MIN_DP: full-bleed artwork with three transport buttons
-  centred in a band at the foot of it. No title here — three glyphs and a cover
-  is all that fits in two cells without crowding.
+  MediaWidget.WIDE_LAYOUT_MIN_DP: full-bleed artwork with the track name over
+  three centred transport buttons, in a band at the foot of it.
+
+  Stacked rather than set beside the buttons like widget_media_wide does it. Two
+  cells is 110dp, of which the transport alone wants 40; a title sharing that
+  line would have some 20dp left and show two or three characters, so it takes a
+  line of its own and the band grows to fit. No artist: one line of text is what
+  a square this size can carry legibly, and the song is the half of it worth
+  having.
 
   The band is the *only* thing laid over the artwork; the blur that makes it
   readable is baked into the bitmap widget_art shows, because RemoteViews has no
@@ -39,36 +45,74 @@
         android:layout_width="match_parent"
         android:layout_height="@dimen/widget_band_compact"
         android:layout_gravity="bottom"
-        android:gravity="center"
-        android:orientation="horizontal"
+        android:gravity="center_horizontal|bottom"
+        android:orientation="vertical"
         android:paddingLeft="@dimen/widget_band_padding"
-        android:paddingRight="@dimen/widget_band_padding">
+        android:paddingRight="@dimen/widget_band_padding"
+        android:paddingBottom="4dp">
 
-        <ImageView
-            android:id="@+id/widget_previous"
-            android:layout_width="@dimen/widget_button_compact"
-            android:layout_height="@dimen/widget_button_compact"
-            android:background="@drawable/widget_transport_button"
-            android:contentDescription="@string/widget_previous"
-            android:padding="9dp"
-            android:src="@drawable/ic_widget_previous" />
+        <!--
+          Centred, and padded in past the band's own inset: at this width a title
+          runs to the ellipsis more often than not, and one that ended flush with
+          the widget's edge would read as clipped rather than as shortened.
+        -->
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="3dp"
+            android:ellipsize="end"
+            android:fontFamily="@font/sf_pro_display_semibold"
+            android:gravity="center_horizontal"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:paddingLeft="4dp"
+            android:paddingRight="4dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="13sp" />
 
-        <ImageView
-            android:id="@+id/widget_toggle"
-            android:layout_width="@dimen/widget_button_compact"
-            android:layout_height="@dimen/widget_button_compact"
-            android:background="@drawable/widget_transport_button"
-            android:contentDescription="@string/widget_play"
-            android:padding="9dp"
-            android:src="@drawable/ic_widget_play" />
+        <!--
+          Weighted rather than three fixed 40dp buttons centred: at two cells the
+          band has 94dp of content width and three of those want 120, so a fixed
+          row overflows and the launcher clips the last glyph off. Sharing the
+          width out instead means the buttons spread as the widget grows and
+          close up as it shrinks, and the glyphs — which are padded in, not sized
+          by the box — hold 22dp until there is genuinely no room.
+        -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
 
-        <ImageView
-            android:id="@+id/widget_next"
-            android:layout_width="@dimen/widget_button_compact"
-            android:layout_height="@dimen/widget_button_compact"
-            android:background="@drawable/widget_transport_button"
-            android:contentDescription="@string/widget_next"
-            android:padding="9dp"
-            android:src="@drawable/ic_widget_next" />
+            <ImageView
+                android:id="@+id/widget_previous"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/widget_button_compact"
+                android:layout_weight="1"
+                android:background="@drawable/widget_transport_button"
+                android:contentDescription="@string/widget_previous"
+                android:padding="9dp"
+                android:src="@drawable/ic_widget_previous" />
+
+            <ImageView
+                android:id="@+id/widget_toggle"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/widget_button_compact"
+                android:layout_weight="1"
+                android:background="@drawable/widget_transport_button"
+                android:contentDescription="@string/widget_play"
+                android:padding="9dp"
+                android:src="@drawable/ic_widget_play" />
+
+            <ImageView
+                android:id="@+id/widget_next"
+                android:layout_width="0dp"
+                android:layout_height="@dimen/widget_button_compact"
+                android:layout_weight="1"
+                android:background="@drawable/widget_transport_button"
+                android:contentDescription="@string/widget_next"
+                android:padding="9dp"
+                android:src="@drawable/ic_widget_next" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>
