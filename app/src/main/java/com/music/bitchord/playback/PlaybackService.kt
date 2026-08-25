@@ -286,9 +286,11 @@ class PlaybackService : MediaSessionService() {
             // transition — a track started from idle or resumed from pause
             // otherwise stays silent on the site.
             if (isPlaying && song != null) {
-                if (listenBrainzSong == null) {
+                if (listenBrainzSong?.videoId != song.videoId || listenBrainzStartMs == 0L) {
                     listenBrainzSong = song
                     listenBrainzStartMs = System.currentTimeMillis()
+                    listenBrainzDurationMs = durationMs
+                } else if (listenBrainzDurationMs == null) {
                     listenBrainzDurationMs = durationMs
                 }
                 submitListenBrainzPlayingNow(song, exoPlayer.currentPosition, durationMs)
@@ -403,13 +405,15 @@ class PlaybackService : MediaSessionService() {
                 // The last track finished with nothing after it, so no
                 // transition will ever close it out. Scrobble it now.
                 val lastSong = listenBrainzSong
-                if (lastSong != null) {
+                if (lastSong != null && listenBrainzStartMs > 0L) {
                     val lastStart = listenBrainzStartMs
                     val lastDuration = listenBrainzDurationMs
                         ?: exoPlayer.duration.takeIf { it > 0 }
                     submitListenBrainzFinished(lastSong, lastStart, lastDuration)
-                    listenBrainzSong = null
                 }
+                listenBrainzSong = null
+                listenBrainzStartMs = 0L
+                listenBrainzDurationMs = null
             }
         }
 
@@ -1099,7 +1103,9 @@ class PlaybackService : MediaSessionService() {
         scrobbleManager?.onSongStop()
         val newSong = mediaItem?.toSong()
         val durationMs = exoPlayer.duration.takeIf { it > 0 }
-        scrobbleManager?.onSongStart(newSong, durationMs)
+        if (exoPlayer.isPlaying) {
+            scrobbleManager?.onSongStart(newSong, durationMs)
+        }
 
         // ListenBrainz: submit finished for old song, playing_now for new song.
         // The finished listen only counts when the track actually ended —
@@ -1109,13 +1115,13 @@ class PlaybackService : MediaSessionService() {
         val ended = previousEnded
         val prevSong = listenBrainzSong
         val prevStart = listenBrainzStartMs
-        if (prevSong != null && ended) {
+        if (prevSong != null && ended && prevStart > 0L) {
             submitListenBrainzFinished(prevSong, prevStart, listenBrainzDurationMs)
         }
         listenBrainzSong = newSong
-        listenBrainzStartMs = System.currentTimeMillis()
+        listenBrainzStartMs = if (exoPlayer.isPlaying) System.currentTimeMillis() else 0L
         listenBrainzDurationMs = durationMs
-        if (newSong != null) {
+        if (newSong != null && exoPlayer.isPlaying) {
             submitListenBrainzPlayingNow(newSong, 0L, durationMs)
         }
 
@@ -2513,7 +2519,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     private fun observeScrobbling() {
-        // Rebuild the ScrobbleManager whenever scrobbling settings change.
+        // Keep the manager alive while its timing settings change, so updating
+        // a preference does not cancel the current track's scrobble timer.
         scope.launch {
             // Explicit <Any, _>: these flows have mixed element types, and letting
             // the reified vararg combine() infer T lands on an intersection type.
@@ -2542,30 +2549,40 @@ class PlaybackService : MediaSessionService() {
                     delaySeconds = values[9] as Int,
                 )
             }.collectLatest { snapshot ->
-                scrobbleManager?.destroy()
-                scrobbleManager = null
-
-                if (AppSettings.scrobblingAvailable &&
+                val shouldEnable = AppSettings.scrobblingAvailable &&
                     snapshot.lastfmEnabled &&
-                    snapshot.sessionKey.isNotBlank()
-                ) {
-                    // Configure LastFM client
-                    val endpoint = snapshot.endpoint.ifBlank { LastFM.DEFAULT_API_ENDPOINT }
-                    val apiKey = snapshot.apiKey.ifBlank { LastFM.FALLBACK_COMPAT_API_KEY }
-                    val secret = snapshot.secret.ifBlank { LastFM.FALLBACK_COMPAT_SECRET }
-                    LastFM.configure(
-                        endpoint = endpoint,
-                        apiKey = apiKey,
-                        secret = secret,
-                        sessionKey = snapshot.sessionKey,
-                    )
-                    scrobbleManager = ScrobbleManager(
-                        scope = scope,
-                        minSongDuration = snapshot.minDuration,
-                        scrobbleDelayPercent = snapshot.delayPercent,
-                        scrobbleDelaySeconds = snapshot.delaySeconds,
-                    ).apply {
-                        useNowPlaying = snapshot.nowPlaying
+                    snapshot.scrobbleEnabled &&
+                    snapshot.sessionKey.isNotBlank() &&
+                    snapshot.apiKey.isNotBlank() &&
+                    snapshot.secret.isNotBlank()
+
+                if (!shouldEnable) {
+                    scrobbleManager?.destroy()
+                    scrobbleManager = null
+                    return@collectLatest
+                }
+
+                LastFM.configure(
+                    endpoint = snapshot.endpoint.ifBlank { LastFM.DEFAULT_API_ENDPOINT },
+                    apiKey = snapshot.apiKey,
+                    secret = snapshot.secret,
+                    sessionKey = snapshot.sessionKey,
+                )
+                val manager = scrobbleManager ?: ScrobbleManager(scope).also {
+                    scrobbleManager = it
+                }
+                manager.minSongDuration = snapshot.minDuration
+                manager.scrobbleDelayPercent = snapshot.delayPercent
+                manager.scrobbleDelaySeconds = snapshot.delaySeconds
+                manager.useNowPlaying = snapshot.nowPlaying
+
+                player?.let { exoPlayer ->
+                    if (exoPlayer.isPlaying) {
+                        manager.onPlayerStateChanged(
+                            isPlaying = true,
+                            song = exoPlayer.currentMediaItem?.toSong(),
+                            durationMs = exoPlayer.duration.takeIf { it > 0 },
+                        )
                     }
                 }
             }
@@ -2815,7 +2832,7 @@ class PlaybackService : MediaSessionService() {
         // service scope: it is cancelled a few lines down, and the request
         // should still reach ListenBrainz.
         val lastSong = listenBrainzSong
-        if (lastSong != null) {
+        if (lastSong != null && listenBrainzStartMs > 0L) {
             val lbEnabled =
                 AppSettings.scrobblingAvailable && AppSettings.listenBrainzEnabled.value
             val lbToken = AppSettings.listenBrainzToken.value

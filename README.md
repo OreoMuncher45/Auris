@@ -83,6 +83,10 @@ cd BitChord
 
 A debug build needs no extra setup. For a signed release build, create a keystore and a `keystore.properties` (see [`keystore.properties.example`](keystore.properties.example)):
 
+Last.fm login additionally needs `LASTFM_API_KEY` and `LASTFM_SECRET` in
+`local.properties` or the environment. These credentials are optional and are
+never committed; ListenBrainz only requires the user's token in the app.
+
 ```bash
 keytool -genkey -v -keystore bitchord-release.jks \
     -keyalg RSA -keysize 2048 -validity 10000 -alias bitchord

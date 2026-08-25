@@ -29,6 +29,16 @@ val localProps = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 val moduleIndexUrl: String = localProps.getProperty("MODULE_INDEX_URL", "")
+val lastfmApiKey: String = (
+    localProps.getProperty("LASTFM_API_KEY")
+        ?: System.getenv("LASTFM_API_KEY")
+        ?: ""
+    ).trim()
+val lastfmSecret: String = (
+    localProps.getProperty("LASTFM_SECRET")
+        ?: System.getenv("LASTFM_SECRET")
+        ?: ""
+    ).trim()
 
 android {
     namespace = "com.music.bitchord"
@@ -47,6 +57,10 @@ android {
 
         // Lossless/HQ module index URL — empty string if not configured.
         buildConfigField("String", "MODULE_INDEX_URL", "\"${moduleIndexUrl}\"")
+
+        // Last.fm credentials are supplied locally and never committed.
+        buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "LASTFM_SECRET", "\"${lastfmSecret.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
 
         // Automix's DSP analyzer (native/analyzer). 64-bit only: minSdk 26
         // already postdates the 64-bit requirement, so a 32-bit slice would

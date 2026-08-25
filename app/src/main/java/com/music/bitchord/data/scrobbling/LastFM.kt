@@ -20,8 +20,6 @@ import java.security.MessageDigest
 object LastFM {
     const val DEFAULT_API_ENDPOINT = "https://ws.audioscrobbler.com/2.0/"
     const val LIBREFM_API_ENDPOINT = "https://libre.fm/2.0/"
-    const val FALLBACK_COMPAT_API_KEY = "bitchord"
-    const val FALLBACK_COMPAT_SECRET = "bitchord"
 
     @Serializable
     data class Session(val name: String, val key: String, val subscriber: Int)
@@ -196,6 +194,9 @@ object LastFM {
         apiKey: String,
         secret: String,
     ) {
+        require(apiKey.isNotBlank() && secret.isNotBlank()) {
+            "Last.fm API credentials are not configured for this build"
+        }
         configure(
             endpoint = runtimeConfig.endpoint,
             apiKey = apiKey,

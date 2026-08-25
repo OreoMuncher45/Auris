@@ -1373,8 +1373,8 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     scope.launch {
                         try {
                             LastFM.initialize(
-                                apiKey = LastFM.FALLBACK_COMPAT_API_KEY,
-                                secret = LastFM.FALLBACK_COMPAT_SECRET,
+                                apiKey = AppSettings.lastfmApiKey.value,
+                                secret = AppSettings.lastfmSecret.value,
                             )
                             LastFM.getMobileSession(usernameInput.trim(), passwordInput)
                                 .onSuccess { auth ->
