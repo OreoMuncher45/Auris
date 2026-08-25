@@ -64,6 +64,8 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 
 private const val LOCAL_TAB_SONGS = 0
 private const val LOCAL_TAB_ARTISTS = 1
@@ -621,9 +623,16 @@ private fun LocalTab(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    // Fired here rather than at each of the three call sites, so Songs, Artists
+    // and Albums can't drift apart — and the Downloads folder, which is this
+    // same screen, gets it for free. Silent on the tab that's already showing.
+    val haptics = rememberHaptics()
     Tab(
         selected = selected,
-        onClick = onClick,
+        onClick = {
+            if (!selected) haptics.play(Haptic.Select)
+            onClick()
+        },
         selectedContentColor = MaterialTheme.colorScheme.primary,
         unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
     ) {

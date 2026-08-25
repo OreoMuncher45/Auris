@@ -63,6 +63,8 @@ import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 
 @Composable
 fun SearchScreen(
@@ -390,6 +392,7 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit) {
  */
 @Composable
 private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter) -> Unit) {
+    val haptics = rememberHaptics()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -407,7 +410,13 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
                         if (selected) MaterialTheme.colorScheme.onBackground
                         else MaterialTheme.colorScheme.surfaceVariant,
                     )
-                    .clickable { onFilterChange(entry) }
+                    // Only the pill that isn't already selected has anything to
+                    // report — re-tapping the current filter changes nothing, so
+                    // buzzing for it would be feedback for a no-op.
+                    .clickable {
+                        if (!selected) haptics.play(Haptic.Select)
+                        onFilterChange(entry)
+                    }
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
                 Text(

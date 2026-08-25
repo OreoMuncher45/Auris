@@ -354,6 +354,37 @@ object BitChordIcons {
         }.build()
     }
 
+    /**
+     * Clock face with two hands — a download asked for but not yet on disk.
+     *
+     * The dial is the same 8.6 radius as [Explore]'s, so the two sit at the same
+     * optical weight when they appear in the same row of header buttons. The
+     * hands are one polyline through the centre rather than two strokes: the
+     * round join is then the pivot, which is what stops the middle reading as a
+     * pair of lines that happen to cross.
+     */
+    val Clock: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_clock",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Dial (full circle from two arcs)
+                moveTo(3.4f, 12f)
+                arcToRelative(8.6f, 8.6f, 0f, isMoreThanHalf = true, isPositiveArc = true, 17.2f, 0f)
+                arcToRelative(8.6f, 8.6f, 0f, isMoreThanHalf = true, isPositiveArc = true, -17.2f, 0f)
+                // Minute hand up, hour hand down to the right
+                moveTo(12f, 7.4f); lineTo(12f, 12f); lineTo(15.4f, 13.8f)
+            }
+        }.build()
+    }
+
     val Library: ImageVector by lazy {
         ImageVector.Builder(
             name = "bc_library",

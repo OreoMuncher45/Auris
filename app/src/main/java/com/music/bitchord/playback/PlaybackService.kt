@@ -49,6 +49,8 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.widget.MediaWidget
+import com.music.bitchord.widget.MediaWidgetSnapshot
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -206,6 +208,10 @@ class PlaybackService : MediaSessionService() {
             if (isPlaying) prefetchAround(exoPlayer) else AudioCache.cancel()
             if (isPlaying) lookForBetterCopy(exoPlayer)
             saveQueue()
+            // Not strictly needed for the glyph — onPlayWhenReadyChanged has
+            // already flipped that — but this is where hasNext/hasPrevious and
+            // the artwork are known to be settled.
+            publishWidgetState()
 
             val song = exoPlayer.currentMediaItem?.toSong()
             val durationMs = exoPlayer.duration.takeIf { it > 0 }
@@ -232,6 +238,21 @@ class PlaybackService : MediaSessionService() {
             } else {
                 clearDiscordPresence()
             }
+        }
+
+        /**
+         * The one callback the home-screen widget can be driven from.
+         *
+         * `onIsPlayingChanged` is too late by seconds: this app resolves a
+         * stream before it can buffer one, and for a YouTube track that means a
+         * NewPipe extraction, all of which happens with `isPlaying` still false.
+         * A widget keyed on that answers a tap on play by leaving the play glyph
+         * exactly where it was — the control reads as broken, and the obvious
+         * response is to tap it again. `playWhenReady` flips on the command, not
+         * on the audio, which is what the media notification shows too.
+         */
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            publishWidgetState(playing = playWhenReady)
         }
 
         /**
@@ -526,10 +547,14 @@ class PlaybackService : MediaSessionService() {
                     .setHttpRequestHeaders(upgraded.headers)
                     .build()
             }
-            val downloadedUri = runBlocking(about) { com.music.bitchord.download.Downloads.savedUri(this@PlaybackService, videoId) }
-            if (downloadedUri != null) {
-                return@Factory dataSpec.buildUpon().setUri(downloadedUri).build()
-            }
+            // A downloaded copy is *not* substituted here, deliberately. This
+            // point is inside the HTTP-only half of the chain — below
+            // DefaultDataSource, which has already given up on dispatching by
+            // scheme, and below the cache bypass that keeps local files from
+            // being written to disk a second time. A content:// URI returned
+            // from here reaches OkHttp, which refuses it as a malformed URL.
+            // Which copy of a track to play is settled where the item is built
+            // instead: see [Song.toMediaItem].
             // Whoever is already filling this track's cache entry keeps it.
             // Everything below decides between servers holding *different
             // files*, and this method is called again for every re-open of a
@@ -630,6 +655,10 @@ class PlaybackService : MediaSessionService() {
         // Before the listener below is attached, so loading the queue doesn't
         // read as a track change and set the read-ahead going.
         restoreLastQueue(exoPlayer)
+        // …but the widgets do want to know: a service woken by a widget's own
+        // play button has just recovered the track they should be showing, and
+        // nothing else in this class will mention it until playback starts.
+        publishWidgetState()
 
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
@@ -890,6 +919,9 @@ class PlaybackService : MediaSessionService() {
         upgradeJob?.cancel()
         lookForBetterCopy(exoPlayer)
         saveQueue()
+        // Covers crossfades too: a blended advance never reaches
+        // onMediaItemTransition, and [adoptPlayer] calls this handler by hand.
+        publishWidgetState()
         // Cleared rather than re-published. The renderer is still
         // configured for the track that just ended at this point, so
         // reading the format here reports the *previous* song — which
@@ -2013,6 +2045,37 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
+     * Tell the home-screen widgets what is playing.
+     *
+     * Kept out of [saveQueue] even though every caller does both: that one also
+     * runs from the per-second sampler in [reportProgress], and pushing a bitmap
+     * to the launcher once a second would be a lot of work to redraw the same
+     * picture.
+     *
+     * [playing] overrides what the player reports, for the one caller that knows
+     * better than it does — teardown, where the player is still nominally set to
+     * play right up to the moment it is released.
+     */
+    private fun publishWidgetState(playing: Boolean? = null) {
+        val exoPlayer = player ?: return
+        val song = exoPlayer.currentMediaItem?.toSong() ?: return
+        MediaWidgetSnapshot.save(
+            this,
+            MediaWidgetSnapshot(
+                mediaId = song.videoId,
+                title = song.title,
+                artist = song.artist,
+                artworkUrl = song.thumbnailUrl,
+                // playWhenReady, not isPlaying — see MediaWidgetSnapshot.isPlaying.
+                isPlaying = playing ?: exoPlayer.playWhenReady,
+                hasPrevious = exoPlayer.hasPreviousMediaItem(),
+                hasNext = exoPlayer.hasNextMediaItem(),
+            ),
+        )
+        MediaWidget.refresh(this)
+    }
+
+    /**
      * Hands the cache the queue ahead of the one playing: [AudioCache.QUEUE_DEPTH]
      * tracks is more than it does anything with, but it decides that, not this.
      */
@@ -2516,6 +2579,10 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         // Last chance to record the resume point, while the player still exists.
         saveQueue()
+        // And to leave the widgets showing a play button. Nothing else reports a
+        // swipe-away, so a widget left on the home screen would sit there with a
+        // pause glyph on a service that no longer exists.
+        publishWidgetState(playing = false)
         AudioCache.cancel()
         trackAnalyzer.release()
         // Also the last chance to close out the track that was playing — a

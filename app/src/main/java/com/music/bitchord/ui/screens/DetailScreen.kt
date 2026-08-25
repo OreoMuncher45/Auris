@@ -76,7 +76,10 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.download.DownloadState
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.ArtworkWash
+import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -84,6 +87,8 @@ import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.theme.ArtworkPalette
@@ -167,6 +172,11 @@ fun DetailScreen(
     val songs = (page.songs as? UiState.Success)?.data.orEmpty()
     val isArtist = page.type == BrowseType.ARTIST
     val palette = rememberArtworkPalette(page.thumbnailUrl)
+
+    // What marks a row as already downloaded, tinted from the sleeve like the
+    // rest of the page. Null on the Downloads page: every row there qualifies,
+    // so the badge would be decoration rather than information.
+    val downloadedTint = palette.accent.takeIf { page.browseId != "local:downloads" }
 
     // Animated cover art on the header, the same feature the player has.
     // Albums only: a playlist's artwork is a collage and an artist page's is a
@@ -274,6 +284,7 @@ fun DetailScreen(
                                             palette = palette,
                                             onClick = { onSongClick(top, top.indexOf(song)) },
                                             onLongPress = { onSongLongPress(song) },
+                                            downloadedTint = downloadedTint,
                                         )
                                     }
                                 }
@@ -298,6 +309,7 @@ fun DetailScreen(
                             rowBackground = Color.Transparent,
                             trackNumber = (index + 1).takeIf { numbered },
                             subtitleColor = palette.onBackgroundVariant,
+                            downloadedTint = downloadedTint,
                         )
                         if (index < state.data.lastIndex) {
                             HorizontalDivider(
@@ -326,6 +338,7 @@ fun DetailScreen(
                         onClick = { onSongClick(page.suggestedSongs, index) },
                         onLongPress = { onSongLongPress(song) },
                         onAdd = { onAddSuggested(song) },
+                        downloadedTint = downloadedTint,
                     )
                     if (index < page.suggestedSongs.lastIndex) {
                         HorizontalDivider(
@@ -473,6 +486,7 @@ private fun ReleaseHeader(
                             },
                             palette = palette,
                             onClick = { onToggleLibrary?.invoke() },
+                            haptic = if (library.saved) Haptic.ToggleOff else Haptic.ToggleOn,
                         )
                     }
                     CircleIconButton(
@@ -480,6 +494,7 @@ private fun ReleaseHeader(
                         contentDescription = "Shuffle",
                         palette = palette,
                         onClick = onShuffle,
+                        haptic = Haptic.Resume,
                     )
                     PlayPill(
                         palette = palette,
@@ -491,9 +506,24 @@ private fun ReleaseHeader(
                         horizontalPadding = if (library != null && onDownload != null) 24.dp else 32.dp,
                     )
                     onDownload?.let { download ->
+                        // The queue is one queue for the whole app, so this asks
+                        // only about this release's own tracks: a download
+                        // running on some other album is not this button's
+                        // business. Failed entries stay in [Downloads.active]
+                        // until dismissed, and a failure is not a wait.
+                        val active by Downloads.active.collectAsStateWithLifecycle()
+                        val ids = remember(songs) { songs.mapTo(HashSet()) { it.videoId } }
+                        val waiting = active.any { (id, state) ->
+                            id in ids &&
+                                (state is DownloadState.Queued || state is DownloadState.Running)
+                        }
                         CircleIconButton(
-                            icon = BitChordIcons.Download,
-                            contentDescription = "Download all",
+                            icon = if (waiting) BitChordIcons.Clock else BitChordIcons.Download,
+                            contentDescription = if (waiting) {
+                                "Downloading"
+                            } else {
+                                "Download all"
+                            },
                             palette = palette,
                             onClick = { download(songs) },
                         )
@@ -748,6 +778,7 @@ private fun ActionRow(palette: ArtworkPalette, onPlay: () -> Unit, onShuffle: ()
             contentDescription = "Shuffle",
             palette = palette,
             onClick = onShuffle,
+            haptic = Haptic.Resume,
         )
 
         PlayPill(
@@ -769,13 +800,19 @@ private fun PlayPill(
     modifier: Modifier = Modifier,
     horizontalPadding: Dp = 32.dp,
 ) {
+    // Resume rather than a flat tap: this button starts a queue, and the rising
+    // pair says so.
+    val haptics = rememberHaptics()
     Row(
         modifier = modifier
             .height(50.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
-            .clickable(onClick = onClick)
+            .clickable {
+                haptics.play(Haptic.Resume)
+                onClick()
+            }
             .padding(horizontal = horizontalPadding),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
@@ -805,14 +842,19 @@ private fun CircleIconButton(
     contentDescription: String,
     palette: ArtworkPalette,
     onClick: () -> Unit,
+    haptic: Haptic = Haptic.Tap,
 ) {
+    val haptics = rememberHaptics()
     Box(
         modifier = Modifier
             .size(50.dp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
-            .clickable(onClick = onClick),
+            .clickable {
+                haptics.play(haptic)
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -856,6 +898,7 @@ private fun CompactSongRow(
     palette: ArtworkPalette,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
+    downloadedTint: Color? = null,
 ) {
     Row(
         modifier = Modifier
@@ -890,6 +933,9 @@ private fun CompactSongRow(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (downloadedTint != null) {
+            DownloadedBadge(song.videoId, downloadedTint)
+        }
         Box(
             modifier = Modifier
                 .size(36.dp)
@@ -921,6 +967,7 @@ private fun SuggestedSongRow(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     onAdd: () -> Unit,
+    downloadedTint: Color? = null,
 ) {
     Row(
         modifier = Modifier
@@ -955,6 +1002,9 @@ private fun SuggestedSongRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (downloadedTint != null) {
+            DownloadedBadge(song.videoId, downloadedTint)
         }
         Spacer(Modifier.width(8.dp))
         Box(

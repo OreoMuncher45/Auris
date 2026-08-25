@@ -43,13 +43,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
@@ -75,7 +75,7 @@ fun FloatingBottomBar(
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
 
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    val haptics = LocalHapticFeedback.current
+    val haptics = rememberHaptics()
     val density = LocalDensity.current
     val currentSelectedIndex by rememberUpdatedState(selectedIndex)
 
@@ -181,7 +181,7 @@ fun FloatingBottomBar(
                                     .coerceIn(0f, tabs.lastIndex.toFloat())
                                     .roundToInt()
                             if (approxTab != lastHapticTab) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.play(Haptic.Tick)
                                 lastHapticTab = approxTab
                             }
                         },
@@ -217,6 +217,7 @@ private fun BottomBarItem(
         ),
         label = "tabScale",
     )
+    val haptics = rememberHaptics()
     val tint by animateColorAsState(
         targetValue = if (selected) {
             MaterialTheme.colorScheme.primary
@@ -234,8 +235,10 @@ private fun BottomBarItem(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
-            )
+            ) {
+                if (!selected) haptics.play(Haptic.Select)
+                onClick()
+            }
             .padding(vertical = 7.dp),
     ) {
         Icon(
