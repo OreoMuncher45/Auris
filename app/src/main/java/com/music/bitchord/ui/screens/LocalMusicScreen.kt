@@ -15,14 +15,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -64,6 +61,7 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.topBarHeight
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -119,9 +117,8 @@ fun LocalMusicScreen(
 
     // contentPadding.top carries extra breathing room meant for scrolling
     // content resting under the glass bar; the tab row is fixed and sits
-    // right below the bar, so it only needs to clear the bar itself
-    // (status bar inset + the bar's own 52dp) — see FrostedTopBar.
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp
+    // right below the bar, so it only needs to clear the bar itself.
+    val barHeight = topBarHeight()
 
     Column(modifier = modifier.fillMaxSize()) {
         // ── Tab row ──────────────────────────────────────────────────────────
@@ -129,7 +126,7 @@ fun LocalMusicScreen(
             selectedTabIndex = selectedTab,
             containerColor = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = topBarHeight),
+            modifier = Modifier.padding(top = barHeight),
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),

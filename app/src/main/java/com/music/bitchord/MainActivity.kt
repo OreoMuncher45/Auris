@@ -115,6 +115,7 @@ import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopFadeBlur
+import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -525,8 +526,13 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
     // Content padding leaves room for the frosted bar above and the tab bar
     // (plus mini player) below, so nothing is ever trapped under the glass.
+    //
+    // The top is measured off the bar rather than guessed at: the bar is pinned
+    // under the status bar inset, and that inset varies by device and by window,
+    // so a fixed number only ever lines up on the one device it was picked on.
+    // See [topBarContentPadding].
     val listPadding = PaddingValues(
-        top = 96.dp,
+        top = topBarContentPadding(),
         bottom = if (player.song != null) 210.dp else 140.dp,
     )
 
