@@ -50,6 +50,10 @@ object Downloader {
     /**
      * Fetch all of [stream] into [sink].
      *
+     * @param maxKbps the ceiling [stream] was resolved under, needed again for
+     *   the re-resolve below. Resolving at a different one would pick a
+     *   different rung of the AAC ladder, and the length check that guards the
+     *   resume would then fail a retry that had nothing wrong with it.
      * @param onProgress called as bytes land, with the running total and the
      *   full size. Never called with a total of zero.
      * @return how many bytes were written.
@@ -57,6 +61,7 @@ object Downloader {
     suspend fun fetch(
         videoId: String,
         stream: StreamResolver.Stream,
+        maxKbps: Int,
         sink: OutputStream,
         onProgress: (written: Long, total: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
@@ -90,7 +95,7 @@ object Downloader {
                 if (reresolved) error("Download refused after ${position}B (HTTP ${response.code})")
                 reresolved = true
                 Log.w(TAG, "re-resolving $videoId after HTTP ${response.code} at $position")
-                url = StreamResolver.resolveForDownload(videoId).url
+                url = StreamResolver.resolveForDownload(videoId, maxKbps).url
                 // Resolving again re-runs the whole client walk, and a
                 // different client can answer with a different format. Resuming
                 // one stream into the middle of another produces a file that is

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
@@ -101,6 +102,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.DolbyAtmos
@@ -148,6 +150,8 @@ fun SettingsScreen(
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
+    val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
+    val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -172,6 +176,7 @@ fun SettingsScreen(
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
 
     var picking by remember { mutableStateOf<QualityTarget?>(null) }
+    var pickingDownloadQuality by remember { mutableStateOf(false) }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
@@ -217,8 +222,9 @@ fun SettingsScreen(
             header = "Audio quality",
             footer = "Each connection keeps its own ceiling, so Wi-Fi can stay on " +
                 "High while mobile data is capped. High costs about " +
-                "${AudioQuality.HIGH.hourly} of data. The ceiling applies to every " +
-                "source, and outranks the lossless preference.",
+                "${AudioQuality.HIGH.hourly} of data. The ceiling applies to streams " +
+                "from every source, and outranks the lossless preference. Files kept " +
+                "on the device have their own quality, below.",
         ) {
             SettingsRow(
                 icon = Icons.Rounded.GraphicEq,
@@ -273,6 +279,60 @@ fun SettingsScreen(
                 badge = "In use".takeIf { metered == true },
                 value = cellularQuality.label,
                 onClick = { picking = QualityTarget.CELLULAR },
+            )
+        }
+
+        // Its own group rather than rows bolted onto the two above, because a
+        // download is not a third kind of connection. The ceilings answer "what
+        // does this minute cost"; these answer "what am I keeping, and when may
+        // it be fetched" — and those two questions only make sense read
+        // together, which is what puts them side by side here.
+        SettingsGroup(
+            header = "Downloads",
+            footer = "Saved files are kept at this quality no matter which " +
+                "connection they were fetched over — a download is paid for once " +
+                "and played from disk forever after, so the streaming ceilings " +
+                "above don't apply to it." +
+                if (downloadQuality == DownloadQuality.LOSSLESS) {
+                    " Lossless needs a source that holds real files, set up on " +
+                        "the Sources screen; tracks it can't find fall back to " +
+                        "the best AAC available."
+                } else {
+                    ""
+                },
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.Download,
+                title = "Download quality",
+                subtitle = "${downloadQuality.perTrack} per track, whatever the connection",
+                value = downloadQuality.label,
+                onClick = { pickingDownloadQuality = true },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Wifi,
+                title = "Download over Wi-Fi only",
+                // Says "unmetered" rather than "Wi-Fi" when it matters, because
+                // the test is whether the connection charges for data: a
+                // tethered hotspot is Wi-Fi this refuses, and saying otherwise
+                // would make the refusal look like a bug.
+                subtitle = if (wifiOnlyDownloads) {
+                    "Downloads wait for an unmetered connection"
+                } else {
+                    "Downloads may use mobile data"
+                },
+                badge = "Blocking".takeIf { wifiOnlyDownloads && metered == true },
+                trailing = {
+                    Switch(
+                        checked = wifiOnlyDownloads,
+                        onCheckedChange = AppSettings::setWifiOnlyDownloads,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setWifiOnlyDownloads(!wifiOnlyDownloads) },
             )
         }
 
@@ -663,6 +723,21 @@ fun SettingsScreen(
         }
     }
 
+    if (pickingDownloadQuality) {
+        ModalBottomSheet(
+            onDismissRequest = { pickingDownloadQuality = false },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            DownloadQualitySheet(
+                selected = downloadQuality,
+                onSelect = { quality ->
+                    AppSettings.setDownloadQuality(quality)
+                    pickingDownloadQuality = false
+                },
+            )
+        }
+    }
+
     if (showListenBrainzTokenDialog) {
         var tokenInput by remember { mutableStateOf(listenBrainzToken) }
         AlertDialog(
@@ -943,6 +1018,88 @@ private fun QualitySheet(
                     )
                     Text(
                         text = "${quality.detail} · ${quality.hourly}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (chosen) {
+                    Spacer(Modifier.width(12.dp))
+                    Icon(
+                        Icons.Rounded.Check,
+                        contentDescription = "Selected",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * What to keep when a track is saved, with what each rung costs on disk.
+ *
+ * Priced per track rather than per hour, the way [QualitySheet] is. That sheet
+ * is answering "what will listening cost me this hour", because a stream is
+ * spent again on every replay; this one is answering "what will keeping this
+ * cost me", and the answer is charged once. Same widget, different question, so
+ * the numbers beside the options are in different units on purpose.
+ */
+@Composable
+private fun DownloadQualitySheet(
+    selected: DownloadQuality,
+    onSelect: (DownloadQuality) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        Row(
+            modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Download,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(
+                    text = "Download quality",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = "For files kept on this device",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
+
+        // Best first, matching [QualitySheet] — and here the best rung is also
+        // the default, so the checkmark starts where the eye does.
+        DownloadQuality.entries.reversed().forEach { quality ->
+            val chosen = quality == selected
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelect(quality)
+                    }
+                    .padding(horizontal = 22.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = quality.label,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Text(
+                        text = "${quality.detail} · ${quality.perTrack} per track",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

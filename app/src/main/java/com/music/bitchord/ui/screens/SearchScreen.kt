@@ -1,7 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -79,6 +81,12 @@ fun SearchScreen(
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
     onBrowseClick: (BrowseItem) -> Unit,
+    /**
+     * Holding an album or playlist hit rather than tapping it — the same menu
+     * the shelves open, so a release found by searching can go on the queue
+     * without a trip through its page.
+     */
+    onBrowseLongPress: ((BrowseItem) -> Unit)? = null,
     history: List<String>,
     suggestions: List<String>,
     onSubmit: () -> Unit,
@@ -162,6 +170,7 @@ fun SearchScreen(
                             is SearchResult.Browse -> BrowseRow(
                                 item = row.item,
                                 onClick = { onBrowseClick(row.item) },
+                                onLongPress = onBrowseLongPress?.let { { it(row.item) } },
                             )
                         }
                         if (index < results.data.lastIndex) {
@@ -341,12 +350,13 @@ private fun RecentSearchRow(term: String, onClick: () -> Unit, onRemove: () -> U
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BrowseRow(item: BrowseItem, onClick: () -> Unit) {
+private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -1094,7 +1094,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         thumbnailUrl: String? = null,
         type: BrowseType = BrowseType.OTHER,
     ) {
-        val resolved = typeOf(browseId, type)
+        val resolved = browseTypeOf(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -1278,12 +1278,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Home and Explore cards don't say what they point at, and an artist
      * fetched as an album only yields the five songs on its landing page.
      * YouTube's browse ids are prefixed by kind, so use that.
+     *
+     * Public because the long-press menus ask the same question of a card
+     * before offering to queue what is behind it — an artist is not a running
+     * order, so it gets no queue actions.
      */
-    private fun typeOf(browseId: String, fallback: BrowseType): BrowseType = when {
+    fun browseTypeOf(browseId: String, fallback: BrowseType = BrowseType.OTHER): BrowseType = when {
         browseId.startsWith("UC") -> BrowseType.ARTIST
         browseId.startsWith("MPREb") -> BrowseType.ALBUM
         browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
         else -> fallback
+    }
+
+    /**
+     * Every track behind an album or playlist, handed to [onResult] once it is
+     * all in.
+     *
+     * What a long-press on a card is acting on. A card has nothing but a browse
+     * id — its page was never opened, so there is no track list anywhere to
+     * read — and "add this album to the queue" means the whole album, so this
+     * follows continuations to the end rather than taking the first page.
+     *
+     * Runs in [viewModelScope], not the caller's: the sheet the tap came from
+     * closes immediately, and a three-hundred-track playlist must not be
+     * abandoned halfway because of it.
+     */
+    fun collectSongs(
+        browseId: String,
+        artworkFallback: String? = null,
+        onResult: (Result<List<Song>>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val result = when (browseId) {
+                "local:downloads" -> runCatching {
+                    LocalMediaRepository.getDownloadedSongs(context)
+                        .ifEmpty { error("No downloaded tracks in Music/BitChord") }
+                }
+                "local:all" -> runCatching {
+                    if (!LocalMediaRepository.hasStoragePermission(context)) {
+                        error("Storage permission required to read local audio files")
+                    }
+                    LocalMediaRepository.getLocalMusic(context)
+                        .ifEmpty { error("No audio files found on device") }
+                }
+                else -> YtMusicRepository.allSongs(browseId)
+            }
+            onResult(result.map { it.withArtwork(artworkFallback) })
+        }
     }
 
     /** Pops one page; returns false when there was nothing to pop. */

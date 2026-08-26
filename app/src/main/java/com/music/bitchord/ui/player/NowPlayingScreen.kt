@@ -218,6 +218,39 @@ private val PLAYER_GUTTER = 30.dp
  */
 private val PLAYER_MAX_WIDTH = 560.dp
 /**
+ * How wide the window has to be before the player stops being something raised
+ * over the page and becomes a pane standing beside it.
+ *
+ * A docked player is only an improvement while both halves are still worth
+ * having: the pane needs the better part of a phone's width before the sleeve
+ * and the transport stop crowding each other, and whatever is left has to still
+ * read as a feed rather than as a column of clipped cards. Below this there
+ * isn't enough window to pay for both, so the sheet — which gets the whole of
+ * it, one thing at a time — remains the better answer. Phones and 7in tablets
+ * are under this; a 9in tablet and up is over it.
+ */
+private val DOCKED_PLAYER_MIN_SCREEN_WIDTH = 720.dp
+/**
+ * The pane's share of a window wide enough to dock in, and the bounds it takes
+ * that share within.
+ *
+ * A fraction alone hands a 13in screen half a metre of player; the floor is
+ * there because the fraction of the narrowest window that qualifies is thinner
+ * than the controls want to be, and the ceiling is [PLAYER_MAX_WIDTH] and its
+ * gutters — past which the player has already said it would rather centre
+ * itself than grow, so anything more is pane the player won't use.
+ */
+private const val DOCKED_PLAYER_FRACTION = 0.42f
+private val DOCKED_PLAYER_MIN_WIDTH = 340.dp
+/**
+ * The room above a docked player's artwork, in place of the drag handle.
+ *
+ * The handle is a promise that the player can be pulled away, and a pane it is
+ * pinned in cannot be — so what is left is the gap it used to sit in, minus the
+ * strip the gesture needed.
+ */
+private val DOCKED_TOP_PAD = 12.dp
+/**
  * How far a tall screen is allowed to push the transport from the blocks either
  * side of it.
  *
@@ -246,6 +279,24 @@ private var lastControlSpread: Dp = 0.dp
 @Composable
 fun fullBleedArtworkAvailable(): Boolean =
     LocalConfiguration.current.screenWidthDp.dp <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
+
+/**
+ * Whether this window is wide enough to keep the player open beside the page
+ * rather than raising it over one — see [DOCKED_PLAYER_MIN_SCREEN_WIDTH].
+ *
+ * Public because it is not only the player's business: the page it stands next
+ * to loses the mini player, gets its bottom inset back, and stops being able to
+ * raise the sheet at all.
+ */
+@Composable
+fun dockedPlayerAvailable(): Boolean =
+    LocalConfiguration.current.screenWidthDp.dp >= DOCKED_PLAYER_MIN_SCREEN_WIDTH
+
+/** How wide that pane is. Only meaningful where [dockedPlayerAvailable] is true. */
+@Composable
+fun dockedPlayerWidth(): Dp =
+    (LocalConfiguration.current.screenWidthDp.dp * DOCKED_PLAYER_FRACTION)
+        .coerceIn(DOCKED_PLAYER_MIN_WIDTH, PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2)
 
 /** Share of a lyric line's own length spent fading out, and its bounds. */
 private const val LYRIC_FADE_FRACTION = 0.28f
@@ -470,6 +521,18 @@ fun NowPlayingScreen(
     lyrics: List<LyricLine>?,
     lyricsSource: LyricsSource?,
     lyricsUnavailable: Boolean,
+    /**
+     * Whether the player is a pane the page sits beside rather than a sheet
+     * raised over it — see [dockedPlayerAvailable].
+     *
+     * Two things follow. There is no sheet under a docked player to pull away,
+     * so the handle goes and with it the strip of dead space that existed to
+     * pass drags down to one. And full-bleed artwork means "the artwork is the
+     * screen", which a pane that is only part of the screen cannot say: edge to
+     * edge inside it is a banner cut off at a seam, so the sleeve stays a
+     * sleeve however [AppSettings.fullBleedArtwork] is set.
+     */
+    docked: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -691,7 +754,7 @@ fun NowPlayingScreen(
     // ignored [fullBleedArt] entirely, so turning the setting off still left a
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
-    val heroMode = fullBleedArt && fullBleedArtworkAvailable()
+    val heroMode = fullBleedArt && !docked && fullBleedArtworkAvailable()
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
@@ -723,6 +786,11 @@ fun NowPlayingScreen(
     // is nothing to show that early either.
     var heroHeight by remember { mutableStateOf(0.dp) }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // What sits between the status bar and the artwork: the drag strip in a
+    // sheet, plain padding in a pane. Read in three places — the strip itself,
+    // the scrim drawn over it and the banner's own height — which all have to
+    // agree or the artwork and the credits under it move.
+    val topStrip = if (docked) DOCKED_TOP_PAD else DISMISS_STRIP_HEIGHT
 
     Box(modifier = modifier.fillMaxSize()) {
         // Keyed on the track: the backdrop drifts when the player opens and on
@@ -831,7 +899,7 @@ fun NowPlayingScreen(
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
-                        .height(statusBarTop + DISMISS_STRIP_HEIGHT)
+                        .height(statusBarTop + topStrip)
                         .background(
                             Brush.verticalGradient(
                                 listOf(
@@ -881,20 +949,24 @@ fun NowPlayingScreen(
         ) {
             // The only strip that passes drags through to the sheet, so the
             // player closes from the handle and the space around it — not from
-            // a stray downward swipe on the artwork or the controls.
+            // a stray downward swipe on the artwork or the controls. Docked
+            // there is no sheet to pass anything to, so all that is left of it
+            // is the room it kept above the artwork.
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(DISMISS_STRIP_HEIGHT),
+                    .height(topStrip),
                 contentAlignment = Alignment.Center,
             ) {
-                Box(
-                    Modifier
-                        .width(38.dp)
-                        .height(5.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(Color.White.copy(alpha = 0.32f)),
-                )
+                if (!docked) {
+                    Box(
+                        Modifier
+                            .width(38.dp)
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(Color.White.copy(alpha = 0.32f)),
+                    )
+                }
             }
 
             Column(
@@ -1011,7 +1083,7 @@ fun NowPlayingScreen(
                 // below it not to move when it appears. Everything between the
                 // screen's top and this box's own top is fixed padding, so it
                 // can simply be added back up rather than measured.
-                val bannerBottom = statusBarTop + DISMISS_STRIP_HEIGHT + ART_BOX_TOP_PAD +
+                val bannerBottom = statusBarTop + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt + ART_TITLE_GAP / 2
                 SideEffect { heroHeight = bannerBottom }
 

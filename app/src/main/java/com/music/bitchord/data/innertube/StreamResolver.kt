@@ -506,7 +506,7 @@ object StreamResolver {
 
     /**
      * As [resolve], but for a file being kept rather than a stream being heard:
-     * the best AAC on offer, whatever the quality ceiling says.
+     * the best AAC the *download* setting allows, and no connection has a say.
      *
      * The format is not a preference here, it is the only option. Every
      * adaptive audio format YouTube offers is either AAC in MP4 or Opus (or
@@ -532,10 +532,11 @@ object StreamResolver {
      * again but not the round trips.
      *
      * Nothing here touches [recent]. That cache exists to keep ExoPlayer's
-     * re-opens off the network, and its entries are picked under the quality
-     * ceiling — seeding it with an unbudgeted URL would quietly hand a capped
-     * connection the stream it was capped to avoid, and reading from it would
-     * hand a download whatever bitrate playback happened to settle for.
+     * re-opens off the network, and its entries are picked under the *playback*
+     * ceiling — seeding it from here would hand a capped connection a stream it
+     * was capped to avoid, and reading from it would hand a download whatever
+     * bitrate playback happened to settle for. Both directions are wrong, and
+     * they are wrong independently of what [maxKbps] says.
      *
      * The whole thing is attempted twice, for the case where a client is turned
      * away with "Sign in to confirm you're not a bot": [playerStream] mints a
@@ -554,9 +555,16 @@ object StreamResolver {
      * NewPipe and re-derives the URL itself. A download reaching the same wall
      * has to do the same thing or it fails while the track it is refusing to
      * save is audibly playing.
+     *
+     * @param maxKbps the ceiling from
+     *   [DownloadQuality][com.music.bitchord.data.settings.DownloadQuality].
+     *   Passed in rather than read here so that one download resolves at one
+     *   bitrate: a setting changed mid-fetch, or a re-resolve after a refusal
+     *   (see [Downloader.fetch][com.music.bitchord.download.Downloader.fetch]),
+     *   must not splice two different renditions into one file.
      */
-    suspend fun resolveForDownload(videoId: String): Stream {
-        val stream = downloadStream(videoId)
+    suspend fun resolveForDownload(videoId: String, maxKbps: Int): Stream {
+        val stream = downloadStream(videoId, maxKbps)
         // Belt and braces on the one invariant the media store enforces for us,
         // and enforces badly: everything in [downloadStream] selects for MP4,
         // and this is where a format that somehow slipped through says so in a
@@ -565,46 +573,52 @@ object StreamResolver {
         return stream
     }
 
-    private suspend fun downloadStream(videoId: String): Stream = withContext(TrackLog.about(videoId)) {
-        init
+    private suspend fun downloadStream(videoId: String, maxKbps: Int): Stream =
+        withContext(TrackLog.about(videoId)) {
+            init
 
-        // Whether any client offered AAC at all, as distinct from whether one
-        // could be turned into a working URL. Those are different failures and
-        // only one of them is worth telling someone to try again about: a track
-        // no client has an MP4 for will not have one in five minutes either,
-        // while an MP4 that won't probe is a bad afternoon on Google's side.
-        var offered = false
+            // Whether any client offered AAC at all, as distinct from whether one
+            // could be turned into a working URL. Those are different failures and
+            // only one of them is worth telling someone to try again about: a track
+            // no client has an MP4 for will not have one in five minutes either,
+            // while an MP4 that won't probe is a bad afternoon on Google's side.
+            var offered = false
 
-        repeat(DOWNLOAD_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(DOWNLOAD_RETRY_MS)
-            // Fresh each time. Responses are only cached once a client has
-            // answered, and re-deriving a URL from a cached response produces
-            // the same URL that just failed to probe — so carrying the map
-            // across attempts would make every attempt after the first a
-            // no-op.
-            val responses = mutableMapOf<PlayerClient, JsonObject>()
-            playerStream(videoId, { response -> pickAac(response)?.also { offered = true } }, responses)
-                ?.let { return@withContext it }
-        }
-
-        // Not "try again later" — every client being refused at once is a state
-        // that lasts hours, and it is precisely the state [resolve] extracts its
-        // way out of. Still asking for MP4, because this is still a download:
-        // the failsafe is a different route to the bytes, not a licence to
-        // fetch a container that cannot then be saved.
-        TrackLog.w(TAG, "no client minted a usable MP4 URL for $videoId; extracting")
-        runCatching {
-            newPipeStream(videoId) { candidates ->
-                candidates.filter { it.second.isM4a }
-                    .maxByOrNull { it.first }?.second
-                    ?.also { offered = true }
+            repeat(DOWNLOAD_ATTEMPTS) { attempt ->
+                if (attempt > 0) delay(DOWNLOAD_RETRY_MS)
+                // Fresh each time. Responses are only cached once a client has
+                // answered, and re-deriving a URL from a cached response produces
+                // the same URL that just failed to probe — so carrying the map
+                // across attempts would make every attempt after the first a
+                // no-op.
+                val responses = mutableMapOf<PlayerClient, JsonObject>()
+                playerStream(
+                    videoId,
+                    { response -> pickAac(response, maxKbps)?.also { offered = true } },
+                    responses,
+                )?.let { return@withContext it }
             }
-        }.onSuccess { return@withContext it }
-            .onFailure { TrackLog.w(TAG, "extraction found no MP4 for $videoId: ${it.message}") }
 
-        if (offered) error("Couldn't reach a downloadable copy just now — try again")
-        error("No downloadable audio for this track")
-    }
+            // Not "try again later" — every client being refused at once is a state
+            // that lasts hours, and it is precisely the state [resolve] extracts its
+            // way out of. Still asking for MP4, because this is still a download:
+            // the failsafe is a different route to the bytes, not a licence to
+            // fetch a container that cannot then be saved.
+            TrackLog.w(TAG, "no client minted a usable MP4 URL for $videoId; extracting")
+            runCatching {
+                newPipeStream(videoId) { candidates ->
+                    // Capped the same way [pickAac] is, off the same setting, or
+                    // the failsafe would quietly hand back a rendition the user
+                    // said they didn't want to keep.
+                    underCeiling(candidates.filter { it.second.isM4a }, maxKbps)
+                        ?.also { offered = true }
+                }
+            }.onSuccess { return@withContext it }
+                .onFailure { TrackLog.w(TAG, "extraction found no MP4 for $videoId: ${it.message}") }
+
+            if (offered) error("Couldn't reach a downloadable copy just now — try again")
+            error("No downloadable audio for this track")
+        }
 
     /**
      * Walks [CLIENTS] until one produces a URL that actually serves audio.
@@ -806,21 +820,24 @@ object StreamResolver {
         pickForQuality(audioFormats(response).map { it.kbps to it })
 
     /**
-     * What a download wants: the best AAC there is, and nothing else.
+     * What a download wants: the best AAC at or under the download setting's
+     * own ceiling.
      *
      * MP4 rather than the better codec because it is the only container the
      * media store will accept for the audio collection — see
      * [resolveForDownload].
      *
-     * No ceiling is applied. The quality setting exists to budget a *stream* —
-     * bytes spent on a track being listened to once, over and over — and a file
-     * saved to the device is the opposite case: paid for once, kept, and played
-     * from disk forever after. Capping it at the setting that happens to be in
-     * force would bake a temporary decision about mobile data into a permanent
-     * artefact.
+     * The ceiling comes in as an argument rather than being read here, and it is
+     * a different setting from the one [pickForQuality] reads. The quality
+     * ceilings budget a *stream* — bytes spent again on every replay of a track
+     * being listened to — and a file saved to the device is the opposite case:
+     * paid for once, kept, played from disk forever after. Capping a permanent
+     * artefact at whichever network happened to be in hand would bake a
+     * temporary decision into it, so a download is capped by a decision made
+     * about downloads, or not at all.
      */
-    private fun pickAac(response: JsonObject): Audio? =
-        audioFormats(response).filter { it.isAac }.maxByOrNull { it.kbps }
+    private fun pickAac(response: JsonObject, maxKbps: Int): Audio? =
+        underCeiling(audioFormats(response).filter { it.isAac }.map { it.kbps to it }, maxKbps)
 
     private fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.content
 
@@ -829,10 +846,17 @@ object StreamResolver {
      * everything is above it (e.g. Low on a track that only has 130kbps+), take
      * the cheapest available rather than failing.
      */
-    private fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? {
+    private fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? =
+        underCeiling(candidates, AppSettings.effectiveAudioQuality.maxKbps)
+
+    /**
+     * Highest of [candidates] at or under [maxKbps]; if everything is above it
+     * — Standard on a track whose AAC ladder starts at 256, say — the cheapest
+     * available, because a rung over budget still beats no audio at all.
+     */
+    private fun <T> underCeiling(candidates: List<Pair<Int, T>>, maxKbps: Int): T? {
         if (candidates.isEmpty()) return null
-        val ceiling = AppSettings.effectiveAudioQuality.maxKbps
-        val withinBudget = candidates.filter { it.first <= ceiling }
+        val withinBudget = candidates.filter { it.first <= maxKbps }
         return (withinBudget.maxByOrNull { it.first } ?: candidates.minByOrNull { it.first })
             ?.second
     }

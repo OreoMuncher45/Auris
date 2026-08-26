@@ -95,6 +95,7 @@ fun LibraryScreen(
                         ),
                     ),
                     onItemClick = onShelfItemClick,
+                    onItemLongPress = onShelfItemLongPress,
                 )
             }
             if (!signedIn) {
@@ -139,7 +140,11 @@ fun LibraryScreen(
                                     onNewPlaylist = onNewPlaylist,
                                 )
                             } else {
-                                Shelf(shelf = shelf, onItemClick = onShelfItemClick)
+                                Shelf(
+                                    shelf = shelf,
+                                    onItemClick = onShelfItemClick,
+                                    onItemLongPress = onShelfItemLongPress,
+                                )
                             }
                         }
                     }
@@ -151,7 +156,8 @@ fun LibraryScreen(
 
 /**
  * The one shelf on this page that can be written to: it leads with the tile
- * that creates a playlist, and holding a card opens the rename/delete menu.
+ * that creates a playlist, and holding a card gets rename and delete on top of
+ * the queue actions every other shelf's menu offers.
  */
 @Composable
 private fun PlaylistShelf(

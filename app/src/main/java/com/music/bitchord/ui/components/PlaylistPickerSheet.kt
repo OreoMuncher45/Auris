@@ -24,12 +24,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.DeleteForever
-import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Lock
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -338,88 +334,12 @@ private fun NewPlaylistForm(
 }
 
 /**
- * Long-press menu for one of the account's own playlists, on the Library tab —
- * the other half of being able to create them.
- *
- * Deleting asks a second time, in place. A playlist is the only thing in this
- * app whose loss can't be undone by tapping the same row again, and a
- * mis-tapped row in a shelf is exactly how it would happen.
+ * The rename panel of [BrowseActionsSheet], which swaps itself out for this
+ * rather than opening a dialog over itself — same reason the create form lives
+ * inside [PlaylistPickerSheet].
  */
 @Composable
-fun PlaylistActionsSheet(
-    playlist: UserPlaylist,
-    onOpen: () -> Unit,
-    onRename: (String) -> Unit,
-    onDelete: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var renaming by remember { mutableStateOf(false) }
-    var confirmingDelete by remember { mutableStateOf(false) }
-
-    if (renaming) {
-        RenamePlaylistForm(
-            playlist = playlist,
-            onBack = { renaming = false },
-            onRename = onRename,
-            modifier = modifier,
-        )
-        return
-    }
-
-    Column(modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AsyncImage(
-                model = playlist.thumbnailUrl.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = playlist.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = playlist.subtitle.ifBlank { "Playlist" },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
-
-        ActionRow(Icons.Rounded.PlayArrow, "Open playlist", onClick = onOpen)
-        ActionRow(Icons.Rounded.Edit, "Rename") { renaming = true }
-        if (confirmingDelete) {
-            ActionRow(
-                icon = Icons.Rounded.DeleteForever,
-                label = "Delete \"${playlist.title}\" — tap to confirm",
-                tint = MaterialTheme.colorScheme.error,
-                onClick = onDelete,
-            )
-        } else {
-            ActionRow(Icons.Rounded.Delete, "Delete playlist") { confirmingDelete = true }
-        }
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun RenamePlaylistForm(
+internal fun RenamePlaylistForm(
     playlist: UserPlaylist,
     onBack: () -> Unit,
     onRename: (String) -> Unit,

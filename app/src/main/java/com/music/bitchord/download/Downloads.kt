@@ -9,6 +9,8 @@ import androidx.core.content.ContextCompat
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
@@ -105,9 +107,27 @@ object Downloads {
      * A track already saved, queued or running is left alone rather than
      * doubled — the menu row shows which of those it is, but a second tap
      * before the sheet updates should still be a no-op.
+     *
+     * The Wi-Fi-only check is here rather than only at the tap because this is
+     * the one door into the queue, and a setting that can be bypassed by a
+     * caller that forgot about it is not a setting. Callers that can say
+     * something better than a failed row — a single toast for a whole album, say
+     * — check [AppSettings.downloadsAllowedNow] themselves first; this is what
+     * catches the rest.
      */
     fun enqueue(context: Context, song: Song) {
         val id = song.videoId
+        if (!AppSettings.downloadsAllowedNow) {
+            // Distinct from the duplicate-tap no-op below: nothing is in flight
+            // here to leave alone, and a refusal nobody is told about reads as a
+            // dead button. A download already queued or running started on a
+            // connection that allowed it and is none of this check's business.
+            val inFlight = _active.value[id]
+            if (inFlight !is DownloadState.Queued && inFlight !is DownloadState.Running) {
+                fail(id, WIFI_ONLY_REFUSAL)
+            }
+            return
+        }
         synchronized(lock) {
             if (id in pending || id == runningId) return
             pending[id] = song
@@ -322,8 +342,14 @@ object Downloads {
             // title is where "(Official Video)" lives, and that would be baked
             // into a filename this app never gets to correct.
             val track = runCatching { YtMusicRepository.resolveAudio(song) }.getOrDefault(song)
-            val route = routeFor(track)
-            Log.d(TAG, "downloading $id as .${route.extension} (${route.describe})")
+            // Read once, here, for the whole of this track. Both routes below
+            // and the re-resolve inside [Downloader.fetch] have to agree on
+            // which rung they are fetching, and re-reading the setting per call
+            // would let a change made mid-download splice two renditions into
+            // one file.
+            val quality = AppSettings.downloadQuality.value
+            val route = routeFor(track, quality)
+            Log.d(TAG, "downloading $id as .${route.extension} (${route.describe}, ${quality.label})")
 
             val name = DownloadStore.fileNameFor(track, route.extension)
             // Already there from a previous run the record lost track of —
@@ -385,9 +411,14 @@ object Downloads {
      * A configured source gets asked first, and YouTube is what happens when
      * none of them can serve it — see [SourceResolver.forDownload] for what
      * "can" means, which is narrower here than it is for playback.
+     *
+     * @param quality read once by the caller and passed down, so that a setting
+     *   changed while this track is in the queue applies to the next one rather
+     *   than to the middle of this one. [Downloader.fetch] resolves again after
+     *   a mid-download refusal and has to ask for the same rung it started on.
      */
-    private suspend fun routeFor(track: Song): Route {
-        lossless(track)?.let { (stream, storable) ->
+    private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
+        lossless(track, quality)?.let { (stream, storable) ->
             return Route(
                 extension = storable.extension,
                 mimeType = storable.mimeType,
@@ -397,12 +428,14 @@ object Downloads {
                 },
             )
         }
-        val stream = StreamResolver.resolveForDownload(track.videoId)
+        val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps)
         return Route(
             extension = stream.downloadExtension,
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
-            write = { sink, onProgress -> Downloader.fetch(track.videoId, stream, sink, onProgress) },
+            write = { sink, onProgress ->
+                Downloader.fetch(track.videoId, stream, quality.maxKbps, sink, onProgress)
+            },
         )
     }
 
@@ -420,11 +453,22 @@ object Downloads {
      * The [DownloadStore.storable] check belongs here rather than inside the
      * resolver: the resolver's job is finding the best audio, and whether this
      * device will keep a file of that codec is a question about Android.
+     *
+     * @param quality pinned by [run] for the whole of this track. Passed on to
+     *   the resolver rather than left to it, so that the twenty seconds this may
+     *   spend searching cannot be a window in which the setting changes and the
+     *   two halves of one decision disagree.
      */
-    private suspend fun lossless(track: Song): Pair<SourceStream, DownloadStore.Storable>? {
+    private suspend fun lossless(
+        track: Song,
+        quality: DownloadQuality,
+    ): Pair<SourceStream, DownloadStore.Storable>? {
         val stream = withTimeoutOrNull(LOSSLESS_LOOKUP_MS) {
             try {
-                SourceResolver.forDownload(TrackMatcher.targetOf(track))
+                SourceResolver.forDownload(
+                    TrackMatcher.targetOf(track),
+                    SourceResolver.requestForDownload(quality),
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -479,6 +523,16 @@ object Downloads {
      * simply do not have it.
      */
     private const val LOSSLESS_LOOKUP_MS = 20_000L
+
+    /**
+     * Why a download didn't start, when the reason is a setting rather than a
+     * fault.
+     *
+     * Names the switch, because a refusal that only says no leaves the user
+     * looking for a network problem that isn't there. Shared with the callers
+     * that show it as a toast so the two cannot drift apart.
+     */
+    internal const val WIFI_ONLY_REFUSAL = "Downloads are set to Wi-Fi only"
 
     /** Dropped when the sheet is reopened; a failure is worth showing once. */
     fun dismissFailure(videoId: String) {

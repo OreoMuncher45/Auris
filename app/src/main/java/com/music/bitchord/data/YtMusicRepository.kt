@@ -307,6 +307,21 @@ object YtMusicRepository {
     }
 
     /**
+     * The complete track listing behind an album or playlist browse id.
+     *
+     * The whole list rather than [browseSongs]' first page, because the callers
+     * are the ones that act on all of it at once — "Add to queue" on a card
+     * whose page was never opened. Queueing the first hundred rows of a
+     * three-hundred-track playlist and calling it the playlist would be a
+     * quieter kind of wrong than failing outright.
+     *
+     * Takes as long as the list is long — see [songsPaged].
+     */
+    suspend fun allSongs(browseId: String): Result<List<Song>> = call("all:$browseId") {
+        songsPaged(browseId).ifEmpty { error("No tracks here") }
+    }
+
+    /**
      * Every track behind a browse id, following continuations.
      *
      * A playlist page returns its first ~100 rows and a token for the rest, so

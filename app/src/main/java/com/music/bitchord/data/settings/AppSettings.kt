@@ -27,6 +27,43 @@ enum class AudioQuality(
     HIGH(Int.MAX_VALUE, "High", "Best available · ~171 kbps Opus", "77 MB/hr"),
 }
 
+/**
+ * What to keep when a track is saved to the device.
+ *
+ * Deliberately not [AudioQuality]. That enum budgets a *stream*, and is priced
+ * per hour because the same bytes are spent again on every replay. A download is
+ * the opposite trade — paid for once, kept, played from disk forever after — so
+ * the figure that decides it is what one track costs, and the rung worth
+ * defaulting to is the top one rather than the cheap one.
+ *
+ * The rungs themselves differ too. On the YouTube path a download is
+ * AAC-in-MP4 or nothing (see
+ * [StreamResolver.resolveForDownload][com.music.bitchord.data.innertube.StreamResolver.resolveForDownload]),
+ * so there is no Opus here to describe the way [AudioQuality.HIGH] does. And
+ * [LOSSLESS] has no streaming counterpart at all: it is the only rung that lets
+ * a configured source's bit-exact file end up as a file on disk.
+ */
+enum class DownloadQuality(
+    /** Ceiling for the AAC ladder. [Int.MAX_VALUE] means "whichever rung is best". */
+    val maxKbps: Int,
+    val label: String,
+    val detail: String,
+    /** Roughly what one four-minute track costs at this rung, sans unit context. */
+    val perTrack: String,
+    /** Whether a source's bit-exact file is worth keeping, or a transcode will do. */
+    val keepsLossless: Boolean,
+) {
+    STANDARD(128, "Standard", "~128 kbps AAC · fits more on the device", "~4 MB", false),
+    HIGH(Int.MAX_VALUE, "High", "Best AAC on offer, usually ~256 kbps", "~8 MB", false),
+    LOSSLESS(
+        Int.MAX_VALUE,
+        "Lossless",
+        "Bit-exact if a source has it, best AAC if not",
+        "~35 MB",
+        true,
+    ),
+}
+
 enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark")
 }
@@ -53,6 +90,42 @@ object AppSettings {
     val audioQualityWifi = MutableStateFlow(AudioQuality.HIGH)
     val audioQualityCellular = MutableStateFlow(AudioQuality.HIGH)
 
+    /**
+     * What a saved file should be, answered on its own terms.
+     *
+     * Kept apart from the two ceilings above on purpose. Those are about what
+     * this minute's connection costs, and a download outlives the minute it was
+     * started in — capping a permanent file at whichever network happened to be
+     * in hand bakes a temporary decision into a lasting artefact, and the
+     * reverse (a High ceiling on Wi-Fi implying 35MB FLACs of everything) is
+     * just as wrong in the other direction.
+     *
+     * Data spend on a download is [wifiOnlyDownloads]' problem, not this
+     * setting's, which is what lets this one be purely about the file.
+     *
+     * Defaults to [DownloadQuality.LOSSLESS] because that is what the download
+     * path already did on an uncapped connection, and [migrateDownloadQuality]
+     * keeps it that way for the people it didn't.
+     */
+    val downloadQuality = MutableStateFlow(DownloadQuality.LOSSLESS)
+
+    /**
+     * Refuse to start a download while the connection charges for data.
+     *
+     * Metered rather than literally-Wi-Fi, the same test [effectiveAudioQuality]
+     * makes, because the thing worth protecting is the bill and not the radio: a
+     * tethered hotspot is Wi-Fi that costs money, and an unmetered home
+     * connection is worth using whether or not it arrives over Wi-Fi.
+     *
+     * On by default, and that is a deliberate change of behaviour for anyone
+     * updating. [downloadQuality] defaulting to Lossless means a tap that used
+     * to spend four megabytes of mobile data can now spend thirty-five, and of
+     * the two ways to get that wrong — silently overspending a data plan, or
+     * refusing with a sentence naming the switch that would allow it — only the
+     * second is recoverable by the person it happens to.
+     */
+    val wifiOnlyDownloads = MutableStateFlow(true)
+
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
@@ -66,6 +139,9 @@ object AppSettings {
      * [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow] —
      * because a capped connection is a budget, and a preference should not
      * quietly overspend one.
+     *
+     * Playback only. Downloads used to read this too, which made one switch
+     * mean two things; [downloadQuality] is where that question is asked now.
      */
     val losslessAudio = MutableStateFlow(true)
 
@@ -260,12 +336,27 @@ object AppSettings {
             audioQualityWifi.value
         }
 
+    /**
+     * Whether a download may start on the connection in hand.
+     *
+     * A null [meteredConnection] means there is no active network, and that is
+     * deliberately allowed through: a download with nothing to download over
+     * fails on the network and says so, which is true, where refusing it here
+     * would blame a Wi-Fi setting for an outage.
+     */
+    val downloadsAllowedNow: Boolean
+        get() = !wifiOnlyDownloads.value || meteredConnection.value != true
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
         losslessAudio.value = prefs.getBoolean(KEY_LOSSLESS, true)
+        // After losslessAudio, which is what it seeds itself from.
+        migrateDownloadQuality()
+        downloadQuality.value = readDownloadQuality()
+        wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
@@ -360,6 +451,32 @@ object AppSettings {
     }
 
     /**
+     * Write down what the download path was already doing, before it starts
+     * being asked instead.
+     *
+     * Download quality used to be derived rather than chosen: a lossless copy
+     * was kept when `SourceResolver.requestForNow()` said Lossless, which meant
+     * a download quietly turned on the lossless preference and off again with
+     * it. Someone who switched that off on the Sources screen was getting AAC
+     * downloads on purpose, and defaulting them to Lossless now would answer a
+     * question they had already answered — with thirty-five megabytes a track.
+     *
+     * The ceilings are deliberately *not* consulted. They were only in that
+     * derivation because there was nowhere else to say "not on mobile data",
+     * and [wifiOnlyDownloads] is now where that is said.
+     */
+    private fun migrateDownloadQuality() {
+        if (prefs.contains(KEY_QUALITY_DOWNLOAD)) return
+        val quality = if (losslessAudio.value) DownloadQuality.LOSSLESS else DownloadQuality.HIGH
+        prefs.edit().putString(KEY_QUALITY_DOWNLOAD, quality.name).apply()
+    }
+
+    private fun readDownloadQuality(): DownloadQuality {
+        val stored = prefs.getString(KEY_QUALITY_DOWNLOAD, null) ?: return DownloadQuality.LOSSLESS
+        return runCatching { DownloadQuality.valueOf(stored) }.getOrDefault(DownloadQuality.LOSSLESS)
+    }
+
+    /**
      * Track the active network so [effectiveAudioQuality] can answer without
      * touching ConnectivityManager. Stream resolution happens off the main
      * thread mid-playback; a callback keeps that lookup off the hot path and
@@ -400,6 +517,16 @@ object AppSettings {
     fun setAudioQualityCellular(value: AudioQuality) {
         audioQualityCellular.value = value
         prefs.edit().putString(KEY_QUALITY_CELLULAR, value.name).apply()
+    }
+
+    fun setDownloadQuality(value: DownloadQuality) {
+        downloadQuality.value = value
+        prefs.edit().putString(KEY_QUALITY_DOWNLOAD, value.name).apply()
+    }
+
+    fun setWifiOnlyDownloads(value: Boolean) {
+        wifiOnlyDownloads.value = value
+        prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
     }
 
     fun setLosslessAudio(value: Boolean) {
@@ -663,6 +790,8 @@ object AppSettings {
     private const val KEY_QUALITY_LEGACY = "audio_quality"
     private const val KEY_QUALITY_WIFI = "audio_quality_wifi"
     private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
+    private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
+    private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"

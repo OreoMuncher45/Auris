@@ -7,8 +7,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -94,6 +97,12 @@ fun LocalMusicScreen(
      * reason there are none, which "0 songs" on its own doesn't give.
      */
     emptyMessage: String? = null,
+    /**
+     * One of the Artists / Albums groupings, held rather than tapped — the
+     * album/playlist menu, with the rows it covers already in hand. Nothing
+     * here has a browse id to fetch, so this is the only way these get one.
+     */
+    onCollectionLongPress: ((String, List<Song>) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // Which top-level tab is selected.
@@ -201,6 +210,9 @@ fun LocalMusicScreen(
                         onSongLongPress = onSongLongPress,
                         onSongSwipe = onSongSwipe,
                         onShuffle = onShuffle,
+                        onMore = onCollectionLongPress?.let { more ->
+                            { more(drillDownLabel ?: "", drillDownSongs) }
+                        },
                         onBack = {
                             drillDownLabel = null
                             drillDownSongs = emptyList()
@@ -231,6 +243,7 @@ fun LocalMusicScreen(
                             drillDownLabel = artist
                             drillDownSongs = artistSongs
                         },
+                        onArtistLongPress = onCollectionLongPress,
                         contentPadding = bodyContentPadding,
                     )
                 }
@@ -249,6 +262,7 @@ fun LocalMusicScreen(
                             drillDownLabel = album
                             drillDownSongs = albumSongs
                         },
+                        onAlbumLongPress = onCollectionLongPress,
                         contentPadding = bodyContentPadding,
                     )
                 }
@@ -303,6 +317,7 @@ private fun SongsTab(
 private fun ArtistsTab(
     artists: List<Map.Entry<String, List<Song>>>,
     onArtistClick: (String, List<Song>) -> Unit,
+    onArtistLongPress: ((String, List<Song>) -> Unit)?,
     contentPadding: PaddingValues,
 ) {
     val listState = rememberLazyListState()
@@ -322,6 +337,7 @@ private fun ArtistsTab(
                 name = artist,
                 songCount = artistSongs.size,
                 onClick = { onArtistClick(artist, artistSongs) },
+                onLongPress = onArtistLongPress?.let { { it(artist, artistSongs) } },
             )
             HorizontalDivider(
                 modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
@@ -332,12 +348,18 @@ private fun ArtistsTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ArtistRow(name: String, songCount: Int, onClick: () -> Unit) {
+private fun ArtistRow(
+    name: String,
+    songCount: Int,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -386,6 +408,7 @@ private fun ArtistRow(name: String, songCount: Int, onClick: () -> Unit) {
 private fun AlbumsTab(
     albums: List<Map.Entry<String, List<Song>>>,
     onAlbumClick: (String, List<Song>) -> Unit,
+    onAlbumLongPress: ((String, List<Song>) -> Unit)?,
     contentPadding: PaddingValues,
 ) {
     val listState = rememberLazyListState()
@@ -415,6 +438,7 @@ private fun AlbumsTab(
                 artist = albumSongs.firstOrNull()?.artist ?: "",
                 songCount = albumSongs.size,
                 onClick = { onAlbumClick(album, albumSongs) },
+                onLongPress = onAlbumLongPress?.let { { it(album, albumSongs) } },
             )
             HorizontalDivider(
                 modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
@@ -425,12 +449,19 @@ private fun AlbumsTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumRow(name: String, artist: String, songCount: Int, onClick: () -> Unit) {
+private fun AlbumRow(
+    name: String,
+    artist: String,
+    songCount: Int,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -488,6 +519,7 @@ private fun DrillDownSongList(
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
+    onMore: (() -> Unit)?,
     onBack: () -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -527,6 +559,24 @@ private fun DrillDownSongList(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                // The same menu holding the row in the grid behind this opens.
+                // Reachable from here too because this is where someone ends up
+                // who wanted the whole album and tapped instead of held.
+                onMore?.let { more ->
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = more),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MoreHoriz,
+                            contentDescription = "More",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
 
