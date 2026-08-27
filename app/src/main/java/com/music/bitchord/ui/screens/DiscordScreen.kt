@@ -68,6 +68,7 @@ import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /** Which dot Discord draws on the avatar, and what it tells other people. */
 enum class DiscordPresenceStatus(val value: String, val label: String, val detail: String) {
@@ -690,7 +691,7 @@ private fun ProgressLine(positionMs: Long, durationMs: Long) {
 
 private fun formatClock(ms: Long): String {
     val total = (ms / 1000).coerceAtLeast(0)
-    return "%d:%02d".format(total / 60, total % 60)
+    return "%d:%02d".format(Locale.ROOT, total / 60, total % 60)
 }
 
 /**

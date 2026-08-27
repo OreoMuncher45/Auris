@@ -85,6 +85,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlinx.coroutines.TimeoutCancellationException
+import java.util.Locale
 
 /** Past this point in a track, back restarts it instead of skipping to the previous one. */
 const val BACK_RESTARTS_AFTER_MS = 10_000L
@@ -480,7 +481,7 @@ class PlaybackService : MediaSessionService() {
             // line that can prove a "hi-res" session never quietly slid
             // onto a lower-rate stream mid-track. `adb logcat -s DECODE:I`.
             val khz = format.sampleRate.takeIf { it != Format.NO_VALUE }
-                ?.let { "%.1fkHz".format(it / 1000.0) } ?: "?kHz"
+                ?.let { "%.1fkHz".format(Locale.ROOT, it / 1000.0) } ?: "?kHz"
             val kbps = format.bitrate.takeIf { it != Format.NO_VALUE }
                 ?.let { "${it / 1000}kbps" } ?: "bitrate n/a"
             val depth = bitDepthOf(format.pcmEncoding)?.let { "${it}-bit" } ?: "?-bit"

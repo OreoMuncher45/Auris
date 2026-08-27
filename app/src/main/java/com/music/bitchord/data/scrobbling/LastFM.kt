@@ -16,6 +16,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.net.URI
 import java.security.MessageDigest
+import java.util.Locale
 
 object LastFM {
     const val DEFAULT_API_ENDPOINT = "https://ws.audioscrobbler.com/2.0/"
@@ -74,7 +75,7 @@ object LastFM {
         val sorted = toSortedMap()
         val toHash = sorted.entries.joinToString("") { it.key + it.value } + secret
         val digest = MessageDigest.getInstance("MD5").digest(toHash.toByteArray())
-        return digest.joinToString("") { "%02x".format(it) }
+        return digest.joinToString("") { "%02x".format(Locale.ROOT, it) }
     }
 
     private fun HttpRequestBuilder.lastfmParams(

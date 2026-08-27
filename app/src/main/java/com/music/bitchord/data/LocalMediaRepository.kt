@@ -16,6 +16,7 @@ import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.Locale
 
 object LocalMediaRepository {
 
@@ -280,6 +281,6 @@ object LocalMediaRepository {
         val totalSecs = ms / 1000
         val minutes = totalSecs / 60
         val secs = totalSecs % 60
-        return String.format("%d:%02d", minutes, secs)
+        return String.format(Locale.ROOT, "%d:%02d", minutes, secs)
     }
 }

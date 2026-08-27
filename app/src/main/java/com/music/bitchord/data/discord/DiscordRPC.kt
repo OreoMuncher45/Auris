@@ -6,6 +6,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.my.kizzy.rpc.KizzyRPC
 import com.my.kizzy.rpc.RpcImage
+import java.util.Locale
 
 /**
  * Publishes what's playing to Discord as a Rich Presence activity.
@@ -71,7 +72,7 @@ class DiscordRPC(
         val calculatedStartTime = currentTime - adjustedPlaybackTime
 
         val songTitleWithRate = if (playbackSpeed != 1.0f) {
-            "${song.title} [${String.format("%.2fx", playbackSpeed)}]"
+            "${song.title} [${String.format(Locale.ROOT, "%.2fx", playbackSpeed)}]"
         } else {
             song.title
         }

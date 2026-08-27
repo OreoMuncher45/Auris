@@ -28,6 +28,7 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToLong
 import kotlin.math.sin
+import java.util.Locale
 
 /**
  * A real crossfade: two tracks audible at once, the outgoing one falling as the
@@ -528,7 +529,7 @@ class CrossfadeController(
         // log says what the planner decided for this pair without burying it.
         val verdict = "${plan.reason}|${plan.transitionStyle}|fade=${plan.fadeMs}" +
             "|cue=${plan.incomingCueTime}|rate=${plan.incomingPlaybackRate}" +
-            "|vocalOverlap=${"%.2f".format(plan.vocalOverlap)}" +
+            "|vocalOverlap=${"%.2f".format(Locale.ROOT, plan.vocalOverlap)}" +
             "|blocked=${plan.blocked}|policy=${plan.policyReasons.joinToString(",")}"
         if (verdict != lastPlanVerdict) {
             lastPlanVerdict = verdict

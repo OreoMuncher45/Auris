@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.util.Locale
 
 /**
  * A [MusicSource] backed by one or more Convx-compatible JS module plugins.
@@ -157,7 +158,7 @@ class ModuleSource(
                 albumName = track.album.ifBlank { null },
                 thumbnailUrl = track.albumCover,
                 durationText = track.duration.takeIf { it > 0 }
-                    ?.let { "${it / 60}:${"%02d".format(it % 60)}" },
+                    ?.let { "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}" },
                 sourceQuality = rowTier(track),
             )
         }
