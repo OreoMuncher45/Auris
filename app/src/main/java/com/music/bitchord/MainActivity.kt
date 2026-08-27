@@ -122,7 +122,7 @@ import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.MainViewModel
-import com.music.bitchord.ui.components.BottomFadeBlur
+import com.music.bitchord.ui.components.BottomFadeScrim
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
@@ -960,7 +960,7 @@ private fun BitChordApp(
             windowWidth = windowWidth,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
-            positionMs = player.positionMs,
+            positionMs = player.position.positionMs,
             durationMs = player.durationMs,
             onPlayPause = {
                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
@@ -1185,7 +1185,7 @@ private fun BitChordApp(
                     } else if (key == "discord") {
                         DiscordScreen(
                             song = player.song,
-                            positionMs = player.positionMs,
+                            positionMs = player.position.positionMs,
                             durationMs = player.durationMs,
                             onOpenLogin = { showDiscordLogin = true },
                             onOpenDialog = { discordDialog = it },
@@ -1531,21 +1531,26 @@ private fun BitChordApp(
                     }
                 }
 
-                // A detail page's artwork runs up under the status bar, so the bar
-                // there is a fade rather than a pane — see [TopFadeBlur]. Drawn before
-                // the bar so the bar's own content sits on top of it.
+                // Every top bar is a fade rather than a pane — see [TopFadeBlur].
+                // Drawn before the bar so the bar's own content sits on top of it.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
                     !showAccountScrobbling && !showReplay
-                // Replay paints its own full-bleed backdrop up under the status
-                // bar, exactly as a release page does, so it takes the same fade
-                // rather than a pane of glass laid over a gradient.
-                if (isDetailVisible || (showReplay && !showSettings)) {
-                    TopFadeBlur(
-                        hazeState = hazeState,
-                        pageColor = if (showReplay) Color.Black else detailPalette.wash,
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    )
-                }
+                TopFadeBlur(
+                    hazeState = hazeState,
+                    // Replay paints its own full-bleed black backdrop up under the
+                    // status bar, exactly as a release page's artwork does.
+                    pageColor = when {
+                        showReplay -> Color.Black
+                        isDetailVisible -> detailPalette.wash
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    scrimColor = when {
+                        showReplay -> Color.Black
+                        isDetailVisible -> detailPalette.background
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
 
                 FrostedTopBar(
                     title = when {
@@ -1558,9 +1563,6 @@ private fun BitChordApp(
                             if (it.label == "Play") "Listen Now" else it.label
                         }
                     },
-                    hazeState = hazeState,
-                    ownBackdrop = (showSettings || !showReplay) &&
-                        (detail == null || isLocalDetail),
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
@@ -1612,10 +1614,8 @@ private fun BitChordApp(
                     },
                 )
 
-                // Drawn before the bars so their own glass reads on top of it; both
-                // sample the same source content, so nothing is blurred twice.
-                BottomFadeBlur(
-                    hazeState = hazeState,
+                // Drawn before the bars so their own glass reads on top of it.
+                BottomFadeScrim(
                     withMiniPlayer = player.song != null && !playerDocked,
                     // Not the wash: by the foot of the screen the page has finished
                     // easing out of it and into this, so this is what is actually

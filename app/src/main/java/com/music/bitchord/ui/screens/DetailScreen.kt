@@ -144,8 +144,8 @@ private val HEADER_DROP = 44.dp
  * that have been made to *resemble* each other, and the eye finds that edge
  * every time. A single blur that samples across the join has no edge to find:
  * the picture, the colour under it and the colour under the song rows are all
- * one smear of the same glass. It is the same thing [BottomFadeBlur] does to
- * the foot of the screen, pointed at the middle of this one.
+ * one smear of the same glass. It is the same thing [TopFadeBlur] does to the
+ * head of the screen, pointed at the middle of this one.
  */
 @Composable
 fun DetailScreen(

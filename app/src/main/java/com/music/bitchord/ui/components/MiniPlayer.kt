@@ -49,15 +49,47 @@ import dev.chrisbanes.haze.materials.HazeMaterials
  */
 private val GLYPH_SLOT = 40.dp
 
-private val ROW_PADDING = 5.dp
-private val ART_CORNER = 7.dp
+/**
+ * The play and skip glyphs themselves.
+ *
+ * Deliberately grown inside [GLYPH_SLOT] rather than by growing the slot: the
+ * slot is level with the 40dp artwork opposite it, and it is the taller of the
+ * two that sets the row's height — so a bigger slot would make the whole bar
+ * taller, which is not what a bigger glyph is being asked for. At 32 there is
+ * still 4dp of clearance to the slot's edge on every side.
+ */
+private val GLYPH_SIZE = 32.dp
+
+/** The spinner that stands in for the play glyph, kept in proportion to it. */
+private val SPINNER_SIZE = 22.dp
 
 /**
- * The bar's own corner, concentric with the artwork's rather than an
- * unrelated, much rounder value — same centre, radius bigger by exactly the
- * padding between the two edges, so the two curves read as one shape.
+ * Vertical padding, which with the 40dp artwork sets the bar's height at 56dp
+ * and so its pill radius at 28.
  */
-private val BAR_CORNER = ART_CORNER + ROW_PADDING
+private val ROW_PADDING_VERTICAL = 8.dp
+
+/**
+ * Horizontal padding, deliberately larger than the vertical.
+ *
+ * A pill's ends are semicircles, so the edge nearest the artwork is not the
+ * one beside it but the one curving away above and below it. At the artwork's
+ * top corner that edge has already come 8.4dp in from the left — level with
+ * where square corners would have put the whole side. Padding the ends by the
+ * vertical figure would leave the artwork touching the curve; 12 clears it
+ * with room, and reads as centred rather than jammed into the round.
+ */
+private val ROW_PADDING_HORIZONTAL = 12.dp
+
+/**
+ * The artwork's corner, on the 8dp every other thumbnail in the app carries.
+ *
+ * It used to be 7, picked so the bar's corner could sit concentric with it.
+ * A pill has no corner to be concentric with — its radius is whatever half the
+ * height happens to be — so that constraint is gone and the artwork can go
+ * back to matching [SongRow].
+ */
+private val ART_CORNER = 8.dp
 
 /** Frosted mini player that rides just above the floating tab bar. */
 @OptIn(ExperimentalHazeMaterialsApi::class)
@@ -74,7 +106,11 @@ fun MiniPlayer(
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val haptics = rememberHaptics()
-    val shape = RoundedCornerShape(BAR_CORNER)
+    // percent rather than a dp figure, so the corner stays exactly half the
+    // height if the row's contents ever change it — which is what keeps a pill
+    // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
+    // directly below it, so the two shapes are the same family.
+    val shape = RoundedCornerShape(percent = 50)
     Box(
         modifier = modifier
             .padding(horizontal = PAGE_GUTTER)
@@ -95,7 +131,10 @@ fun MiniPlayer(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(ROW_PADDING),
+                .padding(
+                    horizontal = ROW_PADDING_HORIZONTAL,
+                    vertical = ROW_PADDING_VERTICAL,
+                ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
@@ -129,7 +168,7 @@ fun MiniPlayer(
                     CircularProgressIndicator(
                         color = MaterialTheme.colorScheme.onBackground,
                         strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(SPINNER_SIZE),
                     )
                 }
             } else {
@@ -144,7 +183,7 @@ fun MiniPlayer(
                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
                         tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(28.dp),
+                        modifier = Modifier.size(GLYPH_SIZE),
                     )
                 }
             }
@@ -159,7 +198,7 @@ fun MiniPlayer(
                     Icons.Rounded.SkipNext,
                     contentDescription = "Next",
                     tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.size(28.dp),
+                    modifier = Modifier.size(GLYPH_SIZE),
                 )
             }
         }

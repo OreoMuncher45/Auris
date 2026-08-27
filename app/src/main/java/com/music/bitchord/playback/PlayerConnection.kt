@@ -7,6 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,14 +28,46 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.delay
 import java.io.File
+
+/**
+ * The playhead, deliberately kept out of [PlayerState].
+ *
+ * It moves twice a second; everything else on [PlayerState] moves on a track
+ * change. Carried in the same object, the two are one snapshot read — and
+ * [rememberPlayerState] returns a value, which makes it non-restartable, which
+ * pushes that read up into its *caller's* scope. In this app the caller is the
+ * root of the whole UI, so a ticking playhead invalidated the entire tree twice
+ * a second: every tab, both floating bars, and the three real-time blurs
+ * underneath them, whether or not anything on screen showed a position.
+ *
+ * Split out and held behind a stable object, the tick is a read of this alone.
+ * Whoever draws a scrubber reads it and recomposes; nobody else hears about it.
+ * Take care to keep it that way — reading [positionMs] high in the tree and
+ * passing the `Long` down puts the invalidation straight back where it was.
+ */
+@Stable
+class PlaybackPosition internal constructor() {
+    var positionMs by mutableLongStateOf(0L)
+        internal set
+}
 
 /** Snapshot of playback state, driven by the MediaController. */
 data class PlayerState(
     val song: Song? = null,
     val isPlaying: Boolean = false,
-    val positionMs: Long = 0L,
+    /**
+     * The playhead. A field rather than a value: its identity never changes, so
+     * carrying it here costs no invalidation — see [PlaybackPosition].
+     */
+    val position: PlaybackPosition = PlaybackPosition(),
+    /**
+     * Left here rather than moved alongside the position: it settles once per
+     * track, and [mutableStateOf] compares structurally, so the poll writing it
+     * back unchanged every tick invalidates nothing.
+     */
     val durationMs: Long = 0L,
     val error: String? = null,
     /** True while ExoPlayer is buffering — including our own stream-URL resolution. */
@@ -82,19 +116,20 @@ fun MediaController.toggleAutoplay() {
 /** Mirrors the controller into Compose state, polling position while playing. */
 @Composable
 fun rememberPlayerState(controller: MediaController?): PlayerState {
-    var state by remember { mutableStateOf(PlayerState()) }
+    val position = remember { PlaybackPosition() }
+    var state by remember { mutableStateOf(PlayerState(position = position)) }
 
     DisposableEffect(controller) {
         val player = controller ?: return@DisposableEffect onDispose {}
 
         fun sync(error: String? = null) {
             val item = player.currentMediaItem
+            // Synced here too, so seeking while paused or buffering still moves
+            // the scrubber (the poll loop only runs on play).
+            position.positionMs = player.currentPosition.coerceAtLeast(0L)
             state = state.copy(
                 song = item?.toSong(),
                 isPlaying = player.isPlaying,
-                // Sync position here too, so seeking while paused or buffering
-                // still moves the scrubber (the poll loop only runs on play).
-                positionMs = player.currentPosition.coerceAtLeast(0L),
                 durationMs = player.duration.coerceAtLeast(0L),
                 error = error,
                 isLoading = player.playbackState == Player.STATE_BUFFERING,
@@ -117,12 +152,18 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
         onDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(controller, state.isPlaying) {
-        while (controller != null && state.isPlaying) {
-            state = state.copy(
-                positionMs = controller.currentPosition.coerceAtLeast(0L),
-                durationMs = controller.duration.coerceAtLeast(0L),
-            )
+    // Only while the app is on screen. The poll exists to move a scrubber, and
+    // a scrubber behind a locked screen is not being read — but the loop is a
+    // plain `delay`, so without this it went on making two binder round-trips a
+    // second to the media session for the whole time the phone was in a pocket.
+    // Nothing is lost by stopping: `sync` above runs on the controller's own
+    // events, and the first thing that happens on the way back is a fresh read.
+    val foreground = rememberIsForeground()
+    LaunchedEffect(controller, state.isPlaying, foreground) {
+        while (controller != null && state.isPlaying && foreground) {
+            position.positionMs = controller.currentPosition.coerceAtLeast(0L)
+            val duration = controller.duration.coerceAtLeast(0L)
+            if (duration != state.durationMs) state = state.copy(durationMs = duration)
             delay(500)
         }
     }

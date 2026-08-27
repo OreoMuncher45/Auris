@@ -50,10 +50,6 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
-import dev.chrisbanes.haze.materials.HazeMaterials
 
 /**
  * The bar's own height, above whatever inset it is sitting under.
@@ -93,31 +89,26 @@ fun topBarHeight(): Dp =
 fun topBarContentPadding(): Dp = topBarHeight() + TopBarContentGap
 
 /**
- * Telegram-style frosted glass top bar.
+ * The top bar's content — title, back affordance, actions — over no backdrop
+ * of its own.
  *
- * The content behind must be tagged with `Modifier.hazeSource(hazeState)`;
- * this bar then samples and blurs whatever scrolls beneath it in real time
- * (RenderEffect on API 31+, translucent scrim fallback below).
+ * The glass behind it is [TopFadeBlur]'s, drawn underneath: a blur that starts
+ * full at the status bar and ramps to nothing below, so the bar has no bottom
+ * edge to draw a line across the page with. A uniform pane would put that line
+ * back, which is the one thing every surface here is built to avoid.
+ *
+ * The exception is Reduce dynamic blur, where there is no fade to sit on and
+ * the bar fills itself solid instead — title over raw scrolling content is
+ * unreadable, so something has to carry it.
  *
  * Apple Music behaviour: the big in-list header owns the title at rest;
- * once the list scrolls, the small centered title + hairline divider fade in.
+ * once the list scrolls, the small centered title fades in.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun FrostedTopBar(
     title: String,
-    hazeState: HazeState,
     scrolled: Boolean,
     modifier: Modifier = Modifier,
-    /**
-     * Whether the bar carries its own pane of glass.
-     *
-     * False where something behind it is already providing one — [TopFadeBlur]
-     * on a page whose artwork runs up under the status bar. Two panes over the
-     * same content is one too many, and this bar's is the one with the hard
-     * bottom edge.
-     */
-    ownBackdrop: Boolean = true,
     onBack: (() -> Unit)? = null,
     refreshing: Boolean = false,
     // A lambda, not a value: the drag changes every frame, and reading it in
@@ -125,30 +116,29 @@ fun FrostedTopBar(
     pullFraction: () -> Float = { 0f },
     actions: @Composable () -> Unit = {},
 ) {
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val titleAlpha by animateFloatAsState(
         targetValue = if (scrolled) 1f else 0f,
         animationSpec = tween(220),
         label = "topBarTitleAlpha",
     )
+    // Only the solid bar wants a hairline under it. A faded one has no edge for
+    // the line to mark, and drawing it there would be inventing the very seam
+    // the fade exists to remove.
     val dividerColor by animateColorAsState(
-        targetValue = MaterialTheme.colorScheme.outline.copy(alpha = if (scrolled && ownBackdrop) 0.6f else 0f),
+        targetValue = MaterialTheme.colorScheme.outline.copy(
+            alpha = if (scrolled && reduceDynamicBlur) 0.6f else 0f,
+        ),
         animationSpec = tween(220),
         label = "topBarDivider",
     )
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .then(
-                when {
-                    !ownBackdrop -> Modifier
-                    reduceDynamicBlur -> Modifier.background(MaterialTheme.colorScheme.surface)
-                    else -> Modifier.hazeEffect(
-                        state = hazeState,
-                        style = HazeMaterials.ultraThin(MaterialTheme.colorScheme.surface),
-                    )
-                },
+                if (reduceDynamicBlur) Modifier.background(MaterialTheme.colorScheme.surface)
+                else Modifier,
             ),
     ) {
         Box(

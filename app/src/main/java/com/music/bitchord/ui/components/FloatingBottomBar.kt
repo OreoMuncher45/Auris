@@ -61,6 +61,27 @@ data class BottomTab(
     val icon: ImageVector,
 )
 
+/**
+ * The gap between the pill's glass edge and the tabs inside it.
+ *
+ * Tighter than the 8 it was, which shows up as a selection indicator reaching
+ * closer to the edge on all four sides rather than floating in the middle of a
+ * wide margin.
+ */
+private val PILL_INSET = 6.dp
+
+/**
+ * Each tab's own vertical padding, and the counterweight to [PILL_INSET].
+ *
+ * The pill has no height of its own — it is whatever its contents come to — so
+ * taking 2dp off the inset above would have shortened the whole bar by 4. The
+ * same 2dp is added back here instead, which leaves the bar's outer height
+ * exactly where it was and moves the boundary rather than the bar. The two
+ * numbers are a pair: change one and the bar's height moves unless the other
+ * moves against it.
+ */
+private val TAB_VERTICAL_PADDING = 9.dp
+
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun FloatingBottomBar(
@@ -128,7 +149,7 @@ fun FloatingBottomBar(
                 },
             )
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), pillShape)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = PILL_INSET, vertical = PILL_INSET),
     ) {
         if (tabWidthPx > 0f) {
             Box(
@@ -239,7 +260,7 @@ private fun BottomBarItem(
                 if (!selected) haptics.play(Haptic.Select)
                 onClick()
             }
-            .padding(vertical = 7.dp),
+            .padding(vertical = TAB_VERTICAL_PADDING),
     ) {
         Icon(
             imageVector = tab.icon,

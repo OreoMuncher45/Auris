@@ -151,6 +151,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.Velocity
@@ -160,6 +161,7 @@ import androidx.media3.common.Player
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
+import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -257,6 +259,7 @@ private val ART_BOX_TOP_PAD = 14.dp
  * that was cut off rather than one that ran out.
  */
 private const val HERO_FADE_FRACTION = 0.42f
+
 /** The player's side margin. Scrollable panels reach back across it. */
 private val PLAYER_GUTTER = 30.dp
 /**
@@ -851,7 +854,19 @@ fun NowPlayingScreen(
     // Both states collapse the header, but the banner only ever shows over a
     // settled player: opening the queue or the lyrics hands the sleeve back its
     // card first.
-    val p = if (lyricsOpen) 1f else queueProgress
+    // How collapsed the sleeve is, whichever surface asked for it.
+    //
+    // This used to read `if (lyricsOpen) 1f else queueProgress`, which gave the
+    // queue a 420ms ease and the lyrics nothing at all: opening them snapped
+    // the sleeve to a thumbnail in a single frame while [heroT] — reading off
+    // this same value — went on fading the banner out over the full 420. One
+    // half of the artwork jumped, the other half glided after it, and the pair
+    // read as a stutter rather than as either. One animation, both surfaces.
+    val p by animateFloatAsState(
+        targetValue = if (lyricsOpen || queueOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "sleeveCollapse",
+    )
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     // Full-bleed is a phone idiom, and a docked pane is a phone's width — so it
     // is asked of the player's own width rather than of the window's. Asking the
@@ -1369,7 +1384,12 @@ fun NowPlayingScreen(
                 // it too.
                 Box(
                     modifier = Modifier
-                        .offset(x = artStart, y = artTop)
+                        // The lambda overload deliberately: the Dp one reads
+                        // its arguments at composition, so an animated offset
+                        // recomposes and re-measures this Box — cover, clip and
+                        // all — once per frame. Read at placement instead, the
+                        // same movement costs a placement pass.
+                        .offset { IntOffset(artStart.roundToPx(), artTop.roundToPx()) }
                         .size(artSize)
                         // Where the dismiss band starts. Read here, above the
                         // paused shrink below, so the band covers the sleeve's
@@ -2128,9 +2148,19 @@ private suspend fun AwaitPointerEventScope.dragQueueIn(
 @Composable
 private fun rememberLyricClock(positionMs: Long, isPlaying: Boolean): MutableLongState {
     val clock = remember { mutableLongStateOf(positionMs) }
-    LaunchedEffect(positionMs, isPlaying) {
+    // Gated on the app being on screen. The loop asks for a frame, writes a
+    // value that invalidates a drawing, and is handed the next frame for it —
+    // which is a request to render continuously for as long as it runs. That is
+    // the right trade for a lyric being read and the wrong one for a phone in a
+    // pocket, and the composition alone cannot tell the two apart.
+    //
+    // Resuming needs no catch-up: [positionMs] is a key, so coming back
+    // restarts the effect and the clock is set from the player's own position
+    // before the first frame is asked for.
+    val foreground = rememberIsForeground()
+    LaunchedEffect(positionMs, isPlaying, foreground) {
         clock.longValue = positionMs
-        if (!isPlaying) return@LaunchedEffect
+        if (!isPlaying || !foreground) return@LaunchedEffect
         var previousFrame = withFrameMillis { it }
         while (true) {
             withFrameMillis { frame ->

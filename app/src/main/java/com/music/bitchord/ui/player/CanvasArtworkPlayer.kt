@@ -43,6 +43,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import com.music.bitchord.ui.rememberIsForeground
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
@@ -164,7 +165,20 @@ fun CanvasArtworkPlayer(
         player.prepare()
     }
 
-    LaunchedEffect(isPlaying) { player.playWhenReady = isPlaying }
+    // Gated on the app being on screen as well as on the caller's own state.
+    //
+    // This is a video decoder. Left to [isPlaying] alone it goes on decoding
+    // frames into a surface nobody can see for as long as the composition is
+    // alive — which, with the phone in a pocket and music playing, is the whole
+    // album. Worse on a detail page, whose caller passes a constant `true`
+    // because "the page is only up while it's being read": true of a page being
+    // looked at, not of one left open behind a locked screen.
+    //
+    // Held inside this component rather than asked of each caller, so no call
+    // site can forget it. Pausing keeps the last frame on the surface and the
+    // player prepared, so coming back resumes rather than reloads.
+    val foreground = rememberIsForeground()
+    LaunchedEffect(isPlaying, foreground) { player.playWhenReady = isPlaying && foreground }
 
     LaunchedEffect(rendered) {
         onRenderedChanged(rendered)
