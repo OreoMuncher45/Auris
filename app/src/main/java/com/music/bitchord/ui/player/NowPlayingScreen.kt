@@ -625,6 +625,12 @@ fun NowPlayingScreen(
     // CanvasRepository, which is also where the "is this actually the right
     // track" check lives.
     val canvasEnabled by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
+    val meteredConnection by AppSettings.meteredConnection.collectAsStateWithLifecycle()
+    // The switch turns the feature off outright; this is the narrower "not
+    // over cellular" case — see [AppSettings.canvasOverCellular] for why a
+    // clip's own loop makes that worth guarding separately from a still image.
+    val canvasAllowedNow = canvasEnabled && (meteredConnection != true || canvasOverCellular)
     var canvas by remember(song.videoId) { mutableStateOf<CanvasArtwork?>(null) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
@@ -644,8 +650,8 @@ fun NowPlayingScreen(
         derivedStateOf { canvasCover.floatValue > 0.999f }
     }
     val meshColors = rememberArtworkColors(song.thumbnailUrl, canvasFrame)
-    LaunchedEffect(song.videoId, song.albumName, canvasEnabled) {
-        if (!canvasEnabled) {
+    LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow) {
+        if (!canvasAllowedNow) {
             canvas = null
             return@LaunchedEffect
         }

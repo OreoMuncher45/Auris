@@ -46,6 +46,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.canvas.CanvasCache
 
 /**
  * The looping video that plays over a track's cover art, sized to fill and
@@ -105,9 +106,12 @@ fun CanvasArtworkPlayer(
     val player = remember {
         ExoPlayer.Builder(context)
             // Shares the app's one OkHttp client, as everything that fetches
-            // over the network here does.
+            // over the network here does — and wrapped in CanvasCache so a
+            // loop past the first is read off disk rather than re-fetched;
+            // see that object's doc for why this matters far more here than
+            // it would for a clip played once.
             .setMediaSourceFactory(
-                DefaultMediaSourceFactory(OkHttpDataSource.Factory(Http.client)),
+                DefaultMediaSourceFactory(CanvasCache.dataSourceFactory(OkHttpDataSource.Factory(Http.client))),
             )
             .build()
             .apply {

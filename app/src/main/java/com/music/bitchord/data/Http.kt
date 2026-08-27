@@ -1,9 +1,18 @@
 package com.music.bitchord.data
 
+import android.util.Log
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import okhttp3.ResponseBody
+import okio.Buffer
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.Source
+import okio.buffer
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * One OkHttp client for the whole app.
@@ -29,11 +38,82 @@ import java.util.concurrent.TimeUnit
  * request was slow.
  */
 object Http {
+
+    // ---- Temporary data-usage instrumentation --------------------------
+    //
+    // Added to answer, with real numbers instead of code-reading, which of
+    // this app's network callers actually account for the reported data
+    // usage (issue #48): every request funnels through this one client, so
+    // a network interceptor here sees every byte the app receives,
+    // regardless of which subsystem asked for it. Categorised by host —
+    // googlevideo.com is YouTube's own audio bytes (and StreamResolver's
+    // probes, distinguishable by their small actual read against a 2MB
+    // Range ask), a canvas provider's CDN is motion artwork, youtube.com /
+    // youtubei is API/extraction traffic. Grep logcat for "BCDataUsage"
+    // during a play session; each line is one response with its actual
+    // transferred bytes and the running total for its host.
+    //
+    // Left in place rather than deleted — the investigation this served is
+    // not the last one this app will need — but off by default: flip to
+    // true only while actively measuring. Wrapping every response body in a
+    // counting source and writing a log line per request is not free, and
+    // paying that on every install for a question already answered is the
+    // wrong trade.
+    private const val USAGE_LOGGING_ENABLED = false
+    private const val USAGE_TAG = "BCDataUsage"
+    private val usageTotals = ConcurrentHashMap<String, AtomicLong>()
+
+    private class CountingSource(source: Source, private val onClose: (Long) -> Unit) :
+        ForwardingSource(source) {
+        private var bytes = 0L
+        override fun read(sink: Buffer, byteCount: Long): Long {
+            val read = super.read(sink, byteCount)
+            if (read > 0) bytes += read
+            return read
+        }
+        override fun close() {
+            super.close()
+            onClose(bytes)
+        }
+    }
+
+    private class CountedBody(
+        private val delegate: ResponseBody,
+        private val counted: BufferedSource,
+    ) : ResponseBody() {
+        override fun contentType() = delegate.contentType()
+        override fun contentLength() = delegate.contentLength()
+        override fun source() = counted
+    }
+
+    private val usageInterceptor = okhttp3.Interceptor { chain ->
+        val request = chain.request()
+        val response = chain.proceed(request)
+        val body = response.body
+        if (body == null) {
+            response
+        } else {
+            val host = request.url.host
+            val range = request.header("Range")
+            val counting = CountingSource(body.source()) { bytes ->
+                val total = usageTotals.computeIfAbsent(host) { AtomicLong() }.addAndGet(bytes)
+                Log.d(
+                    USAGE_TAG,
+                    "$host ${request.method} ${request.url.encodedPath} " +
+                        "range=$range status=${response.code} bytes=$bytes total[$host]=$total",
+                )
+            }.buffer()
+            response.newBuilder().body(CountedBody(body, counting)).build()
+        }
+    }
+    // ---- End temporary instrumentation ----------------------------------
+
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()
 }

@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.MediaDataSource
 import android.net.Uri
 import android.os.SystemClock
-import android.util.Log
 import com.music.bitchord.data.TrackLog
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -90,6 +89,14 @@ object AudioCache {
      * second on this connection, against seventy seconds streamed.
      */
     private const val CHUNK_BYTES = 2L * 1024 * 1024
+
+    /**
+     * What [cacheWholeOnce] risks before committing to a whole [CHUNK_BYTES].
+     *
+     * Sized to answer one question — did this write land at all — as cheaply
+     * as that question can be asked, not to be worth anything on its own.
+     */
+    private const val LOCK_PROBE_BYTES = 64L * 1024
 
     /**
      * How far into a rendition [cachedPrefixBytes] looks when its real length
@@ -408,6 +415,29 @@ object AudioCache {
         // to streaming, not surface as a playback error.
         .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
+    /**
+     * As [cacheFactory], minus [CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR] —
+     * for [fetch] alone, never for playback.
+     *
+     * That flag exists so a playback read whose *write* fails still serves
+     * the listener their audio; a read-ahead fetch has no listener to serve,
+     * so hiding the same failure just spends their data reading bytes onto
+     * the floor. Measured: read-ahead for a track the player had already
+     * reached — its cache entry locked by the real reader, exactly the "lost
+     * race" [fetchWhole] is meant to give up on cheaply — instead read a
+     * full [CHUNK_BYTES] from the network on every one of [MAX_ATTEMPTS]
+     * retries, because the flag turned the lock exception into a silent,
+     * uncached pass-through rather than the failure [fetch]'s own
+     * `runCatching` is written to catch. Nine megabytes on one ordinary,
+     * unskipped track change, for a fetch that cached nothing and was always
+     * going to. Without the flag, losing the race throws before a byte is
+     * read, and every attempt past the first costs nothing.
+     */
+    private fun readAheadCacheFactory(upstream: DataSource.Factory) = CacheDataSource.Factory()
+        .setCache(cache)
+        .setUpstreamDataSourceFactory(upstream)
+        .setCacheKeyFactory(keyFactory)
+
     /** Set once the player exists; read-ahead resolves streams the same way. */
     private var upstreamFactory: DataSource.Factory? = null
 
@@ -446,6 +476,7 @@ object AudioCache {
      */
     fun prefetchQueue(mediaIds: List<String>) {
         if (mediaIds == pendingQueue) return
+        android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
         pendingQueue = mediaIds
         job?.cancel()
         // Both halves of the read-ahead below go through [StreamResolver],
@@ -521,6 +552,21 @@ object AudioCache {
      */
     private suspend fun fetchWhole(videoId: String) {
         repeat(MAX_ATTEMPTS) {
+            // The race this retry loop exists to cover is the *queue's own*:
+            // cancelling [job] tells a blocking network read to stop, but that
+            // takes until its next checkpoint, not instantly — so the walk
+            // that lost the entry to the player can still be a retry or two
+            // into asking for it again by the time [prefetchQueue] has moved
+            // this track's job on to a different one. Re-checking here is
+            // what makes that overlap cost one interrupted read instead of
+            // up to four full ones: once this videoId is no longer the track
+            // [pendingQueue] actually wants read ahead, every further attempt
+            // is spent on a track something else now owns, and asking again
+            // in five seconds would only be wrong for longer.
+            if (pendingQueue.firstOrNull() != videoId) {
+                TrackLog.d(TAG, "$videoId is no longer the read-ahead target; stopping", about = videoId)
+                return
+            }
             if (cacheWholeOnce(videoId)) return
             delay(RETRY_DELAY_MS)
         }
@@ -534,11 +580,18 @@ object AudioCache {
 
         var position = 0L
         while (position < total) {
+            // Checked per chunk, not just once per pass: a track long enough
+            // to need several chunks can lose the race partway through one,
+            // and a queue change mid-pass is exactly the "the player has it
+            // now" case the guard in [fetchWhole] exists for.
+            if (pendingQueue.firstOrNull() != videoId) return false
             val length = minOf(CHUNK_BYTES, total - position)
             if (cache.getCachedBytes(videoId, position, length) < length) {
                 fetch(videoId, position, length)
                 // Written nowhere means the entry is held elsewhere; the rest
-                // of this pass would be just as wasted.
+                // of this pass would be just as wasted. See [fetch] for why
+                // this can be true even though the fetch just above returned
+                // without error.
                 if (cache.getCachedBytes(videoId, position, length) < length) return false
             }
             position += length
@@ -1068,8 +1121,33 @@ object AudioCache {
         length: Long,
         pinKey: Boolean = false,
     ) {
-        val upstream = upstreamFactory ?: return
+        if (upstreamFactory == null) return
         if (cache.getCachedBytes(cacheKey, position, length) >= length) return
+
+        // A cheap first knock rather than the whole range on the door.
+        // Losing this entry to another writer isn't something
+        // [CacheDataSource] surfaces as a failure — it quietly falls through
+        // to the network and hands the bytes to nobody, which looks exactly
+        // like a real fetch until the write is checked afterwards, because
+        // that check has always been the only way to tell "nobody's home"
+        // from "got it". Measured without this: a read-ahead fetch that had
+        // lost that race read a full [CHUNK_BYTES] from the network, found
+        // nothing had landed, and paid that again on every one of
+        // [MAX_ATTEMPTS] retries — nine megabytes for a track that was never
+        // going to cache, because whoever held the entry held it the whole
+        // time. A small probe reaches the same verdict for a fraction of
+        // the cost, and only a probe that actually lands is worth following
+        // with the rest of the range.
+        if (length > LOCK_PROBE_BYTES) {
+            pull(cacheKey, uri, position, LOCK_PROBE_BYTES, pinKey)
+            if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
+        }
+        pull(cacheKey, uri, position, length, pinKey)
+    }
+
+    /** The actual network pull behind [fetch], unconditional and unchecked. */
+    private suspend fun pull(cacheKey: String, uri: Uri, position: Long, length: Long, pinKey: Boolean) {
+        val upstream = upstreamFactory ?: return
 
         // Whose track this is, taken off the URI rather than off [cacheKey]:
         // the key splits a track's renditions apart on purpose, and reading
@@ -1084,7 +1162,7 @@ object AudioCache {
         val fetchStart = SystemClock.elapsedRealtime()
         TrackLog.d(TAG, "read-ahead fetching $cacheKey [$position, ${position + length})", about = about)
 
-        val source = cacheFactory(upstream)
+        val source = readAheadCacheFactory(upstream)
             .apply { if (pinKey) setCacheKeyFactory { cacheKey } }
             .createDataSource()
         val spec = DataSpec.Builder()
@@ -1106,7 +1184,9 @@ object AudioCache {
                 }
             }
         }.onFailure {
-            // Expected on a skip, and never worth failing playback over.
+            // Expected on a skip, and never worth failing playback over — see
+            // [readAheadCacheFactory] for why this is now also the ordinary
+            // shape of losing the race to the player.
             TrackLog.d(TAG, "read-ahead stopped for $cacheKey: ${it.message}", about = about)
         }.onSuccess {
             TrackLog.d(

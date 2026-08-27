@@ -207,6 +207,22 @@ object AppSettings {
     val animatedCanvas = MutableStateFlow(true)
 
     /**
+     * Whether [animatedCanvas] is allowed to actually stream on a metered
+     * connection, as distinct from the switch that turns the feature off
+     * altogether.
+     *
+     * Off by default. A canvas clip loops for as long as its track plays,
+     * and every loop past the first re-fetches the same few seconds of video
+     * — see [CanvasCache][com.music.bitchord.data.canvas.CanvasCache] for why
+     * that costs network at all rather than being answered from a buffer —
+     * so a few-second clip behind a four-minute track on cellular is not a
+     * flat video cost, it is that cost repeated dozens of times per song.
+     * That is the shape of the reported 8GB day: still art costs nothing
+     * here and stays up regardless of this setting.
+     */
+    val canvasOverCellular = MutableStateFlow(false)
+
+    /**
      * Blows the player's cover art out to a full-bleed banner running off the
      * top of the screen, rather than sitting it in a square card.
      *
@@ -409,6 +425,7 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
+        canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
@@ -657,6 +674,11 @@ object AppSettings {
     fun setAnimatedCanvas(value: Boolean) {
         animatedCanvas.value = value
         prefs.edit().putBoolean(KEY_ANIMATED_CANVAS, value).apply()
+    }
+
+    fun setCanvasOverCellular(value: Boolean) {
+        canvasOverCellular.value = value
+        prefs.edit().putBoolean(KEY_CANVAS_OVER_CELLULAR, value).apply()
     }
 
     fun setFullBleedArtwork(value: Boolean) {
@@ -931,6 +953,7 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
+    private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"

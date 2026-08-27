@@ -11,6 +11,7 @@ import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
+import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.DolbyAtmos
 import com.music.bitchord.playback.LastPlayed
@@ -65,6 +66,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // One cache directory can only be opened once per process, and
         // PlaybackService shares this one — so it's opened here, not there.
         AudioCache.init(this)
+        // Same reasoning, its own directory: canvas clips are looping video,
+        // not audio, and belong in a cache AudioCache's own limit and eviction
+        // policy were never sized for. See CanvasCache's doc for why this one
+        // exists at all — it is the fix for canvas clips re-fetching the same
+        // few seconds of video from the network on every loop.
+        CanvasCache.init(this)
         // A sideloaded update is just a new APK over the old one, so app data —
         // including whatever the old build left in these caches — survives it
         // untouched. Wipe both on the first launch of a higher versionCode so a

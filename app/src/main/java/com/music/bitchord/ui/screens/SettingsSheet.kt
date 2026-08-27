@@ -155,6 +155,7 @@ fun SettingsScreen(
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
+    val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
@@ -271,14 +272,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(
-            header = "Audio quality",
-            footer = "Each connection keeps its own ceiling, so Wi-Fi can stay on " +
-                "High while mobile data is capped. High costs about " +
-                "${AudioQuality.HIGH.hourly} of data. The ceiling applies to streams " +
-                "from every source, and outranks the lossless preference. Files kept " +
-                "on the device have their own quality, below.",
-        ) {
+        SettingsGroup(header = "Audio quality") {
             SettingsRow(
                 icon = Icons.Rounded.GraphicEq,
                 title = "Lossless / HQ Audio",
@@ -340,20 +334,7 @@ fun SettingsScreen(
         // does this minute cost"; these answer "what am I keeping, and when may
         // it be fetched" — and those two questions only make sense read
         // together, which is what puts them side by side here.
-        SettingsGroup(
-            header = "Downloads",
-            footer = "Saved files are kept at this quality no matter which " +
-                "connection they were fetched over — a download is paid for once " +
-                "and played from disk forever after, so the streaming ceilings " +
-                "above don't apply to it." +
-                if (downloadQuality == DownloadQuality.LOSSLESS) {
-                    " Lossless needs a source that holds real files, set up on " +
-                        "the Sources screen; tracks it can't find fall back to " +
-                        "the best AAC available."
-                } else {
-                    ""
-                },
-        ) {
+        SettingsGroup(header = "Downloads") {
             SettingsRow(
                 icon = Icons.Rounded.Download,
                 title = "Download quality",
@@ -361,31 +342,14 @@ fun SettingsScreen(
                 value = downloadQuality.label,
                 onClick = { pickingDownloadQuality = true },
             )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Wifi,
+            // Reads as part of Download quality above it, not as a setting
+            // of its own — same treatment as Play animated cover over
+            // cellular gets under Animated cover art.
+            SettingsSubRow(
                 title = "Download over Wi-Fi only",
-                // Says "unmetered" rather than "Wi-Fi" when it matters, because
-                // the test is whether the connection charges for data: a
-                // tethered hotspot is Wi-Fi this refuses, and saying otherwise
-                // would make the refusal look like a bug.
-                subtitle = if (wifiOnlyDownloads) {
-                    "Downloads wait for an unmetered connection"
-                } else {
-                    "Downloads may use mobile data"
-                },
+                checked = wifiOnlyDownloads,
+                onCheckedChange = AppSettings::setWifiOnlyDownloads,
                 badge = "Blocking".takeIf { wifiOnlyDownloads && metered == true },
-                trailing = {
-                    Switch(
-                        checked = wifiOnlyDownloads,
-                        onCheckedChange = AppSettings::setWifiOnlyDownloads,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setWifiOnlyDownloads(!wifiOnlyDownloads) },
             )
         }
 
@@ -585,6 +549,18 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setAnimatedCanvas(!animatedCanvas) },
             )
+            // Reads as part of the Animated cover art option above it, not
+            // as a separate setting. Nothing to narrow while the clip itself
+            // is off. Defaults to off: a clip loops for as long as its track
+            // plays, so on cellular this is not a one-time video cost but
+            // that cost repeated on every loop — see AppSettings.canvasOverCellular.
+            if (animatedCanvas) {
+                SettingsSubRow(
+                    title = "Play animated cover over cellular",
+                    checked = canvasOverCellular,
+                    onCheckedChange = AppSettings::setCanvasOverCellular,
+                )
+            }
             RowDivider()
             SettingsRow(
                 icon = Icons.AutoMirrored.Rounded.Notes,
@@ -665,14 +641,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(
-            header = "Your data",
-            footer = "Listening history is counted and kept on this device — there is no " +
-                "account behind it and nothing is uploaded. An export writes that history " +
-                "and your settings to a JSON file you choose the location of; passwords, " +
-                "tokens and session keys are deliberately left out of it, so you will need " +
-                "to sign back in to Last.fm, ListenBrainz and Discord after restoring.",
-        ) {
+        SettingsGroup(header = "Your data") {
             SettingsRow(
                 icon = Icons.Rounded.BarChart,
                 title = "Replay",
@@ -1396,6 +1365,49 @@ internal fun SettingsRow(
             }
             Chevron()
         }
+    }
+}
+
+/**
+ * A toggle that reads as part of the option above it rather than a setting
+ * of its own: no icon, no divider, and pulled up close against its parent
+ * instead of getting the same breathing room a full [SettingsRow] gets.
+ */
+@Composable
+internal fun SettingsSubRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    badge: String? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(start = ROW_INSET, end = ROW_INSET, top = 0.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (badge != null) {
+                Spacer(Modifier.width(8.dp))
+                Badge(badge)
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
     }
 }
 
