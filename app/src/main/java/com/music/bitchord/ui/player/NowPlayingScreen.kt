@@ -1290,33 +1290,36 @@ fun NowPlayingScreen(
                 //
                 // Granted in whole even pixels, and only when it actually moves.
                 // This is a measurement feeding the layout it was measured from,
-                // and [roomy] cancels that by adding the grant back — but the
-                // grant is *spent* as two spacers of half of it each, and half an
-                // odd number of pixels does not exist. The gaps take a pixel less
-                // than was granted, so the next pass finds a pixel going spare and
-                // grants it again, and the pass after that is back where it
-                // started: the sleeve, the credits and the scrubber shifting half a
-                // pixel and back, every frame, for as long as the player is up.
-                //
-                // Which is why it only ever showed in a docked pane, and only in
-                // some of them. Full screen the spare height is far past the cap
-                // below and [coerceAtMost] pins the answer somewhere the
-                // arithmetic cannot reach it; with nothing spare [coerceAtLeast]
-                // pins it at zero the same way. It is the windows in between —
-                // the narrow ones, where the spread lands mid-range and passes
-                // through unclamped — that shivered.
-                //
-                // An even grant halves exactly, so the gaps take all of it and the
-                // cancellation is exact: one pass to settle, and then nothing to
-                // write, which is also one fewer recomposition per frame.
+                // and [roomy] cancels that by adding the grant back — but only if
+                // this pass's [maxHeight] already reflects the grant about to be
+                // written, which needs the Column above to have re-measured the
+                // controls at that grant already. It doesn't always have: on some
+                // aspect ratios (a phone-shaped sheet as readily as a docked pane)
+                // the cancellation lands a pass late, the grant overshoots, the
+                // next pass corrects past it the other way, and the two chase
+                // each other through the same handful of values forever instead
+                // of settling — a full-amplitude standing oscillation, not the
+                // single-pixel shiver this rounding alone was built to absorb.
+                // See [granted] below for the fix.
                 if (!lyricsOpen) {
-                    val granted = with(density) {
+                    val target = with(density) {
                         val half = slack
                             .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
                             .toPx()
                             .div(2f)
                             .roundToInt()
                         (half * 2).toDp()
+                    }
+                    // Stepped towards [target] rather than jumped there in one
+                    // grant, so a late cancellation (see above) decays instead of
+                    // standing: still one pass to settle when the cancellation
+                    // does land on time, and a fast-converging approach rather
+                    // than a full-amplitude swing on the passes where it doesn't.
+                    val granted = with(density) {
+                        val steppedPx = (controlSpread.toPx() +
+                            (target.toPx() - controlSpread.toPx()) * 0.4f)
+                            .roundToInt()
+                        steppedPx.toDp()
                     }
                     if (granted != controlSpread) {
                         SideEffect {
