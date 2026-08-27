@@ -69,6 +69,12 @@ data class BrowseTarget(
     /**
      * Set when this is one of the account's own playlists, which is the only
      * case where renaming and deleting are things that can be done to it.
+     *
+     * Filled in where the sheet is raised rather than by whatever built the
+     * target: only the playlist's own page states who made it, so for a card
+     * this has to be sent for and arrives after the sheet is already up. Left
+     * null by every caller, and null is also the honest answer while the
+     * question is still out.
      */
     val playlist: UserPlaylist? = null,
     /**

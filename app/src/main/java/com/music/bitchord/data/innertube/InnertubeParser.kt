@@ -727,6 +727,55 @@ object InnertubeParser {
             o("toggledIcon").s("iconType") == "BOOKMARK"
 
     /**
+     * Whether a playlist page is one the account *made*, rather than one it
+     * merely saved — null when the response doesn't say either way.
+     *
+     * The library feed can't answer this. `FEmusic_liked_playlists` lists a
+     * stranger's playlist this account saved in exactly the same shape as one
+     * this account created (see [parseUserPlaylists]), which is how Rename and
+     * Delete came to be offered on someone else's playlist. The page can
+     * answer, and does so three ways over:
+     *
+     *  - An own playlist's header comes wrapped in
+     *    `musicEditablePlaylistDetailHeaderRenderer` — YouTube's own words for
+     *    "this belongs to whoever is asking".
+     *  - Its header menu carries the Edit and Delete rows, read by icon rather
+     *    than by label for the same reason [isSaveToggle] is.
+     *  - Its header carries no save bookmark, and a saved playlist's always
+     *    does: there is nothing to save a playlist already yours *into*. So a
+     *    playlist header without one is this account's.
+     *
+     * Any one of the three is enough, because the two mistakes cost different
+     * amounts. Reading "saved" as "own" puts a Delete button on a playlist the
+     * account cannot delete; reading "own" as "saved" takes Rename and Delete
+     * off the user's own playlist, which is a feature quietly vanishing. Three
+     * readings rather than one so a layout change can only ever cause the
+     * first, which the edit endpoint would refuse anyway.
+     *
+     * Only meaningful for a `VL…` playlist page — an album has a save bookmark
+     * and no owner in this sense at all, and a continuation has no header.
+     */
+    fun parsePlaylistOwned(root: JsonElement): Boolean? {
+        if (collectRenderers(root, "musicEditablePlaylistDetailHeaderRenderer").isNotEmpty()) {
+            return true
+        }
+        // Scoped to the header, not walked for: every track row on the page
+        // carries its own menu, and a row's "Remove from playlist" would
+        // answer for the row rather than for the playlist.
+        val header = collectRenderers(root, "musicResponsiveHeaderRenderer").firstOrNull()
+            ?: return null
+        if (collectRenderers(header, "menuNavigationItemRenderer")
+                .any { it.o("icon").s("iconType") in OWNER_ICONS }
+        ) {
+            return true
+        }
+        return header.a("buttons").orEmpty().none { it.o("toggleButtonRenderer").isSaveToggle }
+    }
+
+    /** Header menu icons only the playlist's owner is offered. */
+    private val OWNER_ICONS = setOf("DELETE", "EDIT")
+
+    /**
      * The playlists the account can be asked to add a track to.
      *
      * `FEmusic_liked_playlists` also carries the "New playlist" tile (no
@@ -738,8 +787,11 @@ object InnertubeParser {
      * ids are not as regular as they look, and a list that quietly drops the
      * user's own playlist is worse than one that offers a playlist the edit
      * endpoint then refuses — which it reports, and which the picker surfaces.
+     *
      * Whether a playlist is *owned* rather than merely saved isn't stated on
-     * this feed at all.
+     * this feed at all, so it isn't decided here: this stays the permissive
+     * list the picker wants, and [parsePlaylistOwned] is what rules a saved
+     * playlist out of being renamed or deleted.
      */
     fun parseUserPlaylists(root: JsonElement): List<UserPlaylist> =
         parseLibraryItems(root).mapNotNull { item ->

@@ -89,6 +89,22 @@ val PAGE_GUTTER = 10.dp
 val ROW_DIVIDER_INSET = PAGE_GUTTER + 68.dp
 
 /**
+ * How wide the floating bars at the foot of the page — the tab bar and the mini
+ * player above it — are ever allowed to get.
+ *
+ * Both are fixed rows of controls with a fixed amount to say, not content that
+ * benefits from room, and a phone is the width they were spaced for. Run right
+ * across a tablet the four tabs end up a hand apart with their labels marooned
+ * in the middle of nothing, and the mini player puts its artwork and its buttons
+ * at opposite ends of the screen with a lake of frosted glass between. Past this
+ * they stop growing and centre themselves over the page instead.
+ *
+ * Set clear of the widest phone (448dp less the two [PAGE_GUTTER]s is 428dp), so
+ * on a phone it does nothing and the bars still line up with the page's content.
+ */
+val FLOATING_BAR_MAX_WIDTH = 440.dp
+
+/**
  * Width of a card in the compact carousels — home shelves, library shelves and
  * the artist page's releases alike.
  *
@@ -98,21 +114,21 @@ val ROW_DIVIDER_INSET = PAGE_GUTTER + 68.dp
 val SHELF_CARD_WIDTH = 150.dp
 
 /** Share of the row a lead-shelf card takes, so the next one peeks in past it. */
-private const val HERO_CARD_FRACTION = 0.82f
+private const val HERO_CARD_FRACTION = 0.70f
 
 /**
  * How wide a lead-shelf card is ever allowed to get.
  *
- * The fraction alone is a phone measurement wearing a percent sign: 82% of a
+ * The fraction alone is a phone measurement wearing a percent sign: 70% of a
  * tablet is a card the better part of a foot across, and a hero card is a
  * caption over some artwork rather than a canvas — blown up that far it stops
  * being the top of a feed and becomes a poster with a shelf hiding under it.
  *
- * Set just clear of what the widest phone asks for (0.82 of 448dp is 367dp), so
- * every phone keeps the width it has today and only a screen wider than any
- * phone is held back to it.
+ * Set just clear of what the widest phone asks for (0.70 of 448dp is 314dp), so
+ * every phone keeps the width the fraction gives it and only a screen wider than
+ * any phone is held back to it.
  */
-private val HERO_CARD_MAX_WIDTH = 380.dp
+private val HERO_CARD_MAX_WIDTH = 320.dp
 
 /** A lead-shelf card's proportions: a touch taller than it is wide. */
 const val HERO_CARD_RATIO = 0.92f

@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -104,9 +105,21 @@ fun MeshGradientBackground(
     // Scale up slightly so the blur's clamped edges never show, then blur the
     // whole layer (RenderEffect, API 31+; a no-op below — the radial falloff
     // already reads soft there).
+    //
+    // Clipped on the way out, and from a layer of its own rather than by setting
+    // `clip` on the one below: that one clips what is drawn *into* it, in its own
+    // coordinates, and the scale is applied after — so the overhang the scale
+    // creates survives it. This has to sit outside the scale to contain it.
+    //
+    // The overhang is a third of the backdrop's width and it is painted, not
+    // transparent: whatever this is standing in gets it. Off a full-window sheet
+    // that is the far side of the window and nobody ever saw it, which is how it
+    // went unnoticed; in a pane beside a page it was a hand's width of gradient
+    // laid over the feed.
     Canvas(
         modifier = modifier
             .fillMaxSize()
+            .clipToBounds()
             .graphicsLayer {
                 scaleX = 1.3f
                 scaleY = 1.3f

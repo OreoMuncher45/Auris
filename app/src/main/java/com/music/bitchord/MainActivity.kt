@@ -22,15 +22,23 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -69,6 +77,8 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -98,10 +108,13 @@ import com.music.bitchord.playback.dropAutoplayTracks
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toggleAutoplay
+import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
+import com.music.bitchord.download.DownloadTarget
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.BrowseActionsSheet
 import com.music.bitchord.ui.components.BrowseTarget
+import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
 import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.playback.rememberMediaController
@@ -109,12 +122,14 @@ import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.components.BottomFadeBlur
 import com.music.bitchord.ui.components.BottomTab
+import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.TopBarAccountButton
+import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.LyricsSourcesDialog
@@ -123,6 +138,8 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.dockedPlayerAvailable
+import com.music.bitchord.ui.player.dockedPlayerWidth
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
@@ -150,7 +167,20 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.DARK -> true
             }
             BitChordTheme(darkTheme = darkTheme) {
-                BitChordApp(darkTheme = darkTheme)
+                // The window's width, measured rather than asked for.
+                //
+                // `Configuration.screenWidthDp` is the wrong question here: in a
+                // freeform or desktop window it can report the display rather
+                // than the window it is actually in, and it lands a beat late
+                // when that window is dragged. The layout downstream splits in
+                // two on the strength of this number and sizes both halves from
+                // it, so a stale one is a player pane sized for a window that no
+                // longer exists and a page squeezed to a sliver to pay for it.
+                // A measured constraint cannot be stale — it is the very width
+                // the split is about to be laid out in.
+                BoxWithConstraints(Modifier.fillMaxSize()) {
+                    BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth)
+                }
             }
         }
     }
@@ -171,21 +201,41 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel()) {
+private fun BitChordApp(
+    darkTheme: Boolean,
+    /** The width of the window this is laid out in — see the call site. */
+    windowWidth: Dp,
+    viewModel: MainViewModel = viewModel(),
+) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    // Whether there is room to keep the player open beside the page rather than
+    // raising it over one. Read all over what follows, because most of what the
+    // page does about the player is really about which of the two it is: no mini
+    // player standing in for one that is already there, no sheet to raise, and
+    // the bottom inset the mini player was holding handed back to the page.
+    val playerDocked = dockedPlayerAvailable(windowWidth)
+    /**
+     * Whether the player's *sheet* is up.
+     *
+     * Only ever set where there is a sheet to set it for. Docked, the player is
+     * open whatever this says, and the things that read it — the light status
+     * bar glyphs the artwork needs, the sheet itself — are all asking the one
+     * question this used to answer on its own: is the player covering the page?
+     */
     var showNowPlaying by remember { mutableStateOf(false) }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
     // [PlayerDeepLink.handled]. The sheet itself is gated on there being a track,
     // so on a cold launch this simply arms it and it opens as the controller
-    // connects.
+    // connects. Docked there is nothing to raise: the player is already up, and
+    // the tap has been honoured by the time it arrives.
     val openPlayerRequested by PlayerDeepLink.pending.collectAsStateWithLifecycle()
     LaunchedEffect(openPlayerRequested) {
         if (openPlayerRequested) {
-            showNowPlaying = true
+            if (!playerDocked) showNowPlaying = true
             PlayerDeepLink.handled()
         }
     }
@@ -195,6 +245,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    /**
+     * Whether the download manager is open.
+     *
+     * Not [rememberSaveable]: the list behind it does not survive the process
+     * either (see [com.music.bitchord.download.DownloadSession]), and a sheet
+     * restored over an empty one would be a manager with nothing to manage.
+     */
+    var showDownloadManager by remember { mutableStateOf(false) }
     // Discord Rich Presence: its own page under Account & integrations, its own
     // full-screen sign-in, and one slot for whichever of its alerts is open.
     // The alerts live out here rather than on the page because their scrim has
@@ -288,7 +346,11 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // pages (album/artist/playlist) get. Downloads is the same page, and the
     // tab row it now carries sits directly under the bar, so it needs the same
     // treatment — an artwork blur over it would tint the tabs.
-    val isLocalDetail = detail?.browseId?.startsWith("local:") == true
+    //
+    // A downloaded playlist's page is under `local:` too and is none of that: it
+    // has a cover and a track list, so it takes the bar every other release page
+    // takes. Hence the folder question rather than the prefix.
+    val isLocalDetail = detail?.browseId.isDeviceFolder()
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
@@ -309,9 +371,25 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // stale counts and a missing row in three places rather than one. So it is
     // taken again whenever the record of what's on disk changes.
     val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
-    LaunchedEffect(savedDownloads, detail?.browseId) {
-        if (detail?.browseId == "local:downloads") {
-            viewModel.reloadLocalDetail("local:downloads")
+    // The releases those files were asked for as — read here rather than in the
+    // page so the Downloads folder recomposes when one is added, the same way it
+    // does when a file is.
+    val savedCollections by Downloads.collections.collectAsStateWithLifecycle()
+    // The playlists among them, for the Library page's On Device shelf. Read off
+    // both records: the collection record is what says a playlist was downloaded
+    // as a playlist, and what is on disk is what says it still has anything left
+    // to open.
+    val downloadedPlaylists = remember(savedCollections, savedDownloads) {
+        Downloads.savedPlaylists()
+    }
+    LaunchedEffect(savedDownloads, savedCollections, detail?.browseId) {
+        val open = detail?.browseId ?: return@LaunchedEffect
+        // A downloaded playlist's page is a snapshot of the same folder and goes
+        // stale for the same reasons — and it is the one page a delete can empty
+        // out entirely, which is worth saying rather than leaving rows behind
+        // that play nothing.
+        if (open == "local:downloads" || Downloads.recordIdOf(open) != null) {
+            viewModel.reloadLocalDetail(open)
         }
     }
 
@@ -407,7 +485,8 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             val starting = YtMusicRepository.resolveAudio(songs[index])
             val queued = songs.toMutableList().also { it[index] = starting }
             controller?.playSongs(queued, index)
-            showNowPlaying = true
+            // Nothing to raise where the player is already open beside the page.
+            if (!playerDocked) showNowPlaying = true
             // Starting playback only waits on the track about to play; the
             // rest of a long album/playlist resolves in the background and
             // is patched into the queue well before it's reached.
@@ -441,7 +520,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         scope.launch {
             val resolved = YtMusicRepository.resolveAudio(song)
             controller?.playSongs(listOf(resolved), 0)
-            showNowPlaying = true
+            if (!playerDocked) showNowPlaying = true
         }
     }
     val addToQueue: (Song) -> Unit = { song ->
@@ -547,7 +626,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                 subtitle = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
                 type = type ?: BrowseType.OTHER,
-                playlist = viewModel.editablePlaylist(id),
             )
         }
     }
@@ -598,6 +676,13 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // only asked for from API 33. So the branches below are mutually exclusive
     // by SDK level, and nothing here can stack two dialogs on each other.
     var downloadPending by remember { mutableStateOf<List<Song>>(emptyList()) }
+    /**
+     * What the pending batch was asked for as, held alongside it for the same
+     * reason: the storage-permission dialog is a round trip through another
+     * process, and the release has to survive it or a whole album granted
+     * permission arrives as forty loose tracks.
+     */
+    var downloadPendingFrom by remember { mutableStateOf<DownloadTarget?>(null) }
     val notifyPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { /* Refusing costs the progress notification, not the download. */ }
@@ -605,10 +690,12 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         val songs = downloadPending
+        val from = downloadPendingFrom
         downloadPending = emptyList()
+        downloadPendingFrom = null
         when {
             songs.isEmpty() -> Unit
-            granted -> songs.forEach { Downloads.enqueue(context, it) }
+            granted -> songs.forEach { Downloads.enqueue(context, it, from?.title) }
             // The one case where refusing is fatal: below API 29 there is no
             // other way to reach the Music folder.
             else -> Toast
@@ -628,7 +715,14 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     // Takes a list so a single tap on an album/playlist header can queue the
     // whole thing — the permission dance only needs to happen once for the
     // batch, not once per track.
-    val startDownload: (List<Song>) -> Unit = { requested ->
+    //
+    // [from] is what the list *is*, when it is a release rather than a
+    // selection: an album or a playlist. It is recorded whole, so the Downloads
+    // page can offer the thing that was tapped back rather than the forty rows
+    // it decomposed into — see [Downloads.rememberCollection]. Null for a single
+    // track, which is not a release however many of them are asked for one at a
+    // time.
+    val startDownload: (List<Song>, DownloadTarget?) -> Unit = { requested, from ->
         val saved = Downloads.saved.value
         // Already on disk, and already queued or running: neither needs asking
         // again. What's left is what a tap on "Download" actually means.
@@ -661,10 +755,19 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
             if (needsStorage) {
                 downloadPending = songs
+                downloadPendingFrom = from
                 storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             } else {
-                songs.forEach { Downloads.enqueue(context, it) }
+                songs.forEach { Downloads.enqueue(context, it, from?.title) }
             }
+        }
+        // Recorded for everything that was asked for, not just what still has to
+        // be fetched: a release whose tracks are already on the device is still
+        // that release, and the point of the record is to group them. Skipped
+        // only when the whole batch was refused, since then there will be
+        // nothing on disk for it to group.
+        if (from != null && !blocked) {
+            Downloads.rememberCollection(from, requested)
         }
         when {
             // The row's own icon reports a queued download, so a single tap
@@ -686,12 +789,8 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             }
         }
     }
-
-    // Whether there is room to keep the player open beside the page instead of
-    // raising it over one. Everything that follows from that is a consequence:
-    // no mini player (the real one is right there), no sheet to raise, and the
-    // bottom inset the mini player was holding goes back to the page.
-    val playerDocked = dockedPlayerAvailable()
+    /** One track on its own, which is never a release. */
+    val downloadSong: (Song) -> Unit = { song -> startDownload(listOf(song), null) }
 
     // Content padding leaves room for the frosted bar above and the tab bar
     // (plus mini player) below, so nothing is ever trapped under the glass.
@@ -755,6 +854,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     val nowPlaying: @Composable (Song, Boolean) -> Unit = { song, docked ->
         NowPlayingScreen(
             song = song,
+            windowWidth = windowWidth,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
             positionMs = player.positionMs,
@@ -956,6 +1056,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                         )
                     } else if (key == "settings") {
                         SettingsScreen(
+                            windowWidth = windowWidth,
                             signedIn = signedIn,
                             account = account,
                             onSignIn = {
@@ -967,16 +1068,34 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             onLyricsSources = { showLyricsSources = true },
                             contentPadding = listPadding,
                         )
-                    } else if (page != null && page.browseId.startsWith("local:")) {
+                    } else if (page != null && page.browseId.isDeviceFolder()) {
                         // Local Music and Downloads — both the tabbed Songs / Artists /
                         // Albums view. Two folders of tracks already on the device, so
                         // there is nothing to tell them apart on screen beyond what is
                         // in them and what to say when that is nothing.
+                        //
+                        // A single downloaded playlist is not one of these: it has one
+                        // running order and nothing to tab through, so it falls to the
+                        // release page below.
                         val localState = page.songs
                         val localSongs = (localState as? com.music.bitchord.data.model.UiState.Success)
                             ?.data.orEmpty()
+                        // Only the Downloads folder has releases behind it: Local
+                        // Music is files this app never asked for, so there is
+                        // nothing on record about how they were grouped. Keyed on
+                        // the record as well as the list, so downloading an album
+                        // while its folder is open adds the folder rather than
+                        // waiting for the page to be reopened.
+                        val downloadCollections = remember(localSongs, savedCollections) {
+                            if (page.browseId == "local:downloads") {
+                                Downloads.collectionsAmong(localSongs)
+                            } else {
+                                emptyList()
+                            }
+                        }
                         LocalMusicScreen(
                             songs = localSongs,
+                            collections = downloadCollections,
                             onSongClick = play,
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
@@ -1041,7 +1160,24 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                                 }
                             },
                             onSectionItemLongPress = onBrowseLongPress,
-                            onDownloadAll = { songs -> startDownload(songs.map(withAlbum)) },
+                            // The page names what it is, so a download from here
+                            // is recorded as the release rather than as its rows.
+                            // Only for something with a running order: an artist
+                            // page is a selection of their work, and grouping the
+                            // Downloads folder under "Radiohead" would be filing
+                            // an artist as an album.
+                            onDownloadAll = { songs ->
+                                startDownload(
+                                    songs.map(withAlbum),
+                                    DownloadTarget(
+                                        id = page.browseId,
+                                        title = page.title,
+                                        subtitle = page.subtitle,
+                                        thumbnailUrl = page.thumbnailUrl,
+                                        playlist = page.type == BrowseType.PLAYLIST,
+                                    ).takeIf { page.type != BrowseType.ARTIST },
+                                )
+                            },
                             // The page's own tracks, so the sheet has them already and
                             // Play, Shuffle and Open are the buttons beside the one that
                             // opened it rather than rows on it.
@@ -1053,7 +1189,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                                     thumbnailUrl = page.thumbnailUrl,
                                     type = page.type,
                                     songs = songs.map(withAlbum),
-                                    playlist = viewModel.editablePlaylist(page.browseId),
                                     fromCard = false,
                                 )
                             },
@@ -1173,7 +1308,6 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                                         subtitle = item.subtitle,
                                         thumbnailUrl = item.thumbnailUrl,
                                         type = item.type,
-                                        playlist = viewModel.editablePlaylist(item.browseId),
                                     )
                                 }
                             },
@@ -1223,6 +1357,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.LIBRARY) },
                             pullState = libraryPull,
                             contentPadding = listPadding,
+                            downloadedPlaylists = downloadedPlaylists,
                         )
                     }
                 }
@@ -1285,6 +1420,11 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             }
                         }
                         if (!showSettings && !showAccountScrobbling) {
+                            // Left of the account photo, and only there while
+                            // there is a batch to report on — see
+                            // [TopBarDownloadButton], which decides that for
+                            // itself rather than being told.
+                            TopBarDownloadButton(onClick = { showDownloadManager = true })
                             TopBarAccountButton(
                                 account = account,
                                 onClick = { showSettings = true },
@@ -1308,6 +1448,13 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        // Capped and centred rather than run to the page's edges
+                        // — see [FLOATING_BAR_MAX_WIDTH]. It sits on the Column
+                        // rather than on each bar so the two are held to the same
+                        // width and keep the shared left and right edge they have
+                        // on a phone. Before fillMaxWidth, so the fill has
+                        // already been bounded by the time it is applied.
+                        .widthIn(max = FLOATING_BAR_MAX_WIDTH)
                         .fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1358,8 +1505,8 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             if (playerDocked) {
                 DockedPlayer(
                     song = playerSong,
-                    width = dockedPlayerWidth(),
-                    content = { docked -> nowPlaying(docked, true) },
+                    width = dockedPlayerWidth(windowWidth),
+                    content = { current -> nowPlaying(current, true) },
                 )
             }
         }
@@ -1428,7 +1575,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     // Stays open: the row it replaces itself with is the
                     // progress, and closing the sheet would hide the only
                     // answer to "did that work?".
-                    onDownload = { startDownload(listOf(song)) },
+                    onDownload = { downloadSong(song) },
                     // The sheet stays up for a rating: it shows the new state
                     // in place, and people often thumb a song and then queue it.
                     onToggleLike = { viewModel.toggleLike(song.videoId) },
@@ -1485,6 +1632,25 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
             }
         }
 
+        // ---- Download manager ----
+        // The batch view of what the top-bar indicator is counting. Dismissing
+        // it is what marks the batch seen, and marking it on the way *out*
+        // rather than on the way in is deliberate: it is the outcome the user is
+        // signing off on, and while the sheet is up there may not be one yet.
+        if (showDownloadManager) {
+            val closeDownloadManager = {
+                showDownloadManager = false
+                DownloadSession.markSeen()
+            }
+            BackHandler(onBack = closeDownloadManager)
+            ModalBottomSheet(
+                onDismissRequest = closeDownloadManager,
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                DownloadManagerSheet(onDismiss = closeDownloadManager)
+            }
+        }
+
         // ---- Add to playlist / new playlist ----
         // One sheet for both, because they are one decision: the list of
         // playlists with a way to make another. `creatingPlaylist` opens it
@@ -1530,14 +1696,36 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     withBrowseSongs(target, action)
                 }
             }
-            val playlist = target.playlist.takeIf { signedIn }
+            // Whose playlist this is, asked here rather than carried in by
+            // whatever opened the sheet.
+            //
+            // Only the playlist's own page states it (see
+            // InnertubeParser.parsePlaylistOwned), so a card has to send for the
+            // answer and the sheet is already up by the time it lands — hence
+            // read as state rather than settled once when the target was built.
+            // Rename and Delete are absent until the answer says they apply, so
+            // the sheet's worst moment is a beat without them on the user's own
+            // playlist, rather than offering to delete a stranger's.
+            LaunchedEffect(target.browseId) {
+                viewModel.resolvePlaylistOwnership(target.browseId)
+            }
+            // Spelt out here rather than left to MainViewModel.editablePlaylist,
+            // which is the same rule over the same two lists: that reads them as
+            // plain values, which is right for a click handler and invisible to
+            // Compose. Both are read from collected state so this sheet actually
+            // recomposes when the answer arrives.
+            val ownedPlaylists by viewModel.playlistOwned.collectAsStateWithLifecycle()
+            val playlist = target.browseId
+                ?.takeIf { signedIn && ownedPlaylists[it] == true }
+                ?.let { id -> playlists.firstOrNull { it.browseId == id } }
             val remote = target.browseId?.startsWith("local:") == false
             ModalBottomSheet(
                 onDismissRequest = { browseActions = null },
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
                 BrowseActionsSheet(
-                    target = target,
+                    // The live answer, not the one the target was built with.
+                    target = target.copy(playlist = playlist),
                     onPlayNext = act(playSongsNext),
                     onAddToQueue = act(addSongsToQueue),
                     onPlay = act { songs -> play(songs, 0) }.takeIf { target.fromCard },
@@ -1563,8 +1751,25 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             }
                         },
                     // The page already has a download button, and nothing on
-                    // this device needs fetching to be on it.
-                    onDownloadAll = act(startDownload).takeIf { target.fromCard && remote },
+                    // this device needs fetching to be on it. What the card
+                    // carries that the tracks don't is the release's own name
+                    // and cover, which is exactly what the record wants.
+                    onDownloadAll = act { songs ->
+                        startDownload(
+                            songs,
+                            target.browseId
+                                ?.takeIf { target.type != BrowseType.ARTIST }
+                                ?.let { id ->
+                                    DownloadTarget(
+                                        id = id,
+                                        title = target.title,
+                                        subtitle = target.subtitle,
+                                        thumbnailUrl = target.thumbnailUrl,
+                                        playlist = target.type == BrowseType.PLAYLIST,
+                                    )
+                                },
+                        )
+                    }.takeIf { target.fromCard && remote },
                     onRename = playlist?.let { p ->
                         { name: String ->
                             browseActions = null
@@ -1744,6 +1949,98 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
 
 private fun tween(durationMillis: Int) =
     androidx.compose.animation.core.tween<Float>(durationMillis)
+
+/**
+ * Whether this page id is one of the two device folders — `local:downloads` and
+ * `local:all`, the tabbed Songs / Artists / Albums view.
+ *
+ * Asked rather than `startsWith("local:")` because that prefix now covers two
+ * unlike pages: a folder, and one downloaded playlist, which is a plain track
+ * listing under its own cover and wants the same chrome every other release page
+ * gets. See [Downloads.PLAYLIST_PREFIX] for why they share a namespace at all.
+ */
+private fun String?.isDeviceFolder(): Boolean =
+    this != null && startsWith("local:") && !startsWith(Downloads.PLAYLIST_PREFIX)
+
+/**
+ * The pane a wide window keeps the player in, down the right-hand edge.
+ *
+ * It is a fixed [width] rather than a share of the row because the player has a
+ * width it wants and a page does not: past a point the sleeve and the transport
+ * stop being improved by more room and the feed beside them still is, so the
+ * pane takes what it needs and the page has the rest — see [dockedPlayerWidth].
+ *
+ * The pane is there whether or not anything is playing. A player that appears
+ * and disappears would take a third of the page's width with it every time
+ * something started or stopped, which is the layout jumping under the finger
+ * rather than the app reacting to it; so with nothing to show it says so.
+ */
+@Composable
+private fun DockedPlayer(
+    song: Song?,
+    width: Dp,
+    content: @Composable (Song) -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .fillMaxHeight()
+            .background(MaterialTheme.colorScheme.surface),
+    ) {
+        if (song != null) {
+            content(song)
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Icon(
+                    imageVector = BitChordIcons.MusicNote,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.size(44.dp),
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Nothing playing",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = "Pick something and it turns up here",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        // The status bar runs across both panes and its glyphs can only be one
+        // colour, and that colour follows the page: in a light theme they are
+        // dark ink, which over a plain surface is a clock nobody can read. Only
+        // painted for the empty state, where the pane really is flat
+        // [colorScheme.surface] behind the placeholder copy.
+        //
+        // A song mounts [NowPlayingScreen] instead, and that already runs its
+        // own backdrop — the mesh gradient, and the hero banner's artwork —
+        // up behind the inset, with its own scrim once the banner settles (see
+        // its [heroT] scrim). Painting flat over that here was covering the
+        // player's own backdrop with a solid rectangle every frame, which is
+        // the black bar across the top of a playing dock: the artwork stopped
+        // at this box instead of running to the edge like it does on a phone.
+        if (song == null) {
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(MaterialTheme.colorScheme.background),
+            )
+        }
+    }
+}
 
 /**
  * How far short of the end a seek is allowed to land.

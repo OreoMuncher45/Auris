@@ -12,10 +12,13 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.download.SavedCollection
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -53,6 +56,21 @@ fun LibraryScreen(
     pullState: PullToRefreshState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
+    /**
+     * The playlists downloaded whole, as cards behind the two device folders.
+     *
+     * They belong on that shelf because they are the same promise everything
+     * else on it makes — here, now, without a network. Nothing is truncated:
+     * the shelf is a row that scrolls, so "all of them" costs nothing.
+     *
+     * Downloaded *albums* are deliberately not here. An album stamps its name
+     * onto each of its tracks, so the Downloads folder's Albums tab groups it
+     * back up on its own and a card here would be a second door onto the same
+     * list. A playlist has no tag anything can derive it from — its tracks are
+     * off forty different releases — so this is the only place it can be reached
+     * without going through that folder.
+     */
+    downloadedPlaylists: List<SavedCollection> = emptyList(),
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -92,7 +110,23 @@ fun LibraryScreen(
                                 videoId = null,
                                 browseId = "local:all",
                             ),
-                        ),
+                        ) + downloadedPlaylists.map { playlist ->
+                            ShelfItem(
+                                title = playlist.title,
+                                // The credit the playlist was downloaded with,
+                                // because this is also what the page it opens
+                                // bills itself by — see `headerLines`, which
+                                // reads the kind and the owner back out of it.
+                                // Saying "Downloaded playlist" here instead would
+                                // make that header read "Downloaded playlist" over
+                                // "PLAYLIST • 12 SONGS", and the shelf this card
+                                // is on already says where it lives.
+                                subtitle = playlist.subtitle.ifBlank { "Downloaded playlist" },
+                                thumbnailUrl = playlist.thumbnailUrl,
+                                videoId = null,
+                                browseId = Downloads.pageIdFor(playlist.id),
+                            )
+                        },
                     ),
                     onItemClick = onShelfItemClick,
                     onItemLongPress = onShelfItemLongPress,
@@ -182,5 +216,5 @@ private fun PlaylistShelf(
 }
 
 /** The library feed whose cards are the account's own — see [PlaylistShelf]. */
-private const val PLAYLISTS = "Playlists"
+private const val PLAYLISTS = YtMusicRepository.PLAYLISTS_SHELF
 private const val ON_DEVICE = "On Device"

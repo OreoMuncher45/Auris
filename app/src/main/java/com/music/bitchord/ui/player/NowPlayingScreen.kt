@@ -18,6 +18,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -26,9 +27,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -60,6 +64,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -87,6 +92,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
@@ -94,6 +100,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -120,11 +127,19 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -196,7 +211,39 @@ private const val SEEK_SETTLE_TIMEOUT_MS = 4_000L
 private val THUMB_SIZE = 54.dp
 private val HEADER_HEIGHT = 60.dp
 private val ART_TITLE_GAP = 20.dp
-/** Only drags starting in this top strip reach the sheet and close the player. */
+/**
+ * How long the sleeve takes to travel the whole way between the full player and
+ * the queue's header.
+ *
+ * Spent in proportion rather than in full: a drag released four fifths of the
+ * way up has a fifth of the journey left and gets a fifth of the time for it.
+ * Only the toggle, which travels end to end, ever spends all of it.
+ */
+private const val QUEUE_TRAVEL_MS = 420
+/**
+ * How far up the sleeve has to have been dragged for a release to carry on
+ * opening the queue rather than falling back, as a share of the sleeve's travel.
+ *
+ * Well under half, because the gesture is only ever *started* deliberately —
+ * there is nothing else an upward drag on the artwork could have meant — so the
+ * doubt a halfway line exists to settle isn't there.
+ */
+private const val QUEUE_CARRY_FRACTION = 0.3f
+/**
+ * How fast a release has to be moving, in pixels a second, to decide the queue
+ * on its own and overrule [QUEUE_CARRY_FRACTION].
+ *
+ * A flick is a whole gesture in its own right: it says "open" without ever
+ * asking the finger to travel, and the distance it covered is beside the point.
+ */
+private const val QUEUE_FLICK_VELOCITY = 450f
+/**
+ * The handle strip above the artwork, which always hands drags to the sheet.
+ *
+ * It isn't the only place that does — the artwork and the credits under it pass
+ * theirs on as well, which is what makes the whole top of the player closable
+ * rather than just its topmost 44dp. See the dismiss band in `NowPlayingScreen`.
+ */
 private val DISMISS_STRIP_HEIGHT = 44.dp
 /** The breathing room above the sleeve, needed twice: once to apply, once to measure past. */
 private val ART_BOX_TOP_PAD = 14.dp
@@ -218,30 +265,31 @@ private val PLAYER_GUTTER = 30.dp
  */
 private val PLAYER_MAX_WIDTH = 560.dp
 /**
- * How wide the window has to be before the player stops being something raised
- * over the page and becomes a pane standing beside it.
- *
- * A docked player is only an improvement while both halves are still worth
- * having: the pane needs the better part of a phone's width before the sleeve
- * and the transport stop crowding each other, and whatever is left has to still
- * read as a feed rather than as a column of clipped cards. Below this there
- * isn't enough window to pay for both, so the sheet — which gets the whole of
- * it, one thing at a time — remains the better answer. Phones and 7in tablets
- * are under this; a 9in tablet and up is over it.
- */
-private val DOCKED_PLAYER_MIN_SCREEN_WIDTH = 720.dp
-/**
  * The pane's share of a window wide enough to dock in, and the bounds it takes
  * that share within.
  *
- * A fraction alone hands a 13in screen half a metre of player; the floor is
- * there because the fraction of the narrowest window that qualifies is thinner
- * than the controls want to be, and the ceiling is [PLAYER_MAX_WIDTH] and its
- * gutters — past which the player has already said it would rather centre
- * itself than grow, so anything more is pane the player won't use.
+ * A fraction alone hands a 13in screen half a metre of player. The ceiling is a
+ * phone's width because that is the shape the player was drawn for and the shape
+ * it looks right in — a square sleeve, one line of credits, a row of oversized
+ * glyphs. Widened past that the sleeve stops being able to grow with it (it is
+ * bounded by the pane's height long before that) and all the extra pane buys is
+ * a scrubber and a volume slider stretched thin either side of it, which is a
+ * coarser player rather than a bigger one, and a column of feed given up to pay
+ * for it. The floor is there because the fraction of the narrowest window that
+ * qualifies is thinner than the controls want to be.
  */
 private const val DOCKED_PLAYER_FRACTION = 0.42f
 private val DOCKED_PLAYER_MIN_WIDTH = 340.dp
+private val DOCKED_PLAYER_MAX_WIDTH = 420.dp
+
+/**
+ * The narrowest the page is worth leaving while the player stands beside it.
+ *
+ * About a small phone: below this the shelves stop showing a second card, the
+ * track rows lose their artist line to the ellipsis and a two-pane layout is
+ * two things done badly instead of one done well.
+ */
+private val DOCKED_PAGE_MIN_WIDTH = 360.dp
 /**
  * The room above a docked player's artwork, in place of the drag handle.
  *
@@ -271,32 +319,62 @@ private val CONTROL_GAP_SPREAD_MAX = 48.dp
 private var lastControlSpread: Dp = 0.dp
 
 /**
- * Whether this screen is narrow enough for the player to run artwork edge to
- * edge on it — the gate on both the motion-artwork banner and
+ * Whether the player is ever narrow enough in this window to run artwork edge to
+ * edge — the gate on both the motion-artwork banner and
  * [AppSettings.fullBleedArtwork]. Public so the settings sheet can leave the
  * switch out entirely where it would do nothing.
+ *
+ * Two ways to qualify. A window narrow enough that the player fills it is one:
+ * edge to edge there means the artwork *is* the screen, which is the whole idea.
+ * A window wide enough to dock the player is the other, and for the same reason
+ * rather than in spite of it — the pane is a phone's width by construction (see
+ * [dockedPlayerWidth]), so edge to edge inside it reads exactly as it does on a
+ * phone. Only the band between the two has nothing to offer: too wide for the
+ * player to fill, too narrow to stand something beside it.
  */
-@Composable
-fun fullBleedArtworkAvailable(): Boolean =
-    LocalConfiguration.current.screenWidthDp.dp <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
+fun fullBleedArtworkAvailable(windowWidth: Dp): Boolean =
+    playerFillsWindow(windowWidth) || dockedPlayerAvailable(windowWidth)
 
 /**
- * Whether this window is wide enough to keep the player open beside the page
- * rather than raising it over one — see [DOCKED_PLAYER_MIN_SCREEN_WIDTH].
+ * Whether a player given the whole of a window this wide is still narrow enough
+ * to run its artwork edge to edge.
+ *
+ * The player's own width is the question, always — this is just the form it takes
+ * when the player *is* the window, which is the only time the window's width is
+ * an answer to it. A docked pane has its own, much smaller width and does not go
+ * through here.
+ */
+private fun playerFillsWindow(windowWidth: Dp): Boolean =
+    windowWidth <= PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2
+
+/**
+ * Whether [windowWidth] is enough to keep the player open beside the page rather
+ * than raising it over one: the least the page can live in and the least the
+ * player can live in, side by side. Stated as the sum of the two minimums rather
+ * than as a number of its own, so it cannot drift out of step with either.
+ *
+ * [windowWidth] is the width of the *window*, and it has to be measured rather
+ * than read off `Configuration.screenWidthDp` — in a freeform or desktop window
+ * that can report the display instead of the window, and it lands a beat late
+ * when the window is dragged. Deciding a two-pane split from a width the app
+ * does not have splits it at the wrong moment and in the wrong place.
  *
  * Public because it is not only the player's business: the page it stands next
  * to loses the mini player, gets its bottom inset back, and stops being able to
  * raise the sheet at all.
  */
-@Composable
-fun dockedPlayerAvailable(): Boolean =
-    LocalConfiguration.current.screenWidthDp.dp >= DOCKED_PLAYER_MIN_SCREEN_WIDTH
+fun dockedPlayerAvailable(windowWidth: Dp): Boolean =
+    windowWidth >= DOCKED_PAGE_MIN_WIDTH + DOCKED_PLAYER_MIN_WIDTH
 
 /** How wide that pane is. Only meaningful where [dockedPlayerAvailable] is true. */
-@Composable
-fun dockedPlayerWidth(): Dp =
-    (LocalConfiguration.current.screenWidthDp.dp * DOCKED_PLAYER_FRACTION)
-        .coerceIn(DOCKED_PLAYER_MIN_WIDTH, PLAYER_MAX_WIDTH + PLAYER_GUTTER * 2)
+fun dockedPlayerWidth(windowWidth: Dp): Dp =
+    (windowWidth * DOCKED_PLAYER_FRACTION)
+        .coerceIn(DOCKED_PLAYER_MIN_WIDTH, DOCKED_PLAYER_MAX_WIDTH)
+        // Never at the page's expense. The floor above is what the player wants;
+        // this is what it may actually have, and where the two disagree the page
+        // wins — [dockedPlayerAvailable] is the promise that they only disagree
+        // in windows narrow enough that there is no pane at all.
+        .coerceAtMost(windowWidth - DOCKED_PAGE_MIN_WIDTH)
 
 /** Share of a lyric line's own length spent fading out, and its bounds. */
 private const val LYRIC_FADE_FRACTION = 0.28f
@@ -521,16 +599,16 @@ fun NowPlayingScreen(
     lyrics: List<LyricLine>?,
     lyricsSource: LyricsSource?,
     lyricsUnavailable: Boolean,
+    /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
+    windowWidth: Dp,
     /**
      * Whether the player is a pane the page sits beside rather than a sheet
      * raised over it — see [dockedPlayerAvailable].
      *
-     * Two things follow. There is no sheet under a docked player to pull away,
-     * so the handle goes and with it the strip of dead space that existed to
-     * pass drags down to one. And full-bleed artwork means "the artwork is the
-     * screen", which a pane that is only part of the screen cannot say: edge to
-     * edge inside it is a banner cut off at a seam, so the sleeve stays a
-     * sleeve however [AppSettings.fullBleedArtwork] is set.
+     * There is no sheet under a docked player to pull away, so the handle goes
+     * and with it the strip of dead space that existed to pass drags down to one.
+     * The artwork is unaffected: the pane is a phone's width, so it runs the
+     * cover edge to edge exactly as a phone does — see [fullBleedArtworkAvailable].
      */
     docked: Boolean = false,
     modifier: Modifier = Modifier,
@@ -626,11 +704,38 @@ fun NowPlayingScreen(
     }
 
     // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
-    val queueProgress by animateFloatAsState(
-        targetValue = if (queueOpen) 1f else 0f,
-        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-        label = "queueProgress",
-    )
+    //
+    // Plain state driven by an animation rather than [animateFloatAsState],
+    // because it has two drivers and only one of them is an animation: the
+    // toggle at the foot of the player, which travels end to end, and a finger
+    // dragging the sleeve upward, which sets it outright. An animation keyed on
+    // [queueOpen] cannot be pushed around mid-flight by a drag — and a drag that
+    // could only move the *target* would have nothing to show for itself until
+    // it was released, then jump from wherever the animation had got to.
+    val queueSlide = remember { mutableFloatStateOf(0f) }
+    val queueProgress = queueSlide.floatValue
+    // Whether a finger is on the sleeve right now. Parks the settle below rather
+    // than leaving the two to write the same value on alternate frames.
+    var queueDragging by remember { mutableStateOf(false) }
+    // Bumped when a drag hands the value back, so the settle runs again even
+    // though [queueOpen] may not have moved: a swipe that gave up short of
+    // [QUEUE_CARRY_FRACTION] has to fall back to 0 just as surely as one that
+    // carried has to finish reaching 1.
+    var queueReleased by remember { mutableIntStateOf(0) }
+    LaunchedEffect(queueOpen, queueDragging, queueReleased) {
+        if (queueDragging) return@LaunchedEffect
+        val target = if (queueOpen) 1f else 0f
+        val from = queueSlide.floatValue
+        if (from == target) return@LaunchedEffect
+        animate(
+            initialValue = from,
+            targetValue = target,
+            animationSpec = tween(
+                durationMillis = (QUEUE_TRAVEL_MS * abs(target - from)).roundToInt(),
+                easing = FastOutSlowInEasing,
+            ),
+        ) { value, _ -> queueSlide.floatValue = value }
+    }
 
     // Horizontal fling anywhere on the player skips tracks; the artwork
     // follows the finger so the gesture has something to hold on to.
@@ -740,11 +845,16 @@ fun NowPlayingScreen(
     // card first.
     val p = if (lyricsOpen) 1f else queueProgress
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
-    // Full-bleed is a phone idiom. Past the width the player is willing to grow
-    // to, edge to edge stops meaning "the artwork *is* the screen" and starts
-    // meaning "a picture, and separately some controls" — the banner would be
-    // running a foot wider than the column of controls under it. Tablets keep
-    // the sleeve, and a clip plays inside it as before.
+    // Full-bleed is a phone idiom, and a docked pane is a phone's width — so it
+    // is asked of the player's own width rather than of the window's. Asking the
+    // window is what left the pane with a square sleeve floating in a field of
+    // backdrop: the window is wide, but the player in it never is.
+    //
+    // What the width has to rule out is a player running a foot wider than the
+    // column of controls under it — edge to edge meaning "a picture, and
+    // separately some controls" rather than "the artwork *is* the player". A pane
+    // cannot do that; only the band between phone-width and dockable can, and
+    // that is the band [fullBleedArtworkAvailable] excludes.
     //
     // One question for the still cover and the clip both, rather than two that
     // could disagree — and they did, twice over. Dissolving a TextureView's
@@ -754,7 +864,7 @@ fun NowPlayingScreen(
     // ignored [fullBleedArt] entirely, so turning the setting off still left a
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
-    val heroMode = fullBleedArt && !docked && fullBleedArtworkAvailable()
+    val heroMode = fullBleedArt && (docked || playerFillsWindow(windowWidth))
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
@@ -765,8 +875,16 @@ fun NowPlayingScreen(
     // twice the length of the whole screen's worth of movement for a change the
     // artwork itself already announces. The frame stays; the cover arrives in
     // it, fading in as Coil fades in everywhere else.
+    //
+    // Latched off the clip as well as the still art, for a cover that never
+    // arrives at all and leaves the banner standing on the clip alone: the clip
+    // gives its frame up and takes it back every time the app leaves the screen,
+    // and a banner that answered only to that would collapse behind the user's
+    // back and blow itself out again in front of them on the way in.
     var heroSettled by remember { mutableStateOf(false) }
-    LaunchedEffect(artLoaded) { if (artLoaded) heroSettled = true }
+    LaunchedEffect(artLoaded, canvasRendered) {
+        if (artLoaded || canvasRendered) heroSettled = true
+    }
     // The clip that gets the banner, if any. Hoisted because the still frame
     // underneath keys its handover on exactly what is mounted here: both are
     // decided in the same composition pass, so opening the queue or the lyrics —
@@ -791,6 +909,40 @@ fun NowPlayingScreen(
     // the scrim drawn over it and the banner's own height — which all have to
     // agree or the artwork and the credits under it move.
     val topStrip = if (docked) DOCKED_TOP_PAD else DISMISS_STRIP_HEIGHT
+
+    // The band of the player a vertical drag belongs to rather than to whatever
+    // is under it: from the top of the artwork to the bottom of the credits, in
+    // root coordinates. Everything in between is one block — the full sleeve
+    // with the title and artist beneath it — and a drag on it closes the player
+    // downwards and opens the queue upwards.
+    //
+    // Read off the layout rather than recomputed, so it stays the block's own
+    // shape whatever the screen: a height-bound sleeve on a tablet, a full-bleed
+    // banner on a phone.
+    //
+    // Only ever the *expanded* block, though. Once a panel is up the band is not
+    // this pair at all but the header, worked out from the state instead — see
+    // the gesture below. The two edges do travel with the sleeve as it collapses,
+    // which reads like the band could simply follow them the whole way, and that
+    // is exactly what went wrong: the sleeve takes [QUEUE_TRAVEL_MS] to get
+    // there, and for that whole half second the queue was already listed and
+    // scrollable underneath a band still lying across it. A drag on a row came
+    // out as the player closing.
+    //
+    // Bare numbers rather than a rect: the band runs the full width of the
+    // player either way, and on a height-bound sleeve the bare backdrop down
+    // each side of it should close the player too — it is part of the same
+    // gesture, and a hole there would be a strip the finger mysteriously
+    // slides off.
+    //
+    // Both start at zero, which is a band with no height and so no hole at all
+    // until the first layout pass. There is nothing on screen to drag then
+    // either.
+    var dismissBandTop by remember { mutableFloatStateOf(0f) }
+    var dismissBandBottom by remember { mutableFloatStateOf(0f) }
+    // The suppressing Column's own coordinates, to put a pointer's local
+    // position into the same space as the two edges above.
+    var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
         // Keyed on the track: the backdrop drifts when the player opens and on
@@ -979,8 +1131,80 @@ fun NowPlayingScreen(
                     // on purpose: inside it, the two gutters were left as bare
                     // sheet, and a swipe that strayed into one closed the whole
                     // player instead of scrolling the lyrics or the queue.
+                    //
+                    // With one hole in it, and where that hole is depends on
+                    // which screen of the player is up:
+                    //
+                    //  * The main player — the artwork-and-credits block. Down is
+                    //    left unconsumed for the sheet to dismiss with, so the
+                    //    player closes from the picture as well as from the
+                    //    handle; up is taken here and drags the queue in.
+                    //  * The queue or the lyrics — the header those panels sit
+                    //    below, and nothing else. Down closes the player, up does
+                    //    nothing: there is no sleeve left to pull away from.
+                    //
+                    // The header is worked out from the state rather than read
+                    // off the sleeve, which is the whole point of doing it here:
+                    // the sleeve is still on its way for [QUEUE_TRAVEL_MS] after
+                    // the queue opens, and a hole that waited for it spent that
+                    // half second lying across a list the finger was already
+                    // scrolling.
+                    .onGloballyPositioned { dismissBandSpace = it }
                     .pointerInput(Unit) {
-                        detectVerticalDragGestures { change, _ -> change.consume() }
+                        awaitEachGesture {
+                            // Unconsumed on purpose, as the blanket version was:
+                            // the collapsed sleeve's own clickable — the way back
+                            // out of the queue — has taken the press by the time
+                            // an ancestor sees it.
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val space = dismissBandSpace
+                            val y = space?.localToRoot(down.position)?.y
+                                ?: down.position.y
+                            // A panel is up from the moment it is asked for to
+                            // the moment the sleeve has finished growing back —
+                            // never mind where the sleeve is in between.
+                            val panelUp = queueOpen || lyricsOpen ||
+                                queueSlide.floatValue > 0.01f
+                            val bandTop: Float
+                            val bandBottom: Float
+                            if (panelUp) {
+                                bandTop = space?.positionInRoot()?.y ?: 0f
+                                bandBottom = bandTop +
+                                    (ART_BOX_TOP_PAD + HEADER_HEIGHT).toPx()
+                            } else {
+                                bandTop = dismissBandTop
+                                bandBottom = dismissBandBottom
+                            }
+                            if (y >= bandTop && y <= bandBottom) {
+                                if (!panelUp) {
+                                    dragQueueIn(
+                                        down = down,
+                                        travel = bandBottom - bandTop -
+                                            HEADER_HEIGHT.toPx(),
+                                        slide = queueSlide,
+                                        onHold = { queueDragging = it },
+                                        onSettle = { open ->
+                                            if (open != queueOpen) {
+                                                haptics.play(
+                                                    if (open) Haptic.Expand else Haptic.Tap,
+                                                )
+                                                queueOpen = open
+                                            }
+                                            queueReleased++
+                                        },
+                                    )
+                                }
+                                return@awaitEachGesture
+                            }
+                            // What detectVerticalDragGestures does, minus the
+                            // callbacks: cross the slop, then hold the gesture
+                            // to the end so nothing downstream of the first
+                            // event reaches the sheet either.
+                            val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, _ ->
+                                change.consume()
+                            }
+                            if (drag != null) verticalDrag(drag.id) { it.consume() }
+                        }
                     }
                     .padding(horizontal = PLAYER_GUTTER),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -1057,10 +1281,42 @@ fun NowPlayingScreen(
                 //
                 // Left alone while the lyrics panel is up: the spacers it feeds
                 // aren't in the tree then, so there would be nothing to apply it.
+                //
+                // Granted in whole even pixels, and only when it actually moves.
+                // This is a measurement feeding the layout it was measured from,
+                // and [roomy] cancels that by adding the grant back — but the
+                // grant is *spent* as two spacers of half of it each, and half an
+                // odd number of pixels does not exist. The gaps take a pixel less
+                // than was granted, so the next pass finds a pixel going spare and
+                // grants it again, and the pass after that is back where it
+                // started: the sleeve, the credits and the scrubber shifting half a
+                // pixel and back, every frame, for as long as the player is up.
+                //
+                // Which is why it only ever showed in a docked pane, and only in
+                // some of them. Full screen the spare height is far past the cap
+                // below and [coerceAtMost] pins the answer somewhere the
+                // arithmetic cannot reach it; with nothing spare [coerceAtLeast]
+                // pins it at zero the same way. It is the windows in between —
+                // the narrow ones, where the spread lands mid-range and passes
+                // through unclamped — that shivered.
+                //
+                // An even grant halves exactly, so the gaps take all of it and the
+                // cancellation is exact: one pass to settle, and then nothing to
+                // write, which is also one fewer recomposition per frame.
                 if (!lyricsOpen) {
-                    SideEffect {
-                        controlSpread = slack.coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
-                        lastControlSpread = controlSpread
+                    val granted = with(density) {
+                        val half = slack
+                            .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
+                            .toPx()
+                            .div(2f)
+                            .roundToInt()
+                        (half * 2).toDp()
+                    }
+                    if (granted != controlSpread) {
+                        SideEffect {
+                            controlSpread = granted
+                            lastControlSpread = granted
+                        }
                     }
                 }
                 // Artwork and the title row travel together as one block, so
@@ -1085,7 +1341,14 @@ fun NowPlayingScreen(
                 // can simply be added back up rather than measured.
                 val bannerBottom = statusBarTop + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt + ART_TITLE_GAP / 2
-                SideEffect { heroHeight = bannerBottom }
+                // Guarded, like the spread above: this runs on every pass, and a
+                // state write from inside a layout is a recomposition asked for
+                // from inside a layout. Writing the same answer back costs a
+                // comparison here and a whole frame if it is left to the snapshot
+                // to notice.
+                if (bannerBottom != heroHeight) {
+                    SideEffect { heroHeight = bannerBottom }
+                }
 
                 // Empty state lives on this Box, not the AsyncImage: a
                 // background *and* a painter both trying to fill the same
@@ -1097,6 +1360,14 @@ fun NowPlayingScreen(
                     modifier = Modifier
                         .offset(x = artStart, y = artTop)
                         .size(artSize)
+                        // Where the dismiss band starts. Read here, above the
+                        // paused shrink below, so the band covers the sleeve's
+                        // slot rather than the 86% of it that is drawn while
+                        // paused — the ring of backdrop the shrink opens up is
+                        // still the artwork as far as a finger is concerned, and
+                        // a band that breathed with the shrink would hand it
+                        // back and forth on every play and pause.
+                        .onGloballyPositioned { dismissBandTop = it.boundsInRoot().top }
                         .graphicsLayer {
                             // The paused shrink and the swipe nudge only make
                             // sense on the full sleeve.
@@ -1122,10 +1393,19 @@ fun NowPlayingScreen(
                     // The sleeve proper. Separated from the box around it so
                     // the banner can dissolve the card — shadow, corners, tile
                     // and all — without taking the stats line with it.
+                    //
+                    // Held fully opaque until this track's own art is in,
+                    // regardless of [heroT]: the banner is sticky across skips
+                    // by design (see [heroSettled]), but its still image is not
+                    // — a new track's cover has to come from somewhere while
+                    // the banner waits on Coil, and the sleeve underneath,
+                    // with its loading icon, is that somewhere. Once
+                    // [artLoaded] catches up the two are showing the same
+                    // bitmap, so hiding one behind the other is invisible.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { alpha = 1f - heroT }
+                            .graphicsLayer { alpha = if (artLoaded) 1f - heroT else 1f }
                             // A drop shadow grounds a photo; on the flat
                             // placeholder tile it has nothing to sit behind, so
                             // it just reads as a second, darker square ringing
@@ -1287,7 +1567,13 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .offset(y = titleTop)
                         .padding(start = titleStart)
-                        .height(HEADER_HEIGHT),
+                        .height(HEADER_HEIGHT)
+                        // Where the dismiss band ends — see its top on the
+                        // artwork above. Taken from the row rather than added up
+                        // from the sleeve so the gap between the two is inside
+                        // the band as well: it is a gap in one block, not a seam
+                        // between two, and a finger should not be able to find it.
+                        .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -1747,6 +2033,74 @@ fun NowPlayingScreen(
             }
         }
     }
+}
+
+/**
+ * The upward half of the sleeve's vertical gesture: dragged up, the artwork
+ * block pulls the queue in behind it, following the finger the whole way and
+ * settling to whichever end it was nearer on release.
+ *
+ * Downward is deliberately not ours. The sheet the player sits in is what closes
+ * when the sleeve is dragged that way, and it can only read a drag it was
+ * allowed to see — so a downward crossing of the touch slop is left entirely
+ * alone and this returns having consumed nothing at all.
+ *
+ * Which of the two it is can only be known at the crossing, which is why the
+ * decision is made there rather than at the press. A pointer event reaches a
+ * child before its parent, so consuming the very event that crossed the slop is
+ * enough to keep the sheet out of an upward drag, and letting that one event
+ * through is enough to hand it a downward one — the sheet's own slop detector
+ * gives up the moment it sees a change already spoken for.
+ *
+ * @param travel how far the sleeve has to be dragged for the queue to arrive.
+ * @param slide the 0..1 the player's whole layout reads off.
+ * @param onHold true while the finger owns [slide] and false when it hands it
+ *   back; the settling animation is parked in between so the two never write the
+ *   same value on alternate frames.
+ * @param onSettle the state the release decided on, which that animation then
+ *   finishes reaching from wherever the finger left off.
+ */
+private suspend fun AwaitPointerEventScope.dragQueueIn(
+    down: PointerInputChange,
+    travel: Float,
+    slide: MutableFloatState,
+    onHold: (Boolean) -> Unit,
+    onSettle: (Boolean) -> Unit,
+) {
+    // A block with nowhere to travel — a player not yet measured — would divide
+    // by nothing and snap the queue open on the first pixel of movement.
+    if (travel < 1f) return
+
+    var pulled = 0f
+    val drag = awaitVerticalTouchSlopOrCancellation(down.id) { change, overSlop ->
+        if (overSlop < 0f) {
+            pulled = -overSlop
+            change.consume()
+        }
+    }
+    if (drag == null || pulled <= 0f) return
+
+    onHold(true)
+    val velocity = VelocityTracker()
+    velocity.addPointerInputChange(drag)
+    slide.floatValue = (pulled / travel).coerceIn(0f, 1f)
+    verticalDrag(drag.id) { change ->
+        velocity.addPointerInputChange(change)
+        pulled -= change.positionChange().y
+        slide.floatValue = (pulled / travel).coerceIn(0f, 1f)
+        change.consume()
+    }
+
+    // A flick decides on its own — it says "open" without asking the finger to
+    // travel at all. Anything slower goes to whichever end it got nearer to.
+    val flick = -velocity.calculateVelocity().y
+    val open = when {
+        flick >= QUEUE_FLICK_VELOCITY -> true
+        flick <= -QUEUE_FLICK_VELOCITY -> false
+        else -> slide.floatValue >= QUEUE_CARRY_FRACTION
+    }
+    onHold(false)
+    onSettle(open)
 }
 
 
@@ -2635,13 +2989,6 @@ private fun InlineQueue(
     val autoplayStart = remember(queue, currentIndex) {
         autoplaySectionStart(queue.map { it.fromAutoplay }, currentIndex)
     }
-    // Open on what's playing, not at the top of a long queue. The heading sits
-    // between the two sections, so it counts as a row once it's above this one.
-    LaunchedEffect(currentIndex) {
-        if (currentIndex in queue.indices) {
-            listState.scrollToItem(currentIndex + if (currentIndex >= autoplayStart) 1 else 0)
-        }
-    }
 
     // Each section reorders on its own — a drag never crosses the line
     // between what was queued by hand and what AutoPlay picked, same as
@@ -2688,6 +3035,21 @@ private fun InlineQueue(
         lazyOffset = headingCount,
         onMove = onMove,
     )
+
+    // Open on what's playing, not at the top of a long queue. The heading sits
+    // between the two sections, so it counts as a row once it's above this one.
+    //
+    // Never mid-drag, though. A track ending while a row is held would jump the
+    // list out from under the finger, and the jump takes the list's scroll off
+    // the edge auto-scroll below — which would leave the rest of that drag
+    // unable to scroll at all. Reordering is also the one time the user is
+    // certainly looking somewhere other than at the current track.
+    LaunchedEffect(currentIndex) {
+        val holding = manualDrag.draggedKey != null || autoplayDrag.draggedKey != null
+        if (!holding && currentIndex in queue.indices) {
+            listState.scrollToItem(currentIndex + if (currentIndex >= autoplayStart) 1 else 0)
+        }
+    }
 
     Column(modifier.fillMaxWidth()) {
         Row(
@@ -2745,7 +3107,7 @@ private fun InlineQueue(
                     onDragEnd = manualDrag::onDragEnd,
                     modifier = Modifier
                         .zIndex(if (dragging) 1f else 0f)
-                        .graphicsLayer { translationY = if (dragging) manualDrag.dragOffset else 0f }
+                        .graphicsLayer { translationY = if (dragging) manualDrag.renderOffset else 0f }
                         // The dragged row follows the finger, so it is the one
                         // row that must not also be animating to a slot.
                         .then(if (dragging) Modifier else Modifier.animateItem()),
@@ -2806,7 +3168,7 @@ private fun InlineQueue(
                     onDragEnd = autoplayDrag::onDragEnd,
                     modifier = Modifier
                         .zIndex(if (dragging) 1f else 0f)
-                        .graphicsLayer { translationY = if (dragging) autoplayDrag.dragOffset else 0f }
+                        .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
                         .then(if (dragging) Modifier else Modifier.animateItem()),
                 )
             }
@@ -2830,6 +3192,52 @@ private fun List<Song>.stableQueueKeys(prefix: String = ""): List<String> {
 }
 
 /**
+ * How far in from either end of the queue a held row starts scrolling the list,
+ * and how fast it scrolls once it is all the way at the edge.
+ *
+ * The zone is a shade deeper than the 28.dp the list fades out over, so the
+ * list is already moving by the time the row begins to disappear into the fade
+ * rather than only once it has. The speed at the edge is about six rows a
+ * second: quick enough to cross a long queue without waiting on it, slow
+ * enough to still read the titles going past and stop on the right one.
+ */
+private val QUEUE_EDGE_SCROLL_ZONE = 40.dp
+private val QUEUE_EDGE_SCROLL_SPEED = 340.dp
+
+/**
+ * The pace, in pixels a second, to scroll a list at while a row occupying
+ * [top] to [bottom] is held in a viewport spanning [viewportStart] to
+ * [viewportEnd] — negative towards the start of the list, positive towards its
+ * end, and zero while the row is clear of both edges.
+ *
+ * Ramped by how far into the [zone] the row has reached, so how fast the queue
+ * goes by stays the user's to choose — but from a fifth of [speed] rather than
+ * from nothing, since a row just inside the zone should visibly move the list
+ * instead of creeping a pixel a second until it is pushed further. A viewport
+ * too short to hold the row clear of both edges at once scrolls neither way,
+ * rather than picking one arbitrarily and running away with it.
+ */
+internal fun edgeScrollSpeed(
+    top: Float,
+    bottom: Float,
+    viewportStart: Int,
+    viewportEnd: Int,
+    zone: Float,
+    speed: Float,
+): Float {
+    if (zone <= 0f) return 0f
+    val intoStart = (viewportStart + zone) - top
+    val intoEnd = bottom - (viewportEnd - zone)
+    val reach = when {
+        intoStart > 0f && intoEnd <= 0f -> -intoStart
+        intoEnd > 0f && intoStart <= 0f -> intoEnd
+        else -> return 0f
+    }
+    val ramp = speed * (0.2f + 0.8f * (abs(reach) / zone).coerceAtMost(1f))
+    return if (reach < 0f) -ramp else ramp
+}
+
+/**
  * Drag-to-reorder for one contiguous section of [InlineQueue]'s LazyColumn —
  * the user's own queue and AutoPlay's each get their own instance, since a
  * drag never crosses the boundary between them.
@@ -2838,8 +3246,7 @@ private fun List<Song>.stableQueueKeys(prefix: String = ""): List<String> {
  * neighbour, so the live queue is always what's on screen and the rows the
  * drag displaces animate to their new slots off it. The dragged row is
  * tracked by its LazyColumn key rather than by index, because the index under
- * it changes with every swap; [dragOffset] is corrected by the same distance
- * the row jumps so it stays put under the finger while its slot moves.
+ * it changes with every swap.
  *
  * [lazyRange] is the section's span of LazyColumn indices, and [lazyOffset]
  * the distance from those to queue indices — the AutoPlay heading is a row
@@ -2856,60 +3263,305 @@ private fun rememberQueueDragState(
     state.lazyRange = lazyRange
     state.lazyOffset = lazyOffset
     state.onMove = onMove
+    with(LocalDensity.current) {
+        state.edgeZone = QUEUE_EDGE_SCROLL_ZONE.toPx()
+        state.edgeSpeed = QUEUE_EDGE_SCROLL_SPEED.toPx()
+    }
+
+    // Held near either end of the list, the row scrolls it. A track can be
+    // moved across a queue many screens long without letting go, where before
+    // the only way down was to drop the row at the edge, scroll by hand and
+    // pick it up again, once per screenful.
+    //
+    // What the scroll moves is the list, not the finger, and
+    // [QueueDragState.onScrolled] says exactly that: the held position stays
+    // where it is and the new layout is read back against it. The row sits
+    // still on screen while the rows above or below slide past it, and swaps
+    // through them on the same terms it would if the finger had covered the
+    // distance itself.
+    val direction = state.autoScrollDir
+    LaunchedEffect(state, direction) {
+        if (direction == 0) return@LaunchedEffect
+        listState.scroll {
+            var previous = withFrameNanos { it }
+            while (true) {
+                val now = withFrameNanos { it }
+                // A frame the system dropped, paid back in full, lands as a
+                // lurch — so it isn't.
+                val seconds = ((now - previous) / 1_000_000_000f).coerceAtMost(1f / 30f)
+                previous = now
+                val scrolled = scrollBy(state.autoScrollSpeed * seconds)
+                // Nowhere left to scroll, or the row has left the edge and the
+                // speed has gone to nothing. Let the list's scroll go rather
+                // than spin on it holding the lock: the row can still be
+                // dragged the rest of the way by hand, and coming back to an
+                // edge starts this over.
+                if (scrolled == 0f) break
+                state.onScrolled()
+            }
+        }
+    }
     return state
 }
 
+/**
+ * Where a held row is being held, what it may do from there, and the moves it
+ * has sent to the player on the way.
+ *
+ * The whole thing turns on one number: [heldCenter], where the row's centre is
+ * being held, in the LazyColumn's own viewport pixels. The finger moves it and
+ * nothing else does — not a scroll, not a swap, not a relayout. Everything
+ * drawn or decided is then read back off the live layout against it: the row
+ * is drawn at whatever its slot currently is plus the distance to
+ * [heldCenter], and it trades places with whichever neighbour's slot
+ * [heldCenter] has reached into.
+ *
+ * Tracking where the row is rather than how far it has come is what lets the
+ * drag survive the list moving underneath it. The offset this replaces was
+ * kept by hand — corrected on every scrolled pixel and again on every swap —
+ * and held together only for as long as it was told about every last thing
+ * that moved the list. It wasn't: LazyColumn re-anchors its own scroll
+ * position when the row it measures from is reordered elsewhere (see
+ * [swapTarget]), and one such jump left the offset a full row wrong, the row
+ * drawn a row off the finger and its slot pushed clean out of the viewport.
+ * Read fresh off the layout there is nothing left to be wrong — wherever the
+ * list has ended up, the row is still under the finger.
+ */
 private class QueueDragState(private val listState: LazyListState) {
     var lazyRange: IntRange = IntRange.EMPTY
     var lazyOffset: Int = 0
     var onMove: (Int, Int) -> Unit = { _, _ -> }
 
+    /** [QUEUE_EDGE_SCROLL_ZONE] and [QUEUE_EDGE_SCROLL_SPEED], in pixels. */
+    var edgeZone: Float = 0f
+    var edgeSpeed: Float = 0f
+
     /** LazyColumn key of the row being dragged; null at rest. */
     var draggedKey by mutableStateOf<Any?>(null)
         private set
-    var dragOffset by mutableFloatStateOf(0f)
+
+    /**
+     * How far from its own slot to draw the held row, in pixels.
+     *
+     * Not simply the distance to [heldCenter]: a queue longer than the screen
+     * has nowhere to show a row above its first slot or below its last, so a
+     * finger held past either end was drawing the row off the list into
+     * nothing. Kept inside the viewport it sits at whichever edge it reached
+     * and stays visible there while the auto-scroll carries the list under it.
+     */
+    var renderOffset by mutableFloatStateOf(0f)
         private set
+
+    /**
+     * Which way the list is scrolling itself under the held row: -1 towards the
+     * start of the queue, 1 towards its end, 0 not at all. State, because this
+     * is what starts and stops the loop that does the scrolling.
+     */
+    var autoScrollDir by mutableIntStateOf(0)
+        private set
+
+    /**
+     * How fast it is doing so, signed, in pixels a second — and deliberately
+     * *not* state. It changes with every pixel of drag travel, and only the
+     * loop reads it, once a frame; as state it would recompose the whole queue
+     * on every touch event to tell the composition something it has no use for.
+     */
+    var autoScrollSpeed: Float = 0f
+        private set
+
+    /**
+     * Where the finger is holding the row's centre, in viewport pixels. NaN
+     * until the first drag event, which takes it from the row's own slot — a
+     * drag begins with the row exactly where it already was.
+     */
+    private var heldCenter: Float = Float.NaN
 
     /** Where the last swap put the row, until the list is laid out with it. */
     private var awaiting: Int? = null
 
     fun onDragStart(key: Any) {
         draggedKey = key
-        dragOffset = 0f
+        heldCenter = Float.NaN
+        renderOffset = 0f
         awaiting = null
+        setAutoScroll(0f)
     }
 
-    fun onDrag(deltaY: Float) {
+    /** The finger moved [deltaY] pixels and the list stayed put. */
+    fun onDrag(deltaY: Float) = settle(deltaY)
+
+    /** The list moved under the finger and the finger stayed put. */
+    fun onScrolled() = settle(0f)
+
+    fun onDragEnd() {
+        draggedKey = null
+        heldCenter = Float.NaN
+        renderOffset = 0f
+        awaiting = null
+        setAutoScroll(0f)
+    }
+
+    /**
+     * Takes the drag in [deltaY] pixels further, then reads the list back to
+     * see where that leaves the row: where to draw it, whether it has reached
+     * an edge, and whether it has reached a neighbour worth trading with.
+     */
+    private fun settle(deltaY: Float) {
         val key = draggedKey ?: return
-        dragOffset += deltaY
         val items = listState.layoutInfo.visibleItemsInfo
-        val dragged = items.find { it.key == key } ?: return
+        // The row's own slot is off screen. There is nothing to measure an
+        // edge or a swap against and nothing to draw against either, so the
+        // way back is to stand still and let the swap already sent land and
+        // bring the slot into view. If the row has been disposed outright
+        // rather than merely scrolled past, it ends the drag itself on the
+        // way out — see the disposal guard in [InlineQueueRow].
+        val dragged = items.find { it.key == key } ?: run {
+            setAutoScroll(0f)
+            return
+        }
+        val half = dragged.size / 2f
+        if (heldCenter.isNaN()) heldCenter = dragged.offset + half
+        heldCenter += deltaY
+        holdToSection(items, dragged)
+
+        val top = heldCenter - half
+        // Aimed before the guard below, not after: a swap in flight is a frame
+        // or two of the list not having caught up yet, and the scroll should
+        // carry on evenly through those rather than stutter once per row.
+        aimAutoScroll(top, dragged)
+        renderOffset = insideViewport(top, dragged.size) - dragged.offset
+
         // A swap already sent but not yet laid out: deciding the next one off
         // a position the list has moved on from would send a second move for
         // a swap that has already happened, and the two would fight.
-        awaiting?.let { if (dragged.index != it) return else awaiting = null }
-        val draggedCenter = dragged.offset + dragged.size / 2f + dragOffset
+        awaiting?.let {
+            if (dragged.index != it) return
+            awaiting = null
+        }
+        val target = swapTarget(items, dragged) ?: return
+        onMove(dragged.index - lazyOffset, target.index - lazyOffset)
+        awaiting = target.index
+    }
+
+    /**
+     * The neighbour [heldCenter] has reached far enough into to trade places
+     * with, or null while there is none to trade with yet.
+     */
+    private fun swapTarget(
+        items: List<LazyListItemInfo>,
+        dragged: LazyListItemInfo,
+    ): LazyListItemInfo? {
         // Only rows of this section are fair targets — the heading and the
         // other section's rows share the LazyColumn but not this range.
         val target = items
             .filter { it.index in lazyRange && it.index != dragged.index }
-            .minByOrNull { abs((it.offset + it.size / 2f) - draggedCenter) }
-            ?: return
+            .minByOrNull { abs((it.offset + it.size / 2f) - heldCenter) }
+            ?: return null
         // Held short of halfway the rows would swap back and forth over a
         // single pixel of travel; a full half-height of overlap is what makes
         // one swap per row crossed.
-        if (abs(draggedCenter - (target.offset + target.size / 2f)) > target.size / 2f) return
-        onMove(dragged.index - lazyOffset, target.index - lazyOffset)
-        // The row is about to land where the target was — fold that jump back
-        // into the offset so it doesn't move out from under the finger.
-        dragOffset += (dragged.offset - target.offset)
-        awaiting = target.index
+        if (abs(heldCenter - (target.offset + target.size / 2f)) > target.size / 2f) return null
+        // Never with the row the list is keeping its own place by, while there
+        // is still list above it to scroll.
+        //
+        // LazyColumn remembers where it is scrolled to as the *key* of its
+        // first visible row plus an offset into it. Reorder that particular
+        // row and it follows the key to wherever the row went, which slides
+        // the entire list along by a row — and the held row, which has just
+        // moved into the slot that row left, goes off the top of the viewport
+        // with it. LazyColumn then disposes it, and disposal cancels the drag
+        // gesture outright: neither onDragEnd nor onDragCancel runs, so the
+        // row was left highlighted and offset with nothing dragging it,
+        // stranded a row above where it was picked up. Dragging *down* never
+        // met this, because the row traded with is the one below and the list
+        // anchors on the one at the top; dragging up, the row traded with is
+        // precisely the one the edge scroll is drawing in at the top, which is
+        // why one direction worked and the other did not.
+        //
+        // Declining to swap this frame is the whole fix. The scroll that
+        // brought the row here carries on, the next row up becomes the one the
+        // list is anchored by, and the trade goes through a few frames later —
+        // by which time it moves nothing the list is holding on to. With no
+        // list left above to scroll there is no jump to decline in the first
+        // place, so a row can still be dropped into the first slot of its
+        // section.
+        if (target.index == listState.firstVisibleItemIndex && listState.canScrollBackward) {
+            return null
+        }
+        return target
     }
 
-    fun onDragEnd() {
-        draggedKey = null
-        dragOffset = 0f
-        awaiting = null
+    /**
+     * Points the auto-scroll at whichever edge the row now spanning [top] has
+     * reached, if either — but only while there is both a row that way for it
+     * to swap with and list left to scroll. Held past the last row of its own
+     * section it would otherwise keep the list moving with no move left to
+     * make, carrying the row's slot away under a finger that has nothing left
+     * to answer with.
+     */
+    private fun aimAutoScroll(top: Float, dragged: LazyListItemInfo) {
+        val info = listState.layoutInfo
+        val speed = edgeScrollSpeed(
+            top = top,
+            bottom = top + dragged.size,
+            viewportStart = info.viewportStartOffset,
+            viewportEnd = info.viewportEndOffset,
+            zone = edgeZone,
+            speed = edgeSpeed,
+        )
+        val blocked = when {
+            speed < 0f -> dragged.index <= lazyRange.first || !listState.canScrollBackward
+            speed > 0f -> dragged.index >= lazyRange.last || !listState.canScrollForward
+            else -> true
+        }
+        setAutoScroll(if (blocked) 0f else speed)
+    }
+
+    /**
+     * Holds the drag inside the section it started in.
+     *
+     * A row can only be dropped between the first and last slots of its own
+     * section — the playing track and the history above it are not the user's
+     * to reorder, and neither is the far side of the AutoPlay heading. The
+     * swap loop already respects that, by having no target to offer past
+     * either end; what it does not do is stop [heldCenter] running on past the
+     * boundary, and a finger a screen beyond it then has that whole distance
+     * to travel back before the row answers again. Held at the boundary it
+     * stops there under the finger, which is what "this is as far as it goes"
+     * ought to look like.
+     *
+     * Only the ends actually on screen bound anything. A section that runs off
+     * the viewport has more of itself that way for the auto-scroll to bring
+     * in, and holding to whichever of its rows happens to be measured would
+     * stop the drag at the edge of the screen instead of at the edge of the
+     * section.
+     */
+    private fun holdToSection(items: List<LazyListItemInfo>, dragged: LazyListItemInfo) {
+        val half = dragged.size / 2f
+        items.firstOrNull { it.index == lazyRange.first }?.let {
+            heldCenter = heldCenter.coerceAtLeast(it.offset + half)
+        }
+        items.firstOrNull { it.index == lazyRange.last }?.let {
+            heldCenter = heldCenter.coerceAtMost(it.offset + it.size - half)
+        }
+    }
+
+    /** [top], kept where a row of [size] can still be seen — see [renderOffset]. */
+    private fun insideViewport(top: Float, size: Int): Float {
+        val info = listState.layoutInfo
+        val minTop = info.viewportStartOffset.toFloat()
+        val maxTop = (info.viewportEndOffset - size).toFloat().coerceAtLeast(minTop)
+        return top.coerceIn(minTop, maxTop)
+    }
+
+    private fun setAutoScroll(speed: Float) {
+        autoScrollSpeed = speed
+        val direction = when {
+            speed > 0f -> 1
+            speed < 0f -> -1
+            else -> 0
+        }
+        if (autoScrollDir != direction) autoScrollDir = direction
     }
 }
 
@@ -2926,6 +3578,21 @@ private fun InlineQueueRow(
     onDrag: (Float) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
+    // LazyColumn disposes a row the instant its slot leaves the viewport, and
+    // that takes the drag gesture below down with it: the coroutine running
+    // [detectDragGestures] is cancelled where it stands, so neither onDragEnd
+    // nor onDragCancel is ever reached and the drag is left held by nothing —
+    // the row comes back into view highlighted and offset from its slot, and
+    // stays that way until the queue is closed. The swap guard in
+    // [QueueDragState.swapTarget] is what stops the slot being thrown out of
+    // the viewport in the first place; this is here because "the gesture ended
+    // and nothing was told" should not be a state the queue can be left in at
+    // all, whatever put it there.
+    val heldOnDispose by rememberUpdatedState(dragging)
+    val endDrag by rememberUpdatedState(onDragEnd)
+    DisposableEffect(Unit) {
+        onDispose { if (heldOnDispose) endDrag() }
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()

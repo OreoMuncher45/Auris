@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -49,7 +50,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -188,9 +188,10 @@ fun DetailScreen(
     val palette = rememberArtworkPalette(page.thumbnailUrl)
 
     // What marks a row as already downloaded, tinted from the sleeve like the
-    // rest of the page. Null on the Downloads page: every row there qualifies,
-    // so the badge would be decoration rather than information.
-    val downloadedTint = palette.accent.takeIf { page.browseId != "local:downloads" }
+    // rest of the page. Null on any page that is itself a reading of this
+    // device — the Downloads folder, one downloaded playlist — where every row
+    // qualifies and the badge would be decoration rather than information.
+    val downloadedTint = palette.accent.takeUnless { page.browseId.startsWith("local:") }
 
     // Animated cover art on the header, the same feature the player has.
     // Albums only: a playlist's artwork is a collage and an artist page's is a
@@ -215,13 +216,19 @@ fun DetailScreen(
     }
 
     val pageHaze = remember { HazeState() }
-    // The artwork is drawn behind the list rather than in it, so both need to
-    // agree on its height without being able to ask each other. The width is
-    // the screen's, so the ratio decides it and both can work it out alone.
-    val artHeight = LocalConfiguration.current.screenWidthDp.dp /
-        if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO
 
-    Box(modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        // The artwork is drawn behind the list rather than in it, so both need
+        // to agree on its height without being able to ask each other. The
+        // width is the page's, so the ratio decides it and both can work it out
+        // alone.
+        //
+        // Measured rather than read off the window, because the two are not the
+        // same number everywhere: on a tablet the page is the column left over
+        // once the player has its pane, and a height derived from the whole
+        // window there is a sleeve half again as tall as it is wide.
+        val artHeight = maxWidth / if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO
+
         PageBackground(
             page = page,
             palette = palette,

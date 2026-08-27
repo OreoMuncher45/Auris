@@ -1,8 +1,8 @@
 package com.music.bitchord.download
 
 /**
- * Writes iTunes-style metadata atoms — title, artist, album, cover — into an
- * already-downloaded M4A/MP4 file, in place.
+ * Writes iTunes-style metadata atoms — title, artist, album, lyrics, cover —
+ * into an already-downloaded M4A/MP4 file, in place.
  *
  * There is no public Android API for this: [android.media.MediaMuxer] can
  * copy tracks into a fresh MP4 but has no way to declare a title or embed
@@ -47,15 +47,22 @@ object Mp4Tagger {
         title: String,
         artist: String,
         album: String?,
+        lyrics: String?,
         cover: ByteArray?,
         coverIsPng: Boolean,
     ): ByteArray {
         val items = mutableListOf<ByteArray>()
-        // © is iTunes's own "copyright" prefix for the three text atoms
+        // © is iTunes's own "copyright" prefix for the four text atoms
         // below — not a copyright mark here, just the byte their readers key on.
         if (title.isNotBlank()) items += textItem("©nam", title)
         if (artist.isNotBlank()) items += textItem("©ART", artist)
         if (!album.isNullOrBlank()) items += textItem("©alb", album)
+        // `©lyr` is a UTF-8 text atom like the three above, with no length limit
+        // and no objection to newlines, so LRC goes in as-is. There is a
+        // separate `Sync Lyrics`/`sylt`-style representation in some tools;
+        // nothing writes it, because `©lyr` holding LRC is what the players
+        // that show synced lyrics for an M4A actually read.
+        if (!lyrics.isNullOrBlank()) items += textItem("©lyr", lyrics)
         if (cover != null && cover.isNotEmpty()) items += coverItem(cover, coverIsPng)
         if (items.isEmpty()) return bytes
 
