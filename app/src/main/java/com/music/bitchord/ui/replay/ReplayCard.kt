@@ -1,11 +1,5 @@
 package com.music.bitchord.ui.replay
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -23,7 +17,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -43,9 +36,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
-import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 
@@ -79,8 +70,6 @@ import com.music.bitchord.ui.player.rememberArtworkColors
  *    under a pale gradient fill — is how a real card's raised type catches the
  *    light, and it is why those lines read as pressed into the card rather than
  *    printed on it;
- *  - the **sheen** sweeps across on a slow loop, because a card in the hand is
- *    never lit flatly;
  *  - the **logo sits top-right**, opposite what the card is for, so the two
  *    corners of the head each carry one fact and neither is a caption for the
  *    other.
@@ -88,10 +77,12 @@ import com.music.bitchord.ui.player.rememberArtworkColors
  * ## Why the background is the player's own mesh
  *
  * Sampled from the artwork this card is about, so no two people's cards look
- * alike and each one is lit by the record it is describing. It keeps drifting
- * rather than settling, which is the one place in the app that is true — see
- * [MeshGradientBackground]'s `continuous`, and the note there about why a
- * full screen does not get the same treatment.
+ * alike and each one is lit by the record it is describing. It is drawn once
+ * and held still — [MeshGradientBackground]'s `animated = false` — rather
+ * than crossfading or drifting, since a row of these redrawing a blurred
+ * layer every time a card is opened or swiped past is the expensive case the
+ * class note there warns about, multiplied by however many cards are on
+ * screen.
  */
 @Composable
 fun ReplayCreditCard(
@@ -117,8 +108,8 @@ fun ReplayCreditCard(
         MeshGradientBackground(
             palette = palette,
             trackKey = artworkUrl ?: label,
-            continuous = true,
             blurRadius = 34.dp,
+            animated = false,
         )
         // Deepened towards the foot, where the embossed lines are: the mesh is
         // built to be bright and those lines are pale, and without this the
@@ -134,7 +125,6 @@ fun ReplayCreditCard(
                     ),
                 ),
         )
-        Sheen()
 
         Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 16.dp)) {
             // The two things a card says about itself, at the two corners a card
@@ -252,44 +242,6 @@ private fun Embossed(text: String, size: TextUnit) {
         ),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-    )
-}
-
-/**
- * The highlight that travels across the face.
- *
- * A band of white at a few percent, swept corner to corner on a long loop. Kept
- * faint on purpose: at any strength you would call "shiny" while looking at a
- * still, it reads as a glare on a screenshot rather than as a card catching the
- * light. It also goes when "reduce animation" does, which is why the sweep is
- * driven from the same setting everything else in the app is.
- */
-@Composable
-private fun Sheen() {
-    val reduce by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    if (reduce) return
-    val transition = rememberInfiniteTransition(label = "sheen")
-    val offset by transition.animateFloat(
-        initialValue = -1f,
-        targetValue = 2f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(5_200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "sheenOffset",
-    )
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(
-                Brush.linearGradient(
-                    colorStops = arrayOf(
-                        (offset - 0.22f).coerceIn(0f, 1f) to Color.Transparent,
-                        offset.coerceIn(0f, 1f) to Color.White.copy(alpha = 0.13f),
-                        (offset + 0.22f).coerceIn(0f, 1f) to Color.Transparent,
-                    ),
-                ),
-            ),
     )
 }
 

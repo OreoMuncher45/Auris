@@ -1760,7 +1760,11 @@ private fun BitChordApp(
             // tablet the player is visible whatever the menu was opened from.
             val fromPlayer = menuFromPlayer
             val share: () -> Unit = {
-                Toast.makeText(context, "Sharing is coming soon", Toast.LENGTH_SHORT).show()
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.videoId}")
+                }
+                context.startActivity(Intent.createChooser(sendIntent, song.title))
                 songActions = null
             }
             // Navigating has to take the player down with the sheet, or the
@@ -1830,7 +1834,11 @@ private fun BitChordApp(
                     // whatever ids it's ever going to have.
                     resolvingLinks = fromPlayer && linksLoading,
                     showSleepTimer = fromPlayer,
-                    onShare = share.takeIf { fromPlayer },
+                    // Hidden outright when there's no real YouTube id behind
+                    // this row to build a link from — SongActionsSheet already
+                    // drops it for a local file via `isOffline`, this catches
+                    // the rest.
+                    onShare = share.takeIf { song.videoId.isNotBlank() },
                     onCopyLog = if (fromPlayer) {
                         {
                             songActions = null

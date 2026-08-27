@@ -110,7 +110,7 @@ fun ReplayScreen(
     val palette = rememberArtworkColors(leadArtwork)
 
     Box(modifier.fillMaxSize()) {
-        MeshGradientBackground(palette = palette, trackKey = leadArtwork)
+        MeshGradientBackground(palette = palette, trackKey = leadArtwork, animated = false)
         // The mesh is built to sit behind a player, where the only thing over it
         // is a handful of large controls. A page of ranked lists needs a good
         // deal more separation than that, so most of it is put back under ink.

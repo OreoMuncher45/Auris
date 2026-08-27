@@ -305,7 +305,7 @@ private fun Stage(
         // about and rotated per card — so no two backdrops in the run are the
         // same colour. Keyed on the page as well as the artwork, or a card
         // sharing a cover with the one before it would not crossfade at all.
-        MeshGradientBackground(palette = palette, trackKey = page.name)
+        MeshGradientBackground(palette = palette, trackKey = page.name, animated = false)
         // Enough ink for white type, weighted to the top where the headline sits
         // and to the foot where the controls do.
         //
