@@ -31,6 +31,7 @@ import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.delay
 import java.io.File
+import java.util.Locale
 
 /**
  * The playhead, deliberately kept out of [PlayerState].
@@ -293,7 +294,7 @@ private val DIRECT_FILE_URI_EXTENSIONS = setOf(
 
 private fun resolvePlaybackUri(uriString: String, localPath: String?): String {
     if (localPath.isNullOrBlank() || !uriString.startsWith("content://")) return uriString
-    val ext = localPath.substringAfterLast('.', "").lowercase()
+    val ext = localPath.substringAfterLast('.', "").lowercase(Locale.ROOT)
     if (ext !in DIRECT_FILE_URI_EXTENSIONS) return uriString
     val file = File(localPath)
     return if (file.exists() && file.canRead()) Uri.fromFile(file).toString() else uriString

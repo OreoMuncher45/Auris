@@ -181,6 +181,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlinx.coroutines.launch
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -3733,7 +3734,7 @@ private fun formatTime(ms: Long): String {
     if (ms <= 0) return "0:00"
     val minutes = TimeUnit.MILLISECONDS.toMinutes(ms)
     val seconds = TimeUnit.MILLISECONDS.toSeconds(ms) % 60
-    return "%d:%02d".format(minutes, seconds)
+    return "%d:%02d".format(Locale.ROOT, minutes, seconds)
 }
 
 /**
@@ -3885,7 +3886,7 @@ private fun NerdStats.Snapshot.describe(): String? {
         codecLabel(mimeType)?.let(::add)
         bitDepth?.let { add("$it-bit") }
         if (!isLossless) bitrateKbps?.let { add("$it kbps") }
-        sampleRateHz?.let { add("%.1f kHz".format(it / 1000f)) }
+        sampleRateHz?.let { add("%.1f kHz".format(Locale.ROOT, it / 1000f)) }
         channels?.let {
             add(
                 when (it) {
@@ -3909,7 +3910,7 @@ private fun codecLabel(mimeType: String?): String? = when {
     mimeType.endsWith("mpeg") -> "MP3"
     mimeType.endsWith("flac") -> "FLAC"
     mimeType.endsWith("alac") -> "ALAC"
-    else -> mimeType.substringAfter('/').uppercase()
+    else -> mimeType.substringAfter('/').uppercase(Locale.ROOT)
 }
 
 /** Wording for the stats line; see [TrackAnalysisState]. */

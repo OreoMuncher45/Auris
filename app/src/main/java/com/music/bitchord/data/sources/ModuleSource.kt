@@ -271,11 +271,11 @@ class ModuleSource(
      * guessed at — [kbpsFor] carries what is known about those instead.
      */
     private fun codecOf(mimeType: String?, quality: String?, url: String): String? {
-        mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase()
+        mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
             ?.takeIf { it.isNotEmpty() }
             ?.let { return it }
         if (qualityTier(quality.orEmpty()) == LOSSLESS) return "flac"
-        return url.substringBefore('?').substringAfterLast('.').lowercase()
+        return url.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)
             .takeIf { it in AUDIO_EXTENSIONS }
     }
 
@@ -438,7 +438,7 @@ class ModuleSource(
          * codec, and it is the codec that settles it.
          */
         fun qualityTier(label: String): String? {
-            val text = label.uppercase()
+            val text = label.uppercase(Locale.ROOT)
             return when {
                 text.isBlank() -> null
                 LOSSLESS_HINTS.any { it in text } -> LOSSLESS

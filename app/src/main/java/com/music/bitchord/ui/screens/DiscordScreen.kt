@@ -526,7 +526,7 @@ private fun RichPresencePreview(
 
     Column(Modifier.fillMaxWidth().padding(16.dp)) {
         Text(
-            text = "$verb $heading".uppercase(),
+            text = "$verb $heading".uppercase(Locale.ROOT),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.W700,
             color = MaterialTheme.colorScheme.onBackground,

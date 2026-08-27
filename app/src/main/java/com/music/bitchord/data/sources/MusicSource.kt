@@ -36,7 +36,7 @@ data class StreamFormat(
     /** "24-bit · 192 kHz", "FLAC", "320 kbps" — whichever parts are known. */
     val summary: String
         get() = listOfNotNull(
-            codec?.uppercase(),
+            codec?.uppercase(Locale.ROOT),
             bitDepth?.let { "$it-bit" },
             sampleRateHz?.let { "${"%.1f".format(Locale.ROOT, it / 1000f).removeSuffix(".0")} kHz" },
             kbps?.takeIf { isLossless != true }?.let { "$it kbps" },

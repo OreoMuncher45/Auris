@@ -53,6 +53,7 @@ import kotlinx.coroutines.launch
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import java.util.concurrent.atomic.AtomicLong
+import java.util.Locale
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -956,7 +957,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _home.value = YtMusicRepository.home().fold(
             onSuccess = { feed ->
                 homeContinuation = feed.continuation
-                val shelves = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase()) }
+                val shelves = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
                 if (shelves.isEmpty()) UiState.Error("No results from YouTube Music")
                 else UiState.Success(shelves)
             },
@@ -975,7 +976,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _homeLoadingMore.value = true
         viewModelScope.launch {
             YtMusicRepository.moreHome(token).onSuccess { feed ->
-                val added = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase()) }
+                val added = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
                 // A page with nothing new signals the feed has looped back on
                 // itself rather than run dry with a token still attached —
                 // treat it the same as exhausted so scrolling can't spin here.

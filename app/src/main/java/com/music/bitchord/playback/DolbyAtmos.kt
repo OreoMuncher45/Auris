@@ -18,6 +18,7 @@ import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.Locale
 
 /**
  * Whether the device has Dolby Atmos, and whether it is switched on right now.
@@ -127,7 +128,7 @@ object DolbyAtmos {
     private val dolbyEffect: Boolean by lazy {
         runCatching {
             AudioEffect.queryEffects()?.any { descriptor ->
-                val identity = "${descriptor.implementor} ${descriptor.name}".lowercase()
+                val identity = "${descriptor.implementor} ${descriptor.name}".lowercase(Locale.ROOT)
                 DOLBY_MARKERS.any { it in identity }
             } == true
         }.getOrDefault(false)

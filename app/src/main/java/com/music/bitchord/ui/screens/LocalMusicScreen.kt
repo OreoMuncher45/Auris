@@ -80,6 +80,7 @@ import com.music.bitchord.ui.components.TopBarContentGap
 import com.music.bitchord.ui.components.topBarHeight
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
+import java.util.Locale
 
 private const val LOCAL_TAB_SONGS = 0
 private const val LOCAL_TAB_ARTISTS = 1
@@ -296,7 +297,7 @@ fun LocalMusicScreen(
                         songs.groupBy { it.artist }
                             .entries
                             .filter { searchQuery.isBlank() || it.key.contains(searchQuery, ignoreCase = true) }
-                            .sortedBy { it.key.lowercase() }
+                            .sortedBy { it.key.lowercase(Locale.ROOT) }
                     }
                     ArtistsTab(
                         artists = artists,
@@ -528,14 +529,14 @@ private fun albumEntries(
             key = "asked:${collection.id}",
         )
     }
-    val claimed = asked.mapTo(HashSet()) { it.title.lowercase() }
+    val claimed = asked.mapTo(HashSet()) { it.title.lowercase(Locale.ROOT) }
     val derived = songs
         .groupBy { it.albumName }
         .mapNotNull { (name, group) ->
             // Null is every track that never said what release it was off, and
             // there is no row to draw for "no album" — those are the Songs tab's
             // and nothing else's.
-            if (name == null || name.lowercase() in claimed) return@mapNotNull null
+            if (name == null || name.lowercase(Locale.ROOT) in claimed) return@mapNotNull null
             AlbumEntry(
                 title = name,
                 artist = group.firstOrNull()?.artist.orEmpty(),
@@ -547,7 +548,7 @@ private fun albumEntries(
             )
         }
     return (asked + derived).sortedWith(
-        compareByDescending<AlbumEntry> { it.asked }.thenBy { it.title.lowercase() },
+        compareByDescending<AlbumEntry> { it.asked }.thenBy { it.title.lowercase(Locale.ROOT) },
     )
 }
 

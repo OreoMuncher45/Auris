@@ -28,6 +28,7 @@ import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import java.io.OutputStream
+import java.util.Locale
 
 /** Where a track is between "not on this device" and "on it". */
 sealed interface DownloadState {
@@ -339,7 +340,7 @@ object Downloads {
         if (_collections.value.isEmpty()) return emptyList()
         return _collections.value.values
             .filter { record -> record.playlist && record.videoIds.any { it in onDisk } }
-            .sortedBy { it.title.lowercase() }
+            .sortedBy { it.title.lowercase(Locale.ROOT) }
     }
 
     /**
@@ -381,7 +382,7 @@ object Downloads {
                     )
                 }
             }
-            .sortedBy { it.title.lowercase() }
+            .sortedBy { it.title.lowercase(Locale.ROOT) }
     }
 
     private fun recordCollections(map: Map<String, SavedCollection>) {

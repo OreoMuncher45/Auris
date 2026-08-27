@@ -8,6 +8,7 @@ import android.system.ErrnoException
 import android.system.Os
 import android.util.Log
 import java.io.IOException
+import java.util.Locale
 
 /**
  * A reader over a track that is already on the device, for [TrackAnalyzer].
@@ -53,7 +54,7 @@ internal object LocalAudioSource {
     private const val TAG = "BitChordLocalAudio"
 
     /** Whether [uri] names a file on the device rather than something to fetch. */
-    fun isLocal(uri: Uri): Boolean = when (uri.scheme?.lowercase()) {
+    fun isLocal(uri: Uri): Boolean = when (uri.scheme?.lowercase(Locale.ROOT)) {
         ContentResolver.SCHEME_FILE, ContentResolver.SCHEME_CONTENT -> true
         else -> false
     }

@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources.module
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import java.util.Locale
 
 /**
  * One plugin descriptor as published in a module-source index.
@@ -42,16 +43,16 @@ data class SpineModule(
 
     val isLossless: Boolean
         get() = tags.any {
-            it.uppercase().contains("LOSSLESS") ||
-                it.uppercase().contains("HI-RES") ||
-                it.uppercase().contains("FLAC")
+            it.uppercase(Locale.ROOT).contains("LOSSLESS") ||
+                it.uppercase(Locale.ROOT).contains("HI-RES") ||
+                it.uppercase(Locale.ROOT).contains("FLAC")
         }
 
-    val hasHiRes: Boolean get() = tags.any { it.uppercase().contains("HI-RES") }
+    val hasHiRes: Boolean get() = tags.any { it.uppercase(Locale.ROOT).contains("HI-RES") }
 
     val isDolbyAtmos: Boolean
         get() = tags.any {
-            it.uppercase().contains("ATMOS") || it.uppercase().contains("DOLBY")
+            it.uppercase(Locale.ROOT).contains("ATMOS") || it.uppercase(Locale.ROOT).contains("DOLBY")
         }
 }
 

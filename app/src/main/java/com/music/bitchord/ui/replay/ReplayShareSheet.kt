@@ -56,6 +56,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.util.Locale
 
 /**
  * The picture, and the apps that can take it.
@@ -276,7 +277,7 @@ private suspend fun saveToGallery(
     bitmap: Bitmap,
     label: String,
 ): Boolean = withContext(Dispatchers.IO) {
-    val name = "bitchord-replay-${label.replace(' ', '-').lowercase()}.png"
+    val name = "bitchord-replay-${label.replace(' ', '-').lowercase(Locale.ROOT)}.png"
     runCatching {
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)

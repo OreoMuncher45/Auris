@@ -14,6 +14,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import java.util.Locale
 
 /**
  * Sandboxed QuickJS engine pool for executing module JS.
@@ -358,7 +359,7 @@ internal object QuickJsExecutor {
             )
         }
 
-        when (method.uppercase()) {
+        when (method.uppercase(Locale.ROOT)) {
             "POST" -> builder.post((body ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
             "PUT" -> builder.put((body ?: "").toRequestBody("application/json; charset=utf-8".toMediaType()))
             "DELETE" -> builder.delete()

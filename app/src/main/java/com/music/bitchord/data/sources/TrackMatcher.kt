@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.model.Song
 import kotlin.math.abs
+import java.util.Locale
 
 /**
  * Decides whether one catalogue's track is the same recording as another's,
@@ -78,7 +79,7 @@ object TrackMatcher {
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
     internal fun primaryArtist(artist: String): String =
-        artist.lowercase().split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
+        artist.lowercase(Locale.ROOT).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
 
     // ── Judging ─────────────────────────────────────────────────────────────
 
@@ -196,7 +197,7 @@ object TrackMatcher {
     internal fun parseTitle(raw: String, artist: String = ""): TitleParts {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
-        var text = raw.lowercase().replace("&", " and ")
+        var text = raw.lowercase(Locale.ROOT).replace("&", " and ")
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -287,7 +288,7 @@ object TrackMatcher {
         if (artist.isBlank()) return false
         val words = text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
-        val credited = artist.lowercase().split(WORD_SPLIT)
+        val credited = artist.lowercase(Locale.ROOT).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
             .toSet()
@@ -328,7 +329,7 @@ object TrackMatcher {
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
     internal fun artistNames(value: String): Set<List<String>> = value
-        .lowercase()
+        .lowercase(Locale.ROOT)
         .split(ARTIST_SEPARATORS)
         .map { name ->
             name.split(WORD_SPLIT)

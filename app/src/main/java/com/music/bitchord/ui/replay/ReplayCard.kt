@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.music.bitchord.R
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
+import java.util.Locale
 
 /**
  * One headline number, as a card you could keep in a wallet.
@@ -166,7 +167,7 @@ fun ReplayCreditCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = label.uppercase(),
+                text = label.uppercase(Locale.ROOT),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.W700,
                 letterSpacing = 1.8.sp,
@@ -180,7 +181,7 @@ fun ReplayCreditCard(
             Row(verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
                     Embossed(
-                        text = holder.ifBlank { DEFAULT_HOLDER }.uppercase(),
+                        text = holder.ifBlank { DEFAULT_HOLDER }.uppercase(Locale.ROOT),
                         size = 13.sp,
                     )
                     if (detail != null) {
@@ -281,7 +282,7 @@ fun InitialTile(text: String, size: Dp, shape: Shape) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = text.take(1).uppercase(),
+            text = text.take(1).uppercase(Locale.ROOT),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.W800,
             color = Color.White,

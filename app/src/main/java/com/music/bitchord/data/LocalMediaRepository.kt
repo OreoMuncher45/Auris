@@ -225,7 +225,7 @@ object LocalMediaRepository {
     }
 
     private fun isAudioFileName(name: String): Boolean {
-        val lower = name.lowercase()
+        val lower = name.lowercase(Locale.ROOT)
         return lower.endsWith(".mp3") || lower.endsWith(".m4a") ||
             lower.endsWith(".flac") || lower.endsWith(".wav") ||
             lower.endsWith(".ogg") || lower.endsWith(".opus") ||

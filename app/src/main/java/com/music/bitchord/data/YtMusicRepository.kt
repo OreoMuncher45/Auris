@@ -25,6 +25,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import java.util.Locale
 
 /** Suspend API over Innertube. Every call returns a Result so the UI can show a real error. */
 object YtMusicRepository {
@@ -126,7 +127,7 @@ object YtMusicRepository {
                 .map { id -> async { runCatching { shelvesOf(id) }.getOrDefault(emptyList()) } }
                 .awaitAll()
             val seen = mutableSetOf<String>()
-            feeds.flatten().filter { seen.add(it.title.lowercase()) }
+            feeds.flatten().filter { seen.add(it.title.lowercase(Locale.ROOT)) }
         }
     }
 

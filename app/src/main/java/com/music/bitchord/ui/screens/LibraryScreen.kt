@@ -43,6 +43,7 @@ import com.music.bitchord.ui.components.librarySkeleton
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.ui.replay.ReplayHeroCard
+import java.util.Locale
 
 /**
  * The signed-in library: the saved collections, as shelves of cards.
@@ -303,7 +304,7 @@ private fun ReplayBanner(card: ReplayHeroCard?, onClick: () -> Unit) {
                 Text(
                     // The numbers when there are any, because "5,231 minutes" is
                     // a reason to tap and a description of the feature is not.
-                    text = card?.let { "${it.value} ${it.label.lowercase()} · ${it.detail}" }
+                    text = card?.let { "${it.value} ${it.label.lowercase(Locale.ROOT)} · ${it.detail}" }
                         ?: "Top songs, artists, albums and genres — counted on this device",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.82f),

@@ -67,7 +67,7 @@ fun rememberReplayState(active: Boolean): Pair<ReplayState, (ReplayPeriod) -> Un
         // A directory listing, so off the composition's thread.
         memberSince = withContext(Dispatchers.IO) {
             ListeningStats.months().firstOrNull()?.let {
-                "%02d/%02d".format(it.monthValue, it.year % 100)
+                "%02d/%02d".format(Locale.ROOT, it.monthValue, it.year % 100)
             }
         }
     }

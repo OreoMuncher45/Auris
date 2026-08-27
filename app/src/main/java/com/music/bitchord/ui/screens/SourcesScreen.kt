@@ -49,6 +49,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Where the app is allowed to get audio from.
@@ -333,7 +334,7 @@ private fun ServerEditorDialog(
 
     AlertDialog(
         onDismissRequest = { if (!testing) onDismiss() },
-        title = { Text(if (isNew) "Add ${config.kind.label.lowercase()}" else config.displayName) },
+        title = { Text(if (isNew) "Add ${config.kind.label.lowercase(Locale.ROOT)}" else config.displayName) },
         text = {
             Column {
                 OutlinedTextField(

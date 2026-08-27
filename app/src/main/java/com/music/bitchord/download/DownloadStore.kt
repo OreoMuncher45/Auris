@@ -12,6 +12,7 @@ import androidx.annotation.RequiresApi
 import com.music.bitchord.data.model.Song
 import java.io.File
 import java.io.OutputStream
+import java.util.Locale
 
 /**
  * Where a downloaded track goes, and how it gets there.
@@ -129,7 +130,7 @@ object DownloadStore {
      * concerned — the tagger works on the box tree and never asks what the
      * samples inside are.
      */
-    fun storable(codec: String?): Storable? = when (codec?.lowercase()?.trim()) {
+    fun storable(codec: String?): Storable? = when (codec?.lowercase(Locale.ROOT)?.trim()) {
         "flac", "x-flac" -> Storable("flac", "audio/flac")
         "wav", "x-wav", "wave" -> Storable("wav", "audio/x-wav")
         "alac", "m4a", "mp4" -> Storable("m4a", "audio/mp4")

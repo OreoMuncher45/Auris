@@ -227,7 +227,7 @@ object LastFM {
 
     fun normalizeEndpoint(endpoint: String): String {
         val uri = URI(endpoint.trim())
-        val scheme = uri.scheme?.lowercase()
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
         require(scheme == "http" || scheme == "https")
         require(!uri.host.isNullOrBlank())
         require(uri.query == null && uri.fragment == null)

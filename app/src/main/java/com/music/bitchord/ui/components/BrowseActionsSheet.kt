@@ -38,6 +38,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.ui.icons.BitChordIcons
+import java.util.Locale
 
 /**
  * The album or playlist a long-press is acting on.
@@ -239,7 +240,7 @@ private fun BrowseSheetHeader(target: BrowseTarget) {
                 // unknown kind has neither, and gets the track count instead —
                 // which by then is the one thing actually known about it.
                 text = target.subtitle.ifBlank {
-                    target.type.noun.replaceFirstChar { it.uppercase() }.ifBlank {
+                    target.type.noun.replaceFirstChar { it.uppercase(Locale.ROOT) }.ifBlank {
                         target.songs.size.takeIf { it > 0 }
                             ?.let { "$it ${if (it == 1) "song" else "songs"}" }
                             .orEmpty()

@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * The Replay as one picture, drawn to a bitmap you can send.
@@ -398,7 +399,7 @@ private fun drawHeader(
         holder.ifBlank { DEFAULT_HOLDER },
         memberSince?.let { "member since $it" },
     ).joinToString(" · ")
-    canvas.drawText(credit.uppercase(), MARGIN, 182f, type.label(24f, 0x8CFFFFFF.toInt()))
+    canvas.drawText(credit.uppercase(Locale.ROOT), MARGIN, 182f, type.label(24f, 0x8CFFFFFF.toInt()))
     return 300f
 }
 

@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
@@ -264,7 +265,7 @@ object ArtistFacts {
      * admitting "seen live", just less obvious on the page.
      */
     private fun canonical(tag: String): String? {
-        val cleaned = tag.trim().lowercase()
+        val cleaned = tag.trim().lowercase(Locale.ROOT)
             .replace('-', ' ')
             .replace("&", "and")
             .replace(Regex("[^a-z0-9 ]"), "")
@@ -274,7 +275,7 @@ object ArtistFacts {
         return VOCABULARY[cleaned] ?: VOCABULARY[ALIASES[cleaned] ?: return null]
     }
 
-    private fun key(artist: String): String = artist.trim().lowercase()
+    private fun key(artist: String): String = artist.trim().lowercase(Locale.ROOT)
 
     // ── Persistence ─────────────────────────────────────────────────────────
 
@@ -379,7 +380,7 @@ object ArtistFacts {
         "cloud rap", "conscious hip hop", "west coast rap", "east coast rap",
     ).associateWith { normalised ->
         SPELLINGS[normalised] ?: normalised.split(" ").joinToString(" ") { word ->
-            word.replaceFirstChar { it.uppercase() }
+            word.replaceFirstChar { it.uppercase(Locale.ROOT) }
         }
     }
 
