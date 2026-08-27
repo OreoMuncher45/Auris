@@ -200,6 +200,14 @@ class PlaybackService : MediaSessionService() {
     private var autoplayLoadJob: Job? = null
     private var autoplaySeed: String? = null
 
+    /**
+     * Every song AutoPlay has offered or played this service instance, kept
+     * only so "don't repeat suggestions" has something to check against once
+     * a song scrolls out of the live queue or the queue itself is replaced.
+     * Never persisted — a fresh process means a fresh session.
+     */
+    private val sessionSongHistory = mutableListOf<Song>()
+
     private val sessionCallback = object : MediaSession.Callback {
         override fun onConnect(
             session: MediaSession,
@@ -878,40 +886,44 @@ class PlaybackService : MediaSessionService() {
         mediaSession?.setCustomLayout(notificationButtons())
     }
 
-    /** Starts the same radio extension used by the player when AutoPlay is enabled. */
+    /**
+     * Tops the queue back up to [MAX_QUEUED_AUTOPLAY] AutoPlay-suggested tracks
+     * ahead of whatever is currently playing. Run on every track change rather
+     * than only once the queue runs dry, so a freshly played suggestion is
+     * replaced by a new one appended after the ones still waiting instead of
+     * everything arriving in one burst at the end of the queue.
+     */
     private fun loadAutoplayForCurrentTrack() {
         val exoPlayer = player ?: return
-        if (!AppSettings.autoplay.value ||
-            exoPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
-            exoPlayer.hasNextMediaItem()
-        ) {
+        if (!AppSettings.autoplay.value || exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) {
             return
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
+        if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
+        val queuedAutoplay = (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
+            .count { exoPlayer.getMediaItemAt(it).fromAutoplay }
+        val needed = MAX_QUEUED_AUTOPLAY - queuedAutoplay
+        if (needed <= 0) return
         if (autoplaySeed == current.videoId) return
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
-            val existing = (0 until exoPlayer.mediaItemCount)
+            val queueSongs = (0 until exoPlayer.mediaItemCount)
                 .map { exoPlayer.getMediaItemAt(it).toSong() }
-            loadAutoplayTracks(existing, current)
+            val existing = if (AppSettings.dontRepeatSuggestions.value) {
+                queueSongs + sessionSongHistory
+            } else {
+                queueSongs
+            }
+            loadAutoplayTracks(existing, current, needed)
                 .onSuccess { resolved ->
                     val activePlayer = player ?: return@onSuccess
                     if (!AppSettings.autoplay.value ||
-                        activePlayer.currentMediaItem?.mediaId != current.videoId ||
-                        activePlayer.hasNextMediaItem()
+                        activePlayer.currentMediaItem?.mediaId != current.videoId
                     ) {
                         return@onSuccess
                     }
-                    val stillPlaying = player ?: return@onSuccess
-                    if (!AppSettings.autoplay.value ||
-                        stillPlaying.currentMediaItem?.mediaId != current.videoId ||
-                        stillPlaying.hasNextMediaItem()
-                    ) {
-                        return@onSuccess
-                    }
-                    stillPlaying.addMediaItems(
-                        resolved.map { it.toMediaItem() },
-                    )
+                    activePlayer.addMediaItems(resolved.map { it.toMediaItem() })
+                    if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
                 }
                 .onFailure {
                     TrackLog.w("BitChord", "notification autoplay failed: ${it.message}", about = current.videoId)

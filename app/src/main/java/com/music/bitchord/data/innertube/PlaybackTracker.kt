@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -112,6 +113,15 @@ object PlaybackTracker {
     fun onPlaying(videoId: String) {
         if (!VIDEO_ID.matches(videoId)) return
         if (Innertube.cookie == null) return
+        // A downloaded track plays perfectly well with the radio off — the
+        // whole point of downloading it — so this is the one place that has
+        // to ask before trying rather than let a request find out the hard
+        // way. [meteredConnection] is null exactly when there is no active
+        // network, which is the one case worth skipping outright rather than
+        // spending three retries on: nothing here is urgent enough to wait
+        // for connectivity to return, and the play was still counted by
+        // whichever surface reads local listening history.
+        if (AppSettings.meteredConnection.value == null) return
         if (session?.videoId == videoId || opening == videoId) return
         opening = videoId
         scope.launch(TrackLog.about(videoId)) {

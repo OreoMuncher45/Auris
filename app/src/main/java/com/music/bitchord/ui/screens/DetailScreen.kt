@@ -172,8 +172,13 @@ fun DetailScreen(
      * list that isn't already one of the buttons beside it — see
      * [com.music.bitchord.ui.components.BrowseActionsSheet]. Null on the pages
      * with no list to act on.
+     *
+     * The second argument is whether the sheet should open with "Delete
+     * download" already armed — true only when the header's own download
+     * circle was the thing tapped, because by then it's showing a tick and a
+     * tap on a tick means "take it off the device", not "show me the menu".
      */
-    onMore: ((List<Song>) -> Unit)? = null,
+    onMore: ((List<Song>, Boolean) -> Unit)? = null,
     /**
      * Saves this release to the account's library, or takes it out —
      * [DetailPage.library] says which way round. Null hides the control
@@ -414,7 +419,7 @@ private fun ReleaseHeader(
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     onDownload: ((List<Song>) -> Unit)?,
-    onMore: ((List<Song>) -> Unit)?,
+    onMore: ((List<Song>, Boolean) -> Unit)?,
     onArtistClick: (String, String) -> Unit,
     onToggleLibrary: (() -> Unit)?,
 ) {
@@ -549,20 +554,37 @@ private fun ReleaseHeader(
                         // business. Failed entries stay in [Downloads.active]
                         // until dismissed, and a failure is not a wait.
                         val active by Downloads.active.collectAsStateWithLifecycle()
+                        // Same source [DownloadedBadge] reads per row — a release
+                        // counts as downloaded once every one of its own tracks is
+                        // in the saved set, not from any record of the release
+                        // itself.
+                        val saved by Downloads.saved.collectAsStateWithLifecycle()
                         val ids = remember(songs) { songs.mapTo(HashSet()) { it.videoId } }
                         val waiting = active.any { (id, state) ->
                             id in ids &&
                                 (state is DownloadState.Queued || state is DownloadState.Running)
                         }
+                        val downloaded = !waiting && ids.isNotEmpty() && ids.all { it in saved }
                         CircleIconButton(
-                            icon = if (waiting) BitChordIcons.Clock else BitChordIcons.Download,
-                            contentDescription = if (waiting) {
-                                "Downloading"
-                            } else {
-                                "Download all"
+                            icon = when {
+                                waiting -> BitChordIcons.Clock
+                                downloaded -> BitChordIcons.Check
+                                else -> BitChordIcons.Download
+                            },
+                            contentDescription = when {
+                                waiting -> "Downloading"
+                                downloaded -> "Downloaded"
+                                else -> "Download all"
                             },
                             palette = palette,
-                            onClick = { download(songs) },
+                            onClick = {
+                                // A tick means the release is already on the
+                                // device — a second tap on "Download" would do
+                                // nothing (everything is filtered out before the
+                                // queue), so it opens the overflow with "Delete
+                                // download" already armed instead.
+                                if (downloaded) onMore?.invoke(songs, true) else download(songs)
+                            },
                             size = circleSize,
                         )
                     }
@@ -571,7 +593,7 @@ private fun ReleaseHeader(
                             icon = Icons.Rounded.MoreHoriz,
                             contentDescription = "More",
                             palette = palette,
-                            onClick = { more(songs) },
+                            onClick = { more(songs, false) },
                             size = circleSize,
                         )
                     }

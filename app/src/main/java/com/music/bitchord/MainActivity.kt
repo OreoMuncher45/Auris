@@ -1345,7 +1345,7 @@ private fun BitChordApp(
                             // The page's own tracks, so the sheet has them already and
                             // Play, Shuffle and Open are the buttons beside the one that
                             // opened it rather than rows on it.
-                            onMore = { songs ->
+                            onMore = { songs, highlightDeleteDownload ->
                                 browseActions = BrowseTarget(
                                     browseId = page.browseId,
                                     title = page.title,
@@ -1355,6 +1355,7 @@ private fun BitChordApp(
                                     songs = songs.map(withAlbum),
                                     fromCard = false,
                                     downloadId = downloadIdFor(page.browseId),
+                                    highlightDeleteDownload = highlightDeleteDownload,
                                 )
                             },
                             onArtistClick = { id, name ->

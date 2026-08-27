@@ -169,6 +169,7 @@ fun SettingsScreen(
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
+    val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
 
     // Whether the module index URL is baked into this build.
     val losslessConfigured = BuildConfig.MODULE_INDEX_URL.trim().isNotEmpty()
@@ -708,6 +709,23 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setSwipeToPlayNext(!swipeToPlayNext) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.History,
+                title = "Don't repeat songs in current session",
+                subtitle = "AutoPlay won't suggest a song already played or suggested this session",
+                trailing = {
+                    Switch(
+                        checked = dontRepeatSuggestions,
+                        onCheckedChange = AppSettings::setDontRepeatSuggestions,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
             )
             RowDivider()
             SettingsRow(

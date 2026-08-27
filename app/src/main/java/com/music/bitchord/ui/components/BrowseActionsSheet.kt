@@ -96,6 +96,14 @@ data class BrowseTarget(
      * questions about the download record, not about what this sheet is.
      */
     val downloadId: String? = null,
+    /**
+     * Set when the sheet is being opened from the release page's own download
+     * circle after every track is already on disk — that tap means "I know
+     * it's downloaded, let me remove it", not "show me the menu", so the
+     * delete-download row opens already armed instead of making the tap land
+     * twice.
+     */
+    val highlightDeleteDownload: Boolean = false,
 )
 
 /**
@@ -141,7 +149,7 @@ fun BrowseActionsSheet(
 ) {
     var renaming by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
-    var confirmingDeleteDownload by remember { mutableStateOf(false) }
+    var confirmingDeleteDownload by remember { mutableStateOf(target.highlightDeleteDownload) }
 
     val playlist = target.playlist
     if (renaming && playlist != null && onRename != null) {

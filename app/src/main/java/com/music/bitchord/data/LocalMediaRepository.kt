@@ -147,6 +147,16 @@ object LocalMediaRepository {
         if (!hasStoragePermission(context)) return@withContext emptyList()
 
         val songs = mutableListOf<Song>()
+        // This scan runs over every audio file on the device, which includes
+        // whatever this app has downloaded into Music/BitChord alongside
+        // everything else — but by content URI, the only thing MediaStore
+        // offers here, that download is indistinguishable from a file the
+        // user copied on by hand. Reversing [Downloads.saved] hands a
+        // downloaded track its real YouTube id back, which is what lets
+        // PlaybackTracker recognise it as a video worth registering a play
+        // for — a content URI fails its id check on purpose, since most rows
+        // here really are just local files with nothing to sync.
+        val videoIdByUri = Downloads.saved.value.entries.associate { (id, uri) -> uri to id }
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
@@ -196,7 +206,7 @@ object LocalMediaRepository {
 
                     songs.add(
                         Song(
-                            videoId = contentUri,
+                            videoId = videoIdByUri[contentUri] ?: contentUri,
                             title = title,
                             artist = artist,
                             thumbnailUrl = artworkUrl,
