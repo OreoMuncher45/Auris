@@ -64,6 +64,20 @@ private val GLYPH_SIZE = 32.dp
 private val SPINNER_SIZE = 22.dp
 
 /**
+ * The gap between the two transport controls.
+ *
+ * Material asks for at least 8dp between adjacent touch targets, and these had
+ * none: two [GLYPH_SLOT] boxes sharing an edge, so the boundary between "pause"
+ * and "skip" was a line with nothing either side of it. What space there looked
+ * to be was only the margin each glyph keeps inside its own slot, and a thumb
+ * lands on a target's edge far more often than it lands on a glyph's.
+ *
+ * Taken from the title's width rather than the bar's height, so nothing above
+ * or below it moves.
+ */
+private val TRANSPORT_GAP = 8.dp
+
+/**
  * Vertical padding, which with the 40dp artwork sets the bar's height at 56dp
  * and so its pill radius at 28.
  */
@@ -187,6 +201,7 @@ fun MiniPlayer(
                     )
                 }
             }
+            Spacer(Modifier.width(TRANSPORT_GAP))
             IconButton(
                 onClick = {
                     haptics.play(Haptic.SkipNext)
