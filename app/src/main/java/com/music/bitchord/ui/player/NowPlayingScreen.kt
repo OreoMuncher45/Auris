@@ -143,6 +143,8 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1996,11 +1998,8 @@ fun NowPlayingScreen(
                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                 )
                 BottomGlyph(
-                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) {
-                        BitChordIcons.RepeatOne
-                    } else {
-                        BitChordIcons.Repeat
-                    },
+                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
+                    label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
                     contentDescription = when (repeatMode) {
                         Player.REPEAT_MODE_ONE -> "Repeat one"
                         Player.REPEAT_MODE_ALL -> "Repeat all"
@@ -2867,11 +2866,12 @@ private fun TransportGlyph(
 
 @Composable
 private fun BottomGlyph(
-    icon: ImageVector,
+    icon: ImageVector?,
     contentDescription: String,
     onClick: () -> Unit,
     highlighted: Boolean = false,
     haptic: Haptic = Haptic.Tap,
+    label: String? = null,
 ) {
     val haptics = rememberHaptics()
     Box(
@@ -2887,15 +2887,26 @@ private fun BottomGlyph(
             ) {
                 haptics.play(haptic)
                 onClick()
-            },
+            }
+            .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = if (highlighted) 1f else 0.75f),
-            modifier = Modifier.size(26.dp),
-        )
+        val tint = Color.White.copy(alpha = if (highlighted) 1f else 0.75f)
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(26.dp),
+            )
+        } else if (label != null) {
+            Text(
+                text = label,
+                color = tint,
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
     }
 }
 

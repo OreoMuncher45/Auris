@@ -277,6 +277,22 @@ object Downloads {
     }
 
     /**
+     * Delete every file downloaded for release [id] and drop the record of it.
+     *
+     * The counterpart to [forgetCollection]: that one is for a record whose
+     * files are already gone, this one is what actually takes them off the
+     * device — the "delete download" a whole album or playlist card offers,
+     * where a single track only ever offers [delete].
+     */
+    suspend fun deleteCollection(context: Context, id: String): Boolean {
+        val record = _collections.value[id] ?: return false
+        var any = false
+        record.videoIds.forEach { videoId -> if (delete(context, videoId)) any = true }
+        forgetCollection(id)
+        return any
+    }
+
+    /**
      * How one downloaded playlist is addressed as a page of its own.
      *
      * Under `local:` deliberately: that prefix is how the rest of the app asks

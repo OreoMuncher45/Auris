@@ -400,6 +400,14 @@ private fun BitChordApp(
     val downloadedPlaylists = remember(savedCollections, savedDownloads) {
         Downloads.savedPlaylists()
     }
+    // What a browse id is recorded under in Downloads.collections, when it names
+    // a release downloaded whole — see BrowseTarget.downloadId. A downloaded
+    // playlist's own page and its card both carry the id under the
+    // `local:playlist:` prefix; a release still reachable by its real id (an
+    // album's own page, a search hit) is looked up directly under that instead.
+    val downloadIdFor: (String?) -> String? = { id ->
+        id?.let { Downloads.recordIdOf(it) ?: it }?.takeIf { it in savedCollections }
+    }
     LaunchedEffect(savedDownloads, savedCollections, detail?.browseId) {
         val open = detail?.browseId ?: return@LaunchedEffect
         // A downloaded playlist's page is a snapshot of the same folder and goes
@@ -709,6 +717,7 @@ private fun BitChordApp(
                 subtitle = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
                 type = type ?: BrowseType.OTHER,
+                downloadId = downloadIdFor(id),
             )
         }
     }
@@ -1256,6 +1265,13 @@ private fun BitChordApp(
                             // a page, so the menu is handed the rows themselves — there
                             // is no id anything could be fetched with.
                             onCollectionLongPress = { label, grouped ->
+                                // An artist grouping is never one of these — only a
+                                // release downloaded whole has a record to match,
+                                // which is exactly the distinction `asked` draws in
+                                // `albumEntries`.
+                                val downloadId = downloadCollections.firstOrNull {
+                                    it.title == label && it.songs == grouped
+                                }?.id
                                 browseActions = BrowseTarget(
                                     browseId = null,
                                     title = label,
@@ -1264,6 +1280,7 @@ private fun BitChordApp(
                                         .orEmpty(),
                                     thumbnailUrl = grouped.firstOrNull()?.thumbnailUrl,
                                     songs = grouped,
+                                    downloadId = downloadId,
                                 )
                             },
                             contentPadding = listPadding,
@@ -1337,6 +1354,7 @@ private fun BitChordApp(
                                     type = page.type,
                                     songs = songs.map(withAlbum),
                                     fromCard = false,
+                                    downloadId = downloadIdFor(page.browseId),
                                 )
                             },
                             onArtistClick = { id, name ->
@@ -1455,6 +1473,7 @@ private fun BitChordApp(
                                         subtitle = item.subtitle,
                                         thumbnailUrl = item.thumbnailUrl,
                                         type = item.type,
+                                        downloadId = downloadIdFor(item.browseId),
                                     )
                                 }
                             },
@@ -1983,6 +2002,12 @@ private fun BitChordApp(
                         {
                             browseActions = null
                             viewModel.deletePlaylist(p)
+                        }
+                    },
+                    onDeleteDownload = target.downloadId?.let { id ->
+                        {
+                            browseActions = null
+                            scope.launch { Downloads.deleteCollection(context, id) }
                         }
                     },
                 )

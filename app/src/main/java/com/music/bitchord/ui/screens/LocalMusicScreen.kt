@@ -29,15 +29,18 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -57,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +76,7 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.TopBarContentGap
 import com.music.bitchord.ui.components.topBarHeight
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -132,6 +137,11 @@ fun LocalMusicScreen(
     // Which top-level tab is selected.
     var selectedTab by rememberSaveable { mutableIntStateOf(LOCAL_TAB_SONGS) }
 
+    // Narrows whichever tab is showing — songs by title/artist/album, artists
+    // and albums by name. Not saved across process death: a filter left on a
+    // folder that was never reopened is more surprising than one that reset.
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+
     // When non-null, we are showing a drill-down list for that artist or album.
     var drillDownLabel by remember { mutableStateOf<String?>(null) }
     var drillDownSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
@@ -161,12 +171,29 @@ fun LocalMusicScreen(
     val barHeight = topBarHeight()
 
     Column(modifier = modifier.fillMaxSize()) {
+        // ── Search ───────────────────────────────────────────────────────────
+        // Above the tabs rather than inside each one, since a query typed on
+        // Songs is just as reasonable to carry over to Artists or Albums.
+        LocalSearchField(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            modifier = Modifier.padding(
+                // The same clearance every other page under the frosted bar
+                // gets — see topBarContentPadding, which this screen can't use
+                // directly since its tab row is fixed and only the search field
+                // above it needs to clear the bar.
+                top = barHeight + TopBarContentGap,
+                start = PAGE_GUTTER,
+                end = PAGE_GUTTER,
+                bottom = 4.dp,
+            ),
+        )
+
         // ── Tab row ──────────────────────────────────────────────────────────
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = barHeight),
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
@@ -251,8 +278,12 @@ fun LocalMusicScreen(
                 }
 
                 key == "tab:$LOCAL_TAB_SONGS" -> {
+                    val filteredSongs = remember(songs, searchQuery) {
+                        if (searchQuery.isBlank()) songs
+                        else songs.filter { it.matchesSearch(searchQuery) }
+                    }
                     SongsTab(
-                        songs = songs,
+                        songs = filteredSongs,
                         onSongClick = onSongClick,
                         onSongLongPress = onSongLongPress,
                         onSongSwipe = onSongSwipe,
@@ -261,9 +292,10 @@ fun LocalMusicScreen(
                 }
 
                 key == "tab:$LOCAL_TAB_ARTISTS" -> {
-                    val artists = remember(songs) {
+                    val artists = remember(songs, searchQuery) {
                         songs.groupBy { it.artist }
                             .entries
+                            .filter { searchQuery.isBlank() || it.key.contains(searchQuery, ignoreCase = true) }
                             .sortedBy { it.key.lowercase() }
                     }
                     ArtistsTab(
@@ -280,7 +312,13 @@ fun LocalMusicScreen(
 
                 else -> {
                     // LOCAL_TAB_ALBUMS
-                    val albums = remember(songs, collections) { albumEntries(songs, collections) }
+                    val albums = remember(songs, collections, searchQuery) {
+                        albumEntries(songs, collections).filter {
+                            searchQuery.isBlank() ||
+                                it.title.contains(searchQuery, ignoreCase = true) ||
+                                it.artist.contains(searchQuery, ignoreCase = true)
+                        }
+                    }
                     AlbumsTab(
                         albums = albums,
                         onAlbumClick = { entry ->
@@ -815,6 +853,78 @@ private fun DrillDownSongList(
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
+
+/** Whether this track is a hit for a query typed into [LocalSearchField]. */
+private fun Song.matchesSearch(query: String): Boolean =
+    title.contains(query, ignoreCase = true) ||
+        artist.contains(query, ignoreCase = true) ||
+        albumName?.contains(query, ignoreCase = true) == true
+
+/**
+ * The filter box above the tab row.
+ *
+ * Live rather than submit-on-enter: there is no network round trip behind it,
+ * only a list already in memory, so narrowing it on every keystroke costs
+ * nothing and a submit action would just be a tap this screen doesn't need.
+ */
+@Composable
+private fun LocalSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Rounded.Search,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) {
+                Text(
+                    text = "Search this folder",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = MaterialTheme.colorScheme.onBackground,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (query.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .clickable { onQueryChange("") },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "Clear search",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun LocalTab(

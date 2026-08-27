@@ -427,7 +427,7 @@ private fun SearchFilterTabs(filter: SearchFilter, onFilterChange: (SearchFilter
                         if (!selected) haptics.play(Haptic.Select)
                         onFilterChange(entry)
                     }
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
                 Text(
                     text = entry.label,

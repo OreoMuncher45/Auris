@@ -83,6 +83,19 @@ data class BrowseTarget(
      * on that page, so there they are left off the sheet.
      */
     val fromCard: Boolean = true,
+    /**
+     * The id this release is recorded under in [com.music.bitchord.download.Downloads.collections],
+     * when it was downloaded whole — set so [onDelete] in the caller can offer
+     * "Delete download" alongside (or instead of) deleting the account's own
+     * copy.
+     *
+     * Left for the caller to resolve rather than derived here: a card off the
+     * Local Music screen has no browse id to derive it from at all (see
+     * `albumEntries` in `LocalMusicScreen`), while a real page's id needs
+     * `Downloads.recordIdOf` run on it first for a downloaded playlist. Both are
+     * questions about the download record, not about what this sheet is.
+     */
+    val downloadId: String? = null,
 )
 
 /**
@@ -117,9 +130,18 @@ fun BrowseActionsSheet(
     onDownloadAll: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
+    /**
+     * Removes the files this release was downloaded as, when it was downloaded
+     * whole — see [BrowseTarget.downloadId]. Independent of [onDelete]: that one
+     * deletes the playlist from the account, this one only ever touches what's
+     * on the device, so both can be offered together for an owned playlist that
+     * also happens to be downloaded.
+     */
+    onDeleteDownload: (() -> Unit)? = null,
 ) {
     var renaming by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
+    var confirmingDeleteDownload by remember { mutableStateOf(false) }
 
     val playlist = target.playlist
     if (renaming && playlist != null && onRename != null) {
@@ -157,6 +179,18 @@ fun BrowseActionsSheet(
                 )
             } else {
                 ActionRow(Icons.Rounded.Delete, "Delete playlist") { confirmingDelete = true }
+            }
+        }
+        if (onDeleteDownload != null) {
+            if (confirmingDeleteDownload) {
+                ActionRow(
+                    icon = Icons.Rounded.DeleteForever,
+                    label = "Remove \"${target.title}\" from this device — tap to confirm",
+                    tint = MaterialTheme.colorScheme.error,
+                    onClick = onDeleteDownload,
+                )
+            } else {
+                ActionRow(Icons.Rounded.Delete, "Delete download") { confirmingDeleteDownload = true }
             }
         }
         Spacer(Modifier.height(24.dp))

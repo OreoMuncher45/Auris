@@ -111,16 +111,14 @@ object BitChordIcons {
         }.build()
     }
 
-    val Repeat: ImageVector by lazy { repeatLoop("bc_repeat", withOne = false) }
-
-    val RepeatOne: ImageVector by lazy { repeatLoop("bc_repeat_one", withOne = true) }
+    val Repeat: ImageVector by lazy { repeatLoop("bc_repeat") }
 
     /**
      * Two straight runs joined by semicircles, with the arrow heads lying flat
      * at the ends of the straights. Putting them on the curves instead — as a
      * first pass did — makes the glyph read as a refresh/sync symbol.
      */
-    private fun repeatLoop(name: String, withOne: Boolean): ImageVector =
+    private fun repeatLoop(name: String): ImageVector =
         ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp, defaultHeight = 24.dp,
@@ -141,11 +139,6 @@ object BitChordIcons {
                 // Direction of travel: right along the top, left along the bottom.
                 moveTo(13.5f, 5.7f); lineTo(15.4f, 7.6f); lineTo(13.5f, 9.5f)
                 moveTo(10.5f, 14.5f); lineTo(8.6f, 16.4f); lineTo(10.5f, 18.3f)
-
-                if (withOne) {
-                    // Slim "1" inside the loop
-                    moveTo(10.9f, 10.9f); lineTo(12.2f, 10f); lineTo(12.2f, 14f)
-                }
             }
         }.build()
 
