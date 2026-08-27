@@ -223,6 +223,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _account = MutableStateFlow<Account?>(null)
     val account: StateFlow<Account?> = _account.asStateFlow()
 
+    private val _history = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+    val history: StateFlow<UiState<List<Song>>> = _history.asStateFlow()
+
     private val _library = MutableStateFlow<UiState<LibraryPage>>(UiState.Loading)
     val library: StateFlow<UiState<LibraryPage>> = _library.asStateFlow()
 
@@ -1004,6 +1007,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             },
             onFailure = { UiState.Error(it.friendly()) },
         )
+    }
+
+    /**
+     * The account's listening history.
+     *
+     * Loaded on each visit rather than cached: it is a page whose whole subject
+     * is what happened most recently, and one that opened showing the state it
+     * was in last time would be answering a different question. Guests get the
+     * signed-out message straight away, since there is no account to have a
+     * history on.
+     */
+    fun loadHistory() {
+        if (!_signedIn.value) {
+            _history.value = UiState.Error("Sign in to see what you've been listening to")
+            return
+        }
+        _history.value = UiState.Loading
+        viewModelScope.launch {
+            _history.value = YtMusicRepository.history().fold(
+                onSuccess = { songs ->
+                    if (songs.isEmpty()) UiState.Error("Nothing played yet")
+                    else UiState.Success(songs)
+                },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+        }
     }
 
     /** Recent searches, kept on device. */

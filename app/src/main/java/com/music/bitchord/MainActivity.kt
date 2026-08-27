@@ -45,6 +45,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -101,6 +102,7 @@ import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
+import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
@@ -259,6 +261,7 @@ private fun BitChordApp(
     /** Which story card the share sheet is for, or null for the whole Replay. */
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -352,6 +355,7 @@ private fun BitChordApp(
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val account by viewModel.account.collectAsStateWithLifecycle()
+    val historyState by viewModel.history.collectAsStateWithLifecycle()
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
@@ -437,6 +441,7 @@ private fun BitChordApp(
     val homeListState = rememberLazyListState()
     val exploreListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
+    val historyListState = rememberLazyListState()
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
@@ -1127,6 +1132,7 @@ private fun BitChordApp(
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
+        BackHandler(enabled = showHistory) { showHistory = false }
 
         // On a tablet the page and the player stand side by side rather than
         // one over the other: everything a phone stacks in a single column —
@@ -1138,6 +1144,7 @@ private fun BitChordApp(
                 AnimatedContent(
                     targetState = when {
                         showDiscord -> "discord"
+                        showHistory -> "history"
                         showAccountScrobbling -> "account_scrobbling"
                         // Above Replay, not below it. The top bar's account
                         // button sets `showSettings` from every page including
@@ -1154,9 +1161,19 @@ private fun BitChordApp(
                 ) { key ->
                     val page = detailStack.lastOrNull()?.takeIf {
                         it.browseId == key && key != "settings" && key != "account_scrobbling" &&
-                            key != "discord" && key != "replay"
+                            key != "discord" && key != "replay" && key != "history"
                     }
-                    if (key == "replay") {
+                    if (key == "history") {
+                        HistoryScreen(
+                            state = historyState,
+                            listState = historyListState,
+                            onSongClick = play,
+                            onSongLongPress = { songActions = it },
+                            onSongSwipe = onSongSwipe,
+                            onRetry = viewModel::loadHistory,
+                            contentPadding = listPadding,
+                        )
+                    } else if (key == "replay") {
                         ReplayScreen(
                             state = replay,
                             holder = account?.name.orEmpty(),
@@ -1555,6 +1572,7 @@ private fun BitChordApp(
                 FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
+                        showHistory -> "History"
                         showAccountScrobbling -> "Account & scrobbling"
                         showSettings -> "Settings"
                         showReplay -> "Replay"
@@ -1566,7 +1584,7 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
-                        showSettings || showAccountScrobbling || showDiscord -> true
+                        showSettings || showAccountScrobbling || showDiscord || showHistory -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
                         showReplay -> replayScrolled
@@ -1577,6 +1595,7 @@ private fun BitChordApp(
                     pullFraction = { currentPull?.distanceFraction ?: 0f },
                     onBack = when {
                         showDiscord -> ({ showDiscord = false })
+                        showHistory -> ({ showHistory = false })
                         showAccountScrobbling -> ({ showAccountScrobbling = false })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
@@ -1601,6 +1620,24 @@ private fun BitChordApp(
                             }
                         }
                         if (!showSettings && !showAccountScrobbling) {
+                            // Left of the account photo, and only where the account is
+                            // also offered: both are about *this listener* rather than
+                            // about the page, and a history is the one thing you reach
+                            // for as often as the settings behind the avatar.
+                            if (!showHistory) {
+                                IconButton(
+                                    onClick = {
+                                        showHistory = true
+                                        viewModel.loadHistory()
+                                    },
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.History,
+                                        contentDescription = "Listening history",
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
                             // Left of the account photo, and only there while
                             // there is a batch to report on — see
                             // [TopBarDownloadButton], which decides that for

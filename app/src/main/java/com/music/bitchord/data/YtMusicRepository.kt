@@ -88,10 +88,7 @@ object YtMusicRepository {
      */
     private suspend fun recentlyPlayed(): HomeShelf? {
         if (Innertube.cookie == null) return null
-        val songs = InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY))
-            // A track played three times today is three rows in the feed.
-            .distinctBy { it.videoId }
-            .take(RECENT_LIMIT)
+        val songs = fetchHistory().take(RECENT_LIMIT)
         if (songs.isEmpty()) return null
         return HomeShelf(
             title = RECENT_TITLE,
@@ -106,6 +103,29 @@ object YtMusicRepository {
             },
         )
     }
+
+    /**
+     * The raw fetch behind both [recentlyPlayed] and [history]: the account's
+     * listening history, newest first, one row per play collapsed to one row
+     * per track.
+     *
+     * A track played three times today is three rows in the feed — what that
+     * dedupe costs is the times, which is fine for "what you have been
+     * listening to" but would matter for a log. YouTube's own page groups them
+     * under Today and Yesterday headings that the shelf parser doesn't carry
+     * through either.
+     */
+    private suspend fun fetchHistory(): List<Song> =
+        InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY)).distinctBy { it.videoId }
+
+    /**
+     * The account's listening history, in the order YouTube Music keeps it.
+     *
+     * The same feed [recentlyPlayed] reads, without the truncation: that one is
+     * a shelf on the home page and stops at [RECENT_LIMIT] so it stays a shelf,
+     * whereas this is the page you open when twenty is not enough.
+     */
+    suspend fun history(): Result<List<Song>> = call("history") { fetchHistory() }
 
     private const val HISTORY = "FEmusic_history"
     private const val RECENT_TITLE = "Recently played"
