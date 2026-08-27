@@ -41,7 +41,11 @@ fun YtMusicLoginScreen(
                     override fun onPageFinished(view: WebView?, url: String?) {
                         if (captured || url?.startsWith(MUSIC_ORIGIN) != true) return
                         val cookies = CookieManager.getInstance().getCookie(MUSIC_ORIGIN)
-                        if (cookies != null && "SAPISID" in cookies) {
+                        // Not a substring test. See [AuthStore.hasApiSid] — the
+                        // one this replaces accepted a jar with no signing
+                        // secret in it, and the sign-in then appeared to
+                        // succeed while every request stayed anonymous.
+                        if (cookies != null && AuthStore.hasApiSid(cookies)) {
                             captured = true
                             onCookiesCaptured(cookies)
                         }

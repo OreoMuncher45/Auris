@@ -8,6 +8,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,7 +30,15 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
+import org.schabi.newpipe.extractor.exceptions.AccountTerminatedException
+import org.schabi.newpipe.extractor.exceptions.AgeRestrictedContentException
+import org.schabi.newpipe.extractor.exceptions.GeographicRestrictionException
+import org.schabi.newpipe.extractor.exceptions.PaidContentException
+import org.schabi.newpipe.extractor.exceptions.PrivateContentException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
+import org.schabi.newpipe.extractor.exceptions.SoundCloudGoPlusContentException
+import org.schabi.newpipe.extractor.exceptions.UnsupportedContentInCountryException
+import org.schabi.newpipe.extractor.exceptions.YoutubeMusicPremiumContentException
 import org.schabi.newpipe.extractor.services.youtube.YoutubeJavaScriptPlayerManager
 import org.schabi.newpipe.extractor.stream.AudioStream
 import org.schabi.newpipe.extractor.stream.DeliveryMethod
@@ -306,6 +315,11 @@ object StreamResolver {
             ?.takeIf { SystemClock.elapsedRealtime() - it.at < URL_TTL_MS }
             ?.let { return it.url }
 
+        // A verdict, not a failure: asking again cannot change the answer, so
+        // every caller after the first is told so without a request being sent.
+        // See [rememberUnplayable] for why this is the fix for "stuck loading".
+        unplayableReason(videoId)?.let { throw PermanentlyUnplayableException(it) }
+
         val stream = coalescedResolve(videoId)
 
         // The container carries no bitrate field, so this is the only place the
@@ -314,6 +328,76 @@ object StreamResolver {
         remember(videoId, stream.url)
         return stream.url
     }
+
+    /**
+     * A track this app cannot play, for a reason that will read the same in ten
+     * seconds — an age gate no session gets past, a takedown, a region block.
+     *
+     * Its own type because everything above the resolver has to be able to tell
+     * it apart from a failure worth retrying, and the layers in between are
+     * ExoPlayer's: a load error carries whatever exception it was given and
+     * nothing else, so the distinction has to travel in the type. See
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s load-error
+     * policy and `recoverFrom`.
+     */
+    class PermanentlyUnplayableException(reason: String) : IOException(reason)
+
+    /**
+     * Tracks that have already failed for a reason retrying cannot fix, and
+     * until when.
+     *
+     * This is the single change that turns the observed failure — a track that
+     * sits in BUFFERING for minutes on end, hammering youtubei — back into a
+     * failure that happens once. Nothing above this object retries *less* than
+     * three deep: ExoPlayer's own load-error policy retries the source, this
+     * service's `recoverFrom` retries the player, and read-ahead resolves the
+     * same track again on its own schedule. Against a permanent refusal every
+     * one of those is a full client walk plus a triple extraction — measured in
+     * the report at roughly twenty-seven walks and fifty youtubei requests in a
+     * 2m41s window, for a track whose answer was settled by the first one.
+     *
+     * Entries expire rather than being permanent, because the reasons behind
+     * them do: an age gate stops mattering the moment the listener signs in
+     * (see [forgetUnplayable], called from the login flow), and Google's region
+     * and bot verdicts are measured in hours, not sessions. Ten minutes is the
+     * same budget [STAND_DOWN_MS] uses, for the same reason — long enough that
+     * the storm cannot re-form, short enough that a listener who fixes the
+     * cause does not have to restart the app.
+     */
+    private val unplayable = ConcurrentHashMap<String, Verdict>()
+
+    private class Verdict(val reason: String, val at: Long)
+
+    private fun unplayableReason(videoId: String): String? {
+        val entry = unplayable[videoId] ?: return null
+        if (SystemClock.elapsedRealtime() - entry.at < UNPLAYABLE_TTL_MS) return entry.reason
+        unplayable.remove(videoId)
+        return null
+    }
+
+    private fun rememberUnplayable(videoId: String, reason: String) {
+        if (unplayable.size > MAX_REMEMBERED) unplayable.clear()
+        unplayable[videoId] = Verdict(reason, SystemClock.elapsedRealtime())
+    }
+
+    /**
+     * Forget every verdict recorded above.
+     *
+     * Signing in is the one event that can turn an age-gated track playable,
+     * and signing out the one that can turn it back — so both have to clear
+     * this, or the listener who signs in specifically to play a track is told
+     * for the next ten minutes that it still cannot be played. The stand-downs
+     * go with it: a client refused while anonymous is owed a fresh hearing now
+     * that there is a session to send.
+     */
+    fun onSessionChanged() {
+        unplayable.clear()
+        standDownUntil.clear()
+        refusalsByClient.clear()
+        preferred = null
+    }
+
+    private const val UNPLAYABLE_TTL_MS = 10 * 60 * 1000L
 
     /**
      * One walk per videoId at a time.
@@ -337,20 +421,36 @@ object StreamResolver {
      * single largest producer of lines in the log, and every one of them was
      * previously filed against whatever happened to be playing while the walk
      * ran, which for read-ahead is the track before this one.
-     */
-    private suspend fun coalescedResolve(videoId: String): Stream {
-        // computeIfAbsent, not getOrPut: getOrPut's get-then-put isn't atomic
-        // on a ConcurrentHashMap, and two racing callers each starting their
-        // own async before either one's put() lands is the exact race this
-        // exists to close.
-        val deferred = inFlight.computeIfAbsent(videoId) {
-            resolverScope.async(TrackLog.about(videoId)) { resolveUncached(videoId) }
+     */    private suspend fun coalescedResolve(videoId: String): Stream {
+        inFlight[videoId]?.let { return it.await() }
+        // Started lazily so that losing the race below costs nothing: the walk
+        // that gets discarded has not run a line, so cancelling it fires no
+        // requests and leaves no half-finished deferred behind.
+        val walk = resolverScope.async(TrackLog.about(videoId), start = CoroutineStart.LAZY) {
+            resolveUncached(videoId)
         }
-        return try {
-            deferred.await()
-        } finally {
-            inFlight.remove(videoId, deferred)
+        val running = inFlight.putIfAbsent(videoId, walk)
+        if (running != null) {
+            walk.cancel()
+            return running.await()
         }
+        // Unregistered by the walk's own completion rather than by the awaiter,
+        // which is the difference between coalescing and only appearing to.
+        //
+        // This used to be `try { deferred.await() } finally { inFlight.remove }`,
+        // and the finally is the bug: the walk is parented to [resolverScope]
+        // precisely so a caller giving up does not kill it, so a caller that
+        // gives up — which is every read-ahead resolve the queue moves past, and
+        // every [PlaybackService] resolve that hits its own timeout — took the
+        // still-running walk out of the map on its way out. The next caller then
+        // found nothing in flight and started a second full walk against the
+        // same videoId, which is exactly what the logs show: two overlapping
+        // resolves for one track, 4472ms and 4620ms, 2.8s of them concurrent,
+        // each paying for the other's round trips. The doc comment above
+        // promised one walk per videoId and the finally guaranteed the opposite.
+        walk.invokeOnCompletion { inFlight.remove(videoId, walk) }
+        walk.start()
+        return walk.await()
     }
 
     private val inFlight = ConcurrentHashMap<String, Deferred<Stream>>()
@@ -360,8 +460,8 @@ object StreamResolver {
     private suspend fun resolveUncached(videoId: String): Stream {
         val resolveStart = SystemClock.elapsedRealtime()
         val stream = try {
-            timed("$videoId playerStream") { playerStream(videoId, ::pickForPlayback) }
-                ?: timed("$videoId authenticatedWebRemixStream") { authenticatedWebRemixStream(videoId, ::pickForPlayback) }
+            timed("$videoId playerStream") { playerStream(videoId, ::rankForPlayback) }
+                ?: timed("$videoId authenticatedWebRemixStream") { authenticatedWebRemixStream(videoId, ::rankForPlayback) }
                 ?: run {
                     TrackLog.w(TAG, "every player client failed for $videoId; falling back to extraction")
                     timed("$videoId newPipeStream") { newPipeStream(videoId, ::pickForQuality) }
@@ -400,6 +500,15 @@ object StreamResolver {
                     "${e.javaClass.name}: ${e.message}",
                 e,
             )
+            // Recorded before it is rethrown, so the retries stacked above this
+            // — ExoPlayer's, the service's, read-ahead's — are answered from
+            // memory instead of each one walking seven clients and extracting
+            // three times against a refusal that is never going to soften.
+            permanentReason(e)?.let { reason ->
+                rememberUnplayable(videoId, reason)
+                TrackLog.w(TAG, "$videoId is not playable: $reason; not asking again for 10 minutes")
+                throw PermanentlyUnplayableException(reason)
+            }
             throw e
         }
         TrackLog.d(TAG, "TIMING $videoId total resolve: ${SystemClock.elapsedRealtime() - resolveStart}ms")
@@ -441,24 +550,41 @@ object StreamResolver {
      */
     private suspend fun authenticatedWebRemixStream(
         videoId: String,
-        select: (JsonObject) -> Audio?,
+        select: (JsonObject) -> List<Audio>,
     ): Stream? {
         if (Innertube.cookie == null) return null
+        // Every format this client returns is ciphered, so with the solver
+        // broken there is nothing here but a round trip and a log line. The
+        // signed-in device clients in [playerStream] are the route that works.
+        if (signatureSolverBroken) return null
         return try {
             timed("$videoId WEB_REMIX ensureVisitorData") { Innertube.ensureVisitorData() }
             val timestamp = timed("$videoId WEB_REMIX getSignatureTimestamp") {
-                jsPlayerManager { YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId) }
+                signatureTimestamp(videoId)
             }
             val response = timed("$videoId WEB_REMIX player()") {
                 Innertube.player(videoId, PlayerClient.WEB_REMIX, timestamp, authenticated = true)
             }
-            val format = select(response) ?: return null
-            val url = timed("$videoId WEB_REMIX streamUrl") {
-                streamUrl(videoId, format)?.let { patchClientVersion(it, PlayerClient.WEB_REMIX.clientVersion) }
-            } ?: return null
-            if (timed("$videoId WEB_REMIX probe") { probe(url) } != Probe.OK) return null
-            TrackLog.d(TAG, "resolved $videoId via authenticated WEB_REMIX @ ${format.kbps}kbps")
-            Stream(url, format.kbps, format.mimeType)
+            val candidates = select(response)
+            if (candidates.isEmpty()) return null
+            var format: Audio? = null
+            var url: String? = null
+            timed("$videoId WEB_REMIX streamUrl") {
+                for (candidate in candidates) {
+                    val unlocked = streamUrl(videoId, candidate)
+                        ?.let { patchClientVersion(it, PlayerClient.WEB_REMIX.clientVersion) }
+                    if (unlocked != null) {
+                        format = candidate
+                        url = unlocked
+                        break
+                    }
+                }
+            }
+            val picked = format ?: return null
+            val playable = url ?: return null
+            if (timed("$videoId WEB_REMIX probe") { probe(playable) } != Probe.OK) return null
+            TrackLog.d(TAG, "resolved $videoId via authenticated WEB_REMIX @ ${picked.kbps}kbps")
+            Stream(playable, picked.kbps, picked.mimeType)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -506,7 +632,7 @@ object StreamResolver {
 
     /**
      * As [resolve], but for a file being kept rather than a stream being heard:
-     * the best AAC on offer, whatever the quality ceiling says.
+     * the best AAC the *download* setting allows, and no connection has a say.
      *
      * The format is not a preference here, it is the only option. Every
      * adaptive audio format YouTube offers is either AAC in MP4 or Opus (or
@@ -532,10 +658,11 @@ object StreamResolver {
      * again but not the round trips.
      *
      * Nothing here touches [recent]. That cache exists to keep ExoPlayer's
-     * re-opens off the network, and its entries are picked under the quality
-     * ceiling — seeding it with an unbudgeted URL would quietly hand a capped
-     * connection the stream it was capped to avoid, and reading from it would
-     * hand a download whatever bitrate playback happened to settle for.
+     * re-opens off the network, and its entries are picked under the *playback*
+     * ceiling — seeding it from here would hand a capped connection a stream it
+     * was capped to avoid, and reading from it would hand a download whatever
+     * bitrate playback happened to settle for. Both directions are wrong, and
+     * they are wrong independently of what [maxKbps] says.
      *
      * The whole thing is attempted twice, for the case where a client is turned
      * away with "Sign in to confirm you're not a bot": [playerStream] mints a
@@ -554,9 +681,16 @@ object StreamResolver {
      * NewPipe and re-derives the URL itself. A download reaching the same wall
      * has to do the same thing or it fails while the track it is refusing to
      * save is audibly playing.
+     *
+     * @param maxKbps the ceiling from
+     *   [DownloadQuality][com.music.bitchord.data.settings.DownloadQuality].
+     *   Passed in rather than read here so that one download resolves at one
+     *   bitrate: a setting changed mid-fetch, or a re-resolve after a refusal
+     *   (see [Downloader.fetch][com.music.bitchord.download.Downloader.fetch]),
+     *   must not splice two different renditions into one file.
      */
-    suspend fun resolveForDownload(videoId: String): Stream {
-        val stream = downloadStream(videoId)
+    suspend fun resolveForDownload(videoId: String, maxKbps: Int): Stream {
+        val stream = downloadStream(videoId, maxKbps)
         // Belt and braces on the one invariant the media store enforces for us,
         // and enforces badly: everything in [downloadStream] selects for MP4,
         // and this is where a format that somehow slipped through says so in a
@@ -565,46 +699,52 @@ object StreamResolver {
         return stream
     }
 
-    private suspend fun downloadStream(videoId: String): Stream = withContext(TrackLog.about(videoId)) {
-        init
+    private suspend fun downloadStream(videoId: String, maxKbps: Int): Stream =
+        withContext(TrackLog.about(videoId)) {
+            init
 
-        // Whether any client offered AAC at all, as distinct from whether one
-        // could be turned into a working URL. Those are different failures and
-        // only one of them is worth telling someone to try again about: a track
-        // no client has an MP4 for will not have one in five minutes either,
-        // while an MP4 that won't probe is a bad afternoon on Google's side.
-        var offered = false
+            // Whether any client offered AAC at all, as distinct from whether one
+            // could be turned into a working URL. Those are different failures and
+            // only one of them is worth telling someone to try again about: a track
+            // no client has an MP4 for will not have one in five minutes either,
+            // while an MP4 that won't probe is a bad afternoon on Google's side.
+            var offered = false
 
-        repeat(DOWNLOAD_ATTEMPTS) { attempt ->
-            if (attempt > 0) delay(DOWNLOAD_RETRY_MS)
-            // Fresh each time. Responses are only cached once a client has
-            // answered, and re-deriving a URL from a cached response produces
-            // the same URL that just failed to probe — so carrying the map
-            // across attempts would make every attempt after the first a
-            // no-op.
-            val responses = mutableMapOf<PlayerClient, JsonObject>()
-            playerStream(videoId, { response -> pickAac(response)?.also { offered = true } }, responses)
-                ?.let { return@withContext it }
-        }
-
-        // Not "try again later" — every client being refused at once is a state
-        // that lasts hours, and it is precisely the state [resolve] extracts its
-        // way out of. Still asking for MP4, because this is still a download:
-        // the failsafe is a different route to the bytes, not a licence to
-        // fetch a container that cannot then be saved.
-        TrackLog.w(TAG, "no client minted a usable MP4 URL for $videoId; extracting")
-        runCatching {
-            newPipeStream(videoId) { candidates ->
-                candidates.filter { it.second.isM4a }
-                    .maxByOrNull { it.first }?.second
-                    ?.also { offered = true }
+            repeat(DOWNLOAD_ATTEMPTS) { attempt ->
+                if (attempt > 0) delay(DOWNLOAD_RETRY_MS)
+                // Fresh each time. Responses are only cached once a client has
+                // answered, and re-deriving a URL from a cached response produces
+                // the same URL that just failed to probe — so carrying the map
+                // across attempts would make every attempt after the first a
+                // no-op.
+                val responses = mutableMapOf<PlayerClient, JsonObject>()
+                playerStream(
+                    videoId,
+                    { response -> pickAac(response, maxKbps).also { if (it.isNotEmpty()) offered = true } },
+                    responses,
+                )?.let { return@withContext it }
             }
-        }.onSuccess { return@withContext it }
-            .onFailure { TrackLog.w(TAG, "extraction found no MP4 for $videoId: ${it.message}") }
 
-        if (offered) error("Couldn't reach a downloadable copy just now — try again")
-        error("No downloadable audio for this track")
-    }
+            // Not "try again later" — every client being refused at once is a state
+            // that lasts hours, and it is precisely the state [resolve] extracts its
+            // way out of. Still asking for MP4, because this is still a download:
+            // the failsafe is a different route to the bytes, not a licence to
+            // fetch a container that cannot then be saved.
+            TrackLog.w(TAG, "no client minted a usable MP4 URL for $videoId; extracting")
+            runCatching {
+                newPipeStream(videoId) { candidates ->
+                    // Capped the same way [pickAac] is, off the same setting, or
+                    // the failsafe would quietly hand back a rendition the user
+                    // said they didn't want to keep.
+                    underCeiling(candidates.filter { it.second.isM4a }, maxKbps)
+                        ?.also { offered = true }
+                }
+            }.onSuccess { return@withContext it }
+                .onFailure { TrackLog.w(TAG, "extraction found no MP4 for $videoId: ${it.message}") }
+
+            if (offered) error("Couldn't reach a downloadable copy just now — try again")
+            error("No downloadable audio for this track")
+        }
 
     /**
      * Walks [CLIENTS] until one produces a URL that actually serves audio.
@@ -622,7 +762,7 @@ object StreamResolver {
      */
     private suspend fun playerStream(
         videoId: String,
-        select: (JsonObject) -> Audio?,
+        select: (JsonObject) -> List<Audio>,
         responses: MutableMap<PlayerClient, JsonObject> = mutableMapOf(),
     ): Stream? {
         // Before anything asks. Without one, the good clients refuse outright
@@ -632,6 +772,10 @@ object StreamResolver {
 
         var timestamp: Int? = null
         var mintedFreshVisitor = false
+        // One signed-in retry per client per walk. Without the bound, a client
+        // that answers the age gate with the same age gate signed in would be
+        // asked twice for every walk, and there are seven of them.
+        val triedSignedIn = mutableSetOf<PlayerClient>()
 
         for (client in clientOrder()) {
             if (isStoodDown(videoId, client)) continue
@@ -641,23 +785,54 @@ object StreamResolver {
                 // reached — it costs a download of YouTube's player JavaScript.
                 if (client.needsSignatureTimestamp && timestamp == null) {
                     timestamp = timed("$videoId getSignatureTimestamp") {
-                        runCatching { jsPlayerManager { YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId) } }
-                            .onFailure { TrackLog.w(TAG, "no signature timestamp: ${it.message}") }
-                            .getOrNull()
+                        signatureTimestamp(videoId)
                     } ?: continue
                 }
 
                 val response = responses[client] ?: try {
                     timed("$videoId ${client.clientName} player()") { Innertube.player(videoId, client, timestamp) }
                 } catch (e: Innertube.UnplayableException) {
-                    // A visitor id can be burned while the session around it is
-                    // fine, and the only symptom is being called a bot. Worth
-                    // one fresh id and one more try, once per resolve.
-                    if (!e.looksLikeBotCheck || mintedFreshVisitor) throw e
-                    mintedFreshVisitor = true
-                    TrackLog.d(TAG, "bot check from ${client.clientName}; minting a fresh visitor id")
-                    timed("$videoId ensureVisitorData(refresh)") { Innertube.ensureVisitorData(refresh = true) }
-                    timed("$videoId ${client.clientName} player() retry") { Innertube.player(videoId, client, timestamp) }
+                    when {
+                        // The fix for the reported bug, and the only one that
+                        // makes an age-restricted track actually play.
+                        //
+                        // The refusal here is "Sign in to confirm your age" (or,
+                        // from the iOS and Android clients, "This video may be
+                        // inappropriate for some users"), and it is a statement
+                        // about the *request*, not the track: the same client
+                        // asked again carrying the listener's session is
+                        // answered OK. Worth doing on these clients in
+                        // particular because they return plain `url` fields — so
+                        // this route never touches YouTube's player JavaScript,
+                        // which is the thing that is currently broken. Before
+                        // this, the only path with a hope of an age-gated track
+                        // was [authenticatedWebRemixStream], whose formats are
+                        // ciphered without exception, so a track YouTube was
+                        // perfectly willing to serve failed on the signature
+                        // solve instead. See [onSignatureSolverBroken].
+                        e.isAgeGate && Innertube.cookie != null && !triedSignedIn.contains(client) -> {
+                            triedSignedIn.add(client)
+                            TrackLog.d(
+                                TAG,
+                                "${client.clientName} wants an age check for $videoId; asking again signed in",
+                            )
+                            timed("$videoId ${client.clientName} player() signed in") {
+                                Innertube.player(videoId, client, timestamp, authenticated = true)
+                            }
+                        }
+                        // A visitor id can be burned while the session around it
+                        // is fine, and the only symptom is being called a bot.
+                        // Worth one fresh id and one more try, once per resolve.
+                        e.looksLikeBotCheck && !mintedFreshVisitor -> {
+                            mintedFreshVisitor = true
+                            TrackLog.d(TAG, "bot check from ${client.clientName}; minting a fresh visitor id")
+                            timed("$videoId ensureVisitorData(refresh)") { Innertube.ensureVisitorData(refresh = true) }
+                            timed("$videoId ${client.clientName} player() retry") {
+                                Innertube.player(videoId, client, timestamp)
+                            }
+                        }
+                        else -> throw e
+                    }
                 }
                 responses[client] = response
 
@@ -666,32 +841,56 @@ object StreamResolver {
                 // timings alone cannot: a client that offers no acceptable
                 // format never reaches [streamUrl], so both cases look
                 // identical from outside — a `player()` line and then silence.
-                val format = select(response)
-                if (format == null) {
+                val candidates = select(response)
+                if (candidates.isEmpty()) {
                     TrackLog.d(TAG, "${client.clientName} offered no usable format for $videoId")
                     refused(videoId, client)
                     continue
                 }
-                val url = timed("$videoId ${client.clientName} streamUrl") {
-                    streamUrl(videoId, format)?.let { patchClientVersion(it, client.clientVersion) }
+                // Down the ladder rather than one shot at the top of it.
+                //
+                // [select] used to return a single format, and a format that
+                // would not unlock ended the client's turn — which conflates two
+                // different things: a client being refused the track, and the
+                // one format that happened to win on bitrate being the one whose
+                // URL could not be unlocked. A response is routinely a mix, some
+                // entries with a plain `url` and some ciphered, and ranking by
+                // bitrate alone is blind to which is which — so a broken
+                // signature solver threw away whole clients that were offering a
+                // perfectly serviceable unciphered rung one step down.
+                var format: Audio? = null
+                var url: String? = null
+                timed("$videoId ${client.clientName} streamUrl") {
+                    for (candidate in candidates) {
+                        val unlocked = streamUrl(videoId, candidate)
+                            ?.let { patchClientVersion(it, client.clientVersion) }
+                        if (unlocked != null) {
+                            format = candidate
+                            url = unlocked
+                            break
+                        }
+                    }
                 }
-                if (url == null) {
+                val picked = format
+                val playable = url
+                if (picked == null || playable == null) {
                     TrackLog.d(
                         TAG,
-                        "${client.clientName} offered ${format.mimeType} for $videoId but its URL could not be unlocked",
+                        "${client.clientName} offered ${candidates.size} format(s) for $videoId but none " +
+                            "could be unlocked (${candidates.joinToString { "${it.mimeType} @ ${it.kbps}kbps" }})",
                     )
                     refused(videoId, client)
                     continue
                 }
 
-                val verdict = timed("$videoId ${client.clientName} probe") { probe(url) }
+                val verdict = timed("$videoId ${client.clientName} probe") { probe(playable) }
                 TrackLog.d(TAG, "TIMING $videoId ${client.clientName} total: ${SystemClock.elapsedRealtime() - clientStart}ms")
                 when (verdict) {
                     Probe.OK -> {
-                        TrackLog.d(TAG, "resolved $videoId via ${client.clientName} @ ${format.kbps}kbps")
+                        TrackLog.d(TAG, "resolved $videoId via ${client.clientName} @ ${picked.kbps}kbps")
                         served(client)
                         preferred = client
-                        return Stream(url, format.kbps, format.mimeType)
+                        return Stream(playable, picked.kbps, picked.mimeType)
                     }
                     // The client itself is being refused this track; don't
                     // spend another round trip on it for a while.
@@ -711,7 +910,7 @@ object StreamResolver {
                 TrackLog.w(
                     TAG,
                     "${client.clientName} minted an unusable URL for $videoId: " +
-                        "$verdict for ${format.mimeType} @ ${format.kbps}kbps",
+                        "$verdict for ${picked.mimeType} @ ${picked.kbps}kbps",
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -801,26 +1000,55 @@ object StreamResolver {
             ?.filter { it.url != null || it.signatureCipher != null }
             .orEmpty()
 
-    /** What playback wants: the best format the connection's ceiling allows. */
-    private fun pickForPlayback(response: JsonObject): Audio? =
-        pickForQuality(audioFormats(response).map { it.kbps to it })
+    /**
+     * What playback wants, best first: the formats the connection's ceiling
+     * allows, in the order they are worth trying.
+     *
+     * A list rather than a single pick because unlocking can fail per format —
+     * see [playerStream] and [streamUrl].
+     */
+    private fun rankForPlayback(response: JsonObject): List<Audio> =
+        rankByQuality(audioFormats(response), AppSettings.effectiveAudioQuality.maxKbps)
 
     /**
-     * What a download wants: the best AAC there is, and nothing else.
+     * [candidates] in the order they are worth attempting: the highest at or
+     * under [maxKbps] first and the rest of the ladder descending from it, then
+     * anything above the ceiling ascending — because a rung over budget still
+     * beats no audio at all, and the cheapest such rung is the least wrong.
+     *
+     * Unciphered formats are preferred within a bitrate tie, and moved ahead of
+     * ciphered ones outright once the signature solver has been found broken:
+     * a ciphered format is then not merely more expensive, it is unplayable, and
+     * ordering it first would spend the client's turn on a certainty. See
+     * [onSignatureSolverBroken].
+     */
+    private fun rankByQuality(candidates: List<Audio>, maxKbps: Int): List<Audio> {
+        val order = compareByDescending<Audio> { it.url != null }
+        val (withinBudget, overBudget) = candidates.partition { it.kbps <= maxKbps }
+        val ranked = withinBudget.sortedWith(compareByDescending<Audio> { it.kbps }.then(order)) +
+            overBudget.sortedWith(compareBy<Audio> { it.kbps }.then(order))
+        return if (signatureSolverBroken) ranked.sortedWith(order) else ranked
+    }
+
+    /**
+     * What a download wants: the best AAC at or under the download setting's
+     * own ceiling.
      *
      * MP4 rather than the better codec because it is the only container the
      * media store will accept for the audio collection — see
      * [resolveForDownload].
      *
-     * No ceiling is applied. The quality setting exists to budget a *stream* —
-     * bytes spent on a track being listened to once, over and over — and a file
-     * saved to the device is the opposite case: paid for once, kept, and played
-     * from disk forever after. Capping it at the setting that happens to be in
-     * force would bake a temporary decision about mobile data into a permanent
-     * artefact.
+     * The ceiling comes in as an argument rather than being read here, and it is
+     * a different setting from the one [rankForPlayback] reads. The quality
+     * ceilings budget a *stream* — bytes spent again on every replay of a track
+     * being listened to — and a file saved to the device is the opposite case:
+     * paid for once, kept, played from disk forever after. Capping a permanent
+     * artefact at whichever network happened to be in hand would bake a
+     * temporary decision into it, so a download is capped by a decision made
+     * about downloads, or not at all.
      */
-    private fun pickAac(response: JsonObject): Audio? =
-        audioFormats(response).filter { it.isAac }.maxByOrNull { it.kbps }
+    private fun pickAac(response: JsonObject, maxKbps: Int): List<Audio> =
+        rankByQuality(audioFormats(response).filter { it.isAac }, maxKbps)
 
     private fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.content
 
@@ -829,10 +1057,17 @@ object StreamResolver {
      * everything is above it (e.g. Low on a track that only has 130kbps+), take
      * the cheapest available rather than failing.
      */
-    private fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? {
+    private fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? =
+        underCeiling(candidates, AppSettings.effectiveAudioQuality.maxKbps)
+
+    /**
+     * Highest of [candidates] at or under [maxKbps]; if everything is above it
+     * — Standard on a track whose AAC ladder starts at 256, say — the cheapest
+     * available, because a rung over budget still beats no audio at all.
+     */
+    private fun <T> underCeiling(candidates: List<Pair<Int, T>>, maxKbps: Int): T? {
         if (candidates.isEmpty()) return null
-        val ceiling = AppSettings.effectiveAudioQuality.maxKbps
-        val withinBudget = candidates.filter { it.first <= ceiling }
+        val withinBudget = candidates.filter { it.first <= maxKbps }
         return (withinBudget.maxByOrNull { it.first } ?: candidates.minByOrNull { it.first })
             ?.second
     }
@@ -845,6 +1080,10 @@ object StreamResolver {
         if (direct != null) return deobfuscate(videoId, direct)
 
         val cipher = format.signatureCipher ?: return null
+        // Asked before the library is, because the library's answer is a cached
+        // exception and its cost is a log line per format per walk rather than
+        // any real work. See [signatureSolverBroken].
+        if (signatureSolverBroken) return null
         val params = cipher.split("&")
             .mapNotNull { part ->
                 val i = part.indexOf('=').takeIf { it > 0 } ?: return@mapNotNull null
@@ -862,11 +1101,78 @@ object StreamResolver {
             jsPlayerManager { YoutubeJavaScriptPlayerManager.deobfuscateSignature(videoId, signature) }
         }.getOrElse {
             TrackLog.w(TAG, "signature cipher failed: ${it.message}")
+            if (it.isUnparseablePlayer()) onSignatureSolverBroken(it)
             return null
         }
         val separator = if ("?" in base) "&" else "?"
         return deobfuscate(videoId, "$base$separator$into=$solved")
     }
+
+    /**
+     * Whether NewPipe cannot read the current `base.js` at all, as opposed to
+     * having failed to solve one particular signature.
+     *
+     * The wording is the only thing that distinguishes them, which is
+     * unsatisfying and still worth acting on: "Could not parse deobfuscation
+     * function" is thrown before this app's input is looked at, so it says
+     * nothing about the track and everything about the pair of (this extractor
+     * release, whatever player YouTube is currently serving).
+     *
+     * Matched narrowly on purpose. A false positive here costs every ciphered
+     * format for the rest of the process — the ANDROID client and WEB_REMIX
+     * both — so a broad "could not parse" would trade one track's failure for a
+     * session's, which is the wrong way round. Every player-JS parse failure
+     * NewPipe raises names the function or the script it could not read.
+     */
+    private fun Throwable.isUnparseablePlayer(): Boolean {
+        val text = generateSequence(this) { it.cause?.takeIf { c -> c !== it } }
+            .mapNotNull { it.message }
+            .joinToString(" ")
+            .lowercase()
+        return "deobfuscation function" in text ||
+            "player js" in text ||
+            "player javascript" in text ||
+            "javascript base url" in text
+    }
+
+    /**
+     * NewPipe cannot solve signatures against the player YouTube is currently
+     * serving, so nothing that depends on solving one is worth attempting again
+     * this process.
+     *
+     * This is the actual root cause of the report, and the reason it looks like
+     * an age-restriction bug when it isn't. Ordinary tracks never reach a
+     * signature at all: the device clients at the top of [CLIENTS] hand back
+     * plain `url` fields, so a broken solver is invisible on everything that
+     * plays. An age-restricted track is the one case where every unciphered
+     * client is refused and the *only* remaining route —
+     * [authenticatedWebRemixStream] — is ciphered without exception, so the
+     * broken solver is fatal exactly there and nowhere else. Hence "other songs
+     * played fine", and hence clearing caches and restarting not helping: the
+     * parse failure is deterministic, and NewPipe caches even the failed parse's
+     * exception (see [jsPlayerMutex]).
+     *
+     * Recorded as a flag rather than acted on, because there is nothing to do
+     * about it in this file beyond not paying for it repeatedly. What makes the
+     * track play regardless is [playerStream]'s authenticated retry, which gets
+     * an *unciphered* URL out of a device client and never touches this path.
+     * Bumping NewPipeExtractor is not the fix: no release through v0.26.5
+     * addresses this parse failure, and the last upstream fix in this area
+     * shipped in 2025.
+     */
+    private fun onSignatureSolverBroken(cause: Throwable) {
+        if (signatureSolverBroken) return
+        signatureSolverBroken = true
+        TrackLog.w(
+            TAG,
+            "this NewPipe release cannot read YouTube's current player JavaScript " +
+                "(${cause.message}); ciphered formats are unavailable for the rest of this session — " +
+                "signed-in device clients are the only route to an age-restricted track",
+        )
+    }
+
+    @Volatile
+    private var signatureSolverBroken = false
 
     /**
      * Transform the `n` parameter when present. If deobfuscation itself fails
@@ -926,6 +1232,34 @@ object StreamResolver {
     private val jsPlayerMutex = Mutex()
 
     private suspend fun <T> jsPlayerManager(block: () -> T): T = jsPlayerMutex.withLock { block() }
+
+    /**
+     * YouTube's current player revision, as the number a client quotes to prove
+     * it is running that player.
+     *
+     * Named and shared rather than fetched at each of the three call sites,
+     * because there is now a fourth kind of caller that is nothing to do with
+     * streaming: [PlaybackTracker] needs one to be issued a tracking block at
+     * all, and it has no business knowing that the value comes from parsing
+     * YouTube's player JavaScript.
+     *
+     * Memoised for the process. It is a property of YouTube's deployment, not of
+     * a track — the videoId is passed only because NewPipe's API takes one, to
+     * decide which player script to fetch — and it changes on the order of days,
+     * against a first parse that costs seconds.
+     */
+    suspend fun signatureTimestamp(videoId: String): Int? {
+        cachedSignatureTimestamp?.let { return it }
+        return runCatching {
+            jsPlayerManager { YoutubeJavaScriptPlayerManager.getSignatureTimestamp(videoId) }
+        }
+            .onFailure { TrackLog.w(TAG, "no signature timestamp: ${it.message}") }
+            .getOrNull()
+            ?.also { cachedSignatureTimestamp = it }
+    }
+
+    @Volatile
+    private var cachedSignatureTimestamp: Int? = null
 
     /**
      * Align the URL's `cver` with the client that actually asked.
@@ -1226,6 +1560,22 @@ object StreamResolver {
                 // static method ...") reads like nothing.
                 throw IOException("Extractor cannot run on this device: $e", e)
             } catch (e: Exception) {
+                // A verdict about the content, not about this minute. There was
+                // no classification here at all, so the most expensive retry in
+                // the app was spent on the one class of failure that cannot
+                // benefit from it: an age-restricted track threw
+                // AgeRestrictedContentException, which extends
+                // ContentNotAvailableException extends ParsingException extends
+                // Exception, landed in this clause, and was granted all three
+                // attempts with 1s and 2s backoffs — each one re-fetching the
+                // watch page and holding [extractionGate] against every other
+                // resolve in the process while it did. Three identical refusals
+                // per walk, and the walk itself repeated. Named and rethrown on
+                // the first one instead.
+                permanentReason(e)?.let { reason ->
+                    TrackLog.w(TAG, "extraction will not succeed for $videoId: $reason")
+                    throw e
+                }
                 // Worth another go rather than worth giving up on: the common
                 // failure here is a shaped or cut-off watch page, which is a
                 // fact about this minute rather than about the track, and this
@@ -1238,6 +1588,59 @@ object StreamResolver {
             }
         }
         throw failure ?: IllegalStateException("Track unavailable: no audio streams")
+    }
+
+    /**
+     * Why [e] means "never", or null if it only means "not just now".
+     *
+     * The distinction is the difference between one failed track and a request
+     * storm, and it is not available from the exception hierarchy: NewPipe files
+     * a takedown, a region block and a truncated watch page under the same
+     * [ParsingException] ancestry, so a `catch (e: Exception)` treats "this
+     * video does not exist" exactly like "the page arrived cut in half". Every
+     * retry in this app sat downstream of that conflation.
+     *
+     * Kept as a message rather than a boolean because the message is what the
+     * listener eventually sees, and "This video is age-restricted" is a
+     * different thing to be told than `ERROR_CODE_IO_UNSPECIFIED`.
+     */
+    private fun permanentReason(e: Throwable): String? = when (e) {
+        is PermanentlyUnplayableException -> e.message ?: "This track cannot be played"
+        // The whole reason this function exists — see [newPipeStream].
+        is AgeRestrictedContentException ->
+            if (Innertube.cookie == null) {
+                "This track is age-restricted. Sign in to YouTube to play it."
+            } else {
+                "YouTube will not serve this age-restricted track to this app."
+            }
+        is GeographicRestrictionException -> "This track isn't available in your country"
+        is UnsupportedContentInCountryException -> "This track isn't available in your country"
+        is PaidContentException -> "This track is paid content"
+        is YoutubeMusicPremiumContentException -> "This track needs YouTube Music Premium"
+        is PrivateContentException -> "This track is private"
+        is AccountTerminatedException -> "The channel behind this track was terminated"
+        is SoundCloudGoPlusContentException -> "This track needs SoundCloud Go+"
+        is Innertube.UnplayableException ->
+            when {
+                // An age gate is only permanent once the session that could get
+                // past it has been tried and refused. Signed out it is a
+                // sentence with an action attached, and [resolve] must not cache
+                // it in a way that survives the listener taking that action —
+                // hence [onSessionChanged].
+                e.isAgeGate ->
+                    if (Innertube.cookie == null) {
+                        "This track is age-restricted. Sign in to YouTube to play it."
+                    } else {
+                        null
+                    }
+                e.isPermanent -> e.message
+                else -> null
+            }
+        // ExoPlayer and the coroutine machinery both wrap freely, and the
+        // classification has to survive being wrapped or it never fires: the
+        // failure that reaches [resolveUncached] arrives as whatever the last
+        // layer chose to throw it as.
+        else -> e.cause?.takeIf { it !== e }?.let(::permanentReason)
     }
 
     /** How many times the watch page is worth asking for before giving up. */

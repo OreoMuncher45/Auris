@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -52,6 +53,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
@@ -59,6 +61,7 @@ import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SignInBanner
 import com.music.bitchord.ui.components.feedMoreSkeleton
 import com.music.bitchord.ui.components.feedSkeleton
+import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +79,12 @@ fun HomeScreen(
     title: String = "Listen Now",
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
+    /**
+     * Holding a card rather than tapping it — the album/playlist menu. Only the
+     * cards that point at a collection have one; a card that is a single track
+     * is a track, and its own menu lives on the rows in the lists below.
+     */
+    onItemLongPress: ((ShelfItem) -> Unit)? = null,
     // Explore doesn't page — only Home has a continuation worth following.
     onLoadMore: (() -> Unit)? = null,
     loadingMore: Boolean = false,
@@ -110,7 +119,7 @@ fun HomeScreen(
                     MessageState(state.message, actionLabel = "Retry", onAction = onRetry)
                 }
                 is UiState.Success -> {
-                    itemsIndexedShelves(state.data, onItemClick)
+                    itemsIndexedShelves(state.data, onItemClick, onItemLongPress)
                     if (loadingMore) feedMoreSkeleton()
                 }
             }
@@ -142,13 +151,14 @@ fun HomeScreen(
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
     onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
 ) {
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
             if (index == 0) {
-                HeroShelf(shelf = shelf, onItemClick = onItemClick)
+                HeroShelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
             } else {
-                Shelf(shelf = shelf, onItemClick = onItemClick)
+                Shelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
             }
         }
     }
@@ -178,35 +188,53 @@ internal fun SectionHeader(title: String, subtitle: String = "") {
 }
 
 @Composable
-private fun HeroShelf(shelf: HomeShelf, onItemClick: (ShelfItem) -> Unit) {
+private fun HeroShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)? = null,
+) {
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
-        LazyRow(
-            state = rememberLazyListState(),
-            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            items(shelf.items) { item ->
-                HeroCard(
-                    item = item,
-                    onClick = { onItemClick(item) },
-                    modifier = Modifier.fillParentMaxWidth(0.82f),
-                )
+        // Measured rather than taken as a share of the parent, because the card
+        // has a ceiling as well as a fraction — see [heroCardWidth]. A fixed
+        // width is also the only one of the two the aspect ratio below can turn
+        // into a height, so the card keeps its shape however it was arrived at.
+        BoxWithConstraints {
+            val cardWidth = heroCardWidth(maxWidth)
+            LazyRow(
+                state = rememberLazyListState(),
+                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                items(shelf.items) { item ->
+                    HeroCard(
+                        item = item,
+                        onClick = { onItemClick(item) },
+                        onLongPress = onItemLongPress?.let { { it(item) } },
+                        modifier = Modifier.width(cardWidth),
+                    )
+                }
             }
         }
     }
 }
 
 /** Big card: artwork with the caption laid over a scrim, as on Listen Now. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun HeroCard(item: ShelfItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun HeroCard(
+    item: ShelfItem,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
     Box(
         modifier = modifier
-            .aspectRatio(0.92f)
+            .aspectRatio(HERO_CARD_RATIO)
             .clip(RoundedCornerShape(18.dp))
             .thumbnailBorder(RoundedCornerShape(18.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(HEADER_ART_PX),
@@ -248,9 +276,9 @@ private fun HeroCard(item: ShelfItem, onClick: () -> Unit, modifier: Modifier = 
 /**
  * [leadingCard] rides at the head of the row, ahead of the content — the
  * Library tab's "New playlist" tile, which belongs among the playlists rather
- * than in a bar somewhere above them. [onItemLongPress] is likewise the
- * Library's: a card is only worth holding where there is something to do to
- * the thing behind it.
+ * than in a bar somewhere above them. [onItemLongPress] opens the album /
+ * playlist menu, and is null only where a card points at something with no
+ * track list behind it to act on.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable

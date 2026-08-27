@@ -9,12 +9,16 @@ import androidx.core.content.ContextCompat
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,11 +64,13 @@ object Downloads {
 
     private const val TAG = "BitChord"
     private const val KEY_SAVED_METADATA = "downloaded_tracks_metadata"
+    private const val KEY_SAVED_COLLECTIONS = "downloaded_collections"
 
     private lateinit var prefs: SharedPreferences
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = MapSerializer(String.serializer(), String.serializer())
     private val metadataSerializer = MapSerializer(String.serializer(), SavedSongMetadata.serializer())
+    private val collectionSerializer = MapSerializer(String.serializer(), SavedCollection.serializer())
 
     private val _active = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val active: StateFlow<Map<String, DownloadState>> = _active.asStateFlow()
@@ -75,6 +81,19 @@ object Downloads {
     val saved: StateFlow<Map<String, String>> = _saved.asStateFlow()
 
     private val _savedMetadata = MutableStateFlow<Map<String, SavedSongMetadata>>(emptyMap())
+
+    private val _collections = MutableStateFlow<Map<String, SavedCollection>>(emptyMap())
+
+    /**
+     * The releases that were downloaded *as* releases, by the id they were asked
+     * for under.
+     *
+     * Read by the Downloads page so a batch download reads back as the thing
+     * that was tapped. Exposed rather than kept private because the page is a
+     * snapshot and has to be retaken when this changes — see
+     * [collectionsAmong], which is what turns it into something drawable.
+     */
+    val collections: StateFlow<Map<String, SavedCollection>> = _collections.asStateFlow()
 
     /** Waiting, in the order asked for. Guarded by [lock]. */
     private val pending = LinkedHashMap<String, Song>()
@@ -95,6 +114,9 @@ object Downloads {
         _savedMetadata.value = runCatching {
             json.decodeFromString(metadataSerializer, prefs.getString(KEY_SAVED_METADATA, null) ?: "{}")
         }.getOrDefault(emptyMap())
+        _collections.value = runCatching {
+            json.decodeFromString(collectionSerializer, prefs.getString(KEY_SAVED_COLLECTIONS, null) ?: "{}")
+        }.getOrDefault(emptyMap())
     }
 
     // ---- Asking -------------------------------------------------------------
@@ -105,14 +127,38 @@ object Downloads {
      * A track already saved, queued or running is left alone rather than
      * doubled — the menu row shows which of those it is, but a second tap
      * before the sheet updates should still be a no-op.
+     *
+     * The Wi-Fi-only check is here rather than only at the tap because this is
+     * the one door into the queue, and a setting that can be bypassed by a
+     * caller that forgot about it is not a setting. Callers that can say
+     * something better than a failed row — a single toast for a whole album, say
+     * — check [AppSettings.downloadsAllowedNow] themselves first; this is what
+     * catches the rest.
+     *
+     * @param from what release this track was asked for as part of, when it was
+     *   one of many. Carried no further than [DownloadSession], which is the
+     *   only thing that has to say *why* forty tracks are in the queue.
      */
-    fun enqueue(context: Context, song: Song) {
+    fun enqueue(context: Context, song: Song, from: String? = null) {
         val id = song.videoId
+        if (!AppSettings.downloadsAllowedNow) {
+            // Distinct from the duplicate-tap no-op below: nothing is in flight
+            // here to leave alone, and a refusal nobody is told about reads as a
+            // dead button. A download already queued or running started on a
+            // connection that allowed it and is none of this check's business.
+            val inFlight = _active.value[id]
+            if (inFlight !is DownloadState.Queued && inFlight !is DownloadState.Running) {
+                DownloadSession.queued(song, from)
+                fail(id, WIFI_ONLY_REFUSAL)
+            }
+            return
+        }
         synchronized(lock) {
             if (id in pending || id == runningId) return
             pending[id] = song
         }
         _active.value = _active.value + (id to DownloadState.Queued)
+        DownloadSession.queued(song, from)
 
         val app = context.applicationContext
         runCatching {
@@ -144,6 +190,10 @@ object Downloads {
         }
         job?.cancel()
         clear(videoId)
+        // A download the user called off is not something they need reminding to
+        // check on, so it leaves the manager rather than sitting in it as a
+        // permanent "cancelled" row.
+        DownloadSession.forget(videoId)
     }
 
     // ---- The record ---------------------------------------------------------
@@ -173,6 +223,158 @@ object Downloads {
 
     private fun forget(videoId: String) {
         record(_saved.value - videoId, _savedMetadata.value - videoId)
+    }
+
+    // ---- Releases -----------------------------------------------------------
+
+    /**
+     * Remember that [songs] were asked for as one release rather than one at a
+     * time.
+     *
+     * The reason this exists at all: a batch download used to be indistinguishable
+     * from forty separate ones the moment it finished. What reached the Downloads
+     * page was forty rows, and the only thing that could group them back up was
+     * whatever album tag each row happened to carry — which an album page's rows
+     * don't carry at all (the release is billed once, in the header) and a
+     * playlist's rows *never* can, because a playlist is not an album and its
+     * tracks are off forty different ones. So the thing the user tapped was the
+     * one thing not written down anywhere.
+     *
+     * Recorded at the tap rather than on completion, and keyed by the id that
+     * was tapped, so re-downloading the same release updates one entry instead
+     * of accumulating near-duplicates. The order is the running order the page
+     * had, which is what makes the entry read back as the release rather than as
+     * a bag of tracks.
+     *
+     * Nothing here asserts the files exist. That is deliberate and matches
+     * [saved]: this is a record of what was *asked* for, and which of those
+     * tracks is actually on disk is answered where it is read — see
+     * [collectionsAmong].
+     */
+    fun rememberCollection(target: DownloadTarget, songs: List<Song>) {
+        if (songs.isEmpty()) return
+        val existing = _collections.value[target.id]
+        val ids = songs.map { it.videoId }.distinct()
+        val record = SavedCollection(
+            id = target.id,
+            title = target.title,
+            subtitle = target.subtitle,
+            thumbnailUrl = target.thumbnailUrl ?: existing?.thumbnailUrl,
+            playlist = target.playlist,
+            // A release fetched in pages can be downloaded twice from two
+            // different depths of the same page, so the two asks are merged
+            // rather than the second replacing the first — but the new order
+            // leads, since it is the one just seen on screen.
+            videoIds = (ids + (existing?.videoIds ?: emptyList())).distinct(),
+        )
+        recordCollections(_collections.value + (target.id to record))
+    }
+
+    /** Drop a release from the record without touching the files under it. */
+    fun forgetCollection(id: String) {
+        if (id !in _collections.value) return
+        recordCollections(_collections.value - id)
+    }
+
+    /**
+     * How one downloaded playlist is addressed as a page of its own.
+     *
+     * Under `local:` deliberately: that prefix is how the rest of the app asks
+     * "is this already on the device?", and it is what keeps the download button
+     * off such a page's header and out of its menu. What it must not be taken
+     * for is one of the two device *folders* — `local:downloads` and `local:all`
+     * open the tabbed Songs / Artists / Albums view, and this opens a plain
+     * track listing — so it gets a segment of its own rather than an id in the
+     * same namespace.
+     *
+     * Playlists only, which is why the word is in the prefix. A downloaded album
+     * stamps its name onto each of its tracks, so the Albums tab groups it back
+     * up without being told; a playlist's tracks are off forty different releases
+     * and no tag on any of them names it, so it is the one that needs a page.
+     */
+    const val PLAYLIST_PREFIX = "local:playlist:"
+
+    /** The page id for the release recorded under [id]. */
+    fun pageIdFor(id: String): String = PLAYLIST_PREFIX + id
+
+    /** The release [pageIdFor] built [browseId] from, or null if it didn't. */
+    fun recordIdOf(browseId: String): String? =
+        browseId.removePrefix(PLAYLIST_PREFIX).takeIf { it != browseId && it.isNotEmpty() }
+
+    /**
+     * The playlists downloaded whole, in name order, without their tracks.
+     *
+     * What the Library page's On Device shelf draws a card from. Unlike
+     * [collectionsAmong] there is no track list here to prune against — that
+     * page never reads the folder — so this prunes against [onDisk] instead,
+     * which drops a playlist once the last file recorded for it has been deleted
+     * *through this app* and keeps the rest. That is the same claim [saved] makes
+     * everywhere else, and opening the card is what settles it either way.
+     *
+     * It is also what keeps a playlist off the shelf between the tap that queues
+     * it and the first track landing: [rememberCollection] writes the record at
+     * the tap, and a playlist with nothing downloaded yet is not on the device.
+     *
+     * [onDisk] is a parameter for the same reason [collectionsAmong] takes its
+     * songs: the rule is worth stating on a known folder rather than only on
+     * whatever this process happens to have recorded.
+     */
+    fun savedPlaylists(onDisk: Map<String, String> = _saved.value): List<SavedCollection> {
+        if (_collections.value.isEmpty()) return emptyList()
+        return _collections.value.values
+            .filter { record -> record.playlist && record.videoIds.any { it in onDisk } }
+            .sortedBy { it.title.lowercase() }
+    }
+
+    /**
+     * The releases at least one of [songs] belongs to, each with its own tracks
+     * picked out of that list.
+     *
+     * Given the page's own songs rather than reading the disk itself, because
+     * the page has already done that work — every row in it is a file that was
+     * there when it was taken — and a release is only worth drawing for the
+     * tracks that survived. A release whose files have all been deleted from a
+     * file manager therefore disappears from the page without anything having to
+     * notice it went.
+     *
+     * The lookup goes through [saved] as well as by id because one file answers
+     * to two of them: a music video is swapped for its catalogue track on the
+     * way down (see [remember]) and the page keeps whichever of the pair it
+     * listed first, which is not necessarily the id the release named.
+     */
+    fun collectionsAmong(songs: List<Song>): List<DownloadedCollection> {
+        if (songs.isEmpty() || _collections.value.isEmpty()) return emptyList()
+        val byId = songs.associateBy { it.videoId }
+        val byUri = songs.mapNotNull { song -> song.localUri?.let { it to song } }.toMap()
+        val uris = _saved.value
+        return _collections.value.values
+            .mapNotNull { record ->
+                val tracks = record.videoIds
+                    .mapNotNull { id -> byId[id] ?: uris[id]?.let(byUri::get) }
+                    .distinctBy { it.localUri ?: it.videoId }
+                if (tracks.isEmpty()) {
+                    null
+                } else {
+                    DownloadedCollection(
+                        id = record.id,
+                        title = record.title,
+                        subtitle = record.subtitle,
+                        thumbnailUrl = record.thumbnailUrl ?: tracks.firstNotNullOfOrNull { it.thumbnailUrl },
+                        playlist = record.playlist,
+                        songs = tracks,
+                    )
+                }
+            }
+            .sortedBy { it.title.lowercase() }
+    }
+
+    private fun recordCollections(map: Map<String, SavedCollection>) {
+        _collections.value = map
+        if (::prefs.isInitialized) {
+            prefs.edit()
+                .putString(KEY_SAVED_COLLECTIONS, json.encodeToString(collectionSerializer, map))
+                .apply()
+        }
     }
 
     /**
@@ -314,16 +516,46 @@ object Downloads {
     internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
         _active.value = _active.value + (id to DownloadState.Running(0f))
+        DownloadSession.running(id, 0f)
 
         var pending: DownloadStore.Pending? = null
+        var lyrics: Deferred<String?>? = null
         try {
             // A music-video entry is swapped for the catalogue track behind it,
             // the same way queueing one is. It matters more here: the video's
             // title is where "(Official Video)" lives, and that would be baked
             // into a filename this app never gets to correct.
             val track = runCatching { YtMusicRepository.resolveAudio(song) }.getOrDefault(song)
-            val route = routeFor(track)
-            Log.d(TAG, "downloading $id as .${route.extension} (${route.describe})")
+            // The manager is showing the row that was tapped, which for a music
+            // video is the wrong title and the wrong cover for the file actually
+            // being written. Corrected here rather than left to disagree with
+            // the notification and with the Downloads page afterwards.
+            DownloadSession.retitle(id, track)
+            // Read once, here, for the whole of this track. Both routes below
+            // and the re-resolve inside [Downloader.fetch] have to agree on
+            // which rung they are fetching, and re-reading the setting per call
+            // would let a change made mid-download splice two renditions into
+            // one file.
+            val quality = AppSettings.downloadQuality.value
+            val route = routeFor(track, quality)
+            Log.d(TAG, "downloading $id as .${route.extension} (${route.describe}, ${quality.label})")
+
+            // Started before the transfer rather than after it, so four lyric
+            // services are being raced while the bytes are already moving. Done
+            // after the commit instead, every download would pay the slowest of
+            // them in dead time — and it is a *suspending* wait, so it would sit
+            // in the one stretch of this function that has no way back: past the
+            // commit, [pending] is null and a cancellation there would abandon a
+            // finished file that nothing has recorded yet. Awaited below while
+            // there is still a pending destination to abort.
+            //
+            // [LyricsTag.forTrack] is contracted not to throw for anything but
+            // cancellation, and that contract is load-bearing here: this is a
+            // plain child of [withContext]'s scope, so a failure inside it would
+            // cancel the download it was only meant to decorate.
+            if (MediaTagger.carriesTags(route.extension)) {
+                lyrics = async { LyricsTag.forTrack(track) }
+            }
 
             val name = DownloadStore.fileNameFor(track, route.extension)
             // Already there from a previous run the record lost track of —
@@ -332,6 +564,7 @@ object Downloads {
             if (alreadyThere != null) {
                 Log.d(TAG, "$name is already in Music; adopting it")
                 remember(song, track, alreadyThere)
+                DownloadSession.done(id)
                 clear(id)
                 return@withContext
             }
@@ -340,14 +573,17 @@ object Downloads {
             pending = destination
             destination.openStream().use { sink ->
                 route.write(sink) { written, total ->
-                    _active.value = _active.value +
-                        (id to DownloadState.Running(written.toFloat() / total))
+                    val fraction = written.toFloat() / total
+                    _active.value = _active.value + (id to DownloadState.Running(fraction))
+                    DownloadSession.running(id, fraction)
                 }
             }
+            val words = lyrics?.await()
             val savedUri = destination.commit()
             pending = null
-            MediaTagger.embed(context, savedUri, track, route.extension)
+            MediaTagger.embed(context, savedUri, track, route.extension, words)
             remember(song, track, savedUri)
+            DownloadSession.done(id)
             clear(id)
             Log.d(TAG, "saved $name")
         } catch (e: CancellationException) {
@@ -358,6 +594,13 @@ object Downloads {
             pending?.abort()
             Log.w(TAG, "download failed for $id: ${e.message}", e)
             fail(id, e.friendly())
+        } finally {
+            // Every exit needs this, not just the failing ones: the adopt-it
+            // path above returns with the lookup still in flight, and
+            // [withContext] does not return while a child of its scope is
+            // running — so an unwaited job would hold the whole queue up for
+            // the length of a lyrics search per already-downloaded track.
+            lyrics?.cancel()
         }
     }
 
@@ -385,9 +628,14 @@ object Downloads {
      * A configured source gets asked first, and YouTube is what happens when
      * none of them can serve it — see [SourceResolver.forDownload] for what
      * "can" means, which is narrower here than it is for playback.
+     *
+     * @param quality read once by the caller and passed down, so that a setting
+     *   changed while this track is in the queue applies to the next one rather
+     *   than to the middle of this one. [Downloader.fetch] resolves again after
+     *   a mid-download refusal and has to ask for the same rung it started on.
      */
-    private suspend fun routeFor(track: Song): Route {
-        lossless(track)?.let { (stream, storable) ->
+    private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
+        lossless(track, quality)?.let { (stream, storable) ->
             return Route(
                 extension = storable.extension,
                 mimeType = storable.mimeType,
@@ -397,12 +645,14 @@ object Downloads {
                 },
             )
         }
-        val stream = StreamResolver.resolveForDownload(track.videoId)
+        val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps)
         return Route(
             extension = stream.downloadExtension,
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
-            write = { sink, onProgress -> Downloader.fetch(track.videoId, stream, sink, onProgress) },
+            write = { sink, onProgress ->
+                Downloader.fetch(track.videoId, stream, quality.maxKbps, sink, onProgress)
+            },
         )
     }
 
@@ -420,11 +670,22 @@ object Downloads {
      * The [DownloadStore.storable] check belongs here rather than inside the
      * resolver: the resolver's job is finding the best audio, and whether this
      * device will keep a file of that codec is a question about Android.
+     *
+     * @param quality pinned by [run] for the whole of this track. Passed on to
+     *   the resolver rather than left to it, so that the twenty seconds this may
+     *   spend searching cannot be a window in which the setting changes and the
+     *   two halves of one decision disagree.
      */
-    private suspend fun lossless(track: Song): Pair<SourceStream, DownloadStore.Storable>? {
+    private suspend fun lossless(
+        track: Song,
+        quality: DownloadQuality,
+    ): Pair<SourceStream, DownloadStore.Storable>? {
         val stream = withTimeoutOrNull(LOSSLESS_LOOKUP_MS) {
             try {
-                SourceResolver.forDownload(TrackMatcher.targetOf(track))
+                SourceResolver.forDownload(
+                    TrackMatcher.targetOf(track),
+                    SourceResolver.requestForDownload(quality),
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -448,6 +709,7 @@ object Downloads {
 
     private fun fail(videoId: String, reason: String) {
         _active.value = _active.value + (videoId to DownloadState.Failed(reason))
+        DownloadSession.failed(videoId, reason)
     }
 
     /**
@@ -480,6 +742,16 @@ object Downloads {
      */
     private const val LOSSLESS_LOOKUP_MS = 20_000L
 
+    /**
+     * Why a download didn't start, when the reason is a setting rather than a
+     * fault.
+     *
+     * Names the switch, because a refusal that only says no leaves the user
+     * looking for a network problem that isn't there. Shared with the callers
+     * that show it as a toast so the two cannot drift apart.
+     */
+    internal const val WIFI_ONLY_REFUSAL = "Downloads are set to Wi-Fi only"
+
     /** Dropped when the sheet is reopened; a failure is worth showing once. */
     fun dismissFailure(videoId: String) {
         if (_active.value[videoId] is DownloadState.Failed) clear(videoId)
@@ -504,4 +776,56 @@ internal data class SavedSongMetadata(
      */
     val albumName: String? = null,
     val uri: String,
+)
+
+/**
+ * What a batch download was asked for as a whole.
+ *
+ * Built by whichever surface the tap came from — a release page's own download
+ * button, a shelf card's menu — because that surface is the only thing that
+ * knows the answer, and by the time the tracks reach the queue they are forty
+ * unrelated rows. Null everywhere a single track is downloaded on its own,
+ * which is the honest answer there: one song off an album is not the album.
+ */
+data class DownloadTarget(
+    /**
+     * What this release is filed under: its browse id where it has one, so the
+     * same album downloaded twice is one entry rather than two.
+     */
+    val id: String,
+    val title: String,
+    val subtitle: String = "",
+    val thumbnailUrl: String? = null,
+    /** Playlists and albums are grouped alike but not billed alike. */
+    val playlist: Boolean = false,
+)
+
+/**
+ * A release the record says was downloaded whole, as it is written down.
+ *
+ * Only the tracks' ids, not the tracks: a [Song] is a wide row full of things
+ * that go stale — like state, autoplay provenance, a resolved local path — and
+ * a second copy of one per release is a second copy to keep in step. The songs
+ * are looked up out of what the Downloads page already read off disk instead;
+ * see [Downloads.collectionsAmong].
+ */
+@kotlinx.serialization.Serializable
+data class SavedCollection(
+    val id: String,
+    val title: String,
+    val subtitle: String = "",
+    val thumbnailUrl: String? = null,
+    val playlist: Boolean = false,
+    /** In the order the page listed them, which is the order to play them in. */
+    val videoIds: List<String> = emptyList(),
+)
+
+/** A [SavedCollection] with its surviving tracks attached, ready to draw. */
+data class DownloadedCollection(
+    val id: String,
+    val title: String,
+    val subtitle: String,
+    val thumbnailUrl: String?,
+    val playlist: Boolean,
+    val songs: List<Song>,
 )

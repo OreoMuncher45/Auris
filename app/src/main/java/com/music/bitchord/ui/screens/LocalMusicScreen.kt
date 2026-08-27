@@ -7,22 +7,21 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,9 +30,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -57,13 +58,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
+import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.download.DownloadedCollection
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.topBarHeight
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -76,8 +85,9 @@ private const val LOCAL_TAB_ALBUMS = 2
  *
  * Also the Downloads folder — the two are the same thing from here, a flat list
  * of tracks on this device, and they read as the same page because they are the
- * same page. What differs is only where the list came from and what to say when
- * it is empty, which is [emptyMessage].
+ * same page. What differs is only where the list came from, what to say when it
+ * is empty, and whether anything knows how those tracks were *asked* for: see
+ * [collections], which is the Downloads folder's alone.
  *
  * Tapping an artist or album name slides in a filtered song list inline, so
  * the tab bar stays visible and Back returns to the grid rather than leaving
@@ -96,6 +106,27 @@ fun LocalMusicScreen(
      * reason there are none, which "0 songs" on its own doesn't give.
      */
     emptyMessage: String? = null,
+    /**
+     * One of the Artists / Albums groupings, held rather than tapped — the
+     * album/playlist menu, with the rows it covers already in hand. Nothing
+     * here has a browse id to fetch, so this is the only way these get one.
+     */
+    onCollectionLongPress: ((String, List<Song>) -> Unit)? = null,
+    /**
+     * The albums and playlists that were downloaded *as* albums and playlists.
+     *
+     * They lead the Albums tab, because they are the only entries on it that the
+     * user actually asked for by name — the rest are groupings this screen
+     * derived from whatever album tag each file happens to carry, which is a
+     * good guess and nothing more. A playlist cannot be derived that way at all:
+     * its tracks are off forty different releases and no tag on any of them says
+     * which playlist they were pulled from, so without this a downloaded
+     * playlist simply scattered.
+     *
+     * Empty for Local Music, where nothing was asked for through this app and
+     * the tags are all there is.
+     */
+    collections: List<DownloadedCollection> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     // Which top-level tab is selected.
@@ -104,13 +135,20 @@ fun LocalMusicScreen(
     // When non-null, we are showing a drill-down list for that artist or album.
     var drillDownLabel by remember { mutableStateOf<String?>(null) }
     var drillDownSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
+    // The release's own cover, for the drill-down header. Only a downloaded
+    // album or playlist has one worth showing — a tag-derived grouping's
+    // "artwork" is just whichever of its rows happened to be first.
+    var drillDownArt by remember { mutableStateOf<String?>(null) }
 
     val inDrillDown = drillDownLabel != null
 
-    BackHandler(enabled = inDrillDown) {
+    val leaveDrillDown = {
         drillDownLabel = null
         drillDownSongs = emptyList()
+        drillDownArt = null
     }
+
+    BackHandler(enabled = inDrillDown) { leaveDrillDown() }
 
     // The tab row is fixed above the scrolling content, so its own top
     // padding has to clear the frosted top bar / status bar that the
@@ -119,9 +157,8 @@ fun LocalMusicScreen(
 
     // contentPadding.top carries extra breathing room meant for scrolling
     // content resting under the glass bar; the tab row is fixed and sits
-    // right below the bar, so it only needs to clear the bar itself
-    // (status bar inset + the bar's own 52dp) — see FrostedTopBar.
-    val topBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp
+    // right below the bar, so it only needs to clear the bar itself.
+    val barHeight = topBarHeight()
 
     Column(modifier = modifier.fillMaxSize()) {
         // ── Tab row ──────────────────────────────────────────────────────────
@@ -129,7 +166,7 @@ fun LocalMusicScreen(
             selectedTabIndex = selectedTab,
             containerColor = MaterialTheme.colorScheme.background,
             contentColor = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(top = topBarHeight),
+            modifier = Modifier.padding(top = barHeight),
             indicator = { tabPositions ->
                 TabRowDefaults.SecondaryIndicator(
                     modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
@@ -143,7 +180,7 @@ fun LocalMusicScreen(
                 selected = selectedTab == LOCAL_TAB_SONGS,
                 onClick = {
                     selectedTab = LOCAL_TAB_SONGS
-                    drillDownLabel = null
+                    leaveDrillDown()
                 },
             )
             LocalTab(
@@ -152,7 +189,7 @@ fun LocalMusicScreen(
                 selected = selectedTab == LOCAL_TAB_ARTISTS,
                 onClick = {
                     selectedTab = LOCAL_TAB_ARTISTS
-                    drillDownLabel = null
+                    leaveDrillDown()
                 },
             )
             LocalTab(
@@ -161,7 +198,7 @@ fun LocalMusicScreen(
                 selected = selectedTab == LOCAL_TAB_ALBUMS,
                 onClick = {
                     selectedTab = LOCAL_TAB_ALBUMS
-                    drillDownLabel = null
+                    leaveDrillDown()
                 },
             )
         }
@@ -199,15 +236,16 @@ fun LocalMusicScreen(
                     // Drill-down song list for artist / album
                     DrillDownSongList(
                         label = drillDownLabel ?: "",
+                        artworkUrl = drillDownArt,
                         songs = drillDownSongs,
                         onSongClick = onSongClick,
                         onSongLongPress = onSongLongPress,
                         onSongSwipe = onSongSwipe,
                         onShuffle = onShuffle,
-                        onBack = {
-                            drillDownLabel = null
-                            drillDownSongs = emptyList()
+                        onMore = onCollectionLongPress?.let { more ->
+                            { more(drillDownLabel ?: "", drillDownSongs) }
                         },
+                        onBack = leaveDrillDown,
                         contentPadding = bodyContentPadding,
                     )
                 }
@@ -233,25 +271,24 @@ fun LocalMusicScreen(
                         onArtistClick = { artist, artistSongs ->
                             drillDownLabel = artist
                             drillDownSongs = artistSongs
+                            drillDownArt = null
                         },
+                        onArtistLongPress = onCollectionLongPress,
                         contentPadding = bodyContentPadding,
                     )
                 }
 
                 else -> {
                     // LOCAL_TAB_ALBUMS
-                    val albums = remember(songs) {
-                        songs.filter { it.albumName != null }
-                            .groupBy { it.albumName!! }
-                            .entries
-                            .sortedBy { it.key.lowercase() }
-                    }
+                    val albums = remember(songs, collections) { albumEntries(songs, collections) }
                     AlbumsTab(
                         albums = albums,
-                        onAlbumClick = { album, albumSongs ->
-                            drillDownLabel = album
-                            drillDownSongs = albumSongs
+                        onAlbumClick = { entry ->
+                            drillDownLabel = entry.title
+                            drillDownSongs = entry.songs
+                            drillDownArt = entry.thumbnailUrl
                         },
+                        onAlbumLongPress = onCollectionLongPress,
                         contentPadding = bodyContentPadding,
                     )
                 }
@@ -306,6 +343,7 @@ private fun SongsTab(
 private fun ArtistsTab(
     artists: List<Map.Entry<String, List<Song>>>,
     onArtistClick: (String, List<Song>) -> Unit,
+    onArtistLongPress: ((String, List<Song>) -> Unit)?,
     contentPadding: PaddingValues,
 ) {
     val listState = rememberLazyListState()
@@ -325,6 +363,7 @@ private fun ArtistsTab(
                 name = artist,
                 songCount = artistSongs.size,
                 onClick = { onArtistClick(artist, artistSongs) },
+                onLongPress = onArtistLongPress?.let { { it(artist, artistSongs) } },
             )
             HorizontalDivider(
                 modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
@@ -335,12 +374,18 @@ private fun ArtistsTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ArtistRow(name: String, songCount: Int, onClick: () -> Unit) {
+private fun ArtistRow(
+    name: String,
+    songCount: Int,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -385,10 +430,94 @@ private fun ArtistRow(name: String, songCount: Int, onClick: () -> Unit) {
 
 // ── Albums tab ────────────────────────────────────────────────────────────────
 
+/**
+ * One row of the Albums tab, whichever of the two things it came from.
+ *
+ * The tab used to be a `Map.Entry<String, List<Song>>` straight off a `groupBy`,
+ * which was exactly as much as a tag grouping can say. A downloaded release
+ * knows three more things — its own cover, whether it is a playlist rather than
+ * an album, and the order its tracks go in — and none of those has anywhere to
+ * live in a map entry.
+ */
+private class AlbumEntry(
+    val title: String,
+    val artist: String,
+    val thumbnailUrl: String?,
+    /** Billed as a playlist rather than by artist; see [AlbumRow]. */
+    val playlist: Boolean,
+    /** Kept in the order it was downloaded in, which is the release's own. */
+    val songs: List<Song>,
+    /** Whether this is a release the user asked for, or a grouping inferred. */
+    val asked: Boolean,
+    /**
+     * What the list keys this row by — the release's own id where it has one.
+     *
+     * Not the title: an album and a playlist can be called the same thing (a
+     * self-titled record and its "This is …" mix, say), and two rows sharing a
+     * key is a crash out of `LazyColumn` rather than a cosmetic clash.
+     */
+    val key: String,
+)
+
+/**
+ * The Albums tab's rows: the releases downloaded whole, then whatever else the
+ * files' own album tags group up.
+ *
+ * The two are merged rather than shown as separate sections because they are the
+ * same kind of thing to whoever is looking for one — a folder of songs with a
+ * name they remember. What matters is only that the *named* ones win a collision:
+ * an album downloaded whole also stamps its name onto each of its tracks (see
+ * `withAlbum` in MainActivity), so without this every one of them would appear
+ * twice, once with its cover and once without.
+ *
+ * Releases lead within their own alphabetical run rather than being sorted
+ * together, because a tag grouping is a guess and a recorded release is not.
+ */
+private fun albumEntries(
+    songs: List<Song>,
+    collections: List<DownloadedCollection>,
+): List<AlbumEntry> {
+    val asked = collections.map { collection ->
+        AlbumEntry(
+            title = collection.title,
+            artist = collection.subtitle.ifBlank {
+                collection.songs.firstOrNull()?.artist.orEmpty()
+            },
+            thumbnailUrl = collection.thumbnailUrl,
+            playlist = collection.playlist,
+            songs = collection.songs,
+            asked = true,
+            key = "asked:${collection.id}",
+        )
+    }
+    val claimed = asked.mapTo(HashSet()) { it.title.lowercase() }
+    val derived = songs
+        .groupBy { it.albumName }
+        .mapNotNull { (name, group) ->
+            // Null is every track that never said what release it was off, and
+            // there is no row to draw for "no album" — those are the Songs tab's
+            // and nothing else's.
+            if (name == null || name.lowercase() in claimed) return@mapNotNull null
+            AlbumEntry(
+                title = name,
+                artist = group.firstOrNull()?.artist.orEmpty(),
+                thumbnailUrl = group.firstNotNullOfOrNull { it.thumbnailUrl },
+                playlist = false,
+                songs = group,
+                asked = false,
+                key = "tagged:$name",
+            )
+        }
+    return (asked + derived).sortedWith(
+        compareByDescending<AlbumEntry> { it.asked }.thenBy { it.title.lowercase() },
+    )
+}
+
 @Composable
 private fun AlbumsTab(
-    albums: List<Map.Entry<String, List<Song>>>,
-    onAlbumClick: (String, List<Song>) -> Unit,
+    albums: List<AlbumEntry>,
+    onAlbumClick: (AlbumEntry) -> Unit,
+    onAlbumLongPress: ((String, List<Song>) -> Unit)?,
     contentPadding: PaddingValues,
 ) {
     val listState = rememberLazyListState()
@@ -400,24 +529,26 @@ private fun AlbumsTab(
         item {
             SectionHeader(
                 icon = Icons.Rounded.Album,
-                title = "${albums.size} albums",
+                title = "${albums.size} ${if (albums.size == 1) "album" else "albums"}",
             )
         }
-        // Songs but no albums: nothing here carries an album tag. Worth saying
-        // outright — most of the Downloads folder is `.webm` and `.m4a` written
-        // by this app, and a track downloaded from a row that never named a
-        // release has no album for any player to group it under.
+        // Songs but no albums: nothing here was downloaded as a release and
+        // nothing carries an album tag either. Worth saying outright — a track
+        // downloaded one at a time from a row that never named a release has no
+        // album for any player to group it under.
         if (albums.isEmpty()) {
             item {
-                MessageState(message = "None of these tracks say what album they're from.")
+                MessageState(
+                    message = "Nothing here belongs to an album or playlist yet. " +
+                        "Download a whole one and it turns up here.",
+                )
             }
         }
-        items(albums) { (album, albumSongs) ->
+        items(albums, key = { it.key }) { entry ->
             AlbumRow(
-                name = album,
-                artist = albumSongs.firstOrNull()?.artist ?: "",
-                songCount = albumSongs.size,
-                onClick = { onAlbumClick(album, albumSongs) },
+                entry = entry,
+                onClick = { onAlbumClick(entry) },
+                onLongPress = onAlbumLongPress?.let { { it(entry.title, entry.songs) } },
             )
             HorizontalDivider(
                 modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
@@ -428,34 +559,29 @@ private fun AlbumsTab(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AlbumRow(name: String, artist: String, songCount: Int, onClick: () -> Unit) {
+private fun AlbumRow(
+    entry: AlbumEntry,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Album icon square
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.secondaryContainer),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Album,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(26.dp),
-            )
-        }
+        CollectionArtwork(
+            url = entry.thumbnailUrl,
+            playlist = entry.playlist,
+            size = 48.dp,
+        )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = name,
+                text = entry.title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
@@ -463,8 +589,15 @@ private fun AlbumRow(name: String, artist: String, songCount: Int, onClick: () -
             )
             Text(
                 text = buildString {
-                    if (artist.isNotBlank()) append("$artist · ")
-                    append("$songCount ${if (songCount == 1) "song" else "songs"}")
+                    // A playlist's tracks are off forty different releases, so
+                    // the first one's artist is not a credit for it — the kind
+                    // of thing it is says more, and is true.
+                    if (entry.playlist) {
+                        append("Playlist · ")
+                    } else if (entry.artist.isNotBlank() && entry.artist != entry.title) {
+                        append("${entry.artist} · ")
+                    }
+                    append("${entry.songs.size} ${if (entry.songs.size == 1) "song" else "songs"}")
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -481,16 +614,58 @@ private fun AlbumRow(name: String, artist: String, songCount: Int, onClick: () -
     }
 }
 
+/**
+ * A release's cover, with a glyph standing in when there isn't one.
+ *
+ * The placeholder is not a fallback so much as the common case for anything
+ * grouped off tags: those files' artwork is whatever the media scanner extracted,
+ * which for a `.m4a` this app wrote is frequently nothing at all. Drawn behind
+ * the image rather than instead of it, so a cover that loads late replaces the
+ * glyph without the row changing size under it.
+ */
+@Composable
+private fun CollectionArtwork(url: String?, playlist: Boolean, size: Dp) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.secondaryContainer),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (playlist) Icons.AutoMirrored.Rounded.QueueMusic else Icons.Rounded.Album,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+            modifier = Modifier.size(size * 0.54f),
+        )
+        if (url != null) {
+            AsyncImage(
+                model = url.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(size)
+                    .clip(shape)
+                    .thumbnailBorder(shape),
+            )
+        }
+    }
+}
+
 // ── Drill-down song list ───────────────────────────────────────────────────────
 
 @Composable
 private fun DrillDownSongList(
     label: String,
+    /** The release's cover, where it has one — see [CollectionArtwork]. */
+    artworkUrl: String?,
     songs: List<Song>,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
+    onMore: (() -> Unit)?,
     onBack: () -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -522,6 +697,13 @@ private fun DrillDownSongList(
                     )
                 }
                 Spacer(Modifier.width(4.dp))
+                // Only where there is a real cover to show. An artist grouping
+                // has none, and a square of placeholder glyph next to the name
+                // would be decoration standing in for information.
+                if (artworkUrl != null) {
+                    CollectionArtwork(url = artworkUrl, playlist = false, size = 40.dp)
+                    Spacer(Modifier.width(10.dp))
+                }
                 Text(
                     text = label,
                     style = MaterialTheme.typography.headlineSmall,
@@ -530,6 +712,24 @@ private fun DrillDownSongList(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
+                // The same menu holding the row in the grid behind this opens.
+                // Reachable from here too because this is where someone ends up
+                // who wanted the whole album and tapped instead of held.
+                onMore?.let { more ->
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = more),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MoreHoriz,
+                            contentDescription = "More",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
         }
 

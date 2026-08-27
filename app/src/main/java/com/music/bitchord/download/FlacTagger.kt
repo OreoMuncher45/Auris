@@ -3,8 +3,8 @@ package com.music.bitchord.download
 import java.io.ByteArrayOutputStream
 
 /**
- * Rewrites a downloaded FLAC's metadata blocks to carry title, artist, album
- * and cover art.
+ * Rewrites a downloaded FLAC's metadata blocks to carry title, artist, album,
+ * lyrics and cover art.
  *
  * The simplest of the three taggers, and the reason is worth stating because it
  * is the opposite of what the other two are shaped by. A FLAC is `fLaC`, then a
@@ -36,10 +36,11 @@ object FlacTagger {
         title: String,
         artist: String,
         album: String?,
+        lyrics: String?,
         cover: ByteArray?,
         coverMime: String,
     ): ByteArray = runCatching {
-        rewrite(bytes, title, artist, album, cover, coverMime)
+        rewrite(bytes, title, artist, album, lyrics, cover, coverMime)
     }.getOrDefault(bytes)
 
     private fun rewrite(
@@ -47,6 +48,7 @@ object FlacTagger {
         title: String,
         artist: String,
         album: String?,
+        lyrics: String?,
         cover: ByteArray?,
         coverMime: String,
     ): ByteArray {
@@ -74,12 +76,13 @@ object FlacTagger {
         if (blocks.firstOrNull()?.type != TYPE_STREAMINFO) return bytes
 
         val additions = listOfNotNull(
-            vorbisComment(title, artist, album)?.let { TYPE_VORBIS_COMMENT to it },
+            vorbisComment(title, artist, album, lyrics)?.let { TYPE_VORBIS_COMMENT to it },
             cover?.takeIf { it.isNotEmpty() }?.let { TYPE_PICTURE to picture(it, coverMime) },
         )
             // A payload past what three bytes of length can describe costs that
-            // one block and nothing else. Only a cover could ever reach 16MB,
-            // and losing the cover is a better outcome than losing the tags.
+            // one block and nothing else. Only a cover could realistically reach
+            // 16MB — `LyricsTag` caps what it hands over at a small fraction of
+            // it — and losing the cover is a better outcome than losing the tags.
             .filter { it.second.size <= MAX_BLOCK_BYTES }
         if (additions.isEmpty()) return bytes
 
@@ -112,12 +115,23 @@ object FlacTagger {
      * Vorbis packet, not to the comment structure, and writing one here appends
      * a stray byte to the block that strict parsers reject. It is the classic
      * way this gets written wrong, so: no framing bit.
+     *
+     * [lyrics] goes in as `LYRICS`, which is where every reader that shows
+     * lyrics for a FLAC looks. Nothing about the layout minds it being long or
+     * containing newlines: a field is a length-prefixed run of UTF-8 bytes, and
+     * only the *name* before the `=` is constrained.
      */
-    private fun vorbisComment(title: String, artist: String, album: String?): ByteArray? {
+    private fun vorbisComment(
+        title: String,
+        artist: String,
+        album: String?,
+        lyrics: String?,
+    ): ByteArray? {
         val fields = buildList {
             if (title.isNotBlank()) add("TITLE=$title")
             if (artist.isNotBlank()) add("ARTIST=$artist")
             if (!album.isNullOrBlank()) add("ALBUM=$album")
+            if (!lyrics.isNullOrBlank()) add("LYRICS=$lyrics")
         }
         if (fields.isEmpty()) return null
 

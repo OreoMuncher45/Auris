@@ -68,6 +68,34 @@ data class Song(
  */
 fun Song.artworkAt(px: Int): String? = thumbnailUrl.artworkAt(px)
 
+/**
+ * [Song.durationText] in milliseconds, or 0 when the row didn't state one.
+ *
+ * A row's duration is a display string — YouTube sends `"3:45"`, not a
+ * number — and anything that has to *reason* about the length rather than draw
+ * it needs it back as a quantity. Lyrics matching is the case that forced this
+ * out into the open: LRCLIB keys its exact lookup on the track's length, and
+ * falls back to whichever fuzzy hit is closest to it, so a duration of zero
+ * doesn't miss — it silently matches the shortest edit of the song in the
+ * database and hands back timings for a different recording.
+ *
+ * Zero is the answer for anything that isn't a duration, including null, so a
+ * caller has one thing to check rather than a nullable *and* a range.
+ */
+fun Song.durationMillis(): Long = durationText.durationMillis()
+
+/** As [Song.durationMillis], for a `M:SS` or `H:MM:SS` string on its own. */
+fun String?.durationMillis(): Long {
+    val parts = this?.trim()?.takeIf { it.isNotEmpty() }?.split(":") ?: return 0L
+    val numbers = parts.map { it.trim().toLongOrNull() ?: return 0L }
+    val seconds = when (numbers.size) {
+        2 -> numbers[0] * 60 + numbers[1]
+        3 -> numbers[0] * 3_600 + numbers[1] * 60 + numbers[2]
+        else -> return 0L
+    }
+    return (seconds * 1_000).coerceAtLeast(0L)
+}
+
 /** As [Song.artworkAt], for artwork that isn't a track's. */
 fun String?.artworkAt(px: Int): String? = this?.replace(SIZE_HINT, "w$px-h$px")
 

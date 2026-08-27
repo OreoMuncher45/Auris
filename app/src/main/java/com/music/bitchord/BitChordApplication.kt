@@ -20,6 +20,9 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
 
@@ -30,6 +33,14 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
         Innertube.cookie = authStore.cookie
+        // Which account that cookie actually acts as. Read here rather than on
+        // demand so the answer is usually in hand before the first request needs
+        // it: a play registered under the wrong account is indistinguishable, to
+        // the listener, from one that was never registered at all. Fire and
+        // forget — every caller works without it, just less precisely.
+        if (authStore.cookie != null) {
+            CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
+        }
         AppSettings.init(this)
         // After AppSettings: a device with Atmos switched off retires the
         // spatial audio preference on the spot, and that needs prefs open.

@@ -2,11 +2,8 @@ package com.music.bitchord.ui.components
 
 import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -26,9 +23,6 @@ import dev.chrisbanes.haze.materials.HazeMaterials
  * the eye finding where it got there.
  */
 private val FADE_RUN = 120.dp
-
-/** The bar's own height, above the status bar inset — see [FrostedTopBar]. */
-private val BAR_HEIGHT = 52.dp
 
 /**
  * How much blur the fade reaches at its outer edge — short of all of it.
@@ -70,12 +64,10 @@ fun TopFadeBlur(
     // nothing left to do.
     if (reduceDynamicBlur) return
 
-    val inset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(inset + BAR_HEIGHT + FADE_RUN)
+            .height(topBarHeight() + FADE_RUN)
             .hazeEffect(
                 state = hazeState,
                 // Keyed to the colour of the page underneath, not the theme's

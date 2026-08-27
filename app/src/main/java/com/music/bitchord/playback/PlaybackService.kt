@@ -29,6 +29,8 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaSession
@@ -402,6 +404,13 @@ class PlaybackService : MediaSessionService() {
             val exoPlayer = player ?: return
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
+                // The queue ran dry, so no transition will ever close the last
+                // track out. Without this its history entry keeps whatever
+                // watchtime the 30-second sampler happened to have reported and
+                // is never marked finished — so the one play most likely to be
+                // a full, deliberate listen is the one recorded as abandoned.
+                PlaybackTracker.onPlaybackFinished(lastPositionSeconds)
+                lastPositionSeconds = 0
                 // The last track finished with nothing after it, so no
                 // transition will ever close it out. Scrobble it now.
                 val lastSong = listenBrainzSong
@@ -732,6 +741,7 @@ class PlaybackService : MediaSessionService() {
         val defaultDataSourceFactory = DefaultDataSource.Factory(this, resolvingFactory)
         AudioCache.setUpstream(defaultDataSourceFactory)
         mediaSourceFactory = DefaultMediaSourceFactory(AudioCache.playbackFactory(defaultDataSourceFactory))
+            .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
 
         val exoPlayer = buildPlayer(spatialAudioProcessorA, transitionFilterA, ownsSession = true)
         val sparePlayer = buildPlayer(spatialAudioProcessorB, transitionFilterB, ownsSession = false)
@@ -1066,10 +1076,27 @@ class PlaybackService : MediaSessionService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
-        // A new track is a clean slate for [recoverFrom]. The count
-        // exists to stop one broken stream looping, not to hold a
-        // grudge against a track for the rest of the session.
-        recoveries.clear()
+        // A *different* track is a clean slate for [recoverFrom], and so is the
+        // same track becoming current for any reason other than that method's
+        // own retry. The distinction is the whole of the reported loading loop.
+        //
+        // This was an unconditional clear, on the reasoning that the count exists
+        // to stop one broken stream looping rather than to hold a grudge for the
+        // session — and that reasoning is right about the listener pressing play
+        // again, which is why it is kept below. What it missed is that "a track
+        // became current" is not the same event as "something other than the
+        // retry happened": ExoPlayer fires a transition for PLAYLIST_CHANGED and
+        // for SEEK, and [recoverFrom]'s recovery *is* a seek — so the counter was
+        // reset by the very retries it was counting. The report shows four resets
+        // in 2m41s, each followed by a fresh "attempt 1", eight failures against
+        // a budget of two, and roughly twenty-seven full resolve walks for one
+        // unplayable track. [retryingMediaId] is the one case that must not
+        // reset; everything else still does.
+        val becameCurrent = mediaItem?.mediaId
+        if (becameCurrent == null || becameCurrent != retryingMediaId) {
+            recoveries.clear()
+        }
+        retryingMediaId = null
 
         // Where the wait starts, for the log in onIsPlayingChanged — unless
         // there was no wait. A crossfaded track has been audible for as long as
@@ -1203,6 +1230,57 @@ class PlaybackService : MediaSessionService() {
     private val recoveries = mutableMapOf<String, Int>()
 
     /**
+     * The track [recoverFrom] is about to seek-and-prepare, so that the
+     * transition its own retry may fire can be told from the queue moving on or
+     * the listener asking again — see [onTrackBecameCurrent]. Cleared by the
+     * transition it describes, the same way [swappingMediaId] is.
+     */
+    private var retryingMediaId: String? = null
+
+    /**
+     * Media3's retry budget, with one thing added: a load error that cannot
+     * succeed on a second attempt does not get one.
+     *
+     * There was no policy here at all, which meant
+     * [DefaultLoadErrorHandlingPolicy] — three tries at a 1s/2s/3s backoff,
+     * against *any* IOException. Stacked on top of this service's own
+     * [MAX_RECOVERIES] counter and read-ahead's independent resolves, that is
+     * where the "infinite loading" came from: the app logged
+     * "leaving it alone" after its third attempt, and then Media3 quietly
+     * started a fourth on its own schedule — visible in the report as a full
+     * resolve walk beginning with no track selection before it, forty seconds
+     * after the app had given up. Nothing in the log named it, because nothing
+     * in the app had asked for it.
+     *
+     * Only [StreamResolver.PermanentlyUnplayableException] is refused, and it is
+     * refused rather than delayed because the resolver has already established
+     * the answer cannot change — it is the type it uses to say exactly that.
+     * Everything else keeps the default behaviour, which is right: a shaped
+     * response or a dropped connection is worth another go.
+     */
+    private class PermanentAwareLoadErrorPolicy : DefaultLoadErrorHandlingPolicy() {
+        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long {
+            if (isPermanent(loadErrorInfo.exception)) return C.TIME_UNSET
+            return super.getRetryDelayMsFor(loadErrorInfo)
+        }
+
+        private fun isPermanent(error: Throwable?): Boolean {
+            var cause = error
+            var depth = 0
+            while (cause != null && depth++ < CAUSE_DEPTH) {
+                if (cause is StreamResolver.PermanentlyUnplayableException) return true
+                cause = cause.cause?.takeIf { it !== cause }
+            }
+            return false
+        }
+
+        private companion object {
+            /** Media3 and the coroutine machinery both wrap; nothing nests deeper than this. */
+            const val CAUSE_DEPTH = 8
+        }
+    }
+
+    /**
      * Puts a track that died mid-read back on its feet.
      *
      * Two things get thrown away before trying again, because both have been
@@ -1250,8 +1328,18 @@ class PlaybackService : MediaSessionService() {
         //
         // So everything from here to the discard runs either way, and only the
         // seek-and-prepare at the end is skipped.
-        val givingUp = attempts > MAX_RECOVERIES
-        if (givingUp) {
+        //
+        // A verdict counts as exhausting the attempts immediately. The resolver
+        // only throws [StreamResolver.PermanentlyUnplayableException] once it has
+        // established that no client, no session and no extraction can serve the
+        // track, so the two further attempts this would otherwise spend are two
+        // more full walks for an answer already in hand — and in the report they
+        // were exactly that, at roughly seventeen youtubei requests each.
+        val verdict = permanentReason(error)
+        val givingUp = verdict != null || attempts > MAX_RECOVERIES
+        if (verdict != null) {
+            TrackLog.w("BitChord", "$mediaId cannot be played: $verdict", about = mediaId)
+        } else if (givingUp) {
             TrackLog.w("BitChord", "$mediaId has failed $attempts times; leaving it alone", about = mediaId)
         }
         // The upgraded rendition goes with the cache entry it lived in, so the
@@ -1305,15 +1393,83 @@ class PlaybackService : MediaSessionService() {
             // resolves freely, lands on a different source, and streams it into
             // the middle of the last one. Releasing the choice without dropping
             // the bytes would trade one stuck track for a corrupt one.
-            if (givingUp) return@launch
+            if (givingUp) {
+                // A track nobody can play must not leave the player parked in
+                // IDLE on it. Nothing else in this service calls prepare() again,
+                // so before this the queue simply stopped: the notification kept
+                // showing the song, the play button kept doing nothing, and from
+                // the outside that is indistinguishable from a hung app — which
+                // is what the report describes and what "it was stuck on my
+                // phone too" means. Moving on is the only honest answer, and it
+                // is only safe to do for a verdict: a track that merely ran out
+                // of attempts may still be playable when the listener presses
+                // play, and skipping past it would silently eat it.
+                if (verdict != null) withContext(Dispatchers.Main) { skipPastUnplayable(mediaId, verdict) }
+                return@launch
+            }
             withContext(Dispatchers.Main) {
                 val player = this@PlaybackService.player ?: return@withContext
                 if (player.currentMediaItem?.mediaId != mediaId) return@withContext
                 TrackLog.d("BitChord", "retrying $mediaId from ${position}ms")
+                // Claimed before the seek, so the transition it may fire is
+                // recognised as this retry rather than read as a fresh start and
+                // handed a fresh attempt budget.
+                retryingMediaId = mediaId
                 player.seekTo(player.currentMediaItemIndex, position)
                 player.prepare()
             }
         }
+    }
+
+    /**
+     * Leave a track the resolver has ruled out and carry on down the queue.
+     *
+     * The item is left in place rather than removed: the listener queued it, and
+     * the reason it cannot be played is usually temporary in a way this service
+     * cannot see the end of — signing in clears an age gate, and travelling
+     * clears a region block. Removing it would quietly rewrite a queue on the
+     * strength of a ten-minute verdict.
+     *
+     * With nothing after it there is nowhere to go, and stopping is then the
+     * correct end state rather than a failure to recover: the error stays on the
+     * player, which is what puts a message in front of the listener — see
+     * `rememberPlayerState` in
+     * [PlayerConnection][com.music.bitchord.playback.PlayerConnection].
+     */
+    private fun skipPastUnplayable(mediaId: String, reason: String) {
+        val exoPlayer = player ?: return
+        if (exoPlayer.currentMediaItem?.mediaId != mediaId) return
+        if (!exoPlayer.hasNextMediaItem()) {
+            TrackLog.w("BitChord", "$reason — and nothing after it in the queue", about = mediaId)
+            return
+        }
+        TrackLog.w("BitChord", "$reason — skipping to the next track", about = mediaId)
+        exoPlayer.seekToNextMediaItem()
+        // No play() here: an error does not clear playWhenReady, so prepare()
+        // resumes exactly as far as the listener had asked for. Calling play()
+        // would un-pause a queue they had paused.
+        exoPlayer.prepare()
+    }
+
+    /**
+     * Why [error] means "never", or null if it only means "not just now".
+     *
+     * Unwrapped by hand because the classification is the resolver's and the
+     * exception has been through Media3's loader by the time it arrives:
+     * `ExoPlaybackException` wrapping `Loader.UnexpectedLoaderException` wrapping
+     * what the resolver actually threw. A shallow `is` check sees only the
+     * outermost of those three.
+     */
+    private fun permanentReason(error: Throwable?): String? {
+        var cause = error
+        var depth = 0
+        while (cause != null && depth++ < PERMANENT_CAUSE_DEPTH) {
+            if (cause is StreamResolver.PermanentlyUnplayableException) {
+                return cause.message ?: "This track cannot be played"
+            }
+            cause = cause.cause?.takeIf { it !== cause }
+        }
+        return null
     }
 
     /**
@@ -2169,7 +2325,17 @@ class PlaybackService : MediaSessionService() {
         // out rather than by asking.
         val quick: SourceStream? = select {
             lookup.onAwait { it }
-            fallback.onAwait { null }
+            // A fallback that finished without a URL has not won anything.
+            //
+            // This clause used to yield null unconditionally, which treats "the
+            // YouTube walk is over" as "YouTube has a URL" — true only while
+            // failing was the slow outcome. It no longer is: [StreamResolver]
+            // now answers a known-unplayable track immediately, so the losing
+            // leg crosses the line first and, before this, took the track down
+            // with it while a module lookup that was about to succeed was still
+            // running. Exactly the case in the report — an age-gated track that
+            // YouTube would never serve and a catalogue that had it all along.
+            fallback.onAwait { resolved -> if (resolved.isSuccess) null else lookup.await() }
         }
 
         if (quick != null) {
@@ -2826,6 +2992,13 @@ class PlaybackService : MediaSessionService() {
         publishWidgetState(playing = false)
         AudioCache.cancel()
         trackAnalyzer.release()
+        // The YouTube Music history entry for whatever was playing, closed out
+        // on the same terms as the ListenBrainz submit below: a swipe-away never
+        // fires STATE_ENDED, and the tracker's own scope outlives this service,
+        // so the ping still goes out after the service scope is cancelled.
+        PlaybackTracker.onPlaybackFinished(
+            player?.currentPosition?.div(1000) ?: lastPositionSeconds,
+        )
         // Also the last chance to close out the track that was playing — a
         // swipe-away or stop never fires STATE_ENDED, so the session would
         // otherwise end with an un-scrobbled song. This must not ride on the
@@ -3171,6 +3344,13 @@ class PlaybackService : MediaSessionService() {
 
         /** How many times one track is picked up off the floor — see [recoverFrom]. */
         const val MAX_RECOVERIES = 2
+
+        /**
+         * How far into an exception's causes a resolver verdict is looked for.
+         * Media3 wraps twice on this path and the coroutine machinery may add
+         * one; nothing nests deeper. See [permanentReason].
+         */
+        const val PERMANENT_CAUSE_DEPTH = 8
 
         /**
          * The pause before a retry. Media3 refuses to remove a cache entry a

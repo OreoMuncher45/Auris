@@ -41,18 +41,42 @@ class AuthStore(context: Context) {
         set(value) = prefs.edit().putString(KEY_COOKIE, value).apply()
 
     val isSignedIn: Boolean
-        get() = cookie?.contains("SAPISID") == true
+        get() = cookie?.let { hasApiSid(it) } == true
 
     /** The Discord account's bearer token. See DiscordRPC for why a user token. */
     var discordToken: String?
         get() = prefs.getString(KEY_DISCORD_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_DISCORD_TOKEN, value).apply()
 
-    /** Signs out of YouTube Music only — the Discord login is a separate account. */
+    /**
+     * Signs out of YouTube Music only — the Discord login is a separate account.
+     */
     fun signOut() = prefs.edit().remove(KEY_COOKIE).apply()
 
-    private companion object {
-        const val KEY_COOKIE = "cookie"
-        const val KEY_DISCORD_TOKEN = "discord_token"
+    companion object {
+        /**
+         * Whether a cookie header carries a secret Innertube requests can be
+         * signed with.
+         *
+         * Matched on the cookie *name*, which reads as pedantry and is not. The
+         * test used to be `cookie.contains("SAPISID")`, and `__Secure-3PAPISID`
+         * contains "SAPISID" — so a jar holding only the `__Secure-` forms, which
+         * is what a partitioned-cookie login produces, passed a check for a
+         * cookie it did not have. The app then declared itself signed in and made
+         * every request unsigned, which Google answers as a stranger. Library
+         * reads degraded quietly and history was never written at all.
+         */
+        fun hasApiSid(cookieHeader: String): Boolean =
+            cookieHeader.split(';').any { entry ->
+                val name = entry.substringBefore('=').trim()
+                val value = entry.substringAfter('=', "").trim()
+                name in API_SID_NAMES && value.isNotEmpty()
+            }
+
+        private val API_SID_NAMES =
+            setOf("SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID")
+
+        private const val KEY_COOKIE = "cookie"
+        private const val KEY_DISCORD_TOKEN = "discord_token"
     }
 }

@@ -6,6 +6,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.DownloadQuality
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -15,8 +16,10 @@ import kotlinx.coroutines.CancellationException
  * Two things happen here that don't happen in any single [MusicSource]:
  *
  *  1. **The quality question is answered once**, from the connection in hand
- *     and the user's ceiling for it — see [requestForNow]. Sources are told
- *     what to serve; they don't each re-derive it.
+ *     and the user's ceiling for it — see [requestForNow], or
+ *     [requestForDownload] for the one caller whose answer becomes a file
+ *     rather than a stream. Sources are told what to serve; they don't each
+ *     re-derive it.
  *
  *  2. **The order is applied.** A track is pinned to the source that produced
  *     it, but a pin is a starting point, not a cage: with lossless on, a
@@ -51,6 +54,37 @@ object SourceResolver {
             AppSettings.losslessAudio.value -> StreamRequest.Lossless
             else -> StreamRequest.Best
         }
+    }
+
+    /**
+     * What to ask a source for on behalf of a file being kept.
+     *
+     * Reads [AppSettings.downloadQuality] and nothing else — not the ceilings,
+     * not the lossless switch. Both of those are about what a *stream* costs on
+     * the connection in hand, and this is the one request whose answer outlives
+     * the connection: it becomes a file.
+     *
+     * That independence is the point. The ceilings used to decide this by
+     * proxy, so downloading on capped mobile data returned a transcode from
+     * YouTube even for someone whose own FLAC server was ranked above it — a
+     * setting about data spend silently deciding what a permanent file was made
+     * of. Data spend on a download is now [AppSettings.wifiOnlyDownloads]'
+     * question, asked once at the point of queueing rather than mixed into
+     * this one.
+     *
+     * @param quality defaults to the setting as it stands, which is what a
+     *   caller with no download in flight wants. A caller that is already
+     *   fetching one passes the value it started with — a lossless search can
+     *   run for twenty seconds (`Downloads.LOSSLESS_LOOKUP_MS`), which is long
+     *   enough for someone to open Settings and change the answer underneath a
+     *   file that is half written.
+     */
+    fun requestForDownload(
+        quality: DownloadQuality = AppSettings.downloadQuality.value,
+    ): StreamRequest = when {
+        quality.keepsLossless -> StreamRequest.Lossless
+        quality.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
+        else -> StreamRequest.Capped(quality.maxKbps)
     }
 
     /**
@@ -238,10 +272,17 @@ object SourceResolver {
      *
      * Being a file is what makes it the strictest search here:
      *
-     *  - **The ceiling is absolute.** [requestForNow] returning anything but
-     *    [StreamRequest.Lossless] ends this rather than being read as "serve
-     *    what you can". A stream is a few megabytes and a FLAC is thirty-five,
-     *    and the setting that would be overspent is the one attached to a bill.
+     *  - **Only [DownloadQuality.LOSSLESS][com.music.bitchord.data.settings.DownloadQuality.LOSSLESS]
+     *    gets this far.** [requestForDownload] returning anything but
+     *    [StreamRequest.Lossless] ends this rather than being read as "serve what
+     *    you can", because the rungs below it are AAC rungs and YouTube's AAC is
+     *    the more reliable fetch for those. Note which setting that is: the
+     *    connection's ceiling used to end it here instead, which meant a
+     *    download on mobile data took a transcode of a recording the user owns
+     *    losslessly. That was a data-plan setting deciding what a permanent file
+     *    was made of, and [AppSettings.wifiOnlyDownloads] does the data-plan job
+     *    properly now — before a byte is fetched rather than by quietly
+     *    downgrading the result.
      *  - **A format that stated nothing is refused**, unlike [streamBest]'s
      *    [statesNothingLossy] allowance. Playback can hand an undescribed URL to
      *    the decoder and let it work the codec out; a download has to *name the
@@ -256,10 +297,15 @@ object SourceResolver {
      * @param target the recording to look for, off the row being downloaded. A
      *   blank title can only produce a wrong match; a null runtime is allowed
      *   and costs the length check rather than the search.
+     * @param request what the download is for, pinned by the caller for the
+     *   duration of one file — see [requestForDownload].
      */
-    suspend fun forDownload(target: TrackMatcher.Target): SourceStream? {
+    suspend fun forDownload(
+        target: TrackMatcher.Target,
+        request: StreamRequest = requestForDownload(),
+    ): SourceStream? {
         if (target.title.isBlank()) return null
-        if (requestForNow() !is StreamRequest.Lossless) return null
+        if (request !is StreamRequest.Lossless) return null
         val active = SourceRegistry.active()
         // YouTube can be switched off, and a download still goes to it when
         // nothing here answers — the download path never consults this list. So
@@ -271,7 +317,9 @@ object SourceResolver {
             val stream = matchAndStream(
                 source,
                 target,
-                StreamRequest.Lossless,
+                // The request the guard above already narrowed, rather than a
+                // second statement of it that could drift from the first.
+                request,
                 waitForAll = true,
                 strictLength = target.durationSec != null,
             ) ?: continue

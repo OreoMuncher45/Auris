@@ -25,11 +25,13 @@ import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.settings.SearchHistory
+import com.music.bitchord.download.Downloads
 import android.util.LruCache
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -462,17 +464,84 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Adds [song] to a playlist.
+     * The library feed's Playlists shelf, rewritten by [edit].
      *
-     * Not optimistic, unlike a rating: there is nothing on screen to update
-     * ahead of the answer, and a "Added to X" that turns out to be untrue is
-     * worse than one that arrives a moment late.
+     * Every playlist edit has to do this by hand, because the library tab reads
+     * `_library` and nothing else — [playlists] is the picker's list, not the
+     * tab's — so a rename that only updated that list left the card on screen
+     * still bearing the old name.
+     *
+     * Re-fetching instead is what this replaces, and it did not work: YouTube's
+     * `FEmusic_liked_playlists` is eventually consistent, and a fetch fired the
+     * moment an edit returns reliably answers with the state from *before* it.
+     * So the edit was applied, the feed denied it, and the denial is what
+     * reached the screen — the bug this exists to fix. The re-fetch still
+     * happens, via [libraryStale], once the tab is next opened and the feed has
+     * caught up.
+     *
+     * A shelf that isn't there yet is created by [edit] returning rows for it
+     * (a first playlist has no shelf to add to), and one left empty is dropped —
+     * see [LibraryScreen], which draws the create tile with or without a shelf.
+     */
+    private fun editPlaylistShelf(edit: (List<ShelfItem>) -> List<ShelfItem>) {
+        val page = (_library.value as? UiState.Success)?.data ?: return
+        val existing = page.shelves.firstOrNull { it.title == YtMusicRepository.PLAYLISTS_SHELF }
+        val items = edit(existing?.items.orEmpty())
+        if (items == existing?.items) return
+        val shelves = when {
+            existing == null && items.isEmpty() -> return
+            // No shelf yet: this is the account's first playlist, so the feed
+            // has never had one to send. Leads the page, as the feed orders it.
+            existing == null ->
+                listOf(HomeShelf(YtMusicRepository.PLAYLISTS_SHELF, items)) + page.shelves
+            // Emptied by deleting the last playlist. Dropped rather than left as
+            // a heading over nothing; the create tile is drawn either way.
+            items.isEmpty() -> page.shelves.filterNot { it === existing }
+            else -> page.shelves.map { if (it === existing) existing.copy(items = items) else it }
+        }
+        _library.value = UiState.Success(page.copy(shelves = shelves))
+    }
+
+    /**
+     * Restates a playlist's name everywhere it is currently drawn: its card in
+     * the library, the picker's list, and its own open page — header and top
+     * bar both, which read [DetailPage.title].
+     */
+    private fun setPlaylistTitle(playlist: UserPlaylist, title: String) {
+        _playlists.value = _playlists.value.map {
+            if (it.playlistId == playlist.playlistId) it.copy(title = title) else it
+        }
+        editPlaylistShelf { items ->
+            items.map { if (it.browseId == playlist.browseId) it.copy(title = title) else it }
+        }
+        _detailStack.value = _detailStack.value.map {
+            if (it.browseId == playlist.browseId) it.copy(title = title) else it
+        }
+    }
+
+    /**
+     * Adds [song] to a playlist, from the picker.
+     *
+     * Not optimistic, unlike a rating: the picker closes on the tap and there is
+     * nothing left of it to update, and a playlist that shows a track it turned
+     * out not to have taken is worse than one that shows it a moment late.
+     *
+     * The playlist's own page is the exception, because it can be the thing
+     * behind the picker — a row's menu on a playlist offers "Add to playlist" —
+     * and a page that doesn't show what was just added to it is the bug this is
+     * part of fixing. Still after the answer, not ahead of it.
      */
     fun addToPlaylist(playlist: UserPlaylist, song: Song) {
         if (!requireSignIn()) return
         viewModelScope.launch {
             YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId)).fold(
-                onSuccess = { libraryStale = true },
+                onSuccess = { added ->
+                    libraryStale = true
+                    // The playlist's page may be open behind the picker — it is
+                    // reachable from a row's own menu on it — so the track goes
+                    // into it for the same reason [addSuggestedSong] does.
+                    appendToOpenPlaylist(playlist.browseId, song, added[song.videoId])
+                },
                 onFailure = {},
             )
         }
@@ -492,10 +561,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 privacy = privacy,
                 videoIds = listOfNotNull(song?.videoId),
             ).fold(
-                onSuccess = {
+                onSuccess = { playlistId ->
+                    // Nothing to look up for a playlist this account has just
+                    // made: it is the owner by construction, so its card is
+                    // editable the moment it appears rather than one request
+                    // after someone holds it.
+                    setPlaylistOwned("VL$playlistId", true)
                     libraryStale = true
-                    loadPlaylists()
-                    refresh(Feed.LIBRARY)
+                    val created = UserPlaylist(
+                        playlistId = playlistId,
+                        title = name,
+                        // Only what this request itself establishes. Both
+                        // surfaces that draw it leave a blank one out, so an
+                        // unseeded playlist gets a card of just its name rather
+                        // than a guess at what the feed will call it.
+                        subtitle = if (song != null) "1 song" else "",
+                        thumbnailUrl = song?.thumbnailUrl,
+                    )
+                    // Drawn from what was just sent rather than waited for: the
+                    // library feed does not have this playlist yet, and the
+                    // fetch that used to run here answered without it — see
+                    // [editPlaylistShelf]. Leads the shelf because it is the
+                    // newest, which is the order the feed itself comes in.
+                    _playlists.value = listOf(created) +
+                        _playlists.value.filterNot { it.playlistId == created.playlistId }
+                    editPlaylistShelf { items ->
+                        listOf(
+                            ShelfItem(
+                                title = created.title,
+                                subtitle = created.subtitle,
+                                thumbnailUrl = created.thumbnailUrl,
+                                videoId = null,
+                                browseId = created.browseId,
+                            ),
+                        ) + items.filterNot { it.browseId == created.browseId }
+                    }
                 },
                 onFailure = {},
             )
@@ -536,17 +636,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Adds one of [DetailPage.suggestedSongs] to the playlist it was
-     * suggested for, and drops it from that section — the playlist's own
-     * track list only shows it correctly (with a working "remove") once the
-     * page is reopened, so there is nothing on screen for it to move to yet.
+     * Adds one of [DetailPage.suggestedSongs] to the playlist it was suggested
+     * for: out of that section, and into the track list above it.
+     *
+     * Both halves, because either alone is a worse answer than doing nothing.
+     * Only removing it — which is what this used to do — reads as the track
+     * having been discarded rather than added: it leaves the Suggested list and
+     * turns up nowhere, and the playlist it was added to looks unchanged until
+     * the page is closed and reopened. Only adding it would leave YouTube still
+     * suggesting a track that is now in the playlist.
+     *
+     * The row goes in complete, per-entry id included, because
+     * [YtMusicRepository.addToPlaylist] reports the one it was just filed
+     * under — so "Remove from this playlist" works on it immediately rather
+     * than after a re-fetch. A response that named no id still adds the row;
+     * it just can't offer to take it back out yet.
      */
     fun addSuggestedSong(browseId: String, song: Song) {
         if (!requireSignIn()) return
         val playlistId = browseId.removePrefix("VL")
         viewModelScope.launch {
             YtMusicRepository.addToPlaylist(playlistId, listOf(song.videoId)).fold(
-                onSuccess = {
+                onSuccess = { added ->
                     libraryStale = true
                     _detailStack.value = _detailStack.value.map { page ->
                         if (page.browseId != browseId) {
@@ -558,12 +669,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             )
                         }
                     }
+                    appendToOpenPlaylist(browseId, song, added[song.videoId])
                 },
                 onFailure = {},
             )
         }
     }
 
+    /**
+     * Puts [song] at the end of the playlist page at [browseId], if that page
+     * is open — where YouTube itself puts it, so the order survives the next
+     * fetch.
+     *
+     * An empty playlist counts as open: it renders as [NO_TRACKS], and the
+     * first track added to one has to replace that message rather than be
+     * dropped for want of a list to join. Only that message, though — any other
+     * error is a page that failed to load, whose real contents are unknown, and
+     * answering it with a one-track listing would be a playlist invented out of
+     * a network failure. A page still loading is left alone too: the fetch in
+     * flight is newer than this and will land with the addition already in it.
+     */
+    private fun appendToOpenPlaylist(browseId: String, song: Song, setVideoId: String?) {
+        val added = song.copy(setVideoId = setVideoId)
+        _detailStack.value = _detailStack.value.map { page ->
+            if (page.browseId != browseId) return@map page
+            val songs = when (val state = page.songs) {
+                is UiState.Success -> state.data
+                is UiState.Error -> if (state.message == NO_TRACKS) emptyList() else return@map page
+                UiState.Loading -> return@map page
+            }
+            // Already there — a track added twice is two real entries on
+            // YouTube's side, but a duplicate row from a double tap is not
+            // something the user asked for.
+            if (songs.any { it.videoId == song.videoId }) return@map page
+            page.copy(
+                songs = UiState.Success(
+                    songs + added.copy(
+                        thumbnailUrl = added.thumbnailUrl ?: page.thumbnailUrl,
+                    ),
+                ),
+            )
+        }
+    }
+
+    /**
+     * Renames a playlist, and says so everywhere it is named — see
+     * [setPlaylistTitle]. Renaming is nearly always done from the playlist's
+     * own page or its card, so there is always something on screen still
+     * showing the old name.
+     */
     fun renamePlaylist(playlist: UserPlaylist, title: String) {
         if (!requireSignIn()) return
         val name = title.trim()
@@ -571,11 +725,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             YtMusicRepository.renamePlaylist(playlist.playlistId, name).fold(
                 onSuccess = {
-                    _playlists.value = _playlists.value.map {
-                        if (it.playlistId == playlist.playlistId) it.copy(title = name) else it
-                    }
+                    setPlaylistTitle(playlist, name)
                     libraryStale = true
-                    refresh(Feed.LIBRARY)
                 },
                 onFailure = {},
             )
@@ -589,23 +740,96 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = {
                     _playlists.value = _playlists.value
                         .filterNot { it.playlistId == playlist.playlistId }
+                    // The card in the library tab, which is the surface the
+                    // deletion was almost certainly ordered from — and which the
+                    // re-fetch that used to stand in for this left in place; see
+                    // [editPlaylistShelf].
+                    editPlaylistShelf { items ->
+                        items.filterNot { it.browseId == playlist.browseId }
+                    }
                     // Its page may be the one open; a deleted playlist has
                     // nothing left to show.
                     _detailStack.value = _detailStack.value
                         .filterNot { it.browseId == playlist.browseId }
                     libraryStale = true
-                    refresh(Feed.LIBRARY)
                 },
                 onFailure = {},
             )
         }
     }
 
-    /** Whether [browseId] is a playlist this account can be asked to edit. */
+    /**
+     * Whether [browseId] is a playlist this account can be asked to edit.
+     *
+     * Only ever yes for a playlist [playlistOwned] has confirmed the account
+     * made. "In this account's library" is not the same thing and cannot stand
+     * in for it: `FEmusic_liked_playlists` lists a playlist saved from someone
+     * else in exactly the shape it lists one this account created, so a lookup
+     * in [playlists] alone called a stranger's playlist editable and the menus
+     * offered Rename and Delete on it — neither of which YouTube would have
+     * honoured.
+     *
+     * Strict rather than permissive-until-proven, so that every surface gives
+     * the same answer for the same playlist. The permissive version was right on
+     * a playlist's own page — where the page load supplies the answer — and
+     * wrong on a card until that page had been opened once, which is a menu that
+     * changes its mind about what a playlist is depending on where it is held.
+     */
     fun editablePlaylist(browseId: String?): UserPlaylist? {
-        if (browseId == null) return null
+        if (browseId == null || _playlistOwned.value[browseId] != true) return null
         return _playlists.value.firstOrNull { it.browseId == browseId }
     }
+
+    /**
+     * Which playlists in this account's library the account actually made, by
+     * browse id — see
+     * [com.music.bitchord.data.innertube.InnertubeParser.parsePlaylistOwned].
+     * An id absent from the map is one nothing has asked about yet, which is not
+     * the same as a no.
+     *
+     * Observable, because the answer routinely arrives after whatever wanted it
+     * is already on screen: a card's menu opens with nothing fetched, and the
+     * rows that depend on this appear as [resolvePlaylistOwnership] answers.
+     */
+    private val _playlistOwned = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val playlistOwned: StateFlow<Map<String, Boolean>> = _playlistOwned.asStateFlow()
+
+    /**
+     * Finds out who made the playlist at [browseId], if it isn't already known.
+     *
+     * Only the playlist's own page states this, so a surface that has no page —
+     * a card in the library, a search result — has to ask for one. Which is why
+     * this is on demand rather than swept up front: the alternative is a request
+     * per playlist every time the library loads, for a question most of them
+     * will never be asked.
+     *
+     * Silent about anything that isn't a playlist in this account's library.
+     * Nothing else can be renamed or deleted whatever the answer, so asking
+     * would be a request spent to rule out what was never on offer.
+     */
+    fun resolvePlaylistOwnership(browseId: String?) {
+        if (!_signedIn.value || browseId == null) return
+        if (browseId in _playlistOwned.value || browseId in ownershipInFlight) return
+        if (_playlists.value.none { it.browseId == browseId }) return
+        ownershipInFlight += browseId
+        viewModelScope.launch {
+            YtMusicRepository.playlistOwned(browseId).onSuccess { owned ->
+                if (owned != null) setPlaylistOwned(browseId, owned)
+            }
+            // Released either way. A failed lookup that stayed marked would
+            // never be retried, leaving Rename off the user's own playlist for
+            // the rest of the session over one dropped request.
+            ownershipInFlight -= browseId
+        }
+    }
+
+    /** Guards against a second lookup while the first is still out. */
+    private val ownershipInFlight = mutableSetOf<String>()
+
+    private fun setPlaylistOwned(browseId: String, owned: Boolean) {
+        _playlistOwned.value = _playlistOwned.value + (browseId to owned)
+    }
+
 
     /**
      * Guards every account write. All of them are signed-in-only, and the UI
@@ -1085,6 +1309,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         /** Enough to be worth scrolling, short enough not to bury YouTube's own rows. */
         const val SOURCE_SEARCH_LIMIT = 12
+
+        /**
+         * What a page with an empty listing says.
+         *
+         * Named because it is a state one can be got *out* of, not just a
+         * message: an own playlist with nothing in it lands here, and adding the
+         * first track to it has to be able to tell "this page is empty" apart
+         * from "this page failed to load" — see [appendToOpenPlaylist].
+         */
+        private const val NO_TRACKS = "No tracks here"
+
+        /**
+         * What a downloaded playlist's page says once the files under it are
+         * gone.
+         *
+         * A record here outlives the folder it names — the user is expected to
+         * manage Downloads with a file manager — so this is a state its page has
+         * to be able to reach, not an error. Named because three places say it:
+         * the page, its refresh, and the long-press menu that queues it without
+         * opening it.
+         */
+        private const val DOWNLOADS_GONE = "Nothing from this playlist is on this device any more"
     }
 
     fun openDetail(
@@ -1094,7 +1340,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         thumbnailUrl: String? = null,
         type: BrowseType = BrowseType.OTHER,
     ) {
-        val resolved = typeOf(browseId, type)
+        val resolved = browseTypeOf(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
             title = title,
@@ -1118,6 +1364,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             /** Whether this release is already saved — see [DetailPage.library]. */
             var library: LibraryState? = null
             val state = when {
+                Downloads.recordIdOf(browseId) != null -> {
+                    val songs = downloadedPlaylist(browseId)
+                    if (songs.isEmpty()) UiState.Error(DOWNLOADS_GONE) else UiState.Success(songs)
+                }
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
@@ -1141,7 +1391,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             artwork = page.thumbnailUrl
                             name = page.name
                             if (page.songs.isEmpty()) {
-                                UiState.Error("No tracks here")
+                                UiState.Error(NO_TRACKS)
                             } else {
                                 UiState.Success(page.songs.withArtwork(thumbnailUrl))
                             }
@@ -1152,8 +1402,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 else -> {
                     YtMusicRepository.browseSongs(browseId).fold(
                         onSuccess = { page ->
+                            // Free here — the page that returned these rows is
+                            // the one thing that states who made the playlist,
+                            // so its own menu never has to go and ask. Recorded
+                            // even when the listing came back empty.
+                            page.owned?.let { setPlaylistOwned(browseId, it) }
                             if (page.songs.isEmpty()) {
-                                UiState.Error("No tracks here")
+                                UiState.Error(NO_TRACKS)
                             } else {
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl)
@@ -1189,13 +1444,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun reloadLocalDetail(browseId: String) {
         viewModelScope.launch {
             val context = getApplication<Application>()
-            val state: UiState<List<Song>> = when (browseId) {
-                "local:downloads" -> {
+            val state: UiState<List<Song>> = when {
+                Downloads.recordIdOf(browseId) != null -> {
+                    val songs = downloadedPlaylist(browseId)
+                    if (songs.isEmpty()) UiState.Error(DOWNLOADS_GONE) else UiState.Success(songs)
+                }
+                browseId == "local:downloads" -> {
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
                     if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
                     else UiState.Success(songs)
                 }
-                "local:all" -> {
+                browseId == "local:all" -> {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
                         UiState.Error("Storage permission required to view local audio files")
                     } else {
@@ -1212,6 +1471,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } else it
             }
         }
+    }
+
+    /**
+     * The tracks of the downloaded playlist [browseId] names that are still on
+     * disk, in the order the playlist had.
+     *
+     * Reads the whole Downloads folder rather than the record's own uris,
+     * because that read is what fills in an album tag the record never carried
+     * and what collapses a music video's two ids down to the one file it saved —
+     * see [Downloads.collectionsAmong], of which this is a single-playlist view.
+     *
+     * Empty is the honest answer for a record whose files have all been deleted
+     * from under it, and callers turn that into [DOWNLOADS_GONE] rather than
+     * into a blank page.
+     */
+    private suspend fun downloadedPlaylist(browseId: String): List<Song> {
+        val id = Downloads.recordIdOf(browseId) ?: return emptyList()
+        val folder = LocalMediaRepository.getDownloadedSongs(getApplication())
+        return Downloads.collectionsAmong(folder).firstOrNull { it.id == id }?.songs.orEmpty()
     }
 
     /**
@@ -1278,12 +1556,60 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Home and Explore cards don't say what they point at, and an artist
      * fetched as an album only yields the five songs on its landing page.
      * YouTube's browse ids are prefixed by kind, so use that.
+     *
+     * Public because the long-press menus ask the same question of a card
+     * before offering to queue what is behind it — an artist is not a running
+     * order, so it gets no queue actions.
      */
-    private fun typeOf(browseId: String, fallback: BrowseType): BrowseType = when {
+    fun browseTypeOf(browseId: String, fallback: BrowseType = BrowseType.OTHER): BrowseType = when {
+        // Not one of YouTube's, and the only one of these that says outright what
+        // it is rather than being read off a prefix convention.
+        browseId.startsWith(Downloads.PLAYLIST_PREFIX) -> BrowseType.PLAYLIST
         browseId.startsWith("UC") -> BrowseType.ARTIST
         browseId.startsWith("MPREb") -> BrowseType.ALBUM
         browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
         else -> fallback
+    }
+
+    /**
+     * Every track behind an album or playlist, handed to [onResult] once it is
+     * all in.
+     *
+     * What a long-press on a card is acting on. A card has nothing but a browse
+     * id — its page was never opened, so there is no track list anywhere to
+     * read — and "add this album to the queue" means the whole album, so this
+     * follows continuations to the end rather than taking the first page.
+     *
+     * Runs in [viewModelScope], not the caller's: the sheet the tap came from
+     * closes immediately, and a three-hundred-track playlist must not be
+     * abandoned halfway because of it.
+     */
+    fun collectSongs(
+        browseId: String,
+        artworkFallback: String? = null,
+        onResult: (Result<List<Song>>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            val result = when {
+                Downloads.recordIdOf(browseId) != null -> runCatching {
+                    downloadedPlaylist(browseId).ifEmpty { error(DOWNLOADS_GONE) }
+                }
+                browseId == "local:downloads" -> runCatching {
+                    LocalMediaRepository.getDownloadedSongs(context)
+                        .ifEmpty { error("No downloaded tracks in Music/BitChord") }
+                }
+                browseId == "local:all" -> runCatching {
+                    if (!LocalMediaRepository.hasStoragePermission(context)) {
+                        error("Storage permission required to read local audio files")
+                    }
+                    LocalMediaRepository.getLocalMusic(context)
+                        .ifEmpty { error("No audio files found on device") }
+                }
+                else -> YtMusicRepository.allSongs(browseId)
+            }
+            onResult(result.map { it.withArtwork(artworkFallback) })
+        }
     }
 
     /** Pops one page; returns false when there was nothing to pop. */
@@ -1297,16 +1623,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onSignedIn(cookie: String) {
         authStore.cookie = cookie
         Innertube.cookie = cookie
+        // Every "this track can't be played" the resolver recorded while there
+        // was no session was recorded under different rules. An age-gated track
+        // is the whole point of signing in, and it is the one verdict a session
+        // overturns — so a listener who signs in to play a track must not spend
+        // the next ten minutes being told it still cannot be played.
+        StreamResolver.onSessionChanged()
         _signedIn.value = true
-        loadHome()
-        loadLibrary()
-        loadAccount()
-        loadPlaylists()
+        // Before the reloads below, and the reason they are inside a coroutine
+        // now: which of the cookie's accounts was just signed into decides what
+        // "the library" and "the history" even refer to. Loading them first and
+        // scoping second shows the listener the wrong account's music and then
+        // silently disagrees with itself.
+        viewModelScope.launch {
+            Innertube.ensureSessionScope()
+            loadHome()
+            loadLibrary()
+            loadAccount()
+            loadPlaylists()
+        }
     }
 
     fun signOut() {
         authStore.signOut()
         Innertube.cookie = null
+        // The mirror image: verdicts reached with a session in hand say nothing
+        // about what an anonymous walk will be told, and the clients stood down
+        // for refusing the session deserve a fresh hearing without it.
+        StreamResolver.onSessionChanged()
         _signedIn.value = false
         _account.value = null
         _library.value = UiState.Loading
@@ -1314,6 +1658,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // them would show the next signed-in user someone else's hearts.
         LikeState.clear()
         _playlists.value = emptyList()
+        _playlistOwned.value = emptyMap()
+        ownershipInFlight.clear()
         _songMenu.value = null
         loadHome()
     }

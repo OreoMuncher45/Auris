@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -29,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -48,7 +50,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -161,6 +162,19 @@ fun DetailScreen(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
     /**
+     * Holding one of the album cards on an artist page — the same menu the
+     * shelves on every other tab open, so a release can be queued from
+     * wherever it is seen rather than only from its own page.
+     */
+    onSectionItemLongPress: ((ShelfItem) -> Unit)? = null,
+    /**
+     * The header's overflow: everything this page can do to its whole track
+     * list that isn't already one of the buttons beside it — see
+     * [com.music.bitchord.ui.components.BrowseActionsSheet]. Null on the pages
+     * with no list to act on.
+     */
+    onMore: ((List<Song>) -> Unit)? = null,
+    /**
      * Saves this release to the account's library, or takes it out —
      * [DetailPage.library] says which way round. Null hides the control
      * entirely, which is the answer for a guest and for the pages YouTube never
@@ -174,9 +188,10 @@ fun DetailScreen(
     val palette = rememberArtworkPalette(page.thumbnailUrl)
 
     // What marks a row as already downloaded, tinted from the sleeve like the
-    // rest of the page. Null on the Downloads page: every row there qualifies,
-    // so the badge would be decoration rather than information.
-    val downloadedTint = palette.accent.takeIf { page.browseId != "local:downloads" }
+    // rest of the page. Null on any page that is itself a reading of this
+    // device — the Downloads folder, one downloaded playlist — where every row
+    // qualifies and the badge would be decoration rather than information.
+    val downloadedTint = palette.accent.takeUnless { page.browseId.startsWith("local:") }
 
     // Animated cover art on the header, the same feature the player has.
     // Albums only: a playlist's artwork is a collage and an artist page's is a
@@ -201,13 +216,19 @@ fun DetailScreen(
     }
 
     val pageHaze = remember { HazeState() }
-    // The artwork is drawn behind the list rather than in it, so both need to
-    // agree on its height without being able to ask each other. The width is
-    // the screen's, so the ratio decides it and both can work it out alone.
-    val artHeight = LocalConfiguration.current.screenWidthDp.dp /
-        if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO
 
-    Box(modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        // The artwork is drawn behind the list rather than in it, so both need
+        // to agree on its height without being able to ask each other. The
+        // width is the page's, so the ratio decides it and both can work it out
+        // alone.
+        //
+        // Measured rather than read off the window, because the two are not the
+        // same number everywhere: on a tablet the page is the column left over
+        // once the player has its pane, and a height derived from the whole
+        // window there is a sleeve half again as tall as it is wide.
+        val artHeight = maxWidth / if (isArtist) ARTIST_PHOTO_RATIO else SLEEVE_RATIO
+
         PageBackground(
             page = page,
             palette = palette,
@@ -247,6 +268,7 @@ fun DetailScreen(
                         // A page of on-device tracks has nothing further away
                         // to fetch — everything on it is already local.
                         onDownload = onDownloadAll.takeUnless { page.browseId.startsWith("local:") },
+                        onMore = onMore,
                         onArtistClick = onArtistClick,
                         onToggleLibrary = onToggleLibrary,
                     )
@@ -363,6 +385,7 @@ fun DetailScreen(
                                 item = item,
                                 palette = palette,
                                 onClick = { onSectionItemClick(item) },
+                                onLongPress = onSectionItemLongPress?.let { { it(item) } },
                             )
                         }
                     }
@@ -391,6 +414,7 @@ private fun ReleaseHeader(
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     onDownload: ((List<Song>) -> Unit)?,
+    onMore: ((List<Song>) -> Unit)?,
     onArtistClick: (String, String) -> Unit,
     onToggleLibrary: (() -> Unit)?,
 ) {
@@ -466,12 +490,23 @@ private fun ReleaseHeader(
                 // Only where YouTube said the release can be saved and the
                 // caller is willing to take the write — see [onToggleLibrary].
                 val library = page.library?.takeIf { onToggleLibrary != null }
+                // Four circles and the pill is as much as this row can carry,
+                // and on a 360dp screen it only carries it by giving something
+                // up: the pill sheds padding first, being the widest thing here,
+                // and the circles come down 4dp after that. The alternative is a
+                // row that runs off the edge of the screen.
+                val circles = listOfNotNull(library, onDownload, onMore).size + 1 // + Shuffle
+                val full = circles >= 4
+                val circleSize = if (full) 46.dp else 50.dp
                 Spacer(Modifier.height(14.dp))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = HEADER_GUTTER),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+                    horizontalArrangement = Arrangement.spacedBy(
+                        if (full) 8.dp else 10.dp,
+                        Alignment.CenterHorizontally,
+                    ),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (library != null) {
@@ -487,6 +522,7 @@ private fun ReleaseHeader(
                             palette = palette,
                             onClick = { onToggleLibrary?.invoke() },
                             haptic = if (library.saved) Haptic.ToggleOff else Haptic.ToggleOn,
+                            size = circleSize,
                         )
                     }
                     CircleIconButton(
@@ -495,15 +531,16 @@ private fun ReleaseHeader(
                         palette = palette,
                         onClick = onShuffle,
                         haptic = Haptic.Resume,
+                        size = circleSize,
                     )
                     PlayPill(
                         palette = palette,
                         onClick = onPlay,
-                        // The pill is the widest thing in the row and the first
-                        // to be squeezed when a third circle joins it, so it
-                        // gives up padding rather than letting the row run off
-                        // the edge of a narrow screen.
-                        horizontalPadding = if (library != null && onDownload != null) 24.dp else 32.dp,
+                        horizontalPadding = when (circles) {
+                            1, 2 -> 32.dp
+                            3 -> 24.dp
+                            else -> 14.dp
+                        },
                     )
                     onDownload?.let { download ->
                         // The queue is one queue for the whole app, so this asks
@@ -526,6 +563,16 @@ private fun ReleaseHeader(
                             },
                             palette = palette,
                             onClick = { download(songs) },
+                            size = circleSize,
+                        )
+                    }
+                    onMore?.let { more ->
+                        CircleIconButton(
+                            icon = Icons.Rounded.MoreHoriz,
+                            contentDescription = "More",
+                            palette = palette,
+                            onClick = { more(songs) },
+                            size = circleSize,
                         )
                     }
                 }
@@ -843,11 +890,12 @@ private fun CircleIconButton(
     palette: ArtworkPalette,
     onClick: () -> Unit,
     haptic: Haptic = Haptic.Tap,
+    size: Dp = 50.dp,
 ) {
     val haptics = rememberHaptics()
     Box(
         modifier = Modifier
-            .size(50.dp)
+            .size(size)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
@@ -861,7 +909,7 @@ private fun CircleIconButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier.size(size * 0.44f),
         )
     }
 }
@@ -1025,12 +1073,18 @@ private fun SuggestedSongRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SectionCard(item: ShelfItem, palette: ArtworkPalette, onClick: () -> Unit) {
+private fun SectionCard(
+    item: ShelfItem,
+    palette: ArtworkPalette,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+) {
     Column(
         modifier = Modifier
             .width(SHELF_CARD_WIDTH)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
