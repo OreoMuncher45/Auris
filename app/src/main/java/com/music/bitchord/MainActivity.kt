@@ -89,6 +89,8 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.SearchFilter
+import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
@@ -145,6 +147,12 @@ import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.SearchScreen
+import com.music.bitchord.ui.replay.ReplayScreen
+import com.music.bitchord.ui.replay.cards
+import com.music.bitchord.ui.replay.ReplayShareSheet
+import com.music.bitchord.ui.replay.ReplayStories
+import com.music.bitchord.ui.replay.ReplayStoryPage
+import com.music.bitchord.ui.replay.rememberReplayState
 import com.music.bitchord.ui.theme.BitChordTheme
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.ui.theme.SystemBarIcons
@@ -241,6 +249,15 @@ private fun BitChordApp(
     }
     var showLogin by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    // Replay: the page, the stories over it, and the share sheet over those.
+    // Three states rather than one enum because they stack — the stories are
+    // opened from the page and the share sheet from either, and closing one
+    // has to reveal what it was opened from.
+    var showReplay by remember { mutableStateOf(false) }
+    var replayStory by remember { mutableStateOf<ReplayStoryPage?>(null) }
+    var showReplayShare by remember { mutableStateOf(false) }
+    /** Which story card the share sheet is for, or null for the whole Replay. */
+    var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
@@ -300,8 +317,9 @@ private fun BitChordApp(
     var searchFocusTrigger by remember { mutableIntStateOf(0) }
 
     // The player fills the screen with dark artwork whichever theme is on, so
-    // it keeps light glyphs; every other surface follows the theme.
-    SystemBarIcons(dark = !darkTheme && !showNowPlaying)
+    // it keeps light glyphs; every other surface follows the theme. Replay's
+    // page and stories are the same case — dark artwork either way.
+    SystemBarIcons(dark = !darkTheme && !showNowPlaying && !showReplay && replayStory == null)
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
@@ -460,6 +478,17 @@ private fun BitChordApp(
     // is hoisted because the bar lives beside that page rather than inside it,
     // and is rebuilt per page: pushing a second one must not inherit the
     // first's scroll offset.
+    // As [detailListState], for Replay: its own large heading owns the title
+    // until it is scrolled away, and the bar lives out here rather than on the
+    // page. Rebuilt per opening so reopening starts at the top.
+    val replayListState = rememberLazyListState()
+    val replayScrolled by remember(replayListState) {
+        derivedStateOf {
+            replayListState.firstVisibleItemIndex > 0 ||
+                replayListState.firstVisibleItemScrollOffset > 24
+        }
+    }
+
     val detailListState = remember(detail?.browseId) { LazyListState() }
     val detailTitleDrop = with(LocalDensity.current) { DETAIL_TITLE_DROP.toPx() }
     val detailScrolled by remember(detailListState, detailTitleDrop) {
@@ -544,6 +573,60 @@ private fun BitChordApp(
     }
     val onSongSwipe: (Song) -> Unit = { song ->
         if (AppSettings.swipeToPlayNext.value) playNext(song) else addToQueue(song)
+    }
+
+    /**
+     * Opens an artist or release page given its browse id — or, failing that,
+     * its name.
+     *
+     * Replay's charts are the reason this exists. An artist there is counted by
+     * *name*, because a name is the only thing every track carries: a browse id
+     * rides along only when the row that queued the track happened to have one,
+     * which for a home-feed card or an AutoPlay suggestion it does not. So half
+     * the rows on a chart would have nothing to open, and a row that does
+     * nothing when tapped is worse than a row that isn't tappable — it reads as
+     * the app having failed rather than as the app not offering.
+     *
+     * Searching for the name is what the user would do next anyway, and it is
+     * what the app already does to find a video's catalogue release (see
+     * [YtMusicRepository.resolveAudio]). A search that finds nothing says so,
+     * which is at least an answer.
+     */
+    fun openByName(
+        browseId: String?,
+        name: String,
+        subtitle: String?,
+        type: BrowseType,
+        artwork: String? = null,
+    ) {
+        if (browseId != null) {
+            val credit = subtitle ?: if (type == BrowseType.ARTIST) "Artist" else "Album"
+            viewModel.openDetail(browseId, name, credit, artwork, type)
+            return
+        }
+        scope.launch {
+            val filter = if (type == BrowseType.ARTIST) {
+                SearchFilter.ARTISTS
+            } else {
+                SearchFilter.ALBUMS
+            }
+            val query = listOfNotNull(name, subtitle).joinToString(" ")
+            val hit = YtMusicRepository.search(query, filter).getOrNull()
+                ?.filterIsInstance<SearchResult.Browse>()
+                ?.firstOrNull()
+                ?.item
+            if (hit == null) {
+                Toast.makeText(context, "Couldn't find $name", Toast.LENGTH_SHORT).show()
+            } else {
+                viewModel.openDetail(
+                    hit.browseId,
+                    hit.title,
+                    hit.subtitle,
+                    hit.thumbnailUrl ?: artwork,
+                    hit.type,
+                )
+            }
+        }
     }
 
     /**
@@ -811,6 +894,17 @@ private fun BitChordApp(
     // to the theme's background anyway, which is exactly right there.
     val detailPalette = rememberArtworkPalette(detail?.thumbnailUrl)
 
+    // One set of numbers for the cards, the page, the stories and the shared
+    // picture, so they cannot disagree. Read while any of them is on screen —
+    // which includes the Library tab, since the cards live at the top of it.
+    // See [rememberReplayState].
+    val replayOpen = showReplay || replayStory != null || showReplayShare ||
+        (selectedTab == TAB_LIBRARY && detail == null && !showSettings)
+    val (replay, setReplayPeriod) = rememberReplayState(replayOpen)
+    val replayCards = remember(replay.summary) {
+        replay.summary?.takeUnless { it.isEmpty }?.cards().orEmpty()
+    }
+
     // ---- The track in the player ----
     // Whatever started this track knew its title and its artwork, but rarely
     // which album or artist page it belongs to. Fill that in while the player
@@ -986,7 +1080,18 @@ private fun BitChordApp(
     ) {
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
-        BackHandler(enabled = detail != null && !showSettings && !showAccountScrobbling) { viewModel.closeDetail() }
+        // Replay's three layers unwind in the order they were opened. Ahead of
+        // every other handler because they are drawn over everything else.
+        BackHandler(enabled = showReplayShare) { showReplayShare = false }
+        BackHandler(enabled = replayStory != null && !showReplayShare) { replayStory = null }
+        BackHandler(
+            enabled = showReplay && !showSettings && replayStory == null && !showReplayShare,
+        ) {
+            showReplay = false
+        }
+        BackHandler(
+            enabled = detail != null && !showSettings && !showAccountScrobbling && !showReplay,
+        ) { viewModel.closeDetail() }
         BackHandler(enabled = showDiscord) {
             showDiscord = false
         }
@@ -998,9 +1103,15 @@ private fun BitChordApp(
         // which is what actually closes/minimizes the app.
         BackHandler(enabled = showSettings && !showAccountScrobbling) {
             showSettings = false
-            if (detail == null) selectedTab = TAB_HOME
+            // Only when Settings was the whole of what was on screen. Opened
+            // over Replay or over a release page, closing it reveals that again
+            // rather than throwing both away.
+            if (detail == null && !showReplay) selectedTab = TAB_HOME
         }
-        BackHandler(enabled = detail == null && !showSettings && !showAccountScrobbling && selectedTab != TAB_HOME) {
+        BackHandler(
+            enabled = detail == null && !showSettings && !showAccountScrobbling &&
+                !showReplay && selectedTab != TAB_HOME,
+        ) {
             selectedTab = TAB_HOME
         }
         BackHandler(enabled = showUpdateDialog) { showUpdateDialog = false }
@@ -1019,7 +1130,12 @@ private fun BitChordApp(
                     targetState = when {
                         showDiscord -> "discord"
                         showAccountScrobbling -> "account_scrobbling"
+                        // Above Replay, not below it. The top bar's account
+                        // button sets `showSettings` from every page including
+                        // this one, so with Replay winning the tie the button
+                        // was live, hit, and changed nothing on screen.
                         showSettings -> "settings"
+                        showReplay -> "replay"
                         detail != null -> detail.browseId
                         else -> "tab:$selectedTab"
                     },
@@ -1028,9 +1144,36 @@ private fun BitChordApp(
                     label = "content",
                 ) { key ->
                     val page = detailStack.lastOrNull()?.takeIf {
-                        it.browseId == key && key != "settings" && key != "account_scrobbling" && key != "discord"
+                        it.browseId == key && key != "settings" && key != "account_scrobbling" &&
+                            key != "discord" && key != "replay"
                     }
-                    if (key == "discord") {
+                    if (key == "replay") {
+                        ReplayScreen(
+                            state = replay,
+                            holder = account?.name.orEmpty(),
+                            onPeriodChange = setReplayPeriod,
+                            onOpenStory = { replayStory = it },
+                            // A track tapped on a chart is one the user already
+                            // knows they like, so it starts a station off itself
+                            // rather than queueing the chart it was on — the
+                            // same reading [playRadio] makes of a search hit.
+                            onPlaySong = playRadio,
+                            onOpenArtist = { id, name ->
+                                showReplay = false
+                                openByName(id, name, null, BrowseType.ARTIST)
+                            },
+                            onOpenAlbum = { id, title, artist, art ->
+                                showReplay = false
+                                openByName(id, title, artist, BrowseType.ALBUM, art)
+                            },
+                            onShare = {
+                                replaySharePage = null
+                                showReplayShare = true
+                            },
+                            contentPadding = listPadding,
+                            listState = replayListState,
+                        )
+                    } else if (key == "discord") {
                         DiscordScreen(
                             song = player.song,
                             positionMs = player.positionMs,
@@ -1065,6 +1208,10 @@ private fun BitChordApp(
                             },
                             onSignOut = { viewModel.signOut() },
                             onAccountScrobbling = { showAccountScrobbling = true },
+                            onOpenReplay = {
+                                showSettings = false
+                                showReplay = true
+                            },
                             onLyricsSources = { showLyricsSources = true },
                             contentPadding = listPadding,
                         )
@@ -1351,6 +1498,8 @@ private fun BitChordApp(
                             // does nothing; see [onBrowseLongPress].
                             onShelfItemLongPress = onBrowseLongPress,
                             onNewPlaylist = { creatingPlaylist = true },
+                            replayCard = replayCards.firstOrNull(),
+                            onOpenReplay = { showReplay = true },
                             onSignIn = { showLogin = true },
                             onRetry = viewModel::loadLibrary,
                             refreshing = MainViewModel.Feed.LIBRARY in refreshing,
@@ -1365,11 +1514,15 @@ private fun BitChordApp(
                 // A detail page's artwork runs up under the status bar, so the bar
                 // there is a fade rather than a pane — see [TopFadeBlur]. Drawn before
                 // the bar so the bar's own content sits on top of it.
-                val isDetailVisible = detail != null && !isLocalDetail && !showSettings && !showAccountScrobbling
-                if (isDetailVisible) {
+                val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
+                    !showAccountScrobbling && !showReplay
+                // Replay paints its own full-bleed backdrop up under the status
+                // bar, exactly as a release page does, so it takes the same fade
+                // rather than a pane of glass laid over a gradient.
+                if (isDetailVisible || (showReplay && !showSettings)) {
                     TopFadeBlur(
                         hazeState = hazeState,
-                        pageColor = detailPalette.wash,
+                        pageColor = if (showReplay) Color.Black else detailPalette.wash,
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
                 }
@@ -1379,17 +1532,22 @@ private fun BitChordApp(
                         showDiscord -> "Discord"
                         showAccountScrobbling -> "Account & scrobbling"
                         showSettings -> "Settings"
+                        showReplay -> "Replay"
                         detail != null -> detail.title
                         else -> tabs[selectedTab].let {
                             if (it.label == "Play") "Listen Now" else it.label
                         }
                     },
                     hazeState = hazeState,
-                    ownBackdrop = detail == null || isLocalDetail,
+                    ownBackdrop = (showSettings || !showReplay) &&
+                        (detail == null || isLocalDetail),
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
                         showSettings || showAccountScrobbling || showDiscord -> true
+                        // The page leads with its own large "Replay", so the bar
+                        // stays out of the way until that has been scrolled off.
+                        showReplay -> replayScrolled
                         detail != null -> detailScrolled
                         else -> scrolled || selectedTab == TAB_SEARCH
                     },
@@ -1399,6 +1557,7 @@ private fun BitChordApp(
                         showDiscord -> ({ showDiscord = false })
                         showAccountScrobbling -> ({ showAccountScrobbling = false })
                         showSettings -> ({ showSettings = false })
+                        showReplay -> ({ showReplay = false })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
                         else -> null
                     },
@@ -1493,6 +1652,7 @@ private fun BitChordApp(
                             viewModel.clearDetail()
                             showSettings = false
                             showAccountScrobbling = false
+                            showReplay = false
                             selectedTab = index
                         },
                     )
@@ -1526,6 +1686,49 @@ private fun BitChordApp(
                 contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
             ) {
                 nowPlaying(playerSong, false)
+            }
+        }
+
+        // ---- Replay stories ----
+        // Mounted out here rather than inside the pane above, because a story
+        // covers the window: on a tablet the page is only the left half of the
+        // row, and a story laid out inside it would run alongside the player
+        // instead of over it.
+        replayStory?.let { start ->
+            replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
+                ReplayStories(
+                    summary = summary,
+                    start = start,
+                    onClose = { replayStory = null },
+                    onShare = { card ->
+                        replaySharePage = card
+                        showReplayShare = true
+                    },
+                    paused = showReplayShare,
+                )
+            }
+        }
+
+        // ---- Share the Replay ----
+        if (showReplayShare) {
+            replay.summary?.takeUnless { it.isEmpty }?.let { summary ->
+                ModalBottomSheet(
+                    onDismissRequest = { showReplayShare = false },
+                    // Straight to full height. The sheet is a picture and two
+                    // buttons, and half-open it showed the picture with both
+                    // buttons below the fold — a sheet whose only two controls
+                    // need a drag to reach.
+                    sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                    containerColor = MaterialTheme.colorScheme.background,
+                ) {
+                    ReplayShareSheet(
+                        summary = summary,
+                        holder = account?.name.orEmpty(),
+                        memberSince = replay.memberSince,
+                        page = replaySharePage,
+                        onDismiss = { showReplayShare = false },
+                    )
+                }
             }
         }
 

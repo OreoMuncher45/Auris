@@ -1,16 +1,32 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.HomeShelf
@@ -24,6 +40,9 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.librarySkeleton
+import com.music.bitchord.ui.player.MeshGradientBackground
+import com.music.bitchord.ui.player.rememberArtworkColors
+import com.music.bitchord.ui.replay.ReplayHeroCard
 
 /**
  * The signed-in library: the saved collections, as shelves of cards.
@@ -49,6 +68,19 @@ fun LibraryScreen(
     onShelfItemClick: (ShelfItem) -> Unit,
     onShelfItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
+    /**
+     * The Replay's leading card — minutes listened — or null before anything has
+     * been played.
+     *
+     * Not drawn as a card here. This page is a list of places to go, and a card
+     * is an object to look at; one sitting at the top of it read as the Replay
+     * page's opening reprinted on a page about playlists and downloads. What the
+     * card is used for instead is its *numbers* and its *artwork*: the button
+     * below says what is behind it, and is painted in the colours of the record
+     * that year was mostly spent on.
+     */
+    replayCard: ReplayHeroCard?,
+    onOpenReplay: () -> Unit,
     onSignIn: () -> Unit,
     onRetry: () -> Unit,
     refreshing: Boolean,
@@ -91,6 +123,10 @@ fun LibraryScreen(
                     modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
                 )
             }
+            // Drawn whether or not anything has been played: with nothing behind
+            // it the page still has to say the feature exists, or the only way
+            // to discover it is to have already used it.
+            item(key = "replay") { ReplayBanner(replayCard, onOpenReplay) }
             item(key = "shelf:$ON_DEVICE") {
                 Shelf(
                     shelf = HomeShelf(
@@ -184,6 +220,104 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The way in to Replay, at the top of the page.
+ *
+ * On the Library tab rather than a tab of its own because that is what Replay
+ * is — a view of what is already yours, alongside the playlists and the
+ * downloads. A fifth tab would give a page most people open a handful of times
+ * a year the same standing as Search.
+ *
+ * ## Why it is painted the way the cards are
+ *
+ * The mesh is the same one the Replay cards and the player's backdrop run —
+ * sampled from the artwork of the record the period was mostly spent on, and
+ * drifting rather than settling (see [MeshGradientBackground]'s `continuous`).
+ * A fixed brand gradient here looked like a promo banner, which is the one thing
+ * this must not be: it advertises the user's own listening, so it should be lit
+ * by the user's own listening, and it should not look like anything else on the
+ * page. With nothing played yet the mesh falls back to its stock colours, which
+ * is a perfectly good button and still not a red rectangle.
+ *
+ * A single wide strip rather than a shelf of cards: there is exactly one of it,
+ * and a carousel with one item in it always reads as a carousel that failed to
+ * load the rest.
+ */
+@Composable
+private fun ReplayBanner(card: ReplayHeroCard?, onClick: () -> Unit) {
+    val palette = rememberArtworkColors(card?.artworkUrl)
+    Box(
+        Modifier
+            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick),
+    ) {
+        // Behind the row and sized to it rather than given a height of its own,
+        // so the strip is as tall as its two lines of type and no taller.
+        Box(Modifier.matchParentSize()) {
+            MeshGradientBackground(
+                palette = palette,
+                trackKey = card?.artworkUrl ?: "replay",
+                continuous = true,
+                // A short wide strip: at the backdrop's own radius the four
+                // colours blur into one wash before they reach its ends.
+                blurRadius = 28.dp,
+            )
+        }
+        // The mesh carries a vertical scrim of its own, pitched for a full
+        // screen where it has hundreds of dp to fade across; over a strip this
+        // short it lands as a flat darkening of the whole thing. So this one is
+        // kept deliberately light and runs the other way — just enough under the
+        // words on the left, and almost nothing over the colour on the right,
+        // which is the half anyone actually sees as a gradient.
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            Color.Black.copy(alpha = 0.34f),
+                            Color.Black.copy(alpha = 0.12f),
+                            Color.Transparent,
+                        ),
+                    ),
+                ),
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Your Replay",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                )
+                Text(
+                    // The numbers when there are any, because "5,231 minutes" is
+                    // a reason to tap and a description of the feature is not.
+                    text = card?.let { "${it.value} ${it.label.lowercase()} · ${it.detail}" }
+                        ?: "Top songs, artists, albums and genres — counted on this device",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.82f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Icon(
+                imageVector = BitChordIcons.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }

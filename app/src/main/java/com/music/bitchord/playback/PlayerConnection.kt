@@ -145,6 +145,9 @@ fun MediaItem.toSong() = Song(
     artist = mediaMetadata.artist?.toString().orEmpty(),
     thumbnailUrl = mediaMetadata.artworkUri?.toString(),
     durationText = mediaMetadata.extras?.getString(EXTRA_DURATION),
+    artistId = mediaMetadata.extras?.getString(EXTRA_ARTIST_ID),
+    albumId = mediaMetadata.extras?.getString(EXTRA_ALBUM_ID),
+    albumName = mediaMetadata.albumTitle?.toString(),
     fromAutoplay = this.fromAutoplay,
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
@@ -160,6 +163,17 @@ val MediaItem.fromAutoplay: Boolean
  * the player, and the UI only ever sees it back through a MediaController.
  */
 private const val EXTRA_FROM_AUTOPLAY = "bitchord.fromAutoplay"
+
+/**
+ * The artist and album pages this track hangs under, when they are known.
+ *
+ * Carried so they survive the round trip through the session: the player's own
+ * menu backfills them with a lookup when they are missing (see MainActivity's
+ * `links`), but a queue restored after a restart, or a track read back by the
+ * service, has only what the item carries.
+ */
+private const val EXTRA_ARTIST_ID = "bitchord.artistId"
+private const val EXTRA_ALBUM_ID = "bitchord.albumId"
 
 /** @see Song.localUri */
 private const val EXTRA_LOCAL_URI = "bitchord.localUri"
@@ -298,6 +312,16 @@ fun Song.toMediaItem(): MediaItem {
         MediaMetadata.Builder()
             .setTitle(title)
             .setArtist(artist)
+            // The release this track came off, when whoever queued it knew.
+            //
+            // A native field rather than an extra because Media3 bundles this
+            // one across the session on its own, and because the lock screen and
+            // Android Auto both draw it — a track queued from an album page had
+            // the name in hand all along and was arriving at those surfaces
+            // without it. It is also what the Replay's album chart is counted
+            // on: read back off the player, a track with no album here is a
+            // track that cannot be filed under one.
+            .setAlbumTitle(albumName)
             // Sized here rather than left as stored: this is what the lock
             // screen, the notification and Android Auto draw, all of them
             // large, and none of them go back for a better copy later.
@@ -324,13 +348,17 @@ fun Song.toMediaItem(): MediaItem {
             // back a null duration, [LastPlayed] stored a null, and the restored
             // queue lost the `&d=` its matching depends on.
             .apply {
-                if (fromAutoplay || offlineUri != null || durationText != null) {
+                if (fromAutoplay || offlineUri != null || durationText != null ||
+                    artistId != null || albumId != null
+                ) {
                     setExtras(
                         bundleOf(
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
                             EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
                             EXTRA_DURATION to durationText,
+                            EXTRA_ARTIST_ID to artistId,
+                            EXTRA_ALBUM_ID to albumId,
                         ),
                     )
                 }

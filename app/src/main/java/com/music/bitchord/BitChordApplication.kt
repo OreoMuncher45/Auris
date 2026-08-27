@@ -19,6 +19,8 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.stats.ArtistFacts
+import com.music.bitchord.data.stats.ListeningStats
 import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +56,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
+        // The device's own listening record. Opened here rather than in
+        // PlaybackService because the Replay page reads it from the UI side and
+        // both live in this process — one owner, one directory.
+        ListeningStats.init(this)
+        // After AppSettings, whose switch decides whether half of it runs.
+        ArtistFacts.init(this)
         // One cache directory can only be opened once per process, and
         // PlaybackService shares this one — so it's opened here, not there.
         AudioCache.init(this)

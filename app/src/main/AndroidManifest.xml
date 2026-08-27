@@ -143,6 +143,27 @@
         <receiver
             android:name=".widget.MediaWidgetActions"
             android:exported="false" />
+
+        <!--
+          Hands the Replay poster to whichever app the user picks to send it
+          with. The authority is derived from the applicationId rather than
+          written out, because the dev and prod flavours are two packages that
+          can be installed side by side — a fixed authority would make the
+          second install fail outright with INSTALL_FAILED_CONFLICTING_PROVIDER.
+
+          Not exported, and grantUriPermissions is the whole mechanism: the
+          receiving app gets a read grant that arrives with the intent, covers
+          one file (see @xml/file_paths) and expires with it.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

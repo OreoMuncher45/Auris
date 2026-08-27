@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Animation
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
 import androidx.compose.material.icons.rounded.Brightness4
@@ -37,10 +38,13 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
@@ -52,6 +56,8 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material.icons.rounded.Wifi
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -105,6 +111,7 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.ThemeMode
+import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.DolbyAtmos
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
@@ -128,6 +135,7 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
+    onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -178,8 +186,50 @@ fun SettingsScreen(
     val listenBrainzEnabled by AppSettings.listenBrainzEnabled.collectAsStateWithLifecycle()
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
 
+    val replayGenres by AppSettings.replayGenres.collectAsStateWithLifecycle()
+
     var picking by remember { mutableStateOf<QualityTarget?>(null) }
     var pickingDownloadQuality by remember { mutableStateOf(false) }
+    // What the last export or import did, shown on the row that did it rather
+    // than as a toast: a backup is the one action here whose outcome nobody can
+    // check by looking at the app afterwards. Held per direction, or an import's
+    // result reports itself under the word "Export".
+    var exportStatus by remember { mutableStateOf<String?>(null) }
+    var importStatus by remember { mutableStateOf<String?>(null) }
+    var confirmImport by remember { mutableStateOf(false) }
+    val backupScope = rememberCoroutineScope()
+
+    /**
+     * Both halves go through the system document picker rather than a path of
+     * this app's own choosing. That is what puts the file somewhere the user can
+     * actually find it — Drive, Files, a folder they already back up — and it
+     * means neither direction needs a storage permission, since the grant
+     * arrives with the document they picked.
+     */
+    val exportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { target ->
+        if (target == null) return@rememberLauncherForActivityResult
+        backupScope.launch {
+            exportStatus = Backup.exportTo(context, target).fold(
+                onSuccess = { months ->
+                    "Exported settings and ${countOfMonths(months)}"
+                },
+                onFailure = { "Export failed: ${it.message ?: "unknown error"}" },
+            )
+        }
+    }
+    val importPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { source ->
+        if (source == null) return@rememberLauncherForActivityResult
+        backupScope.launch {
+            importStatus = Backup.importFrom(context, source).fold(
+                onSuccess = { "Imported ${countOfMonths(it.months)} from v${it.from}" },
+                onFailure = { "Import failed: ${it.message ?: "unknown error"}" },
+            )
+        }
+    }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
@@ -616,6 +666,57 @@ fun SettingsScreen(
         }
 
         SettingsGroup(
+            header = "Your data",
+            footer = "Listening history is counted and kept on this device — there is no " +
+                "account behind it and nothing is uploaded. An export writes that history " +
+                "and your settings to a JSON file you choose the location of; passwords, " +
+                "tokens and session keys are deliberately left out of it, so you will need " +
+                "to sign back in to Last.fm, ListenBrainz and Discord after restoring.",
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.BarChart,
+                title = "Replay",
+                subtitle = "Your top songs, artists, albums and genres",
+                onClick = onOpenReplay,
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.LocalOffer,
+                title = "Work out genres",
+                subtitle = if (replayGenres) {
+                    "Asks Last.fm what an artist plays — their name is sent, nothing else"
+                } else {
+                    "Replay's genre chart is hidden while this is off"
+                },
+                trailing = {
+                    Switch(
+                        checked = replayGenres,
+                        onCheckedChange = AppSettings::setReplayGenres,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setReplayGenres(!replayGenres) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.FileUpload,
+                title = "Export data",
+                subtitle = exportStatus ?: "Settings and listening history, as one JSON file",
+                onClick = { exportPicker.launch(Backup.suggestedName()) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.FileDownload,
+                title = "Import data",
+                subtitle = importStatus ?: "Replaces the settings and history on this device",
+                onClick = { confirmImport = true },
+            )
+        }
+
+        SettingsGroup(
             header = "Miscellaneous",
             footer = "When enabled, closing the app from the recent apps screen will also stop music playback.",
         ) {
@@ -743,6 +844,34 @@ fun SettingsScreen(
         }
     }
 
+    // Asked before the picker opens rather than after a file is chosen: the
+    // thing being confirmed is that this device's own history is about to be
+    // thrown away, and that is true whichever file gets picked.
+    if (confirmImport) {
+        AlertDialog(
+            onDismissRequest = { confirmImport = false },
+            title = { Text("Import a backup?") },
+            text = {
+                Text(
+                    "This replaces the settings and the listening history on this device " +
+                        "with whatever is in the file. What is here now cannot be got back, " +
+                        "so export it first if you want to keep it.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmImport = false
+                    importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
+                }) {
+                    Text("Choose file")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmImport = false }) { Text("Cancel") }
+            },
+        )
+    }
+
     if (showListenBrainzTokenDialog) {
         var tokenInput by remember { mutableStateOf(listenBrainzToken) }
         AlertDialog(
@@ -850,6 +979,10 @@ fun SettingsScreen(
         )
     }
 }
+
+/** "3 months of listening" — the unit a backup is actually measured in. */
+private fun countOfMonths(months: Int): String =
+    if (months == 0) "no listening history" else "$months month${if (months == 1) "" else "s"} of listening"
 
 /** Which ceiling the open picker is editing. */
 private enum class QualityTarget(val title: String, val icon: ImageVector) {

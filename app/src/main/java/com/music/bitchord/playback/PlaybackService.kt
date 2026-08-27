@@ -49,6 +49,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.innertube.PlaybackTracker
+import com.music.bitchord.data.stats.ListeningRecorder
 import com.music.bitchord.data.innertube.PlayerClient
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.LikeStatus
@@ -283,6 +284,12 @@ class PlaybackService : MediaSessionService() {
             val song = exoPlayer.currentMediaItem?.toSong()
             val durationMs = exoPlayer.duration.takeIf { it > 0 }
             scrobbleManager?.onPlayerStateChanged(isPlaying, song, durationMs)
+
+            // The listening record has to be told a pause happened, not merely
+            // stop being told about play: its sampler measures the gap between
+            // ticks, and an unclosed one across a pause is an afternoon on the
+            // lock screen arriving as an afternoon of listening.
+            if (!isPlaying) ListeningRecorder.onStopped()
 
             // ListenBrainz: "now playing" on play/resume too, not just on
             // transition — a track started from idle or resumed from pause
@@ -1128,6 +1135,11 @@ class PlaybackService : MediaSessionService() {
 
         // Scrobbling: stop old song, start new song
         scrobbleManager?.onSongStop()
+        // And the local record, which needs the transition even when the track
+        // id doesn't change: repeat-one plays the same song again, and without
+        // this the second play through is a continuation of the first and is
+        // never counted.
+        ListeningRecorder.onStopped()
         val newSong = mediaItem?.toSong()
         val durationMs = exoPlayer.duration.takeIf { it > 0 }
         if (exoPlayer.isPlaying) {
@@ -2505,6 +2517,14 @@ class PlaybackService : MediaSessionService() {
                     player.currentMediaItem?.mediaId?.let {
                         PlaybackTracker.onProgress(it, lastPositionSeconds)
                     }
+                    // The device's own listening record — see [ListeningRecorder],
+                    // which counts wall-clock time between ticks rather than
+                    // reading the position. This loop is the only place in the app
+                    // that ticks exactly while audio is coming out, which is what
+                    // makes it the right place to count from.
+                    player.currentMediaItem?.toSong()?.let {
+                        ListeningRecorder.onSample(it, player.duration)
+                    }
                     // Same cadence for the resume point: the process can be
                     // killed at any moment without another callback arriving.
                     saveQueue()
@@ -3021,6 +3041,9 @@ class PlaybackService : MediaSessionService() {
         }
         scrobbleManager?.destroy()
         scrobbleManager = null
+        // Last chance to get the current track's minutes onto disk: the scope is
+        // cancelled a few lines down and the sampler goes with it.
+        ListeningRecorder.onStopped()
         // Discord, on the same terms as the ListenBrainz submit above: the
         // service scope is cancelled a few lines down, and a presence left up
         // would advertise a track that stopped when the process did — until

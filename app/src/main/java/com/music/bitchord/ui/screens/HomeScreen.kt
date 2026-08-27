@@ -63,6 +63,8 @@ import com.music.bitchord.ui.components.feedMoreSkeleton
 import com.music.bitchord.ui.components.feedSkeleton
 import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.player.MeshGradientBackground
+import com.music.bitchord.ui.player.MeshPalette
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -370,35 +372,47 @@ private fun ShelfCard(
     ) {
         when (item.browseId) {
             "local:downloads" -> {
+                val palette = remember { MeshPalette(listOf(Color(0xFF1E3C72), Color(0xFF2A5298))) }
                 Box(
                     modifier = Modifier
                         .width(SHELF_CARD_WIDTH)
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .clip(RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
+                    MeshGradientBackground(
+                        palette = palette,
+                        trackKey = "local:downloads",
+                        continuous = true,
+                        blurRadius = 24.dp,
+                    )
                     Icon(
                         imageVector = BitChordIcons.Download,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = Color.White,
                         modifier = Modifier.size(40.dp),
                     )
                 }
             }
             "local:all" -> {
+                val palette = remember { MeshPalette(listOf(Color(0xFF134E5E), Color(0xFF71B280))) }
                 Box(
                     modifier = Modifier
                         .width(SHELF_CARD_WIDTH)
                         .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.secondaryContainer),
+                        .clip(RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
+                    MeshGradientBackground(
+                        palette = palette,
+                        trackKey = "local:all",
+                        continuous = true,
+                        blurRadius = 24.dp,
+                    )
                     Icon(
                         imageVector = Icons.Rounded.LibraryMusic,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tint = Color.White,
                         modifier = Modifier.size(40.dp),
                     )
                 }

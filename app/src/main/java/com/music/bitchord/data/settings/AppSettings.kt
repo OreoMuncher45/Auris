@@ -233,6 +233,20 @@ object AppSettings {
     /** Disk budget for cached audio. [AudioCache][com.music.bitchord.playback.AudioCache] evicts past it. */
     val audioCacheLimitBytes = MutableStateFlow(DEFAULT_CACHE_LIMIT_BYTES)
 
+    // ── Replay ──────────────────────────────────────────────────────────────
+
+    /**
+     * Whether Replay may work out a genre chart.
+     *
+     * Its own switch because it is the one part of Replay that isn't purely
+     * local: everything else on that page is counted on this device and never
+     * leaves it, while a genre has to be looked up by artist name — see
+     * [ArtistFacts][com.music.bitchord.data.stats.ArtistFacts]. On by default,
+     * since it sends a name and nothing else and the answer is what makes a
+     * quarter of the page exist; off, the genre chart simply isn't drawn.
+     */
+    val replayGenres = MutableStateFlow(true)
+
     // ── Scrobbling ──────────────────────────────────────────────────────
 
     /** One release gate shared by the settings UI and the playback service. */
@@ -349,6 +363,28 @@ object AppSettings {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+        authStore = AuthStore(context)
+        readAll()
+        watchConnection(context)
+    }
+
+    /**
+     * Re-reads every setting off disk.
+     *
+     * The one caller is an import ([Backup][com.music.bitchord.data.stats.Backup]),
+     * which writes the whole preference file underneath these flows. Nothing
+     * else in the app changes a preference without going through the setter
+     * beside it, so nothing else has a reason to ask.
+     *
+     * Deliberately not re-registering the network callback: that watches the
+     * device, not the preferences, and a second one would have both firing.
+     */
+    fun reload() {
+        if (!this::prefs.isInitialized) return
+        readAll()
+    }
+
+    private fun readAll() {
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
@@ -391,7 +427,7 @@ object AppSettings {
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
-        authStore = AuthStore(context)
+        replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
         discordName.value = prefs.getString(KEY_DISCORD_NAME, "").orEmpty()
@@ -407,7 +443,6 @@ object AppSettings {
         discordButton2Text.value = prefs.getString(KEY_DISCORD_BUTTON_2_TEXT, "").orEmpty()
         discordButton2Visible.value = prefs.getBoolean(KEY_DISCORD_BUTTON_2_VISIBLE, true)
         discordInfoDismissed.value = prefs.getBoolean(KEY_DISCORD_INFO_DISMISSED, false)
-        watchConnection(context)
     }
 
     /**
@@ -778,11 +813,99 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_DISCORD_INFO_DISMISSED, value).apply()
     }
 
+    fun setReplayGenres(value: Boolean) {
+        replayGenres.value = value
+        prefs.edit().putBoolean(KEY_REPLAY_GENRES, value).apply()
+    }
+
     /** Forgets the account: token and cached profile. */
     fun clearDiscordAccount() {
         setDiscordToken("")
         setDiscordAccount("", "", null)
     }
+
+    // ── Backup ──────────────────────────────────────────────────────────────
+
+    /**
+     * Every stored preference, for an export.
+     *
+     * Read off the preference file wholesale rather than assembled from the
+     * flows above, so a setting added in a later build is in the backup the day
+     * it is added instead of the day somebody remembers to list it here. What is
+     * *left out* is therefore the part worth stating explicitly, and it is
+     * [SECRETS]: an export is a file the user is about to put in Drive or a
+     * chat, and a scrobbler session key or an API secret in it is a credential
+     * that has left the device in plain text. Signing back in after a restore is
+     * a minute; a leaked session key is not recoverable at all.
+     *
+     * The Discord token is not here for the same reason and one more: it never
+     * reaches this file. It lives in the encrypted store — see [AuthStore] — and
+     * so does the YouTube cookie, which means neither can be exported by
+     * accident.
+     */
+    fun exportPrefs(): Map<String, Any?> {
+        if (!this::prefs.isInitialized) return emptyMap()
+        return prefs.all.filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
+    }
+
+    /**
+     * Replaces the preference file with [values] and re-reads it.
+     *
+     * A replace, not a merge: a partial restore leaves a device holding half of
+     * one configuration and half of another, which is the one outcome nobody
+     * asked for. Keys in [SECRETS] survive untouched — they were never in the
+     * file being restored from, and clearing them would sign the user out of
+     * services the backup has nothing to say about.
+     */
+    fun importPrefs(values: Map<String, Any?>) {
+        if (!this::prefs.isInitialized) return
+        val kept = prefs.all.filterKeys { it in SECRETS || it in DEVICE_LOCAL }
+        prefs.edit().apply {
+            clear()
+            val incoming = values.filterKeys { it !in SECRETS && it !in DEVICE_LOCAL }
+            (kept + incoming).forEach { (key, value) ->
+                when (value) {
+                    is Boolean -> putBoolean(key, value)
+                    is Int -> putInt(key, value)
+                    is Long -> putLong(key, value)
+                    is Float -> putFloat(key, value)
+                    is String -> putString(key, value)
+                    is Set<*> -> putStringSet(key, value.filterIsInstance<String>().toSet())
+                    else -> Unit
+                }
+            }
+        }.apply()
+        reload()
+    }
+
+    /**
+     * Preferences an export must not carry — credentials, not configuration.
+     * See [exportPrefs].
+     */
+    private val SECRETS = setOf(
+        KEY_LASTFM_SESSION_KEY,
+        KEY_LASTFM_API_KEY,
+        KEY_LASTFM_SECRET,
+        KEY_LISTENBRAINZ_TOKEN,
+    )
+
+    /**
+     * Preferences that describe *this device* rather than this configuration,
+     * and so are neither exported nor overwritten by an import.
+     *
+     * [Downloads][com.music.bitchord.download.Downloads] keeps its record of
+     * what is saved in this same preference file, and that record is a list of
+     * files on this phone's storage. Carrying it into a backup would restore a
+     * folder full of tracks that are not here; clearing it on import would leave
+     * the files on disk with nothing pointing at them, which is worse — the
+     * Downloads page would read as empty while the space stayed used.
+     */
+    private val DEVICE_LOCAL = setOf(
+        "downloaded_tracks",
+        "downloaded_tracks_metadata",
+        "downloaded_collections",
+        KEY_LAST_VERSION_CODE,
+    )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
     const val MAX_CACHE_LIMIT_BYTES = 10L * 1024 * 1024 * 1024
@@ -811,6 +934,7 @@ object AppSettings {
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
+    private const val KEY_REPLAY_GENRES = "replay_genres"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"
     private const val KEY_LASTFM_USERNAME = "lastfm_username"
