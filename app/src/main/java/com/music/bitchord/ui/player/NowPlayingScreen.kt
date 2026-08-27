@@ -916,13 +916,35 @@ fun NowPlayingScreen(
     // the clip goes, instead of a frame later with the sleeve behind it still
     // transparent and no artwork anywhere.
     val heroClip = canvas?.takeIf { heroMode && p < 0.5f }
+    // Whether the banner is the presentation at all: full-bleed is on, and there
+    // is something to blow out. The collapse is deliberately *not* part of this
+    // — see [heroVisible].
     val heroT by animateFloatAsState(
         targetValue = if (
-            heroMode && p < 0.5f && (canvasRendered || artLoaded || heroSettled)
+            heroMode && (canvasRendered || artLoaded || heroSettled)
         ) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )
+
+    /**
+     * How much of the banner is actually on screen: its own fade, dissolved by
+     * the collapse rather than after it.
+     *
+     * The collapse used to be a threshold on this animation's *target* — the
+     * banner was told to go once [p] passed a half. That chained two 420ms
+     * animations end to end when they should have been the same one: for the
+     * first half of the collapse the banner sat at full size and full opacity
+     * with nothing appearing to move, since the card shrinking behind it is
+     * transparent while the banner is up; then the card finished collapsing and
+     * a full-screen banner cross-dissolved into a finished thumbnail. Two sizes
+     * of the same artwork on screen at once, which is what made every trip in
+     * and out of the lyrics look wrong.
+     *
+     * Multiplied by the collapse instead, the banner goes as the card shrinks:
+     * one movement, and the card is fading in the whole way down.
+     */
+    val heroVisible = heroT * (1f - p)
     // How tall that banner is, worked out down in the layout where the sleeve's
     // own geometry is known. Zero until the first measure, which is fine: there
     // is nothing to show that early either.
@@ -1001,7 +1023,7 @@ fun NowPlayingScreen(
             // banner straight out leaves a frame or two with no artwork anywhere
             // on screen before the card catches up.
             if (heroMode && !(stillCovered && heroClip != null) &&
-                (p < 0.5f || heroT > 0.001f)
+                (p < 0.5f || heroVisible > 0.001f)
             ) {
                 AsyncImage(
                     // Decoded at the same size the sleeve asks for, so the two
@@ -1023,7 +1045,7 @@ fun NowPlayingScreen(
                             // Hands its opacity to the clip as the clip takes
                             // over, and takes it straight back if there is no
                             // clip mounted to hand it to.
-                            alpha = heroT *
+                            alpha = heroVisible *
                                 (1f - if (heroClip != null) canvasCover.floatValue else 0f)
                             // The mask below erases part of what this layer
                             // drew, which it can only do in a buffer of its own.
@@ -1046,8 +1068,8 @@ fun NowPlayingScreen(
             // Motion artwork over it, in the same frame.
             //
             // Always composed while there's a clip to play, never gated on
-            // [heroT]: the clip has to be mounted and decoding *before* it can
-            // report the first frame that raises heroT in the first place.
+            // [heroVisible]: the clip has to be mounted and decoding *before*
+            // it can report the first frame that raises heroT in the first place.
             if (heroMode) {
                 heroClip?.let { clip ->
                     CanvasArtworkPlayer(
@@ -1070,7 +1092,7 @@ fun NowPlayingScreen(
             // directly behind them — a bright frame or a pale sleeve leaves the
             // top of the screen unreadable. Faded in with the banner and gone
             // with it.
-            if (heroT > 0.01f) {
+            if (heroVisible > 0.01f) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -1079,7 +1101,7 @@ fun NowPlayingScreen(
                         .background(
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.Black.copy(alpha = 0.38f * heroT),
+                                    Color.Black.copy(alpha = 0.38f * heroVisible),
                                     Color.Transparent,
                                 ),
                             ),
@@ -1437,7 +1459,7 @@ fun NowPlayingScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { alpha = if (artLoaded) 1f - heroT else 1f }
+                            .graphicsLayer { alpha = if (artLoaded) 1f - heroVisible else 1f }
                             // A drop shadow grounds a photo; on the flat
                             // placeholder tile it has nothing to sit behind, so
                             // it just reads as a second, darker square ringing
