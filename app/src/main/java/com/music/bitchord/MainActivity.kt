@@ -89,6 +89,7 @@ import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
+import com.music.bitchord.ui.screens.ImportPlaylistsScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
@@ -191,6 +192,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
     var showSettings by remember { mutableStateOf(false) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
+    var showImportPlaylists by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
     // Discord Rich Presence: its own page under Account & integrations, its own
@@ -616,6 +618,7 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                     onSignOut = { viewModel.signOut() },
                     onAccountScrobbling = { showAccountScrobbling = true },
                     onLyricsSources = { showLyricsSources = true },
+                    onImportPlaylists = { showImportPlaylists = true },
                     contentPadding = listPadding,
                 )
             } else if (page != null && page.browseId.startsWith("local:")) {
@@ -1313,6 +1316,43 @@ private fun BitChordApp(darkTheme: Boolean, viewModel: MainViewModel = viewModel
                             selectedTab = 2
                         },
                     )
+                }
+            }
+        }
+
+        // ---- Import playlists from other apps (full screen WebView) ----
+        if (showImportPlaylists) {
+            BackHandler { showImportPlaylists = false }
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = { showImportPlaylists = false }) {
+                            Icon(
+                                Icons.Rounded.Close,
+                                contentDescription = "Close",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                        Column {
+                            Text(
+                                "Import playlists",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            Text(
+                                "Powered by TuneMyMusic",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    ImportPlaylistsScreen()
                 }
             }
         }

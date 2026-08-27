@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.ImportExport
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MotionPhotosOff
@@ -124,6 +125,7 @@ fun SettingsScreen(
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
     onLyricsSources: () -> Unit,
+    onImportPlaylists: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -607,6 +609,15 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
+            )
+        }
+
+        SettingsGroup(header = "Privacy and data") {
+            SettingsRow(
+                icon = Icons.Rounded.ImportExport,
+                title = "Import playlists from other apps",
+                subtitle = "Powered by TuneMyMusic",
+                onClick = onImportPlaylists,
             )
         }
 
