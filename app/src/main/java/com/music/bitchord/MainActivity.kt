@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
@@ -92,6 +93,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -107,6 +109,8 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.playback.LinkRequest
+import com.music.bitchord.playback.MusicLink
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
@@ -150,6 +154,7 @@ import com.music.bitchord.ui.player.dockedPlayerWidth
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
+import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.ui.replay.ReplayScreen
@@ -172,6 +177,8 @@ class MainActivity : ComponentActivity() {
         // Before the composition, so a cold launch from a widget's artwork has
         // the request already standing by the time BitChordApp first reads it.
         PlayerDeepLink.consume(intent)
+        // Likewise for a link tapped or shared from another app — see [MusicLink].
+        MusicLink.consume(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val darkTheme = when (theme) {
@@ -209,6 +216,7 @@ class MainActivity : ComponentActivity() {
         // one that just arrived and not the one the task was started with.
         setIntent(intent)
         PlayerDeepLink.consume(intent)
+        MusicLink.consume(intent)
     }
 }
 
@@ -265,6 +273,9 @@ private fun BitChordApp(
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
+    // A Library shelf's "Show all" — the shelf it was opened from, so its own
+    // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
+    var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -445,6 +456,7 @@ private fun BitChordApp(
     val exploreListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
+    val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
@@ -706,6 +718,69 @@ private fun BitChordApp(
     val addSongsToQueue: (List<Song>) -> Unit = { songs -> queueSongs(songs, false) }
     val playSongsNext: (List<Song>) -> Unit = { songs -> queueSongs(songs, true) }
 
+    // ---- Links from outside the app ----
+
+    /**
+     * A YouTube Music link tapped elsewhere on the device, a link shared into
+     * BitChord, or "play something" said to the assistant — see [MusicLink].
+     *
+     * Keyed on the controller as well as the request, because a link is as
+     * often as not what cold-starts the app: the session it has to play into is
+     * still connecting the first time this runs, and returning empty-handed
+     * without spending the request is what lets the second run serve it.
+     */
+    val linkRequest by MusicLink.pending.collectAsStateWithLifecycle()
+    LaunchedEffect(linkRequest, controller) {
+        val request = linkRequest ?: return@LaunchedEffect
+        // Nothing here can be served without somewhere to play it — even the
+        // branches that only push a page are a beat away from a tap on one of
+        // its rows, and half-serving a request would spend it.
+        val session = controller ?: return@LaunchedEffect
+        when (request) {
+            is LinkRequest.Track -> {
+                val song = YtMusicRepository.trackLinks(request.videoId).getOrNull()
+                if (song == null) {
+                    Toast.makeText(context, "Couldn't open that link", Toast.LENGTH_SHORT).show()
+                } else {
+                    // A link is one song named on purpose, which is exactly the
+                    // case [playRadio] exists for: play it and let AutoPlay
+                    // carry on, rather than queueing something around it.
+                    playRadio(song)
+                }
+            }
+            is LinkRequest.Page -> {
+                showNowPlaying = false
+                // Titled by the page itself once it lands — a link carries a
+                // browse id and nothing else. See MainViewModel.openDetail.
+                viewModel.openDetail(request.browseId, title = "")
+            }
+            is LinkRequest.Search -> {
+                val songs = if (!request.play) null else {
+                    YtMusicRepository.search(request.query, SearchFilter.SONGS).getOrNull()
+                        ?.filterIsInstance<SearchResult.Track>()
+                }
+                val top = songs?.firstOrNull()?.song
+                if (top != null) {
+                    playRadio(top)
+                } else {
+                    // Either the link was a search to look at, or "play X"
+                    // found nothing to start — and the results are a better
+                    // answer to a spoken request than silence is.
+                    showNowPlaying = false
+                    selectedTab = TAB_SEARCH
+                    viewModel.searchFor(request.query)
+                }
+            }
+            // "Play music", nothing named. The queue from last time is already
+            // restored by the time the controller connects (see LastPlayed), so
+            // this is the resume it sounds like. On a fresh install there is
+            // nothing to resume and the app has just opened on Home, which is
+            // as much as the request can honestly be given.
+            LinkRequest.Resume -> if (session.mediaItemCount > 0) session.play()
+        }
+        MusicLink.handled()
+    }
+
     // ---- Album / playlist menu ----
 
     /**
@@ -813,6 +888,32 @@ private fun BitChordApp(
             viewModel.reloadLocalDetail("local:all")
         } else {
             Toast.makeText(context, "Storage permission is required to read local audio files", Toast.LENGTH_SHORT).show()
+        }
+    }
+    // Shared by the Library tab itself and by a shelf's "Show all" page, so a
+    // card opens the same way from either.
+    val onLibraryItemClick: (ShelfItem) -> Unit = { item ->
+        item.browseId?.let { id ->
+            if (id == "local:all" && !LocalMediaRepository.hasStoragePermission(context)) {
+                val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    Manifest.permission.READ_MEDIA_AUDIO
+                } else {
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+                }
+                mediaPermissionLauncher.launch(perm)
+            }
+            // Left set rather than cleared: a card opened from a shelf's
+            // "Show all" page stacks a detail page over it exactly as one
+            // opened from the Library tab stacks over that, so back from the
+            // release lands on the grid rather than skipping past it. Every
+            // place that reads `libraryShowAll` alongside `detail` favours
+            // `detail` while both are set — see the AnimatedContent below.
+            viewModel.openDetail(
+                browseId = id,
+                title = item.title,
+                subtitle = item.subtitle,
+                thumbnailUrl = item.thumbnailUrl,
+            )
         }
     }
     // Takes a list so a single tap on an album/playlist header can queue the
@@ -1140,6 +1241,10 @@ private fun BitChordApp(
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = showHistory) { showHistory = false }
+        // Disabled while a detail page is open over the grid: that one's own
+        // BackHandler below has to close first, or back would skip past it
+        // straight to Library. See [onLibraryItemClick].
+        BackHandler(enabled = libraryShowAll != null && detail == null) { libraryShowAll = null }
 
         // On a tablet the page and the player stand side by side rather than
         // one over the other: everything a phone stacks in a single column —
@@ -1152,6 +1257,13 @@ private fun BitChordApp(
                     targetState = when {
                         showDiscord -> "discord"
                         showHistory -> "history"
+                        // `&& detail == null`: a card opened from the grid
+                        // stacks a detail page over it exactly as one opened
+                        // from the Library tab does — see
+                        // [onLibraryItemClick] — so with both set this must
+                        // give way to the `detail != null` branch below it
+                        // rather than keep showing the grid underneath.
+                        libraryShowAll != null && detail == null -> "library_show_all"
                         showAccountScrobbling -> "account_scrobbling"
                         // Above Replay, not below it. The top bar's account
                         // button sets `showSettings` from every page including
@@ -1190,7 +1302,8 @@ private fun BitChordApp(
                     // the identical copy fading in behind it.
                     val live = detailStack.lastOrNull()?.takeIf {
                         it.browseId == key && key != "settings" && key != "account_scrobbling" &&
-                            key != "discord" && key != "replay" && key != "history"
+                            key != "discord" && key != "replay" && key != "history" &&
+                            key != "library_show_all"
                     }
                     // Held for the same reason, one step further on: a popped
                     // page is off the stack before it has finished animating
@@ -1210,6 +1323,23 @@ private fun BitChordApp(
                             onRetry = viewModel::loadHistory,
                             contentPadding = listPadding,
                         )
+                    } else if (key == "library_show_all") {
+                        libraryShowAll?.let { shelf ->
+                            LibraryGridPage(
+                                shelf = shelf,
+                                gridState = libraryShowAllGridState,
+                                onItemClick = onLibraryItemClick,
+                                onItemLongPress = onBrowseLongPress,
+                                // Only the Playlists shelf can grow one — see
+                                // [PlaylistShelf].
+                                onNewPlaylist = if (shelf.title == YtMusicRepository.PLAYLISTS_SHELF) {
+                                    { creatingPlaylist = true }
+                                } else {
+                                    null
+                                },
+                                contentPadding = listPadding,
+                            )
+                        }
                     } else if (key == "replay") {
                         ReplayScreen(
                             state = replay,
@@ -1558,30 +1688,14 @@ private fun BitChordApp(
                             signedIn = signedIn,
                             state = libraryState,
                             listState = libraryListState,
-                            onShelfItemClick = { item ->
-                                item.browseId?.let { id ->
-                                    if (id == "local:all" && !LocalMediaRepository.hasStoragePermission(context)) {
-                                        val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                            Manifest.permission.READ_MEDIA_AUDIO
-                                        } else {
-                                            Manifest.permission.READ_EXTERNAL_STORAGE
-                                        }
-                                        mediaPermissionLauncher.launch(perm)
-                                    }
-                                    viewModel.openDetail(
-                                        browseId = id,
-                                        title = item.title,
-                                        subtitle = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                    )
-                                }
-                            },
+                            onShelfItemClick = onLibraryItemClick,
                             // Every shelf here has a menu behind it now — the account's
                             // own playlists get rename and delete on top of what a saved
                             // album or a Liked Music card gets. Holding an artist still
                             // does nothing; see [onBrowseLongPress].
                             onShelfItemLongPress = onBrowseLongPress,
                             onNewPlaylist = { creatingPlaylist = true },
+                            onShowAll = { shelf -> libraryShowAll = shelf },
                             replayCard = replayCards.firstOrNull(),
                             onOpenReplay = { showReplay = true },
                             onSignIn = { showLogin = true },
@@ -1620,6 +1734,7 @@ private fun BitChordApp(
                     title = when {
                         showDiscord -> "Discord"
                         showHistory -> "History"
+                        libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> "Account & scrobbling"
                         showSettings -> "Settings"
                         showReplay -> "Replay"
@@ -1631,7 +1746,8 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
-                        showSettings || showAccountScrobbling || showDiscord || showHistory -> true
+                        showSettings || showAccountScrobbling || showDiscord || showHistory ||
+                            (libraryShowAll != null && detail == null) -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
                         showReplay -> replayScrolled
@@ -1643,6 +1759,7 @@ private fun BitChordApp(
                     onBack = when {
                         showDiscord -> ({ showDiscord = false })
                         showHistory -> ({ showHistory = false })
+                        libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({ showAccountScrobbling = false })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
@@ -1670,7 +1787,7 @@ private fun BitChordApp(
                             // Left of the account photo, and only on Library itself:
                             // a history is a record of what was played, which reads
                             // as that tab's business rather than every tab's.
-                            if (!showHistory && !showReplay && !showDiscord &&
+                            if (!showHistory && !showReplay && !showDiscord && libraryShowAll == null &&
                                 detail == null && selectedTab == TAB_LIBRARY
                             ) {
                                 IconButton(
@@ -1759,6 +1876,7 @@ private fun BitChordApp(
                             showAccountScrobbling = false
                             showReplay = false
                             showHistory = false
+                            libraryShowAll = null
                             selectedTab = index
                         },
                     )

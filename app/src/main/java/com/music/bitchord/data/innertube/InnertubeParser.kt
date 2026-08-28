@@ -585,6 +585,44 @@ object InnertubeParser {
         return credits.copy(artistName = name)
     }
 
+    /** How an album or playlist page bills itself, off its own header. */
+    data class BrowseHeader(
+        val title: String,
+        /** The line under it — "Album • Artist • 2024", or a playlist's blurb. */
+        val subtitle: String,
+        val thumbnailUrl: String?,
+    )
+
+    /**
+     * What a release or playlist page calls itself.
+     *
+     * Every other way into a detail page comes from a card that already carried
+     * the name and the cover, so nothing used to have to ask. A YouTube Music
+     * link tapped outside the app carries a browse id and nothing else — see
+     * [com.music.bitchord.playback.MusicLink] — and a page with a blank title
+     * over a track list reads as the app having half-loaded.
+     */
+    fun parseBrowseHeader(root: JsonElement): BrowseHeader? {
+        val header = HEADER_RENDERERS.firstNotNullOfOrNull {
+            collectRenderers(root, it).firstOrNull()
+        } ?: return null
+        val title = header.o("title").runs()
+        if (title.isBlank()) return null
+        // Same two header shapes as pageCredit: the current one straplines the
+        // kind of release above the title, the older one packs it into the
+        // subtitle. Either is a fair second line, so take whichever is there.
+        val subtitle = header.o("straplineTextOne").runs()
+            .ifBlank { header.o("subtitle").runs() }
+        return BrowseHeader(
+            title = title,
+            subtitle = subtitle,
+            // Header shapes drift — a cropped square here, a plain thumbnail
+            // there — so the first image under the header is the cover.
+            thumbnailUrl = collectRenderers(header, "musicThumbnailRenderer").firstOrNull()
+                .o("thumbnail").a("thumbnails").best(),
+        )
+    }
+
     /**
      * The account header buried in the `account_menu` popup. Not every client
      * gets an `email` back — some return only the @handle — so whichever is

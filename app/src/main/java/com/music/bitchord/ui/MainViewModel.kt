@@ -1387,6 +1387,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // own picture and name once they arrive.
             var artwork: String? = null
             var name: String? = null
+            /**
+             * The credit line, when the page had to supply its own.
+             *
+             * Only a link tapped outside the app arrives with neither — see
+             * [com.music.bitchord.playback.MusicLink]. Every other caller was
+             * looking at a card that already said this.
+             */
+            var credit: String? = null
             /** Set when the track list carries on past its first response. */
             var more: String? = null
             /** Tracks YouTube offers to round the playlist out — see [DetailPage.suggestedSongs]. */
@@ -1437,6 +1445,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             // so its own menu never has to go and ask. Recorded
                             // even when the listing came back empty.
                             page.owned?.let { setPlaylistOwned(browseId, it) }
+                            // Only for the caller that had nothing: a card's own
+                            // title is what the user just tapped, and must not
+                            // be swapped for the header's wording underneath them.
+                            page.header?.let { header ->
+                                if (title.isBlank()) name = header.title
+                                if (subtitle.isBlank()) credit = header.subtitle
+                                if (thumbnailUrl == null) artwork = header.thumbnailUrl
+                            }
                             if (page.songs.isEmpty()) {
                                 UiState.Error(NO_TRACKS)
                             } else {
@@ -1458,6 +1474,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         sections = sections,
                         thumbnailUrl = artwork ?: it.thumbnailUrl,
                         title = name ?: it.title,
+                        subtitle = credit ?: it.subtitle,
                         suggestedSongs = suggested,
                         library = library,
                     )

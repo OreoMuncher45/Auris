@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -166,24 +167,47 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     }
 }
 
-/** Shared by the home feed, Explore and Library so headings line up across tabs. */
+/**
+ * Shared by the home feed, Explore and Library so headings line up across tabs.
+ *
+ * [onShowAll] is only ever set on Library, whose shelves are grids capped to
+ * one row rather than sideways-scrolling — see [LibraryGridShelf]. Home and
+ * Explore never pass it, so their heading is unchanged.
+ */
 @Composable
-internal fun SectionHeader(title: String, subtitle: String = "") {
-    Column(Modifier.padding(horizontal = PAGE_GUTTER, vertical = 10.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (subtitle.isNotBlank()) {
+internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
             Text(
-                text = subtitle,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (onShowAll != null) {
+            Text(
+                text = "Show all",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable(onClick = onShowAll)
+                    .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
             )
         }
     }
@@ -319,15 +343,14 @@ internal fun NewShelfCard(
     label: String,
     subtitle: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
 ) {
     Column(
-        modifier = Modifier
-            .width(SHELF_CARD_WIDTH)
-            .clickable(onClick = onClick),
+        modifier = modifier.clickable(onClick = onClick),
     ) {
         Box(
             modifier = Modifier
-                .width(SHELF_CARD_WIDTH)
+                .fillMaxWidth()
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
@@ -360,22 +383,21 @@ internal fun NewShelfCard(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ShelfCard(
+internal fun ShelfCard(
     item: ShelfItem,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
+    modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
 ) {
     Column(
-        modifier = Modifier
-            .width(SHELF_CARD_WIDTH)
-            .combinedClickable(onClick = onClick, onLongClick = onLongPress),
+        modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress),
     ) {
         when (item.browseId) {
             "local:downloads" -> {
                 val palette = remember { MeshPalette(listOf(Color(0xFF1E3C72), Color(0xFF2A5298))) }
                 Box(
                     modifier = Modifier
-                        .width(SHELF_CARD_WIDTH)
+                        .fillMaxWidth()
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center,
@@ -398,7 +420,7 @@ private fun ShelfCard(
                 val palette = remember { MeshPalette(listOf(Color(0xFF134E5E), Color(0xFF71B280))) }
                 Box(
                     modifier = Modifier
-                        .width(SHELF_CARD_WIDTH)
+                        .fillMaxWidth()
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp)),
                     contentAlignment = Alignment.Center,
@@ -423,7 +445,7 @@ private fun ShelfCard(
                     contentDescription = null,
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                     modifier = Modifier
-                        .width(SHELF_CARD_WIDTH)
+                        .fillMaxWidth()
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp))
                         .thumbnailBorder(RoundedCornerShape(12.dp))

@@ -145,6 +145,45 @@ const val HERO_CARD_RATIO = 0.92f
  */
 fun heroCardWidth(available: Dp): Dp = minOf(available * HERO_CARD_FRACTION, HERO_CARD_MAX_WIDTH)
 
+/** How many cards sit across a library grid row, and how wide each lands. */
+data class LibraryGridSpec(val columns: Int, val cardWidth: Dp)
+
+/** The narrowest a library grid card is let get before another column gives way. */
+private val LIBRARY_GRID_MIN_CARD_WIDTH = 84.dp
+
+/** Gap between cards in a library grid, in both directions. */
+val LIBRARY_GRID_SPACING = 12.dp
+
+private const val LIBRARY_GRID_MIN_COLUMNS = 2
+
+/** Library shelves never grow past this many across, however wide the screen. */
+private const val LIBRARY_GRID_MAX_COLUMNS = 5
+
+/**
+ * How a Library shelf's full "Show all" page lays out as a grid, in
+ * [available] dp of row — see `LibraryGridPage`.
+ *
+ * Columns follow from [LIBRARY_GRID_MIN_CARD_WIDTH] — as many as fit — rather
+ * than from a fixed count, so a phone settles on 3 or 4 and a tablet fills out
+ * to the 5-column ceiling. Every width here is already in dp, which is what
+ * makes this "based on device width and dpi" rather than a raw pixel count: a
+ * dp reads the same physical size on a 420ppi phone as on a 160ppi tablet, so
+ * the column count tracks how much room there actually is rather than how
+ * many pixels the panel happens to report.
+ *
+ * The shelf's own preview row on the Library page itself is unrelated — it
+ * keeps the fixed [SHELF_CARD_WIDTH] every other shelf uses and a flat
+ * five-card cap rather than a width-derived one, so a card is the same size
+ * whether the row it's in scrolls or not. See `LibraryGridShelf`.
+ */
+fun libraryGrid(available: Dp): LibraryGridSpec {
+    val raw = ((available + LIBRARY_GRID_SPACING) / (LIBRARY_GRID_MIN_CARD_WIDTH + LIBRARY_GRID_SPACING))
+        .toInt()
+    val columns = raw.coerceIn(LIBRARY_GRID_MIN_COLUMNS, LIBRARY_GRID_MAX_COLUMNS)
+    val cardWidth = (available - LIBRARY_GRID_SPACING * (columns - 1)) / columns
+    return LibraryGridSpec(columns, cardWidth)
+}
+
 /**
  * One track row, used by search, library and detail pages.
  *

@@ -294,6 +294,12 @@ object YtMusicRepository {
          * album, a continuation, or a page that doesn't say.
          */
         val owned: Boolean? = null,
+        /**
+         * What the page calls itself — only needed by callers that opened it
+         * with nothing but a browse id, i.e. a tapped link. Null on a
+         * continuation, which carries rows and no header.
+         */
+        val header: InnertubeParser.BrowseHeader? = null,
     )
 
     /**
@@ -335,12 +341,13 @@ object YtMusicRepository {
 
     private fun pageOf(response: JsonObject): SongPage {
         val library = InnertubeParser.parseLibraryState(response)
+        val header = InnertubeParser.parseBrowseHeader(response)
         // A playlist page is scoped to its own shelf so its "Suggested
         // tracks" never read as songs the user added — see
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
         InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
-            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library)
+            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
         }
         return SongPage(
             // One response can name the same track twice — an album page that
@@ -349,6 +356,7 @@ object YtMusicRepository {
             songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId },
             continuation = InnertubeParser.continuationToken(response),
             library = library,
+            header = header,
         )
     }
 

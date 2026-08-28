@@ -62,6 +62,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import kotlinx.coroutines.CoroutineScope
@@ -1334,6 +1335,27 @@ class PlaybackService : MediaSessionService() {
             error,
             about = mediaId,
         )
+        // A local file that is not there is the one failure retrying cannot
+        // touch, and the only one where the fix is to stop asking for the file.
+        //
+        // Everything below this point recovers a *stream*: it discards cached
+        // bytes, releases the choice of who serves the track, and prepares the
+        // same item again. Against `file:///…/Drake - Janice STFU.m4a` that is
+        // all wasted — the uri is baked into the item already in the timeline,
+        // so `prepare()` reopens the identical dead path and fails identically.
+        // Observed as eight `ERROR_CODE_IO_FILE_NOT_FOUND`s in three seconds
+        // against a download whose file had been deleted from a file manager,
+        // ending in a track that simply refused to play.
+        //
+        // Rebuilding the item without its local uri is what turns that into a
+        // stream, and dropping the record is what stops the next play walking
+        // into the same hole. Deliberately ahead of the verdict and the attempt
+        // budget below: this is not an attempt spent, it is a different source.
+        if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND &&
+            restreamMissingLocalFile(player, item, uri, position)
+        ) {
+            return
+        }
         // Giving up on the *retry*, not on everything below it.
         //
         // A track that has exhausted its attempts is not finished with.
@@ -1444,6 +1466,68 @@ class PlaybackService : MediaSessionService() {
                 player.prepare()
             }
         }
+    }
+
+    /**
+     * Swaps a track whose downloaded file has gone missing back onto a stream,
+     * in place and at the same position.
+     *
+     * The file was downloaded and then deleted from under the app — a file
+     * manager, a cleaner, a wiped SD card — leaving [Downloads]' record pointing
+     * at nothing. [Song.toMediaItem] checks that record before it builds an
+     * item, but only at build time: an item already sitting in the timeline was
+     * built when the file was still there, and a queue restored by [LastPlayed]
+     * carries the same stale uri back across a restart. This is the other end of
+     * that, and the only one that can see the file is gone rather than guess.
+     *
+     * The record goes first, then the item is rebuilt from its own metadata with
+     * the local uri stripped, which sends [Song.toMediaItem] down its streaming
+     * branch. Position is kept, so this reads as the hiccup [recoverFrom] is
+     * written around rather than the song starting over.
+     *
+     * @return false when this is not that situation and the caller should carry
+     *   on with its ordinary stream recovery — including the case where stripping
+     *   the local uri changes nothing, which is a device-library track whose
+     *   mediaId *is* the missing file and for which there is no stream to fall
+     *   back to. Returning true there would be a swap that fixes nothing, on a
+     *   loop.
+     */
+    private fun restreamMissingLocalFile(
+        player: ExoPlayer,
+        item: MediaItem,
+        uri: Uri?,
+        position: Long,
+    ): Boolean {
+        val scheme = uri?.scheme
+        if (scheme != "file" && scheme != "content") return false
+        val mediaId = item.mediaId
+
+        Downloads.forgetMissing(mediaId)
+        val restreamed = item.toSong().copy(localUri = null, localPath = null).toMediaItem()
+        if (restreamed.localConfiguration?.uri == uri) {
+            TrackLog.w(
+                "BitChord",
+                "$mediaId is a local file that is gone and has no stream behind it",
+                about = mediaId,
+            )
+            return false
+        }
+
+        TrackLog.w(
+            "BitChord",
+            "$mediaId was downloaded but $uri is gone; streaming it instead",
+            about = mediaId,
+        )
+        // Not claimed as [retryingMediaId], unlike the seek-and-prepare retry
+        // below: that flag exists to stop a retry against the *same* stream
+        // refilling its own attempt budget, and this is a different source
+        // entirely. Letting the transition clear the count is the right answer
+        // here — a stream that has never been tried deserves the full budget.
+        recoveries.remove(mediaId)
+        player.replaceMediaItem(player.currentMediaItemIndex, restreamed)
+        player.seekTo(player.currentMediaItemIndex, position)
+        player.prepare()
+        return true
     }
 
     /**

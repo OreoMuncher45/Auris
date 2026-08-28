@@ -2,7 +2,9 @@ package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -14,6 +16,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -36,9 +44,12 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.SavedCollection
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
+import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
+import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.librarySkeleton
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
@@ -69,6 +80,12 @@ fun LibraryScreen(
     onShelfItemClick: (ShelfItem) -> Unit,
     onShelfItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
+    /**
+     * A shelf's "Show all" — every shelf on this page is capped to one grid
+     * row (see [LibraryGridShelf]), so this is the only way to reach whatever
+     * didn't fit.
+     */
+    onShowAll: (HomeShelf) -> Unit,
     /**
      * The Replay's leading card — minutes listened — or null before anything has
      * been played.
@@ -129,44 +146,46 @@ fun LibraryScreen(
             // to discover it is to have already used it.
             item(key = "replay") { ReplayBanner(replayCard, onOpenReplay) }
             item(key = "shelf:$ON_DEVICE") {
-                Shelf(
-                    shelf = HomeShelf(
-                        title = ON_DEVICE,
-                        items = listOf(
-                            ShelfItem(
-                                title = "Downloads",
-                                subtitle = "Downloaded songs",
-                                thumbnailUrl = null,
-                                videoId = null,
-                                browseId = "local:downloads",
-                            ),
-                            ShelfItem(
-                                title = "Local Music",
-                                subtitle = "Audio files on device",
-                                thumbnailUrl = null,
-                                videoId = null,
-                                browseId = "local:all",
-                            ),
-                        ) + downloadedPlaylists.map { playlist ->
-                            ShelfItem(
-                                title = playlist.title,
-                                // The credit the playlist was downloaded with,
-                                // because this is also what the page it opens
-                                // bills itself by — see `headerLines`, which
-                                // reads the kind and the owner back out of it.
-                                // Saying "Downloaded playlist" here instead would
-                                // make that header read "Downloaded playlist" over
-                                // "PLAYLIST • 12 SONGS", and the shelf this card
-                                // is on already says where it lives.
-                                subtitle = playlist.subtitle.ifBlank { "Downloaded playlist" },
-                                thumbnailUrl = playlist.thumbnailUrl,
-                                videoId = null,
-                                browseId = Downloads.pageIdFor(playlist.id),
-                            )
-                        },
-                    ),
+                val onDeviceShelf = HomeShelf(
+                    title = ON_DEVICE,
+                    items = listOf(
+                        ShelfItem(
+                            title = "Downloads",
+                            subtitle = "Downloaded songs",
+                            thumbnailUrl = null,
+                            videoId = null,
+                            browseId = "local:downloads",
+                        ),
+                        ShelfItem(
+                            title = "Local Music",
+                            subtitle = "Audio files on device",
+                            thumbnailUrl = null,
+                            videoId = null,
+                            browseId = "local:all",
+                        ),
+                    ) + downloadedPlaylists.map { playlist ->
+                        ShelfItem(
+                            title = playlist.title,
+                            // The credit the playlist was downloaded with,
+                            // because this is also what the page it opens
+                            // bills itself by — see `headerLines`, which
+                            // reads the kind and the owner back out of it.
+                            // Saying "Downloaded playlist" here instead would
+                            // make that header read "Downloaded playlist" over
+                            // "PLAYLIST • 12 SONGS", and the shelf this card
+                            // is on already says where it lives.
+                            subtitle = playlist.subtitle.ifBlank { "Downloaded playlist" },
+                            thumbnailUrl = playlist.thumbnailUrl,
+                            videoId = null,
+                            browseId = Downloads.pageIdFor(playlist.id),
+                        )
+                    },
+                )
+                LibraryGridShelf(
+                    shelf = onDeviceShelf,
                     onItemClick = onShelfItemClick,
                     onItemLongPress = onShelfItemLongPress,
+                    onShowAll = { onShowAll(onDeviceShelf) },
                 )
             }
             if (!signedIn) {
@@ -193,11 +212,13 @@ fun LibraryScreen(
                     val shelves = state.data.shelves
                     if (shelves.none { it.title == PLAYLISTS }) {
                         item(key = "shelf:$PLAYLISTS") {
+                            val emptyPlaylists = HomeShelf(PLAYLISTS, emptyList())
                             PlaylistShelf(
-                                shelf = HomeShelf(PLAYLISTS, emptyList()),
+                                shelf = emptyPlaylists,
                                 onItemClick = onShelfItemClick,
                                 onItemLongPress = onShelfItemLongPress,
                                 onNewPlaylist = onNewPlaylist,
+                                onShowAll = { onShowAll(emptyPlaylists) },
                             )
                         }
                     }
@@ -209,12 +230,14 @@ fun LibraryScreen(
                                     onItemClick = onShelfItemClick,
                                     onItemLongPress = onShelfItemLongPress,
                                     onNewPlaylist = onNewPlaylist,
+                                    onShowAll = { onShowAll(shelf) },
                                 )
                             } else {
-                                Shelf(
+                                LibraryGridShelf(
                                     shelf = shelf,
                                     onItemClick = onShelfItemClick,
                                     onItemLongPress = onShelfItemLongPress,
+                                    onShowAll = { onShowAll(shelf) },
                                 )
                             }
                         }
@@ -334,11 +357,13 @@ private fun PlaylistShelf(
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
+    onShowAll: () -> Unit,
 ) {
-    Shelf(
+    LibraryGridShelf(
         shelf = shelf,
         onItemClick = onItemClick,
         onItemLongPress = onItemLongPress,
+        onShowAll = onShowAll,
         leadingCard = {
             NewShelfCard(
                 icon = BitChordIcons.Plus,
@@ -348,6 +373,98 @@ private fun PlaylistShelf(
             )
         },
     )
+}
+
+/** A Library shelf's preview row never swipes past this many cards. */
+private const val LIBRARY_ROW_MAX_ITEMS = 5
+
+/**
+ * A Library shelf: a sideways-scrolling row of [SHELF_CARD_WIDTH] cards, the
+ * same as every other shelf, but stopped at [LIBRARY_ROW_MAX_ITEMS] rather
+ * than left to run the shelf's whole length — with a "Show all" beside the
+ * title whenever there's more than that, opening the rest as a
+ * vertically-scrolling grid instead. See [LibraryGridPage].
+ *
+ * [leadingCard], if given, occupies the first slot and counts against that
+ * cap — see [PlaylistShelf].
+ */
+@Composable
+internal fun LibraryGridShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: (ShelfItem) -> Unit,
+    onShowAll: () -> Unit,
+    leadingCard: (@Composable () -> Unit)? = null,
+) {
+    val leadingCount = if (leadingCard != null) 1 else 0
+    val visibleItems = shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
+    Column(Modifier.padding(bottom = 26.dp)) {
+        SectionHeader(
+            title = shelf.title,
+            subtitle = shelf.subtitle,
+            onShowAll = onShowAll.takeIf { shelf.items.size + leadingCount > LIBRARY_ROW_MAX_ITEMS },
+        )
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
+        ) {
+            leadingCard?.let { card -> item(key = "leading") { card() } }
+            items(visibleItems) { item ->
+                ShelfCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onLongPress = { onItemLongPress(item) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Everything a Library shelf's "Show all" opens onto — the same cards, at the
+ * same [libraryGrid] width, run down the screen instead of stopping at one row.
+ */
+@Composable
+fun LibraryGridPage(
+    shelf: HomeShelf,
+    gridState: LazyGridState,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: (ShelfItem) -> Unit,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+    onNewPlaylist: (() -> Unit)? = null,
+) {
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(grid.columns),
+            state = gridState,
+            contentPadding = contentPadding,
+            horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+        ) {
+            if (onNewPlaylist != null) {
+                item(key = "leading") {
+                    NewShelfCard(
+                        icon = BitChordIcons.Plus,
+                        label = "New playlist",
+                        subtitle = "Saved to YouTube Music",
+                        onClick = onNewPlaylist,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            items(shelf.items, key = { it.browseId ?: it.title }) { item ->
+                ShelfCard(
+                    item = item,
+                    onClick = { onItemClick(item) },
+                    onLongPress = { onItemLongPress(item) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
 }
 
 /** The library feed whose cards are the account's own — see [PlaylistShelf]. */
