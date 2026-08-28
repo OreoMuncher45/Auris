@@ -123,7 +123,18 @@ class ModuleSource(
                 // holding the best copy, and the grace period is what buys the
                 // chance to compare them.
                 if (waitForAll) {
-                    withTimeoutOrNull(SEARCH_PATIENT_MS) { jobs.joinAll() }
+                    // Patient, not indefinite. A flat join on everyone made the
+                    // *slowest* module the price of every single track — and on
+                    // a batch download, where this path runs once per track back
+                    // to back, a module that simply never answers was 20s of
+                    // dead time per song and nothing to show for it. Every
+                    // module still gets a real hearing, several times what the
+                    // live path allows; what it no longer gets is unlimited
+                    // time while the queue stands still.
+                    withTimeoutOrNull(SEARCH_PATIENT_MS) {
+                        withTimeoutOrNull(SEARCH_BUDGET_MS) { first.await() }
+                        withTimeoutOrNull(SEARCH_PATIENT_GRACE_MS) { jobs.joinAll() }
+                    }
                 } else {
                     withTimeoutOrNull(SEARCH_BUDGET_MS) { first.await() }
                     withTimeoutOrNull(SEARCH_GRACE_MS) { jobs.joinAll() }
@@ -478,6 +489,19 @@ class ModuleSource(
          * routinely the one holding the lossless copy.
          */
         const val SEARCH_PATIENT_MS = 25_000L
+
+        /**
+         * How long the stragglers get once someone useful has answered, on the
+         * patient path.
+         *
+         * The counterpart to [SEARCH_GRACE_MS], sized for a caller that is not
+         * holding up audio: long enough for a slow-but-working module to land
+         * its answer and be compared, short enough that a module which is not
+         * going to answer at all cannot define the cost of the track. Ends the
+         * search the moment everyone has spoken, so a healthy index never
+         * spends any of it.
+         */
+        const val SEARCH_PATIENT_GRACE_MS = 8_000L
 
         /**
          * Delimiter between the module id and the upstream track id inside

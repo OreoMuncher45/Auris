@@ -2701,19 +2701,11 @@ class PlaybackService : MediaSessionService() {
                 eachPlayer { it.setPlaybackSpeed(speed) }
             }
         }
-        // Spatial audio is the user's switch *and* the device's: Atmos going
-        // off in system settings mid-track has to stop the effect, not wait for
-        // the next track or the next launch.
         scope.launch {
-            combine(
-                AppSettings.spatialAudio,
-                DolbyAtmos.supported,
-                DolbyAtmos.enabledOnDevice,
-            ) { wanted, supported, atmosOn -> wanted && supported && atmosOn }
-                .collect {
-                    spatialAudioProcessorA.enabled = it
-                    spatialAudioProcessorB.enabled = it
-                }
+            AppSettings.spatialAudio.collect {
+                spatialAudioProcessorA.enabled = it
+                spatialAudioProcessorB.enabled = it
+            }
         }
     }
 

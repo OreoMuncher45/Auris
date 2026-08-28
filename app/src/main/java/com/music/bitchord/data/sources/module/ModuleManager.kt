@@ -114,6 +114,13 @@ class ModuleManager {
      * absolute base — callers pass `{ sourceUrl.substringBeforeLast("/") }`.
      *
      * Results are cached; a second call for the same id returns immediately.
+     *
+     * The cache is checked against the executor rather than on its own. Engines
+     * are LRU-capped over there and this map is not told when one is evicted,
+     * so a hit here could name a module whose engine had already been closed —
+     * and the caller then went straight to a `callExport` that could only fail
+     * with "not loaded". Re-initialising costs a JS evaluation, but not the
+     * download: the source is what this map is really holding.
      */
     suspend fun loadModule(
         module: SpineModule,
@@ -121,8 +128,15 @@ class ModuleManager {
     ): Result<LoadedModule> = withContext(Dispatchers.IO) {
         val cached = loadedModules[module.id]
         if (cached != null) {
-            TrackLog.d(TAG, "▶ loadModule(${module.id}) — CACHE HIT")
-            return@withContext Result.success(cached)
+            if (QuickJsExecutor.isLoaded(module.id)) {
+                TrackLog.d(TAG, "▶ loadModule(${module.id}) — CACHE HIT")
+                return@withContext Result.success(cached)
+            }
+            val revived = QuickJsExecutor
+                .loadModule(module.id, cached.jsCode, cached.baseUrl)
+                .map { cached }
+            if (revived.isSuccess) return@withContext revived
+            loadedModules.remove(module.id)
         }
 
         TrackLog.d(TAG, "▶ loadModule(${module.id}) download=${module.download}")

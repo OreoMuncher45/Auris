@@ -4,6 +4,8 @@ import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import java.util.concurrent.atomic.AtomicLong
 
 /** Where one track in the manager's list has got to. */
 sealed interface DownloadProgress {
@@ -119,13 +121,16 @@ object DownloadSession {
      * "never seen" and leave the indicator hidden for the one batch it most
      * needed to report. A counter starting at zero has neither problem.
      *
-     * Read and incremented under [_state]'s single-writer discipline (every
-     * mutator here runs on whatever thread called it, but all of them go through
-     * [update], and downloads are drained one at a time).
+     * Atomic because there is no single-writer discipline left to lean on:
+     * several downloads run at once now, so several threads are in [update] at
+     * the same time and [update] retries its block on contention — which means
+     * this can be called more than once for one logical event. Skipped values
+     * cost nothing, since every one of these is only ever compared with another
+     * for order.
      */
-    private var clock = 0L
+    private val clock = AtomicLong(0L)
 
-    private fun tick(): Long = ++clock
+    private fun tick(): Long = clock.incrementAndGet()
 
     /**
      * A track has been accepted into the queue — or refused before it got there,
@@ -201,7 +206,7 @@ object DownloadSession {
 
     /** The user has the manager open — see [State.visible]. */
     fun markSeen() {
-        _state.value = _state.value.copy(seenAt = tick())
+        _state.update { it.copy(seenAt = tick()) }
     }
 
     /** Empty the list outright, at the user's request. */
@@ -228,7 +233,17 @@ object DownloadSession {
         }
     }
 
+    /**
+     * Read-modify-write on [_state], atomically.
+     *
+     * A plain `_state.value = block(_state.value)` was safe while one download
+     * ran at a time. With several in flight it is a lost-update race between
+     * four workers each posting progress a few times a second, and what gets
+     * lost is whole rows: two tracks reporting at once, and one of them stays
+     * on screen at whatever it last managed to write. [MutableStateFlow.update]
+     * is the compare-and-set version of the same line.
+     */
     private inline fun update(block: (State) -> State) {
-        _state.value = block(_state.value)
+        _state.update(block)
     }
 }

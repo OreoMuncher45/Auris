@@ -550,20 +550,28 @@ private fun ReleaseHeader(
                     )
                     onDownload?.let { download ->
                         // The queue is one queue for the whole app, so this asks
-                        // only about this release's own tracks: a download
-                        // running on some other album is not this button's
-                        // business. Failed entries stay in [Downloads.active]
-                        // until dismissed, and a failure is not a wait.
+                        // only about tracks *this page* asked to be downloaded —
+                        // not merely tracks it happens to contain. Two releases
+                        // can share a track (a song on both a playlist and an
+                        // album), and scanning the whole queue for any id this
+                        // page's songs carry would show this button waiting on a
+                        // download some other release started. Failed entries
+                        // stay in [Downloads.active] until dismissed, and a
+                        // failure is not a wait.
                         val active by Downloads.active.collectAsStateWithLifecycle()
+                        val requested by Downloads.requested.collectAsStateWithLifecycle()
+                        val requestedIds = requested[page.browseId].orEmpty()
                         // Same source [DownloadedBadge] reads per row — a release
                         // counts as downloaded once every one of its own tracks is
                         // in the saved set, not from any record of the release
                         // itself.
                         val saved by Downloads.saved.collectAsStateWithLifecycle()
                         val ids = remember(songs) { songs.mapTo(HashSet()) { it.videoId } }
-                        val waiting = active.any { (id, state) ->
-                            id in ids &&
-                                (state is DownloadState.Queued || state is DownloadState.Running)
+                        val waiting = requestedIds.any { id ->
+                            when (active[id]) {
+                                is DownloadState.Queued, is DownloadState.Running -> true
+                                else -> false
+                            }
                         }
                         val downloaded = !waiting && ids.isNotEmpty() && ids.all { it in saved }
                         CircleIconButton(

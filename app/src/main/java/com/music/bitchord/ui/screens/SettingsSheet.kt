@@ -97,7 +97,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
@@ -113,7 +112,6 @@ import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.playback.AudioCache
-import com.music.bitchord.playback.DolbyAtmos
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -150,8 +148,6 @@ fun SettingsScreen(
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
-    val atmosSupported by DolbyAtmos.supported.collectAsStateWithLifecycle()
-    val atmosEnabled by DolbyAtmos.enabledOnDevice.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -236,14 +232,6 @@ fun SettingsScreen(
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
-
-    // Coming back from the system Atmos panel is the one moment the answer is
-    // most likely to have changed, and on devices whose Atmos switch isn't
-    // watchable it's the only moment we'd hear about it at all.
-    LifecycleResumeEffect(Unit) {
-        DolbyAtmos.refresh()
-        onPauseOrDispose {}
-    }
 
     val version = remember(context) {
         runCatching {
@@ -413,33 +401,18 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Rounded.SurroundSound,
                 title = "Spatial audio",
-                subtitle = when {
-                    !atmosSupported -> "Needs a device with Dolby Atmos"
-                    !atmosEnabled -> "Turn on Dolby Atmos to use it"
-                    else -> "Widens stereo tracks for a more immersive feel"
-                },
-                enabled = atmosSupported,
+                subtitle = "Widens stereo tracks for a more immersive feel",
                 trailing = {
                     Switch(
-                        checked = spatialAudio && atmosEnabled,
-                        onCheckedChange = { wanted ->
-                            if (atmosEnabled) AppSettings.setSpatialAudio(wanted) else openAtmosSettings(context)
-                        },
-                        enabled = atmosSupported,
+                        checked = spatialAudio,
+                        onCheckedChange = AppSettings::setSpatialAudio,
                         colors = SwitchDefaults.colors(
                             checkedTrackColor = MaterialTheme.colorScheme.primary,
                             checkedBorderColor = MaterialTheme.colorScheme.primary,
                         ),
                     )
                 },
-                // With Atmos off, the switch has nothing to switch — the row
-                // sends the user to the panel that does, and the state it comes
-                // back with is picked up on resume.
-                onClick = when {
-                    !atmosSupported -> null
-                    !atmosEnabled -> ({ openAtmosSettings(context) })
-                    else -> ({ AppSettings.setSpatialAudio(!spatialAudio) })
-                },
+                onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
             )
             RowDivider()
             SettingsRow(
@@ -979,14 +952,6 @@ private enum class QualityTarget(val title: String, val icon: ImageVector) {
 }
 
 private fun openEqualizer(context: Context, sessionId: Int) {
-    if (sessionId == 0) {
-        Toast.makeText(
-            context,
-            "Play a track first, then open the equalizer",
-            Toast.LENGTH_SHORT,
-        ).show()
-        return
-    }
     val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
         putExtra(AudioEffect.EXTRA_AUDIO_SESSION, sessionId)
         putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
@@ -994,22 +959,6 @@ private fun openEqualizer(context: Context, sessionId: Int) {
     }
     runCatching { context.startActivity(intent) }.onFailure {
         Toast.makeText(context, "No system equalizer on this device", Toast.LENGTH_SHORT).show()
-    }
-}
-
-/**
- * Hands the user to whatever owns Dolby Atmos on this device. Nothing in the
- * public API lets an app flip that switch itself, so the honest move is to open
- * the panel rather than pretend the row can do it.
- */
-private fun openAtmosSettings(context: Context) {
-    val intent = DolbyAtmos.settingsIntent(context)
-    if (intent == null) {
-        Toast.makeText(context, "No Dolby Atmos panel on this device", Toast.LENGTH_SHORT).show()
-        return
-    }
-    runCatching { context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }.onFailure {
-        Toast.makeText(context, "Couldn't open Dolby Atmos settings", Toast.LENGTH_SHORT).show()
     }
 }
 

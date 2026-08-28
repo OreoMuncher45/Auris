@@ -13,7 +13,6 @@ import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.playback.AudioCache
-import com.music.bitchord.playback.DolbyAtmos
 import com.music.bitchord.playback.LastPlayed
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.scrobbling.LastFM
@@ -45,9 +44,6 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this)
-        // After AppSettings: a device with Atmos switched off retires the
-        // spatial audio preference on the spot, and that needs prefs open.
-        DolbyAtmos.init(this)
         // Before LastPlayed: a restored queue can contain source-backed tracks,
         // and turning one of those back into a playable item needs the registry
         // that knows which source it belongs to.
