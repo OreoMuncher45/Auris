@@ -8,6 +8,7 @@ import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -179,13 +180,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private var lyricsFor: Pair<String, Set<LyricsSource>>? = null
 
-    /** Called as the playing track changes; cheap no-op when already loaded. */
+    /**
+     * Called as the playing track changes; cheap no-op when already loaded.
+     *
+     * [localUri] is the file this track plays from when it is on the device,
+     * and it is tried before the network: a downloaded track had its lyrics
+     * fetched once already and written into its own file (see `LyricsTag`), so
+     * asking the same servers again is a round trip to arrive at a string that
+     * is on disk — and one that fails outright with the connection off, which
+     * is what made a downloaded song show nothing offline.
+     */
     fun loadLyrics(
         videoId: String,
         title: String,
         artist: String,
         durationMs: Long,
         album: String? = null,
+        localUri: String? = null,
     ) {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
@@ -206,14 +217,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         _lyricsChecked.value = false
-        if (durationMs <= 0L) {
-            // Duration arrives a beat after the track does; wait for it.
-            lyricsFor = null
-            return
-        }
         lyricsJob = viewModelScope.launch {
-            val found =
-                LyricsRepository.lyrics(videoId, title, artist, durationMs, album, sources)
+            // The file first, and without the duration gate below: a length is
+            // only needed to *match* a track against a stranger's database, and
+            // nothing is being matched here — these lyrics were written into
+            // this exact file, for this exact recording.
+            if (localUri != null) {
+                EmbeddedLyrics.forUri(getApplication(), localUri)?.let { embedded ->
+                    _lyrics.value = embedded
+                    // No source to name: what the file records is the lyrics,
+                    // not which of the eight services they came from months ago.
+                    _lyricsSource.value = null
+                    _lyricsChecked.value = true
+                    return@launch
+                }
+            }
+            if (durationMs <= 0L) {
+                // Duration arrives a beat after the track does; wait for it.
+                lyricsFor = null
+                return@launch
+            }
+            val found = LyricsRepository.lyrics(
+                videoId, title, artist, durationMs, album, sources,
+                AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+            )
             _lyrics.value = found?.lines
             _lyricsSource.value = found?.source
             _lyricsChecked.value = true

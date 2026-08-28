@@ -20,12 +20,23 @@ data class LyricWord(val startMs: Long, val endMs: Long, val text: String)
  *
  * [sungUntilMs] is the line's own end where a line-synced provider states one,
  * which is what lets an interlude be told apart from a slowly sung line.
+ *
+ * [background] is the answering vocal — the "(ooh)" or the echoed half-phrase
+ * a second voice sings over the lead. It is a line in its own right, with its
+ * own stamp and its own words, because that is what it is: it starts partway
+ * through the line it answers and routinely runs past the *next* line's stamp.
+ * Run into [text] it dragged the sweep along with it, and the cursor — which
+ * takes the last line whose stamp has passed — moved on before the bracket had
+ * been sung, so the tail of the line was skipped. Kept apart it draws
+ * underneath the lead on its own clock. Never nested: a background line's own
+ * [background] is always null.
  */
 data class LyricLine(
     val timeMs: Long,
     val text: String,
     val words: List<LyricWord> = emptyList(),
     val sungUntilMs: Long? = null,
+    val background: LyricLine? = null,
 ) {
     val isGap: Boolean get() = text.isEmpty()
 
@@ -46,8 +57,16 @@ data class LyricLine(
      * When the last word finishes — or the line's own end where the provider
      * gave one, or [timeMs] when nothing did. Check [hasKnownEnd] before
      * reading a silence out of this.
+     *
+     * The answering vocal counts: it is still this line being sung, and it
+     * regularly holds a note past the lead's last word. Measured without it, a
+     * break would be found in the middle of a line that is still going.
      */
-    val endMs: Long get() = words.lastOrNull()?.endMs ?: sungUntilMs ?: timeMs
+    val endMs: Long
+        get() {
+            val lead = words.lastOrNull()?.endMs ?: sungUntilMs ?: timeMs
+            return maxOf(lead, background?.endMs ?: lead)
+        }
 
     /**
      * How far through the line the singing has got, 0..1, as a fractional

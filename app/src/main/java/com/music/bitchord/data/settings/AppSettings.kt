@@ -245,6 +245,26 @@ object AppSettings {
     /** The databases [syncedLyrics] may ask. Empty is the same as off. */
     val lyricsSources = MutableStateFlow(LyricsSource.entries.toSet())
 
+    /**
+     * The order [lyricsSources] are asked in — see [LyricsRepository][com.music.bitchord.data.lyrics.LyricsRepository]:
+     * every enabled source is asked at once, but a higher-priority one still
+     * pending is never preempted by a lower one that happened to answer first.
+     * Reordered from Settings, so this is a full permutation of
+     * [LyricsSource.entries] rather than a subset — enabling and ordering are
+     * independent choices.
+     */
+    val lyricsSourceOrder = MutableStateFlow<List<LyricsSource>>(LyricsSource.entries)
+
+    /**
+     * Off, the highest-priority source to answer at all is taken as the
+     * lyrics, word-synced or not. On, a merely line-synced answer is held as
+     * a fallback while the rest of [lyricsSourceOrder] is still checked for a
+     * word-synced one — worth the extra network calls to some, not to others,
+     * which is why it defaults off rather than being how [LyricsRepository]
+     * always behaved.
+     */
+    val prioritizeSyllableSync = MutableStateFlow(false)
+
     /** Disk budget for cached audio. [AudioCache][com.music.bitchord.playback.AudioCache] evicts past it. */
     val audioCacheLimitBytes = MutableStateFlow(DEFAULT_CACHE_LIMIT_BYTES)
 
@@ -429,6 +449,8 @@ object AppSettings {
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
+        lyricsSourceOrder.value = readLyricsSourceOrder()
+        prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, false)
         audioCacheLimitBytes.value = prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES)
             .coerceIn(DEFAULT_CACHE_LIMIT_BYTES, MAX_CACHE_LIMIT_BYTES)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -674,6 +696,41 @@ object AppSettings {
         return stored.split(",")
             .mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }
             .toSet()
+    }
+
+    fun setLyricsSourceOrder(value: List<LyricsSource>) {
+        lyricsSourceOrder.value = value
+        prefs.edit().putString(KEY_LYRICS_SOURCE_ORDER, value.joinToString(",") { it.name }).apply()
+    }
+
+    /**
+     * A named source dropped from the stored order — an upgrade reordered
+     * since it was saved — falls out on read; one added since is appended, in
+     * [LyricsSource]'s own declared order, so a fresh install and an upgraded
+     * one agree on where a new source lands until the user says otherwise.
+     */
+    private fun readLyricsSourceOrder(): List<LyricsSource> {
+        val stored = prefs.getString(KEY_LYRICS_SOURCE_ORDER, null)
+            ?: return LyricsSource.entries
+        val saved = stored.split(",")
+            .mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }
+        return saved + LyricsSource.entries.filter { it !in saved }
+    }
+
+    fun setPrioritizeSyllableSync(value: Boolean) {
+        prioritizeSyllableSync.value = value
+        prefs.edit().putBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, value).apply()
+    }
+
+    /**
+     * Puts the source list, its order and [prioritizeSyllableSync] back the
+     * way a fresh install finds them. [syncedLyrics] itself is left alone —
+     * this is "start over on *which* lyrics", not "turn lyrics off".
+     */
+    fun resetLyricsSourceSettings() {
+        setLyricsSources(LyricsSource.entries.toSet())
+        setLyricsSourceOrder(LyricsSource.entries)
+        setPrioritizeSyllableSync(false)
     }
 
     fun setAnimatedCanvas(value: Boolean) {
@@ -963,6 +1020,8 @@ object AppSettings {
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
+    private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
+    private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_REPLAY_GENRES = "replay_genres"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"

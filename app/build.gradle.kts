@@ -50,8 +50,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.5-beta1"
+        versionCode = 9
+        versionName = "1.5-beta2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -86,7 +86,7 @@ android {
         create("dev") {
             dimension = "env"
             applicationId = "com.dev.bitchord"
-            resValue("string", "app_name", "bitchord Dev")
+            resValue("string", "app_name", "BitChord Dev")
         }
         create("prod") {
             dimension = "env"

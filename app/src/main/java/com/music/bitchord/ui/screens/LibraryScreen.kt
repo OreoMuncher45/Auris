@@ -17,11 +17,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -81,9 +81,9 @@ fun LibraryScreen(
     onShelfItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
     /**
-     * A shelf's "Show all" — every shelf on this page is capped to one grid
-     * row (see [LibraryGridShelf]), so this is the only way to reach whatever
-     * didn't fit.
+     * A shelf's "Show all" — every shelf's row here stops at five cards (see
+     * [LibraryGridShelf]), so this is the only way to reach whatever didn't
+     * fit.
      */
     onShowAll: (HomeShelf) -> Unit,
     /**

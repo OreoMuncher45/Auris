@@ -42,8 +42,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
@@ -100,6 +100,7 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ThemeMode
@@ -169,6 +170,7 @@ import com.music.bitchord.ui.theme.SystemBarIcons
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -448,7 +450,14 @@ private fun BitChordApp(
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     LaunchedEffect(player.song?.videoId, player.durationMs, syncedLyricsEnabled, lyricsSources) {
         player.song?.let {
-            viewModel.loadLyrics(it.videoId, it.title, it.artist, player.durationMs, it.albumName)
+            viewModel.loadLyrics(
+                it.videoId,
+                it.title,
+                it.artist,
+                player.durationMs,
+                it.albumName,
+                it.localUri,
+            )
         }
     }
 
@@ -994,8 +1003,26 @@ private fun BitChordApp(
             }
         }
     }
-    /** One track on its own, which is never a release. */
-    val downloadSong: (Song) -> Unit = { song -> startDownload(listOf(song), null) }
+    /**
+     * One track on its own, which is never a release.
+     *
+     * A track reached through AutoPlay or a radio queue often has no duration
+     * string at all — YouTube's watch-queue rows don't always send
+     * `lengthText` — while the player itself knows exactly how long the same
+     * track runs once it has loaded. Backfilled from there when it's the song
+     * on screen, so downloading it isn't handed a duration of zero and
+     * silently skipped for lyrics — see [LyricsTag.forTrack].
+     */
+    val downloadSong: (Song) -> Unit = { song ->
+        val withDuration = if (song.durationMillis() <= 0L &&
+            player.song?.videoId == song.videoId && player.durationMs > 0L
+        ) {
+            song.copy(durationText = formatDurationText(player.durationMs))
+        } else {
+            song
+        }
+        startDownload(listOf(withDuration), null)
+    }
 
     // Content padding leaves room for the frosted bar above and the tab bar
     // (plus mini player) below, so nothing is ever trapped under the glass.
@@ -2402,6 +2429,14 @@ private fun tween(durationMillis: Int) =
  */
 private fun String?.isDeviceFolder(): Boolean =
     this != null && startsWith("local:") && !startsWith(Downloads.PLAYLIST_PREFIX)
+
+/** `M:SS`/`H:MM:SS`, the same shape [String?.durationMillis] parses back. */
+private fun formatDurationText(ms: Long): String {
+    val totalSeconds = ms / 1000
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(Locale.ROOT, minutes, seconds)
+}
 
 /**
  * The pane a wide window keeps the player in, down the right-hand edge.

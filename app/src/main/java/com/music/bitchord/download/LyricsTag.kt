@@ -2,6 +2,7 @@ package com.music.bitchord.download
 
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.lyrics.LyricsRepository
+import com.music.bitchord.data.lyrics.toEnhancedLrc
 import com.music.bitchord.data.lyrics.toLrc
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -42,7 +43,19 @@ internal object LyricsTag {
      * same thing for all of them: the feature is off, the track has no lyrics
      * published, the lookup failed, or the answer was unusable.
      */
-    suspend fun forTrack(track: Song): String? {
+    /**
+     * The two forms of one track's lyrics.
+     *
+     * [plain] is what goes in the container's own lyrics field, where every
+     * other player looks. [enhanced] is the same lines with their word timings
+     * kept, in a field only this app reads — null when the source was
+     * line-synced and there was nothing extra to say. See
+     * [toEnhancedLrc][com.music.bitchord.data.lyrics.toEnhancedLrc] for why
+     * they are two fields rather than one.
+     */
+    internal class Embeddable(val plain: String, val enhanced: String?)
+
+    suspend fun forTrack(track: Song): Embeddable? {
         val sources = if (AppSettings.syncedLyrics.value) {
             AppSettings.lyricsSources.value
         } else {
@@ -70,6 +83,8 @@ internal object LyricsTag {
                     durationMs = durationMs,
                     album = track.albumName,
                     sources = sources,
+                    order = AppSettings.lyricsSourceOrder.value,
+                    prioritizeSyllableSync = AppSettings.prioritizeSyllableSync.value,
                 )
             }
         } catch (e: CancellationException) {
@@ -94,8 +109,19 @@ internal object LyricsTag {
             Log.w(TAG, "lyrics for ${track.videoId} are ${lrc.length} chars; not embedding")
             return null
         }
-        Log.d(TAG, "embedding ${found.source.label} lyrics for ${track.videoId}")
-        return lrc.takeIf { it.isNotBlank() }
+        if (lrc.isBlank()) return null
+        // Capped the same way and for the same reason as the plain form; the
+        // word stamps roughly double it, so it gets its own headroom rather
+        // than sharing the budget and pushing the portable field out.
+        val enhanced = found.lines.toEnhancedLrc().takeIf {
+            it.isNotBlank() && it.length <= MAX_LRC_CHARS * 2
+        }
+        Log.d(
+            TAG,
+            "embedding ${found.source.label} lyrics for ${track.videoId}" +
+                if (enhanced != null) " (word-synced)" else "",
+        )
+        return Embeddable(plain = lrc, enhanced = enhanced)
     }
 
     /**

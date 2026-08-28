@@ -433,7 +433,18 @@ private const val GLOW_TRAIL_FLOOR = 0.55f
  */
 private val GLOW_ROOM = 10.dp
 
-/** Stands in for an instrumental stretch on the single-line strip. */
+/**
+ * How the answering vocal is drawn: smaller than the lead and a shade behind
+ * it, the way Apple Music hangs a backing line under the one it answers.
+ *
+ * Small enough to be read as a second voice at a glance and no smaller —
+ * these are the words of the song, not a caption.
+ */
+private val BACKING_FONT_SIZE = 19.sp
+private val BACKING_LINE_HEIGHT = 24.sp
+private const val BACKING_ALPHA = 0.72f
+
+/** Stands in for an instrumental stretch on the strip. */
 private const val INSTRUMENTAL_MARK = "Instrumental"
 
 /**
@@ -892,7 +903,19 @@ fun NowPlayingScreen(
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
-    var artLoaded by remember(song.videoId) { mutableStateOf(false) }
+    //
+    // Keyed on the artwork rather than on the track, because that is what it
+    // actually describes and because only Coil can set it back to true. Two
+    // tracks off one album share a cover, so skipping between them leaves the
+    // request below byte-identical: the painter keeps the Success it already
+    // had and never re-emits, so the `onState` that is the sole writer here
+    // never fires again. Keyed on the track this reset to false and stayed
+    // there, which pinned the sleeve fully opaque (see the alpha it feeds) on
+    // top of an equally opaque banner — the same cover drawn twice, card and
+    // full-bleed at once. Keyed on the cover there is nothing to reset: the
+    // bitmap really is still loaded, so the state stays true and the two
+    // layers go on trading places as they should.
+    var artLoaded by remember(song.artworkAt(ART_PX)) { mutableStateOf(false) }
     // Sticky, unlike [artLoaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -1901,8 +1924,16 @@ fun NowPlayingScreen(
                             .padding(horizontal = 18.dp, vertical = 8.dp),
                     ) {
                         Text(
-                            text = lyricsSource?.let { "Lyrics by ${it.label}" }
-                                ?: "No lyrics found",
+                            // A missing source and missing lyrics are not the
+                            // same thing: lyrics read back out of a downloaded
+                            // file have no service to credit, and billing those
+                            // as "No lyrics found" said the opposite of what
+                            // the screen was showing.
+                            text = when {
+                                lyricsSource != null -> "Lyrics by ${lyricsSource.label}"
+                                lyrics.isNullOrEmpty() -> "No lyrics found"
+                                else -> "Lyrics saved with this download"
+                            },
                             style = MaterialTheme.typography.labelLarge,
                             color = Color.White.copy(alpha = 0.7f),
                         )
@@ -2473,6 +2504,22 @@ private fun LyricsPanel(
     val activeLine by remember(lines) {
         derivedStateOf { lines.indexOfLast { it.timeMs <= clock.longValue } }
     }
+    // A background vocal routinely holds past the *next* line's own stamp —
+    // that's the whole reason it's carried apart, see [LyricLine.background].
+    // Taken on [activeLine] alone, the row above dropped out of its active
+    // treatment the instant the next line's stamp passed, so its sweep lost
+    // the glow and full brightness mid-bracket while the words were still
+    // being sung. This is the one line behind [activeLine] kept active
+    // alongside it for as long as its own end — background included — hasn't
+    // arrived yet, so the two rows animate together instead of the first
+    // being cut off under the second.
+    val alsoActive by remember(lines) {
+        derivedStateOf {
+            val previous = activeLine - 1
+            val line = lines.getOrNull(previous)
+            if (line != null && line.hasKnownEnd && clock.longValue < line.endMs) previous else -1
+        }
+    }
     val listState = rememberLazyListState()
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     var browsing by remember { mutableStateOf(false) }
@@ -2591,7 +2638,7 @@ private fun LyricsPanel(
             // number of rows away, so the two fade at different rates below.
             val offset = if (activeLine < 0) 0 else index - activeLine
             val distance = abs(offset)
-            val isActive = index == activeLine
+            val isActive = index == activeLine || index == alsoActive
             // Lines already sung stay close to legible — they're what the eye
             // just read and glances back to. Lines still to come fade faster
             // and further, so the panel reads as an arrival rather than a wall
@@ -2652,43 +2699,126 @@ private fun LyricsPanel(
                     }
                     .clip(RoundedCornerShape(10.dp))
                     .clickable { onSeekToLine(line.timeMs) }
-                if (line.isWordSynced && !browsing) {
-                    // Every word-synced line goes through the sweep, not just
-                    // the playing one — a line that has already been sung is
-                    // fully revealed and one still to come is not, which falls
-                    // out of the same arithmetic.
-                    //
-                    // Running it only on the active line meant swapping this
-                    // composable for a plain Text the instant a line handed
-                    // over, and the two disagreed about the brightness of the
-                    // words: the tail of the line popped up to meet the rest of
-                    // it in a single frame. Animating the tail instead lets a
-                    // finished line close up as it dims away.
-                    val tail by animateFloatAsState(
-                        targetValue = if (isActive) UNSUNG_ALPHA else 1f,
-                        label = "lyricTail",
-                    )
-                    SweptLyricLine(
+                // Lead and answering vocal are one row: they are one line of
+                // the song, they scale and dim together, and tapping either
+                // seeks to the same place.
+                Column(modifier = shape) {
+                    PanelVoice(
                         line = line,
                         clock = clock,
                         style = style,
-                        dimAlpha = tail,
-                        modifier = shape,
+                        isActive = isActive,
+                        browsing = browsing,
                         glowAlpha = glow,
-                        glowRoom = GLOW_ROOM,
+                        room = GLOW_ROOM,
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                } else {
-                    Text(
-                        text = line.text,
-                        style = style,
-                        color = Color.White,
-                        modifier = shape.padding(GLOW_ROOM),
-                    )
+                    line.background?.let { backing ->
+                        PanelVoice(
+                            line = backing.withoutBracketPunctuation(),
+                            clock = clock,
+                            style = style.copy(
+                                fontSize = BACKING_FONT_SIZE,
+                                lineHeight = BACKING_LINE_HEIGHT,
+                            ),
+                            isActive = isActive,
+                            browsing = browsing,
+                            // No bloom on the second voice. The glow marks
+                            // what is being sung *at you*; putting it on both
+                            // makes the row read as two equal lines, which is
+                            // the thing this split exists to stop.
+                            glowAlpha = 0f,
+                            room = 0.dp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // No top inset: the lead's own bottom room is
+                                // the gap, which leaves the two voices closer
+                                // to each other than to the rows either side.
+                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                .graphicsLayer { alpha = BACKING_ALPHA },
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+
+/**
+ * One voice of a row in [LyricsPanel] — the lead, or the answering line drawn
+ * under it.
+ *
+ * Both go through the same sweep. A backing vocal carries its own word
+ * timings, so it lights up on its own clock rather than borrowing the lead's:
+ * that is the whole point of splitting it out, and it is why the bracket no
+ * longer gets cut off when the next line's stamp arrives mid-phrase.
+ */
+@Composable
+private fun PanelVoice(
+    line: LyricLine,
+    clock: MutableLongState,
+    style: TextStyle,
+    isActive: Boolean,
+    browsing: Boolean,
+    glowAlpha: Float,
+    room: Dp,
+    modifier: Modifier = Modifier,
+) {
+    if (line.isWordSynced && !browsing) {
+        // Every word-synced line goes through the sweep, not just the playing
+        // one — a line that has already been sung is fully revealed and one
+        // still to come is not, which falls out of the same arithmetic.
+        //
+        // Running it only on the active line meant swapping this composable
+        // for a plain Text the instant a line handed over, and the two
+        // disagreed about the brightness of the words: the tail of the line
+        // popped up to meet the rest of it in a single frame. Animating the
+        // tail instead lets a finished line close up as it dims away.
+        val tail by animateFloatAsState(
+            targetValue = if (isActive) UNSUNG_ALPHA else 1f,
+            label = "lyricTail",
+        )
+        SweptLyricLine(
+            line = line,
+            clock = clock,
+            style = style,
+            dimAlpha = tail,
+            modifier = modifier,
+            glowAlpha = glowAlpha,
+            glowRoom = room,
+        )
+    } else {
+        Text(
+            text = line.text,
+            style = style,
+            color = Color.White,
+            modifier = modifier.padding(room),
+        )
+    }
+}
+
+/**
+ * The answering vocal without the parentheses every text-only source wraps it
+ * in — see [withBackgroundVocals]. Apple Music draws its own equivalent line
+ * bare, and the brackets were only ever there to mark the split before there
+ * was a row of its own to draw it on.
+ *
+ * The LRC writer still gets the line with its brackets: that punctuation is
+ * what the provider published, so a downloaded file keeps it. This is a
+ * display-only trim, done here rather than in the data layer, and applied to
+ * the words too, not just [LyricLine.text] — [SweptLyricLine] measures the
+ * words against the text it draws, and a sweep reading "(echoed" against a
+ * line reading "echoed" would search for a substring that is no longer there.
+ */
+private fun LyricLine.withoutBracketPunctuation(): LyricLine = copy(
+    text = text.stripParens(),
+    words = words.mapNotNull { word ->
+        word.text.stripParens().takeIf { it.isNotEmpty() }?.let { word.copy(text = it) }
+    },
+)
+
+private fun String.stripParens(): String = replace("(", "").replace(")", "").trim()
 
 
 /**
@@ -2728,6 +2858,12 @@ private fun CurrentLyricLine(
     val intro = instrumental && firstSung >= 0 && index < firstSung
     // The intro gets one of the slang lines; mid-song breaks stay plain.
     val introLine = remember(trackKey) { INTRO_LINES.random() }
+    // The strip is one line and switches the moment the next one is due, so
+    // the answering vocal — where there is one — has nowhere to go: showing
+    // it would mean either cutting it short when the next line arrives or
+    // holding the strip back and leaving a gap before the next line's own
+    // words appear. [LyricsPanel] has the room to draw it properly; here it
+    // is simply left off, same as before this line had a bracket in it.
     val text = when {
         intro -> introLine
         instrumental -> INSTRUMENTAL_MARK
@@ -3192,8 +3328,11 @@ private fun InlineQueue(
                         .zIndex(if (dragging) 1f else 0f)
                         .graphicsLayer { translationY = if (dragging) manualDrag.renderOffset else 0f }
                         // The dragged row follows the finger, so it is the one
-                        // row that must not also be animating to a slot.
-                        .then(if (dragging) Modifier else Modifier.animateItem()),
+                        // row that must not also be animating to a slot. Its
+                        // neighbours skip the animation too, for as long as
+                        // *anything* in the section is being dragged — see the
+                        // note on [manualDrag] below for why.
+                        .then(if (manualDrag.draggedKey != null) Modifier else Modifier.animateItem()),
                 )
             }
             // Heading first, then what AutoPlay has lined up under it. With
@@ -3252,7 +3391,7 @@ private fun InlineQueue(
                     modifier = Modifier
                         .zIndex(if (dragging) 1f else 0f)
                         .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
-                        .then(if (dragging) Modifier else Modifier.animateItem()),
+                        .then(if (autoplayDrag.draggedKey != null) Modifier else Modifier.animateItem()),
                 )
             }
         }
@@ -3796,7 +3935,18 @@ private fun LosslessOrStats(
         // so the lookup runs — and can come back lossless — with that switch
         // off. Gating this on it left the badge blank through the wait and
         // then jumped straight to "Hi-Res Lossless".
-        (stillRacing || (isLoading && losslessRequested)) && nerdStats?.isLossless != true -> LosslessLabel(
+        // The [isLoading] half is gated on `nerdStats == null` rather than
+        // `nerdStats?.isLossless != true`: `isLoading` is just
+        // `STATE_BUFFERING`, which a seek trips for a track whose quality
+        // question was already settled — swallowing back into cache still
+        // rebuffers. Gating on `!= true` read that rebuffer as "resolving"
+        // again and flashed "Upgrading Quality" over a track already known
+        // to be, say, Hi-Quality with no lossless copy anywhere. Once
+        // [nerdStats] exists there is something measured to show instead, so
+        // only a genuinely unmeasured track — or a real race via
+        // [stillRacing] — earns this label.
+        (stillRacing && nerdStats?.isLossless != true) ||
+            (isLoading && losslessRequested && nerdStats == null) -> LosslessLabel(
             text = "Upgrading Quality",
             animated = false,
             modifier = modifier,

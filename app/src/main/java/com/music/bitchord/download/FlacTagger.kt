@@ -1,5 +1,7 @@
 package com.music.bitchord.download
 
+import com.music.bitchord.data.lyrics.WORD_LYRICS_FIELD
+
 import java.io.ByteArrayOutputStream
 
 /**
@@ -39,8 +41,10 @@ object FlacTagger {
         lyrics: String?,
         cover: ByteArray?,
         coverMime: String,
+        /** The A2 form, under a name of this app's own — see [WORD_LYRICS_FIELD]. */
+        wordLyrics: String? = null,
     ): ByteArray = runCatching {
-        rewrite(bytes, title, artist, album, lyrics, cover, coverMime)
+        rewrite(bytes, title, artist, album, lyrics, cover, coverMime, wordLyrics)
     }.getOrDefault(bytes)
 
     private fun rewrite(
@@ -51,6 +55,7 @@ object FlacTagger {
         lyrics: String?,
         cover: ByteArray?,
         coverMime: String,
+        wordLyrics: String?,
     ): ByteArray {
         if (!bytes.regionMatches(0, MAGIC)) return bytes
 
@@ -76,7 +81,7 @@ object FlacTagger {
         if (blocks.firstOrNull()?.type != TYPE_STREAMINFO) return bytes
 
         val additions = listOfNotNull(
-            vorbisComment(title, artist, album, lyrics)?.let { TYPE_VORBIS_COMMENT to it },
+            vorbisComment(title, artist, album, lyrics, wordLyrics)?.let { TYPE_VORBIS_COMMENT to it },
             cover?.takeIf { it.isNotEmpty() }?.let { TYPE_PICTURE to picture(it, coverMime) },
         )
             // A payload past what three bytes of length can describe costs that
@@ -126,12 +131,16 @@ object FlacTagger {
         artist: String,
         album: String?,
         lyrics: String?,
+        wordLyrics: String?,
     ): ByteArray? {
         val fields = buildList {
             if (title.isNotBlank()) add("TITLE=$title")
             if (artist.isNotBlank()) add("ARTIST=$artist")
             if (!album.isNullOrBlank()) add("ALBUM=$album")
             if (!lyrics.isNullOrBlank()) add("LYRICS=$lyrics")
+            // Beside `LYRICS`, never instead of it: an unknown name is skipped
+            // by every reader, so the portable field stays exactly as it was.
+            if (!wordLyrics.isNullOrBlank()) add("$WORD_LYRICS_FIELD=$wordLyrics")
         }
         if (fields.isEmpty()) return null
 

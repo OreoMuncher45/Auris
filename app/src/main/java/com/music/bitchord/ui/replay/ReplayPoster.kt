@@ -388,11 +388,11 @@ private fun drawHeader(
     val brand = type.heading(46f, 0xE6FFFFFF.toInt()).apply {
         textAlign = Paint.Align.RIGHT
     }
-    canvas.drawText("bitchord", POSTER_W - MARGIN, 132f, brand)
+    canvas.drawText("BitChord", POSTER_W - MARGIN, 132f, brand)
     // The mark, to the left of the word, exactly as the story header and the
     // card carry it. Without it the one artefact of this app that ends up in
     // somebody else's chat was the only place the logo didn't appear.
-    val wordWidth = brand.measureText("bitchord")
+    val wordWidth = brand.measureText("BitChord")
     drawLogo(canvas, context, POSTER_W - MARGIN - wordWidth - LOGO_GAP, 132f)
 
     val credit = listOfNotNull(
@@ -534,7 +534,7 @@ private fun drawGenres(canvas: Canvas, type: Fonts, summary: ReplaySummary, top:
 
 private fun drawFooter(canvas: Canvas, type: Fonts) {
     canvas.drawText(
-        "Counted on device with bitchord",
+        "Counted on device with BitChord",
         MARGIN,
         POSTER_H - 64f,
         type.label(24f, 0x73FFFFFF, tracking = 0.08f),

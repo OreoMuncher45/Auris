@@ -59,19 +59,43 @@ class WordSyncTest {
     }
 
     @Test
-    fun `skips translations and background vocals`() {
+    fun `skips translations and hangs background vocals under the lead`() {
         val lines = TtmlLyrics.parse(
             """
             <tt><body><div>
               <p begin="1.0" end="2.0">
                 <span begin="1.0" end="2.0">hello</span>
-                <span ttm:role="x-bg" begin="1.5" end="2.0"><span begin="1.5" end="2.0">(ooh)</span></span>
+                <span ttm:role="x-bg" begin="1.5" end="2.4"><span begin="1.5" end="2.4">(ooh)</span></span>
                 <span ttm:role="x-translation" xml:lang="es">hola</span>
               </p>
             </div></body></tt>
             """.trimIndent(),
         ).sung()
-        assertEquals("hello", lines.single().text)
+        val line = lines.single()
+        assertEquals("hello", line.text)
+        assertEquals("(ooh)", line.background?.text)
+        // Its own stamp, not the lead's — it starts partway through the line.
+        assertEquals(1_500L, line.background?.timeMs)
+        assertTrue(line.background!!.isWordSynced)
+        // And the line is not over until the answer is.
+        assertEquals(2_400L, line.endMs)
+    }
+
+    /** A backing span written as a single timed leaf, with no syllables in it. */
+    @Test
+    fun `reads a background vocal that is one timed span`() {
+        val line = TtmlLyrics.parse(
+            """
+            <tt><body><div>
+              <p begin="1.0" end="2.0">
+                <span begin="1.0" end="2.0">hello</span>
+                <span ttm:role="x-bg" begin="1.5" end="2.0">(ooh)</span>
+              </p>
+            </div></body></tt>
+            """.trimIndent(),
+        ).sung().single()
+        assertEquals("hello", line.text)
+        assertEquals("(ooh)", line.background?.text)
     }
 
     @Test

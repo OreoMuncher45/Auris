@@ -93,6 +93,24 @@ class LrcWriterTest {
         assertTrue("no word stamps", '<' !in written)
     }
 
+    /**
+     * The backing-vocal split is a display decision; the file gets the line
+     * the way every provider that didn't mark it structurally published it.
+     * Written as two stamps it would be two lines of the song where there is
+     * one, and the second would be timed over the top of the next one.
+     */
+    @Test
+    fun `an answering vocal is written back onto the end of its lead`() {
+        val lines = listOf(
+            LyricLine(
+                timeMs = 1_000L,
+                text = "the lead line",
+                background = LyricLine(timeMs = 1_600L, text = "(the answer)"),
+            ),
+        )
+        assertEquals("[00:01.00]the lead line (the answer)", lines.toLrc())
+    }
+
     @Test
     fun `no lines is empty text rather than a blank stamp`() {
         assertEquals("", emptyList<LyricLine>().toLrc())

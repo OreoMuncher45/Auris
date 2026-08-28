@@ -9,13 +9,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -170,9 +170,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
 /**
  * Shared by the home feed, Explore and Library so headings line up across tabs.
  *
- * [onShowAll] is only ever set on Library, whose shelves are grids capped to
- * one row rather than sideways-scrolling — see [LibraryGridShelf]. Home and
- * Explore never pass it, so their heading is unchanged.
+ * [onShowAll] is only ever set on Library, whose rows stop at five cards
+ * rather than running the shelf's whole length — see [LibraryGridShelf].
+ * Home and Explore never pass it, so their heading is unchanged.
  */
 @Composable
 internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {

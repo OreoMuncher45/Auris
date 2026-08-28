@@ -784,7 +784,7 @@ object Downloads {
         val route = plan.route ?: error("Nothing to download")
 
         var pending: DownloadStore.Pending? = null
-        var lyrics: Deferred<String?>? = null
+        var lyrics: Deferred<LyricsTag.Embeddable?>? = null
         try {
             coroutineScope {
                 // Started before the transfer rather than after it, so four lyric

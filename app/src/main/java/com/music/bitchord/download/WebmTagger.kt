@@ -1,5 +1,7 @@
 package com.music.bitchord.download
 
+import com.music.bitchord.data.lyrics.WORD_LYRICS_FIELD
+
 /**
  * Appends Matroska `Tags` and `Attachments` elements — title, artist, album,
  * lyrics, cover — to an already-downloaded WebM file, in place.
@@ -50,8 +52,10 @@ object WebmTagger {
         lyrics: String?,
         cover: ByteArray?,
         coverMime: String,
+        /** The A2 form, under a name of this app's own — see [WORD_LYRICS_FIELD]. */
+        wordLyrics: String? = null,
     ): ByteArray = runCatching {
-        insert(bytes, buildTail(title, artist, album, lyrics, cover, coverMime))
+        insert(bytes, buildTail(title, artist, album, lyrics, cover, coverMime, wordLyrics))
     }.getOrDefault(bytes)
 
     private fun insert(bytes: ByteArray, tail: ByteArray): ByteArray {
@@ -94,6 +98,7 @@ object WebmTagger {
         lyrics: String?,
         cover: ByteArray?,
         coverMime: String,
+        wordLyrics: String?,
     ): ByteArray {
         var out = ByteArray(0)
 
@@ -105,6 +110,9 @@ object WebmTagger {
         // UTF-8 element with an explicit length — so the LRC's newlines need no
         // escaping and there is no ceiling worth worrying about here.
         if (!lyrics.isNullOrBlank()) simple += simpleTag("LYRICS", lyrics)
+        // Beside `LYRICS`, never instead of it: a SimpleTag with a name a
+        // player doesn't know is skipped, so the portable field is untouched.
+        if (!wordLyrics.isNullOrBlank()) simple += simpleTag(WORD_LYRICS_FIELD, wordLyrics)
         if (simple.isNotEmpty()) {
             // An empty Targets applies the tag to the whole file — there is no
             // track/chapter to single out in a lone-audio-stream download.
