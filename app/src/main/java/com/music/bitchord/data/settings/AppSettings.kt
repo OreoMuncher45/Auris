@@ -191,6 +191,14 @@ object AppSettings {
     /** Once a song has been suggested or played this session, AutoPlay won't offer it again. */
     val dontRepeatSuggestions = MutableStateFlow(false)
 
+    /**
+     * Leaves a music-video upload as itself instead of swapping it for its
+     * catalogue audio release. See
+     * [YtMusicRepository.resolveAudio][com.music.bitchord.data.YtMusicRepository.resolveAudio],
+     * which checks this before ever running the swap.
+     */
+    val convertVideoToAudio = MutableStateFlow(true)
+
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
@@ -443,6 +451,7 @@ object AppSettings {
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
+        convertVideoToAudio.value = prefs.getBoolean(KEY_CONVERT_VIDEO_TO_AUDIO, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
@@ -666,6 +675,11 @@ object AppSettings {
     fun setDontRepeatSuggestions(value: Boolean) {
         dontRepeatSuggestions.value = value
         prefs.edit().putBoolean(KEY_DONT_REPEAT_SUGGESTIONS, value).apply()
+    }
+
+    fun setConvertVideoToAudio(value: Boolean) {
+        convertVideoToAudio.value = value
+        prefs.edit().putBoolean(KEY_CONVERT_VIDEO_TO_AUDIO, value).apply()
     }
 
     fun setReduceDynamicBlur(value: Boolean) {
@@ -1014,6 +1028,7 @@ object AppSettings {
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
+    private const val KEY_CONVERT_VIDEO_TO_AUDIO = "convert_video_to_audio"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"

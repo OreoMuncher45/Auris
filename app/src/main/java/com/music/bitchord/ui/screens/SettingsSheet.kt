@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Tune
@@ -167,6 +168,7 @@ fun SettingsScreen(
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
+    val convertVideoToAudio by AppSettings.convertVideoToAudio.collectAsStateWithLifecycle()
 
     // Whether the module index URL is baked into this build.
     val losslessConfigured = BuildConfig.MODULE_INDEX_URL.trim().isNotEmpty()
@@ -437,6 +439,23 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setShowNerdStats(!nerdStats) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.SmartDisplay,
+                title = "Stop converting video songs to audio version",
+                subtitle = "Plays a music-video upload as itself instead of swapping it for its catalogue audio release",
+                trailing = {
+                    Switch(
+                        checked = !convertVideoToAudio,
+                        onCheckedChange = { AppSettings.setConvertVideoToAudio(!it) },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setConvertVideoToAudio(!convertVideoToAudio) },
             )
         }
 

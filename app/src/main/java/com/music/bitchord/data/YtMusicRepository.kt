@@ -17,6 +17,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -186,14 +187,16 @@ object YtMusicRepository {
      * Returns [song] unchanged when it isn't a video, or when nothing better
      * turns up — playing the video's own audio track beats guessing at a
      * substitute, and [song] is what a queue restore or offline retry falls
-     * back to as well.
+     * back to as well. Also unchanged when
+     * [AppSettings.convertVideoToAudio][com.music.bitchord.data.settings.AppSettings.convertVideoToAudio]
+     * is off — the listener has asked to keep video uploads as themselves.
      *
      * [search] already drops video rows from its results (see
      * [InnertubeParser.parseSearch]), so every candidate here is audio-only
      * without a second check.
      */
     suspend fun resolveAudio(song: Song): Song {
-        if (!song.isVideo) return song
+        if (!song.isVideo || !AppSettings.convertVideoToAudio.value) return song
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
             val candidates = search(query, SearchFilter.SONGS)
