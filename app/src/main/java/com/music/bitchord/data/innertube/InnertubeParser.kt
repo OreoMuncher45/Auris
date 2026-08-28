@@ -197,6 +197,10 @@ object InnertubeParser {
                     ?.let { song ->
                         ShelfItem(song.title, song.artist, song.thumbnailUrl, song.videoId, null)
                     }
+                // A chart row with nothing to play — "Top artists" lists the
+                // artist alone, no track — falls through parseResponsiveListItem
+                // (it demands a videoId) and used to drop the whole shelf.
+                ?: parseArtistRow(item.o("musicResponsiveListItemRenderer"))
         }
         return if (items.isEmpty()) null else HomeShelf(title.ifBlank { "For you" }, items, strapline)
     }
@@ -479,6 +483,40 @@ object InnertubeParser {
             // otherwise a music-video upload gives itself away with widescreen
             // art where a catalogue track has square album cover art.
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
+        )
+    }
+
+    /**
+     * A chart row that names an artist rather than a track — "Top artists"
+     * on the Charts page lists 40 of them with no song attached, so there is
+     * no `videoId` for [parseResponsiveListItem] to key off and it returns
+     * null for every one. Read here off the row's own `navigationEndpoint`
+     * instead (the flex columns carry only the name and a subscriber count)
+     * and pointed at the artist page rather than dropped.
+     */
+    private fun parseArtistRow(renderer: JsonObject?): ShelfItem? {
+        if (renderer == null) return null
+        val endpoint = renderer.o("navigationEndpoint").o("browseEndpoint")
+        val pageType = endpoint.o("browseEndpointContextSupportedConfigs")
+            .o("browseEndpointContextMusicConfig").s("pageType").orEmpty()
+        if ("ARTIST" !in pageType) return null
+        val browseId = endpoint.s("browseId") ?: return null
+
+        val columns = renderer.a("flexColumns").orEmpty()
+        val title = columns.getOrNull(0)
+            .o("musicResponsiveListItemFlexColumnRenderer").o("text").runs()
+        if (title.isBlank()) return null
+        val subtitle = columns.getOrNull(1)
+            .o("musicResponsiveListItemFlexColumnRenderer").o("text").runs()
+
+        val thumbnails = renderer.o("thumbnail").o("musicThumbnailRenderer")
+            .o("thumbnail").a("thumbnails")
+        return ShelfItem(
+            title = title,
+            subtitle = subtitle,
+            thumbnailUrl = thumbnails.best(),
+            videoId = null,
+            browseId = browseId,
         )
     }
 
