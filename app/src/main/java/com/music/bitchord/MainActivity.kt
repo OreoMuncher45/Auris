@@ -15,6 +15,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -88,6 +90,7 @@ import com.music.bitchord.auth.YtMusicLoginScreen
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.SearchFilter
@@ -1153,16 +1156,46 @@ private fun BitChordApp(
                         showSettings -> "settings"
                         showReplay -> "replay"
                         detail != null -> detail.browseId
-                        else -> "tab:$selectedTab"
+                        else -> "$TAB_KEY$selectedTab"
                     },
-                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(180)) },
+                    // Tabs swap outright; everything else crossfades.
+                    //
+                    // A tab is not a place you travel to — the bar is the whole
+                    // navigation and it carries its own movement — so a fade
+                    // between two of them only ever reads as a stutter. And it
+                    // cannot read as anything else: neither page paints a
+                    // background, so a crossfade dissolves both through to the
+                    // window and the switch dips through a dimmer frame in the
+                    // middle. Pushing a page or raising Settings is a real
+                    // change of context and keeps the fade.
+                    transitionSpec = {
+                        if (initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)) {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        } else {
+                            fadeIn(tween(180)) togetherWith fadeOut(tween(180))
+                        }
+                    },
                     modifier = Modifier.hazeSource(hazeState),
                     label = "content",
                 ) { key ->
-                    val page = detailStack.lastOrNull()?.takeIf {
+                    // Every branch below reads `key` rather than the state that
+                    // produced it. The two are the same thing only for the page
+                    // being entered: the one on its way out is still composed,
+                    // and asking it what is selected *now* has it redraw itself
+                    // as its own replacement — which then fades out from under
+                    // the identical copy fading in behind it.
+                    val live = detailStack.lastOrNull()?.takeIf {
                         it.browseId == key && key != "settings" && key != "account_scrobbling" &&
                             key != "discord" && key != "replay" && key != "history"
                     }
+                    // Held for the same reason, one step further on: a popped
+                    // page is off the stack before it has finished animating
+                    // out, so `live` goes null under it and it would spend its
+                    // exit drawing whatever is underneath instead of itself.
+                    // Per slot, since each is remembered against its own key.
+                    val held = remember(key) { mutableStateOf(live) }
+                    if (live != null) held.value = live
+                    val page = held.value
                     if (key == "history") {
                         HistoryScreen(
                             state = historyState,
@@ -1389,7 +1422,7 @@ private fun BitChordApp(
                             },
                             contentPadding = listPadding,
                         )
-                    } else when (selectedTab) {
+                    } else when (key.removePrefix(TAB_KEY).toIntOrNull() ?: selectedTab) {
                         TAB_HOME -> HomeScreen(
                             state = homeState,
                             listState = homeListState,
@@ -1401,7 +1434,12 @@ private fun BitChordApp(
                                         Song(
                                             videoId = item.videoId,
                                             title = item.title,
-                                            artist = item.subtitle,
+                                            // The card's own subtitle is billed
+                                            // as "Song • Chelsea Wolfe"; only
+                                            // the credit belongs in the field
+                                            // the player, mini player and
+                                            // everything downstream read.
+                                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                                             thumbnailUrl = item.thumbnailUrl,
                                         ),
                                     )
@@ -1432,7 +1470,12 @@ private fun BitChordApp(
                                         Song(
                                             videoId = item.videoId,
                                             title = item.title,
-                                            artist = item.subtitle,
+                                            // The card's own subtitle is billed
+                                            // as "Song • Chelsea Wolfe"; only
+                                            // the credit belongs in the field
+                                            // the player, mini player and
+                                            // everything downstream read.
+                                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                                             thumbnailUrl = item.thumbnailUrl,
                                         ),
                                     )
@@ -1620,11 +1663,12 @@ private fun BitChordApp(
                             }
                         }
                         if (!showSettings && !showAccountScrobbling) {
-                            // Left of the account photo, and only where the account is
-                            // also offered: both are about *this listener* rather than
-                            // about the page, and a history is the one thing you reach
-                            // for as often as the settings behind the avatar.
-                            if (!showHistory) {
+                            // Left of the account photo, and only on Library itself:
+                            // a history is a record of what was played, which reads
+                            // as that tab's business rather than every tab's.
+                            if (!showHistory && !showReplay && !showDiscord &&
+                                detail == null && selectedTab == TAB_LIBRARY
+                            ) {
                                 IconButton(
                                     onClick = {
                                         showHistory = true
@@ -1710,6 +1754,7 @@ private fun BitChordApp(
                             showSettings = false
                             showAccountScrobbling = false
                             showReplay = false
+                            showHistory = false
                             selectedTab = index
                         },
                     )
@@ -2340,3 +2385,11 @@ private const val TAB_HOME = 0
 private const val TAB_EXPLORE = 1
 private const val TAB_LIBRARY = 2
 private const val TAB_SEARCH = 3
+
+/**
+ * What a tab's key is prefixed with in the content switcher above.
+ *
+ * The index is read back off it there rather than off `selectedTab`, so the
+ * prefix has to be the one thing both the writing and the reading agree on.
+ */
+private const val TAB_KEY = "tab:"

@@ -1,7 +1,9 @@
 package com.music.bitchord.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -135,6 +137,11 @@ fun FloatingBottomBar(
     val pillShape = RoundedCornerShape(percent = 50)
     val container = MaterialTheme.colorScheme.surface
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // The liquid settle is exactly the motion "reduce animation" promises to
+    // drop — snapping both the indicator's travel and the glyph's pop to
+    // their target leaves the tap itself instant rather than eased.
+    val glassSpec: AnimationSpec<Float> = if (reduceAnimation) snap() else GlassSpring
 
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val haptics = rememberHaptics()
@@ -161,7 +168,7 @@ fun FloatingBottomBar(
 
     val animatedPillOffset by animateFloatAsState(
         targetValue = pillTargetPx,
-        animationSpec = GlassSpring,
+        animationSpec = glassSpec,
         label = "pillOffset",
     )
 
@@ -273,6 +280,7 @@ fun FloatingBottomBar(
                 BottomBarItem(
                     tab = tab,
                     selected = index == selectedIndex,
+                    glassSpec = glassSpec,
                     onClick = { onTabSelected(index) },
                     modifier = Modifier.weight(1f),
                 )
@@ -285,6 +293,7 @@ fun FloatingBottomBar(
 private fun BottomBarItem(
     tab: BottomTab,
     selected: Boolean,
+    glassSpec: AnimationSpec<Float>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -292,7 +301,7 @@ private fun BottomBarItem(
     // arriving are one movement rather than two that nearly agree.
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.08f else 1f,
-        animationSpec = GlassSpring,
+        animationSpec = glassSpec,
         label = "tabScale",
     )
     val haptics = rememberHaptics()

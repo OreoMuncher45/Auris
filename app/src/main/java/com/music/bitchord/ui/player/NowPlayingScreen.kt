@@ -1691,7 +1691,16 @@ fun NowPlayingScreen(
                         onSeekToLine = onSeek,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = HEADER_HEIGHT + 10.dp),
+                            .padding(top = HEADER_HEIGHT + 10.dp)
+                            // Arrives once the sleeve has finished collapsing
+                            // into the header, the same beat the queue below
+                            // already waits for — fading lyrics in over a
+                            // sleeve still mid-collapse doubled the same
+                            // movement in two places on screen at once.
+                            .graphicsLayer {
+                                alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                                translationY = (1f - p) * 26.dp.toPx()
+                            },
                     )
                 }
 
@@ -1733,9 +1742,11 @@ fun NowPlayingScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
             // Current lyric, one line, directly above the scrubber. It stays in
-            // the layout while the queue is open and only fades — dropping it
-            // would shorten this block, and the controls under it would jump
-            // the moment the queue started sliding in.
+            // the layout — and stays fully visible — whether or not the queue
+            // is open: dropping it would shorten this block and the controls
+            // under it would jump the moment the queue started sliding in, and
+            // fading it away behind the queue left this the one place in the
+            // player where the current line simply vanished.
             //
             // Switched off in Settings it goes entirely, rather than sitting
             // there saying no lyrics were found: none were looked for. It is
@@ -1749,8 +1760,7 @@ fun NowPlayingScreen(
                         // drawn bar, so the strip reads as further off it than
                         // it is. Nudged down into that dead space, the same way
                         // the timestamps below are pulled back up into it.
-                        .offset(y = 6.dp)
-                        .graphicsLayer { alpha = 1f - queueProgress },
+                        .offset(y = 6.dp),
                 ) {
                     if (!lyrics.isNullOrEmpty()) {
                         CurrentLyricLine(
@@ -1759,9 +1769,14 @@ fun NowPlayingScreen(
                             positionMs = positionMs,
                             isPlaying = isPlaying,
                             durationMs = durationMs,
-                            // Faded out behind the queue, so it must not still
-                            // be a target for a tap meant for the list.
-                            onClick = { if (!queueOpen) lyricsOpen = true },
+                            // Still visible over the queue, so still a valid way
+                            // in: opens the same full lyrics panel it always has,
+                            // closing the queue behind it the same way the "Up
+                            // next" glyph closes lyrics behind the queue.
+                            onClick = {
+                                queueOpen = false
+                                lyricsOpen = true
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else if (lyricsUnavailable) {
@@ -2571,25 +2586,22 @@ private fun LyricsPanel(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         itemsIndexed(lines) { index, line ->
-            val distance = if (activeLine < 0) 0 else abs(index - activeLine)
+            // Signed rather than absolute: a line already sung and one still to
+            // come are not the same distance from being read, even at the same
+            // number of rows away, so the two fade at different rates below.
+            val offset = if (activeLine < 0) 0 else index - activeLine
+            val distance = abs(offset)
             val isActive = index == activeLine
-            // Unbounded, and ahead of the clip: the default edge treatment cuts
-            // the blur off at the line's own box, which put a hard edge down
-            // either side of every out-of-focus line where the halo should have
-            // faded out. The list bleeds a gutter wider than its content
-            // padding, so there is room for the spill.
-            val blur by animateDpAsState(
-                targetValue = when {
-                    reduceDynamicBlur || browsing || isActive -> 0.dp
-                    else -> (distance * 1.6f).coerceAtMost(7f).dp
-                },
-                label = "lyricBlur",
-            )
+            // Lines already sung stay close to legible — they're what the eye
+            // just read and glances back to. Lines still to come fade faster
+            // and further, so the panel reads as an arrival rather than a wall
+            // of equally-weighted text.
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
                     browsing -> 1f
                     isActive -> 1f
-                    else -> (0.5f - distance * 0.06f).coerceAtLeast(0.22f)
+                    offset < 0 -> (0.55f - distance * 0.05f).coerceAtLeast(0.30f)
+                    else -> (0.45f - distance * 0.09f).coerceAtLeast(0.12f)
                 },
                 label = "lyricAlpha",
             )
@@ -2603,7 +2615,6 @@ private fun LyricsPanel(
                     contentDescription = "Instrumental",
                     tint = Color.White.copy(alpha = lineAlpha),
                     modifier = Modifier
-                        .blur(blur, BlurredEdgeTreatment.Unbounded)
                         .clip(RoundedCornerShape(10.dp))
                         .clickable { onSeekToLine(line.timeMs) }
                         // Matches the inset every sung line carries, so the
@@ -2639,7 +2650,6 @@ private fun LyricsPanel(
                         transformOrigin = TransformOrigin(0f, 0.5f)
                         alpha = lineAlpha
                     }
-                    .blur(blur, BlurredEdgeTreatment.Unbounded)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable { onSeekToLine(line.timeMs) }
                 if (line.isWordSynced && !browsing) {

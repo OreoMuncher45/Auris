@@ -848,6 +848,22 @@ object InnertubeParser {
     }
 
     /**
+     * The credit out of a shelf card's subtitle, which reads "Song • Chelsea
+     * Wolfe" rather than just the artist — [parseTwoRowItem] keeps the whole
+     * line because the card shows it as billed, but starting a radio off the
+     * card and carrying that line into [Song.artist] would print the label
+     * everywhere the field is read afterwards: the player, the mini player,
+     * a shared link, a scrobble. Same split as [parseResponsiveListItem]'s
+     * subtitle, so a "Song" or "Single" heading drops out the same way.
+     */
+    fun artistFromSubtitle(subtitle: String): String {
+        val parts = subtitle.split(" • ").map(String::trim).filter { it.isNotBlank() }
+        return parts.firstOrNull {
+            it.lowercase() !in TYPE_WORDS && !it.matches(TALLY) && !it.matches(DURATION)
+        } ?: subtitle
+    }
+
+    /**
      * Playlist-id prefixes nothing can be added to: `LM` is Liked Music (a
      * song joins it by being liked), `SE` is Episodes for Later, `RD` is a
      * generated radio mix, and `OLAK`/`MPRE` are albums wearing a playlist id.
