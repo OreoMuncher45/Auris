@@ -11,6 +11,7 @@ import android.provider.MediaStore
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.download.DownloadStore
 import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +22,24 @@ import java.util.Locale
 object LocalMediaRepository {
 
     private const val TAG = "BitChord"
+    private const val MIN_LOCAL_MUSIC_DURATION_MS = 30_000L
+
+    private val localMusicExtensions = setOf(
+        "mp3", "m4a", "flac", "ogg", "opus", "aac", "webm",
+    )
+
+    private val nonMusicPathSegments = listOf(
+        "/alarms/",
+        "/notifications/",
+        "/ringtones/",
+        "/podcasts/",
+        "/audiobooks/",
+        "/recordings/",
+        "/voice recorder/",
+        "/sound_recorder/",
+        "/call_rec/",
+        "/whatsapp voice notes/",
+    )
 
     /** Check if storage/audio permission is granted to query device local music. */
     fun hasStoragePermission(context: Context): Boolean {
@@ -160,6 +179,7 @@ object LocalMediaRepository {
         val videoIdByUri = Downloads.saved.value.entries.associate { (id, uri) -> uri to id }
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
             MediaStore.Audio.Media.TITLE,
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
@@ -168,7 +188,26 @@ object LocalMediaRepository {
             MediaStore.Audio.Media.DATA,
         )
 
-        val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} >= 5000"
+        val filterNonMusic = AppSettings.filterNonMusicAudio.value
+        val selection = if (filterNonMusic) {
+            buildString {
+                append("${MediaStore.Audio.Media.IS_MUSIC} != 0")
+                append(" AND ${MediaStore.Audio.Media.DURATION} >= ?")
+                append(" AND ${MediaStore.Audio.Media.IS_ALARM} = 0")
+                append(" AND ${MediaStore.Audio.Media.IS_NOTIFICATION} = 0")
+                append(" AND ${MediaStore.Audio.Media.IS_RINGTONE} = 0")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    append(" AND ${MediaStore.Audio.Media.IS_PODCAST} = 0")
+                }
+            }
+        } else {
+            "${MediaStore.Audio.Media.IS_MUSIC} != 0"
+        }
+        val selectionArgs = if (filterNonMusic) {
+            arrayOf(MIN_LOCAL_MUSIC_DURATION_MS.toString())
+        } else {
+            null
+        }
         val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
 
         runCatching {
@@ -176,10 +215,11 @@ object LocalMediaRepository {
                 MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
                 projection,
                 selection,
-                null,
+                selectionArgs,
                 sortOrder,
             )?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+                val displayNameCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
                 val titleCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
                 val artistCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
                 val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
@@ -191,6 +231,7 @@ object LocalMediaRepository {
 
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
+                    val displayName = cursor.getString(displayNameCol).orEmpty()
                     val rawTitle = cursor.getString(titleCol)
                     val rawArtist = cursor.getString(artistCol)
                     val rawAlbum = cursor.getString(albumCol)
@@ -198,8 +239,12 @@ object LocalMediaRepository {
                     val durationMs = cursor.getLong(durationCol)
                     val path = cursor.getString(dataCol)
 
+                    if (filterNonMusic && !isEligibleLocalMusic(durationMs, displayName, path)) continue
+
                     val contentUri = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, id).toString()
-                    val title = rawTitle.takeUnless { it.isNullOrBlank() } ?: "Track $id"
+                    val title = rawTitle.cleanTag()?.removeAudioExtension()
+                        ?: displayName.substringBeforeLast('.').takeIf { it.isNotBlank() }
+                        ?: "Track $id"
                     val artist = rawArtist.takeUnless { it.isNullOrBlank() || it == "<unknown>" } ?: "Unknown Artist"
                     val albumName = rawAlbum.takeUnless { it.isNullOrBlank() || it == "<unknown>" }
                     val artworkUrl = if (albumId > 0) ContentUris.withAppendedId(albumArtBaseUri, albumId).toString() else null
@@ -222,6 +267,35 @@ object LocalMediaRepository {
         }.onFailure { Log.w(TAG, "Failed scanning device local music: ${it.message}") }
 
         songs
+    }
+
+    /**
+     * MediaStore's `IS_MUSIC` flag is advisory and often includes notification
+     * sounds, voice notes and recorder output. Keep this second gate independent
+     * of scanner metadata so the same bad rows stay out across Android vendors.
+     */
+    internal fun isEligibleLocalMusic(durationMs: Long, displayName: String, path: String?): Boolean {
+        if (durationMs < MIN_LOCAL_MUSIC_DURATION_MS) return false
+
+        val fileName = path?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: displayName
+        val extension = fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        if (extension !in localMusicExtensions) return false
+
+        val normalizedPath = path
+            ?.replace('\\', '/')
+            ?.lowercase(Locale.ROOT)
+            ?: return true
+        return nonMusicPathSegments.none(normalizedPath::contains)
+    }
+
+    private fun String.removeAudioExtension(): String {
+        val extension = substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return if (extension in localMusicExtensions || extension == "wav") {
+            substringBeforeLast('.').ifBlank { this }
+        } else {
+            this
+        }
     }
 
     private fun isAudioFileName(name: String): Boolean {

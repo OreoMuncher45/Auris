@@ -903,6 +903,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             PlaybackTracker.registeredPlays.drop(1).collect { homeStale = true }
         }
         viewModelScope.launch {
+            AppSettings.filterNonMusicAudio.drop(1).collect {
+                if (_detailStack.value.any { page -> page.browseId == "local:all" }) {
+                    reloadLocalDetail("local:all")
+                }
+            }
+        }
+        viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
             // downloaded it — see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())

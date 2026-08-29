@@ -220,4 +220,6 @@
     <string name="miscellaneous_footer">Al activarlo, cerrar la app desde recientes también detiene la música.</string>
     <string name="dont_repeat_songs_subtitle">La reproducción automática no sugerirá una canción ya reproducida o sugerida en esta sesión</string>
     <string name="download_quality_subtitle">%1$s por pista, sin importar la conexión</string>
+    <string name="filter_non_music_audio">Filtrar audios que no son música</string>
+    <string name="filter_non_music_audio_subtitle">Oculta clips de menos de 30 segundos, archivos WAV, notas de voz, grabaciones y sonidos del sistema</string>
 </resources>

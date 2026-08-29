@@ -169,6 +169,8 @@ private val HEADER_DROP = 44.dp
 @Composable
 fun DetailScreen(
     page: DetailPage,
+    currentSong: Song?,
+    isPlaying: Boolean,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
@@ -433,6 +435,7 @@ fun DetailScreen(
                     }
                     itemsIndexed(matches) { position, entry ->
                         val song = entry.value
+                        val isCurrent = song.isSameQueueEntry(currentSong)
                         SongRow(
                             song = if (numbered) {
                                 song
@@ -448,6 +451,9 @@ fun DetailScreen(
                             trackNumber = (entry.index + 1).takeIf { numbered },
                             subtitleColor = palette.onBackgroundVariant,
                             downloadedTint = downloadedTint,
+                            isCurrent = isCurrent,
+                            isPlaying = isCurrent && isPlaying,
+                            activeTint = palette.accent,
                         )
                         if (position < matches.lastIndex) {
                             HorizontalDivider(
@@ -509,6 +515,20 @@ fun DetailScreen(
             }
         }
     }
+}
+
+/**
+ * Playlist entries have their own identity because the same recording can be
+ * added more than once. Fall back to media identity for albums and local rows,
+ * which do not carry a set-video-id.
+ */
+private fun Song.isSameQueueEntry(current: Song?): Boolean {
+    current ?: return false
+    if (setVideoId != null && current.setVideoId != null) {
+        return setVideoId == current.setVideoId
+    }
+    if (localUri != null && current.localUri != null) return localUri == current.localUri
+    return videoId == current.videoId
 }
 
 /**

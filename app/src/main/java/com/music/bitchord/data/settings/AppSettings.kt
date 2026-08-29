@@ -283,6 +283,9 @@ object AppSettings {
 
     // ── Library ─────────────────────────────────────────────────────────────
 
+    /** Hides short clips, recorder output and non-music formats from Local Music. */
+    val filterNonMusicAudio = MutableStateFlow(true)
+
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
      * order they were pinned.
@@ -483,6 +486,7 @@ object AppSettings {
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
         spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
+        filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
@@ -926,6 +930,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_REPLAY_GENRES, value).apply()
     }
 
+    fun setFilterNonMusicAudio(value: Boolean) {
+        filterNonMusicAudio.value = value
+        prefs.edit().putBoolean(KEY_FILTER_NON_MUSIC_AUDIO, value).apply()
+    }
+
     /**
      * Pins or unpins [browseId], returning whether it is pinned afterwards.
      *
@@ -1073,6 +1082,7 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_REPLAY_GENRES = "replay_genres"
+    private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"

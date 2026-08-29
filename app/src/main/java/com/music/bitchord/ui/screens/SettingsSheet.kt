@@ -40,6 +40,7 @@ import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
+import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
@@ -176,6 +177,7 @@ fun SettingsScreen(
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val convertVideoToAudio by AppSettings.convertVideoToAudio.collectAsStateWithLifecycle()
+    val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
 
     // Whether the module index URL is baked into this build.
     val losslessConfigured = BuildConfig.MODULE_INDEX_URL.trim().isNotEmpty()
@@ -584,6 +586,25 @@ fun SettingsScreen(
                     onClick = onLyricsSources,
                 )
             }
+        }
+
+        SettingsGroup(header = stringResource(R.string.local_music)) {
+            SettingsRow(
+                icon = Icons.Rounded.FilterAlt,
+                title = stringResource(R.string.filter_non_music_audio),
+                subtitle = stringResource(R.string.filter_non_music_audio_subtitle),
+                trailing = {
+                    Switch(
+                        checked = filterNonMusicAudio,
+                        onCheckedChange = AppSettings::setFilterNonMusicAudio,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
+            )
         }
 
         val cacheLimitMb = (cacheLimitBytes / (1024 * 1024)).toInt()

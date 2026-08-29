@@ -560,7 +560,10 @@ private fun BitChordApp(
 
     val play: (List<Song>, Int) -> Unit = { songs, index ->
         scope.launch {
-            val starting = YtMusicRepository.resolveAudio(songs[index])
+            val selected = songs[index]
+            val starting = YtMusicRepository.resolveAudio(selected).copy(
+                setVideoId = selected.setVideoId,
+            )
             val queued = songs.toMutableList().also { it[index] = starting }
             controller?.playSongs(queued, index)
             // Nothing to raise where the player is already open beside the page.
@@ -571,7 +574,9 @@ private fun BitChordApp(
             queued.forEachIndexed { i, song ->
                 if (i == index || !song.isVideo) return@forEachIndexed
                 launch {
-                    val resolved = YtMusicRepository.resolveAudio(song)
+                    val resolved = YtMusicRepository.resolveAudio(song).copy(
+                        setVideoId = song.setVideoId,
+                    )
                     if (resolved.videoId == song.videoId) return@launch
                     // Found by id rather than by the index it went in at:
                     // shuffling and queue edits both move tracks around while
@@ -1552,6 +1557,8 @@ private fun BitChordApp(
                         }
                         DetailScreen(
                             page = page,
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
                             listState = detailListState,
                             onSongClick = play,
                             onSongLongPress = { openSongMenu(withAlbum(it)) },

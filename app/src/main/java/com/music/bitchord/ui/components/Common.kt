@@ -4,9 +4,12 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -234,6 +237,12 @@ fun SongRow(
      * kind of thing that reads as pasted on.
      */
     downloadedTint: Color? = MaterialTheme.colorScheme.primary,
+    /** Whether this row is the current item in the player's queue. */
+    isCurrent: Boolean = false,
+    /** Distinguishes active playback from the same current item while paused. */
+    isPlaying: Boolean = false,
+    /** Accent supplied by artwork-tinted pages. */
+    activeTint: Color = MaterialTheme.colorScheme.primary,
 ) {
     val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
@@ -256,7 +265,18 @@ fun SongRow(
     swipeStateHolder.value = swipeState
 
     if (onSwipeToQueue == null) {
-        SongRowContent(song, onClick, onLongPress, modifier, trackNumber, subtitleColor, downloadedTint)
+        SongRowContent(
+            song = song,
+            onClick = onClick,
+            onLongPress = onLongPress,
+            modifier = modifier,
+            trackNumber = trackNumber,
+            subtitleColor = subtitleColor,
+            downloadedTint = downloadedTint,
+            isCurrent = isCurrent,
+            isPlaying = isPlaying,
+            activeTint = activeTint,
+        )
         return
     }
 
@@ -297,6 +317,9 @@ fun SongRow(
             trackNumber = trackNumber,
             subtitleColor = subtitleColor,
             downloadedTint = downloadedTint,
+            isCurrent = isCurrent,
+            isPlaying = isPlaying,
+            activeTint = activeTint,
         )
     }
 }
@@ -358,10 +381,22 @@ private fun SongRowContent(
     trackNumber: Int? = null,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     downloadedTint: Color? = MaterialTheme.colorScheme.primary,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
+    activeTint: Color = MaterialTheme.colorScheme.primary,
 ) {
+    val titleColor by animateColorAsState(
+        targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
+        label = "song row title",
+    )
+    val activeBackground by animateColorAsState(
+        targetValue = if (isCurrent) activeTint.copy(alpha = 0.10f) else Color.Transparent,
+        label = "song row background",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .background(activeBackground, RoundedCornerShape(10.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -370,11 +405,20 @@ private fun SongRowContent(
             // Same 52dp the artwork would take, so a numbered list and an
             // illustrated one share a left edge and a divider inset.
             Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "$trackNumber",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = subtitleColor,
-                )
+                if (isCurrent) {
+                    Icon(
+                        imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
+                        contentDescription = stringResource(R.string.now_playing),
+                        tint = activeTint,
+                        modifier = Modifier.size(22.dp),
+                    )
+                } else {
+                    Text(
+                        text = "$trackNumber",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = subtitleColor,
+                    )
+                }
             }
         } else {
             AsyncImage(
@@ -392,7 +436,7 @@ private fun SongRowContent(
             Text(
                 text = song.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = titleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -407,6 +451,15 @@ private fun SongRowContent(
         }
         if (downloadedTint != null) {
             DownloadedBadge(song.videoId, downloadedTint)
+        }
+        if (isCurrent && trackNumber == null) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
+                contentDescription = stringResource(R.string.now_playing),
+                tint = activeTint,
+                modifier = Modifier.size(20.dp),
+            )
         }
         song.durationText?.let {
             Spacer(Modifier.width(8.dp))
