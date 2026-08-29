@@ -50,6 +50,7 @@ val SUPPORTED_LANGUAGES = listOf(
     AppLanguage("es", R.string.spanish),
     AppLanguage("fr", R.string.french),
     AppLanguage("de", R.string.german),
+    AppLanguage("pl", R.string.polish),
     AppLanguage("pt", R.string.portuguese),
     AppLanguage("id", R.string.indonesian),
     AppLanguage("hi", R.string.hindi),
