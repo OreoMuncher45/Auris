@@ -2,6 +2,15 @@ name: Build debug APK
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner used for this manual build
+        required: false
+        default: warp-ubuntu-latest-x64-2x
+        type: choice
+        options:
+          - warp-ubuntu-latest-x64-2x
+          - ubuntu-latest
   push:
     branches:
       - main
@@ -12,7 +21,7 @@ permissions:
 jobs:
   build-debug-apk:
     name: Build prod debug APK
-    runs-on: warp-ubuntu-latest-x64-2x
+    runs-on: ${{ inputs.runner || 'warp-ubuntu-latest-x64-2x' }}
     timeout-minutes: 30
 
     steps:
