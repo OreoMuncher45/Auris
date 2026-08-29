@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -59,6 +60,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.R
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -147,7 +149,7 @@ fun SearchScreen(
                     onFill = onQueryChange,
                 )
                 results == null -> if (history.isEmpty()) {
-                    item { MessageState("Search millions of songs on YouTube Music.") }
+                    item { MessageState(stringResource(R.string.search_empty)) }
                 } else {
                     recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
                 }
@@ -253,7 +255,7 @@ private fun SuggestionRow(term: String, onFill: (() -> Unit)?, onClick: () -> Un
             ) {
                 Icon(
                     Icons.Rounded.NorthWest,
-                    contentDescription = "Edit \"$term\"",
+                    contentDescription = stringResource(R.string.recent_search_edit, term),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
@@ -285,13 +287,13 @@ private fun LazyListScope.recentSearches(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Recent searches",
+                text = stringResource(R.string.recent_searches),
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "Clear",
+                text = stringResource(R.string.clear),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
@@ -343,7 +345,7 @@ private fun RecentSearchRow(term: String, onClick: () -> Unit, onRemove: () -> U
         ) {
             Icon(
                 Icons.Rounded.Close,
-                contentDescription = "Remove \"$term\" from recent searches",
+                contentDescription = stringResource(R.string.recent_search_remove, term),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp),
             )
@@ -478,7 +480,7 @@ private fun SearchField(
         // decorative would mean the keyboard's own key was the single way in.
         Icon(
             Icons.Rounded.Search,
-            contentDescription = "Search",
+            contentDescription = stringResource(R.string.search),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .size(32.dp)
@@ -490,7 +492,7 @@ private fun SearchField(
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
-                    text = "Artists, Songs, Lyrics and More",
+                    text = stringResource(R.string.search_hint),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -525,7 +527,7 @@ private fun SearchField(
             ) {
                 Icon(
                     Icons.Rounded.Close,
-                    contentDescription = "Clear search",
+                    contentDescription = stringResource(R.string.clear_search),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
