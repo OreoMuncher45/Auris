@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -80,6 +81,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
@@ -189,6 +191,12 @@ class MainActivity : AppCompatActivity() {
         MusicLink.consume(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
+            val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
+            val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
+            val composeView = LocalView.current
+            LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
+                applyPerformanceMode(highPerformance, performanceRefreshRate, composeView)
+            }
             val darkTheme = when (theme) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -209,6 +217,25 @@ class MainActivity : AppCompatActivity() {
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth)
                 }
+            }
+        }
+    }
+
+    /**
+     * Requests a window refresh rate without forcing a display mode or
+     * resolution. Android may still lower it for temperature, battery state or
+     * hardware limits, which is why Settings describes this as a preference.
+     */
+    private fun applyPerformanceMode(enabled: Boolean, refreshRate: Int, composeView: View) {
+        window.attributes = window.attributes.apply {
+            preferredRefreshRate = if (enabled) refreshRate.toFloat() else 0f
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            window.setFrameRatePowerSavingsBalanced(!enabled)
+            composeView.requestedFrameRate = if (enabled) {
+                refreshRate.toFloat()
+            } else {
+                View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT
             }
         }
     }

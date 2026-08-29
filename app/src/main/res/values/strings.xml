@@ -222,4 +222,17 @@
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>
     <string name="filter_non_music_audio_subtitle">Hides clips under 30 seconds, WAV files, voice notes, recordings and system sounds</string>
+    <string name="performance">Performance</string>
+    <string name="high_performance_mode">High performance mode</string>
+    <string name="high_performance_subtitle">Uses full animations and blur, and requests a higher display refresh rate</string>
+    <string name="high_performance_active">%1$d Hz requested. Android may lower it when needed.</string>
+    <string name="beta">Beta</string>
+    <string name="refresh_rate">Refresh rate</string>
+    <string name="high_performance_before_enabling">Before enabling</string>
+    <string name="high_performance_battery_warning">First set BitChord\'s battery usage to Unrestricted. Higher refresh rates use more battery, CPU and GPU, and may warm your device.</string>
+    <string name="open_battery_settings">Open battery settings</string>
+    <string name="enable_high_performance_title">Enable high performance mode?</string>
+    <string name="enable_high_performance_confirmation">Enable only if BitChord\'s battery use is set to Unrestricted. Android can still limit the refresh rate when the device is hot or low on power.</string>
+    <string name="enable">Enable</string>
+    <string name="not_yet">Not yet</string>
 </resources>

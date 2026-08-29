@@ -3,6 +3,8 @@ package com.music.bitchord.ui.screens
 import android.content.Context
 import android.content.Intent
 import android.media.audiofx.AudioEffect
+import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
@@ -107,6 +109,7 @@ import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.scrobbling.LastFM
@@ -178,6 +181,8 @@ fun SettingsScreen(
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val convertVideoToAudio by AppSettings.convertVideoToAudio.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
+    val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
+    val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
 
     // Whether the module index URL is baked into this build.
     val losslessConfigured = BuildConfig.MODULE_INDEX_URL.trim().isNotEmpty()
@@ -207,7 +212,15 @@ fun SettingsScreen(
     var exportStatus by remember { mutableStateOf<String?>(null) }
     var importStatus by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
+    var showPerformanceWarning by remember { mutableStateOf(false) }
+    var showPerformanceConfirmation by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
+
+    val batterySettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        showPerformanceConfirmation = true
+    }
 
     /**
      * Both halves go through the system document picker rather than a path of
@@ -588,6 +601,63 @@ fun SettingsScreen(
             }
         }
 
+        SettingsGroup(header = stringResource(R.string.performance)) {
+            SettingsRow(
+                icon = BitChordIcons.Performance,
+                title = stringResource(R.string.high_performance_mode),
+                subtitle = if (highPerformanceMode) {
+                    stringResource(R.string.high_performance_active, performanceRefreshRate)
+                } else {
+                    stringResource(R.string.high_performance_subtitle)
+                },
+                badge = stringResource(R.string.beta),
+                trailing = {
+                    Switch(
+                        checked = highPerformanceMode,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showPerformanceWarning = true
+                            } else {
+                                AppSettings.setHighPerformanceMode(false)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = {
+                    if (highPerformanceMode) {
+                        AppSettings.setHighPerformanceMode(false)
+                    } else {
+                        showPerformanceWarning = true
+                    }
+                },
+            )
+            if (highPerformanceMode) {
+                RowDivider()
+                SettingsRow(
+                    icon = BitChordIcons.FrameRate,
+                    title = stringResource(R.string.refresh_rate),
+                )
+                SegmentedControl(
+                    options = AppSettings.PERFORMANCE_REFRESH_RATES.map { "$it Hz" },
+                    selectedIndex = AppSettings.PERFORMANCE_REFRESH_RATES.indexOf(performanceRefreshRate),
+                    onSelect = { index ->
+                        AppSettings.setPerformanceRefreshRate(
+                            AppSettings.PERFORMANCE_REFRESH_RATES[index],
+                        )
+                    },
+                    modifier = Modifier.padding(
+                        start = TEXT_INSET,
+                        end = ROW_INSET,
+                        bottom = 14.dp,
+                    ),
+                )
+            }
+        }
+
         SettingsGroup(header = stringResource(R.string.local_music)) {
             SettingsRow(
                 icon = Icons.Rounded.FilterAlt,
@@ -876,6 +946,58 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmImport = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    if (showPerformanceWarning) {
+        AlertDialog(
+            onDismissRequest = { showPerformanceWarning = false },
+            title = { Text(stringResource(R.string.high_performance_before_enabling)) },
+            text = { Text(stringResource(R.string.high_performance_battery_warning)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showPerformanceWarning = false
+                        val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.fromParts("package", context.packageName, null)
+                        }
+                        val settingsIntent = intent.takeIf {
+                            it.resolveActivity(context.packageManager) != null
+                        } ?: Intent(Settings.ACTION_SETTINGS)
+                        batterySettingsLauncher.launch(settingsIntent)
+                    },
+                ) {
+                    Text(stringResource(R.string.open_battery_settings))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPerformanceWarning = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showPerformanceConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showPerformanceConfirmation = false },
+            title = { Text(stringResource(R.string.enable_high_performance_title)) },
+            text = { Text(stringResource(R.string.enable_high_performance_confirmation)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showPerformanceConfirmation = false
+                        AppSettings.setHighPerformanceMode(true)
+                    },
+                ) {
+                    Text(stringResource(R.string.enable))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPerformanceConfirmation = false }) {
+                    Text(stringResource(R.string.not_yet))
+                }
             },
         )
     }

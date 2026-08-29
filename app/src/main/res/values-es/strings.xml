@@ -222,4 +222,17 @@
     <string name="download_quality_subtitle">%1$s por pista, sin importar la conexión</string>
     <string name="filter_non_music_audio">Filtrar audios que no son música</string>
     <string name="filter_non_music_audio_subtitle">Oculta clips de menos de 30 segundos, archivos WAV, notas de voz, grabaciones y sonidos del sistema</string>
+    <string name="performance">Rendimiento</string>
+    <string name="high_performance_mode">Modo de alto rendimiento</string>
+    <string name="high_performance_subtitle">Usa las animaciones y el desenfoque completos, y solicita una frecuencia de pantalla más alta</string>
+    <string name="high_performance_active">Se solicitaron %1$d Hz. Android puede reducirlos cuando sea necesario.</string>
+    <string name="beta">Beta</string>
+    <string name="refresh_rate">Frecuencia de actualización</string>
+    <string name="high_performance_before_enabling">Antes de activarlo</string>
+    <string name="high_performance_battery_warning">Primero configura el uso de batería de BitChord como Sin restricciones. Las frecuencias altas usan más batería, CPU y GPU, y pueden calentar el dispositivo.</string>
+    <string name="open_battery_settings">Abrir ajustes de batería</string>
+    <string name="enable_high_performance_title">¿Activar el modo de alto rendimiento?</string>
+    <string name="enable_high_performance_confirmation">Actívalo solo si el uso de batería de BitChord está configurado como Sin restricciones. Android aún puede limitar la frecuencia si el dispositivo está caliente o tiene poca batería.</string>
+    <string name="enable">Activar</string>
+    <string name="not_yet">Ahora no</string>
 </resources>
