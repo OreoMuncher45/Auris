@@ -68,7 +68,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -102,10 +101,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.BuildConfig
@@ -145,6 +144,7 @@ fun SettingsScreen(
     onLyricsSources: () -> Unit,
     onSources: () -> Unit,
     onSpotifyCanvasAuth: () -> Unit,
+    onAppLanguage: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -240,7 +240,6 @@ fun SettingsScreen(
     }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
-    var showLanguagePicker by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
 
     val version = remember(context) {
@@ -269,17 +268,6 @@ fun SettingsScreen(
                 subtitle = account?.email?.takeIf { it.isNotBlank() }
                     ?: if (signedIn) "Signed in" else "Not signed in",
                 onClick = onAccountScrobbling,
-            )
-        }
-
-        SettingsGroup(header = stringResource(R.string.language)) {
-            val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
-                ?: Locale.getDefault().language
-            SettingsRow(
-                icon = Icons.Rounded.Language,
-                title = stringResource(R.string.app_language),
-                subtitle = stringResource(languageDisplayName(selectedLanguage)),
-                onClick = { showLanguagePicker = true },
             )
         }
 
@@ -764,6 +752,17 @@ fun SettingsScreen(
             )
         }
 
+        SettingsGroup(header = stringResource(R.string.language)) {
+            val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
+                ?: Locale.getDefault().language
+            SettingsRow(
+                icon = Icons.Rounded.Language,
+                title = stringResource(R.string.app_language),
+                subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
+                onClick = onAppLanguage,
+            )
+        }
+
         Text(
             text = buildAnnotatedString {
                 append("bitchord $version  ")
@@ -967,44 +966,6 @@ fun SettingsScreen(
         )
     }
 
-    if (showLanguagePicker) {
-        val currentLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
-            ?: Locale.getDefault().language
-        AlertDialog(
-            onDismissRequest = { showLanguagePicker = false },
-            title = { Text(stringResource(R.string.app_language)) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    SUPPORTED_LANGUAGES.forEach { language ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    AppCompatDelegate.setApplicationLocales(
-                                        LocaleListCompat.forLanguageTags(language.tag),
-                                    )
-                                    showLanguagePicker = false
-                                }
-                                .padding(vertical = 10.dp),
-                        ) {
-                            RadioButton(
-                                selected = language.tag == currentLanguage,
-                                onClick = null,
-                            )
-                            Spacer(Modifier.width(12.dp))
-                            Text(stringResource(language.nameRes))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showLanguagePicker = false }) {
-                    Text(stringResource(R.string.close))
-                }
-            },
-        )
-    }
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */
@@ -1043,25 +1004,6 @@ private fun ThemeMode.localizedLabel(): String = stringResource(
         ThemeMode.DARK -> R.string.dark
     },
 )
-
-/** Language tag (matches a values-<tag> resource folder) to its display-name string. */
-private data class AppLanguage(val tag: String, val nameRes: Int)
-
-private val SUPPORTED_LANGUAGES = listOf(
-    AppLanguage("en", R.string.english),
-    AppLanguage("es", R.string.spanish),
-    AppLanguage("fr", R.string.french),
-    AppLanguage("de", R.string.german),
-    AppLanguage("pt", R.string.portuguese),
-    AppLanguage("id", R.string.indonesian),
-    AppLanguage("hi", R.string.hindi),
-    AppLanguage("ja", R.string.japanese),
-    AppLanguage("ru", R.string.russian),
-    AppLanguage("zh", R.string.chinese),
-)
-
-private fun languageDisplayName(languageTag: String): Int =
-    SUPPORTED_LANGUAGES.firstOrNull { it.tag == languageTag }?.nameRes ?: R.string.english
 
 private fun openEqualizer(context: Context, sessionId: Int) {
     val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {

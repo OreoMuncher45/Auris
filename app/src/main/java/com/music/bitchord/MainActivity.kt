@@ -148,6 +148,7 @@ import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
+import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -290,6 +291,7 @@ private fun BitChordApp(
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
     var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
     var showLyricsSources by remember { mutableStateOf(false) }
+    var showAppLanguage by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
     /**
@@ -1469,6 +1471,7 @@ private fun BitChordApp(
                             onLyricsSources = { showLyricsSources = true },
                             onSources = { showSources = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
+                            onAppLanguage = { showAppLanguage = true },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -2352,6 +2355,14 @@ private fun BitChordApp(
             LyricsSourcesDialog(
                 hazeState = hazeState,
                 onDismiss = { showLyricsSources = false },
+            )
+        }
+
+        if (showAppLanguage) {
+            BackHandler { showAppLanguage = false }
+            AppLanguageDialog(
+                hazeState = hazeState,
+                onDismiss = { showAppLanguage = false },
             )
         }
 
