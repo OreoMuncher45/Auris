@@ -119,4 +119,25 @@
     <string name="widget_open_bitchord">Abrir BitChord</string>
     <string name="widget_preview_title">Título de la canción</string>
     <string name="widget_preview_artist">Artista</string>
+    <string name="download_quality">Calidad de descarga</string>
+    <string name="download_wifi_only">Descargar solo mediante Wi-Fi</string>
+    <string name="spatial_audio">Audio espacial</string>
+    <string name="spatial_audio_subtitle">Amplía las pistas estéreo para una experiencia más inmersiva</string>
+    <string name="video_audio_conversion">No convertir canciones en vídeo a la versión de audio</string>
+    <string name="video_audio_conversion_subtitle">Reproduce el vídeo musical tal cual, en vez de sustituirlo por su versión de audio de catálogo</string>
+    <string name="animated_cover_cellular">Reproducir portada animada con datos móviles</string>
+    <string name="replay">Resumen anual</string>
+    <string name="replay_subtitle">Tus canciones, artistas, álbumes y géneros principales</string>
+    <string name="work_out_genres">Calcular géneros</string>
+    <string name="export_data">Exportar datos</string>
+    <string name="export_data_subtitle">Ajustes e historial de escucha en un archivo JSON</string>
+    <string name="import_data">Importar datos</string>
+    <string name="import_data_subtitle">Sustituye los ajustes y el historial de este dispositivo</string>
+    <string name="import_backup_title">¿Importar una copia de seguridad?</string>
+    <string name="choose_file">Elegir archivo</string>
+    <string name="top_songs">Canciones principales</string>
+    <string name="top_artists">Artistas principales</string>
+    <string name="top_albums">Álbumes principales</string>
+    <string name="top_genres">Géneros principales</string>
+    <string name="cancel_all">Cancelar todo</string>
 </resources>

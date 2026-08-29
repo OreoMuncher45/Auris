@@ -31,6 +31,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -38,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.R
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
@@ -150,15 +152,15 @@ fun LibraryScreen(
                     title = ON_DEVICE,
                     items = listOf(
                         ShelfItem(
-                            title = "Downloads",
-                            subtitle = "Downloaded songs",
+                            title = stringResource(R.string.downloads),
+                            subtitle = stringResource(R.string.downloaded_songs),
                             thumbnailUrl = null,
                             videoId = null,
                             browseId = "local:downloads",
                         ),
                         ShelfItem(
-                            title = "Local Music",
-                            subtitle = "Audio files on device",
+                            title = stringResource(R.string.local_music),
+                            subtitle = stringResource(R.string.audio_files_on_device),
                             thumbnailUrl = null,
                             videoId = null,
                             browseId = "local:all",
@@ -368,7 +370,7 @@ private fun PlaylistShelf(
             NewShelfCard(
                 icon = BitChordIcons.Plus,
                 label = "New playlist",
-                subtitle = "Saved to YouTube Music",
+                subtitle = stringResource(R.string.saved_to_youtube_music),
                 onClick = onNewPlaylist,
             )
         },
@@ -449,7 +451,7 @@ fun LibraryGridPage(
                     NewShelfCard(
                         icon = BitChordIcons.Plus,
                         label = "New playlist",
-                        subtitle = "Saved to YouTube Music",
+                        subtitle = stringResource(R.string.saved_to_youtube_music),
                         onClick = onNewPlaylist,
                         modifier = Modifier.fillMaxWidth(),
                     )
