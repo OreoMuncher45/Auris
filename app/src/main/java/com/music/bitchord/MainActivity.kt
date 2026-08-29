@@ -89,6 +89,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.YtMusicLoginScreen
+import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
@@ -1825,9 +1826,7 @@ private fun BitChordApp(
                         // be mistaken for a per-page action — Home, at rest.
                         if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
                             updateNotice?.let { update ->
-                                IconButton(onClick = {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
-                                }) {
+                                IconButton(onClick = { showUpdateDialog = true }) {
                                     Icon(
                                         Icons.Rounded.SystemUpdate,
                                         contentDescription = "Update available: v${update.version}",
@@ -2340,9 +2339,29 @@ private fun BitChordApp(
             updateNotice?.let { update ->
                 UpdateAvailableDialog(
                     version = update.version,
+                    notes = update.notes,
                     hazeState = hazeState,
+                    // A download in progress keeps running behind the closed
+                    // sheet — only the sheet itself goes away. The top bar's
+                    // update icon reopens it onto whatever state it reached.
                     onDismiss = { showUpdateDialog = false },
-                    onUpdate = {
+                    onDownload = {
+                        if (update.apkUrl != null) {
+                            scope.launch { AppUpdateChecker.downloadApk(context) }
+                        } else {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
+                            showUpdateDialog = false
+                        }
+                    },
+                    onCancelDownload = {
+                        AppUpdateChecker.cancelDownload()
+                    },
+                    onInstall = {
+                        val ready = AppUpdateChecker.download.value as? AppUpdateChecker.DownloadState.Ready
+                        ready?.let { AppUpdateChecker.installApk(context, it.file) }
+                    },
+                    onOpenReleasePage = {
+                        AppUpdateChecker.resetDownload()
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
                         showUpdateDialog = false
                     },

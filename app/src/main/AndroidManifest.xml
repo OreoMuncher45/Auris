@@ -16,6 +16,13 @@
          this, so granting it doesn't override a user who turned buzzing off. -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!--
+      In-app updates: handing a downloaded APK to the system installer. The
+      per-app "install unknown apps" switch is still the user's to flip; this
+      only lets the request reach the installer.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Reading local audio files across the device -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <uses-permission
@@ -240,6 +247,10 @@
           Not exported, and grantUriPermissions is the whole mechanism: the
           receiving app gets a read grant that arrives with the intent, covers
           one file (see @xml/file_paths) and expires with it.
+
+          Also serves the downloaded update APK to the system installer
+          without it needing broad storage access — its own cache-only scope,
+          nothing else shared through it.
         -->
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -232,6 +232,12 @@ dependencies {
     implementation("dev.chrisbanes.haze:haze:1.3.1")
     implementation("dev.chrisbanes.haze:haze-materials:1.3.1")
 
+    // ---- Markdown rendering (release notes in the update dialog) ----
+    // Pure Compose, not an AndroidView wrapper — needed so the text composes
+    // correctly under the dialog's Haze blur.
+    implementation("com.halilibo.compose-richtext:richtext-ui-material3:0.20.0")
+    implementation("com.halilibo.compose-richtext:richtext-commonmark:0.20.0")
+
     // ---- Innertube (YouTube Music) client: Ktor + kotlinx.serialization ----
     implementation("io.ktor:ktor-client-core:3.0.3")
     implementation("io.ktor:ktor-client-okhttp:3.0.3")

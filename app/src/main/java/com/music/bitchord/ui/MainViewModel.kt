@@ -902,7 +902,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // drop(1): the current value is just the count so far, not a play.
             PlaybackTracker.registeredPlays.drop(1).collect { homeStale = true }
         }
-        viewModelScope.launch { AppUpdateChecker.check() }
+        viewModelScope.launch {
+            // A leftover APK only means "Install Now" for the session that
+            // downloaded it — see AppUpdateChecker.clearCache.
+            AppUpdateChecker.clearCache(getApplication())
+            AppUpdateChecker.check()
+        }
     }
 
     /**
