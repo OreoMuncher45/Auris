@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,8 +33,10 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +60,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -336,6 +340,16 @@ fun DetailScreen(
                 }
             }
 
+            if (isArtist && (page.subscriberCountText != null || page.monthlyListenerCount != null)) {
+                item(key = "artist-stats") {
+                    ArtistStatsRow(
+                        subscriberCountText = page.subscriberCountText,
+                        monthlyListenerCount = page.monthlyListenerCount,
+                        palette = palette,
+                    )
+                }
+            }
+
             if (searching) {
                 item(key = "search") {
                     DetailSearchField(
@@ -356,6 +370,25 @@ fun DetailScreen(
                         palette = palette,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
+                        // Halved when an About section follows directly — see
+                        // [AboutSection]'s own top inset, which makes up the
+                        // rest of that shorter gap.
+                        bottomSpace = if (page.description.isNullOrBlank()) 22.dp else 11.dp,
+                    )
+                }
+            }
+
+            // YouTube's own editorial blurb — an album or an artist only, per
+            // [DetailPage.description]. A playlist never carries one, and the
+            // section is skipped for it even on the rare response that does.
+            if (!page.description.isNullOrBlank() &&
+                (page.type == BrowseType.ALBUM || isArtist)
+            ) {
+                item(key = "about") {
+                    AboutSection(
+                        title = if (isArtist) "About the artist" else "About the album",
+                        text = page.description,
+                        palette = palette,
                     )
                 }
             }
@@ -777,7 +810,10 @@ private fun ArtistHeader(page: DetailPage, palette: ArtworkPalette, artHeight: D
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = HEADER_GUTTER, vertical = 14.dp),
+                // Bottom is half the top inset — the stats pills (or, absent
+                // those, the action row) sit closer under the name than the
+                // name sits under the artwork.
+                .padding(start = HEADER_GUTTER, end = HEADER_GUTTER, top = 14.dp, bottom = 7.dp),
         )
     }
 }
@@ -990,7 +1026,12 @@ private val MERGE_BLUR = 100.dp
 
 /** Shuffle • Play • Download — the Apple Music action row. */
 @Composable
-private fun ActionRow(palette: ArtworkPalette, onPlay: () -> Unit, onShuffle: () -> Unit) {
+private fun ActionRow(
+    palette: ArtworkPalette,
+    onPlay: () -> Unit,
+    onShuffle: () -> Unit,
+    bottomSpace: Dp = 22.dp,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1012,7 +1053,7 @@ private fun ActionRow(palette: ArtworkPalette, onPlay: () -> Unit, onShuffle: ()
             onClick = onPlay,
         )
     }
-    Spacer(Modifier.height(22.dp))
+    Spacer(Modifier.height(bottomSpace))
 }
 
 /**
@@ -1102,6 +1143,117 @@ private fun ReleaseFooter(songs: List<Song>, palette: ArtworkPalette) {
         color = palette.onBackgroundVariant,
         modifier = Modifier.padding(start = HEADER_GUTTER, end = HEADER_GUTTER, top = 18.dp),
     )
+}
+
+/** "1.2M subscribers" and "3.4M monthly listeners", off the artist header. */
+@Composable
+private fun ArtistStatsRow(
+    subscriberCountText: String?,
+    monthlyListenerCount: String?,
+    palette: ArtworkPalette,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            // Top padding is left to the header's own bottom inset (7.dp).
+            .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+    ) {
+        // YouTube's own count text already reads "1.2M subscribers" in full,
+        // so only the number is kept and the label re-said in the app's own
+        // words — the one way to fit both stats on one line on a narrow
+        // screen without either wrapping into two.
+        subscriberCountText?.let {
+            StatChip(
+                icon = Icons.Rounded.Person,
+                text = "${it.substringBefore(' ')} subscribers",
+                palette = palette,
+            )
+        }
+        monthlyListenerCount?.let {
+            StatChip(
+                icon = Icons.Rounded.GraphicEq,
+                text = "${it.substringBefore(' ')} monthly listeners",
+                palette = palette,
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatChip(icon: ImageVector, text: String, palette: ArtworkPalette) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = palette.onBackgroundVariant,
+            modifier = Modifier.size(15.dp),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.onBackgroundVariant,
+        )
+    }
+}
+
+/**
+ * YouTube's own editorial note for a release or an artist, collapsed to a
+ * few lines with a tap to read the rest — the same "About" block Apple
+ * Music and YouTube Music itself show under the header.
+ *
+ * Whether there's anything to expand is only knowable once the text has
+ * been laid out at the collapsed line count, so the "More" toggle is held
+ * back until that measurement says the clipped text actually lost
+ * something — otherwise a two-line bio would show a toggle with nothing
+ * behind it to reveal.
+ */
+@Composable
+private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
+    var expanded by remember(text) { mutableStateOf(false) }
+    var clipped by remember(text) { mutableStateOf(false) }
+    Column {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = palette.onBackground,
+            modifier = Modifier.padding(
+                start = PAGE_GUTTER, end = PAGE_GUTTER, top = 2.dp, bottom = 6.dp,
+            ),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Medium,
+            color = palette.onBackgroundVariant,
+            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            overflow = TextOverflow.Ellipsis,
+            onTextLayout = { result -> if (!expanded) clipped = result.hasVisualOverflow },
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize()
+                .padding(horizontal = PAGE_GUTTER)
+                .let { m -> if (clipped || expanded) m.clickable { expanded = !expanded } else m },
+        )
+        if (clipped || expanded) {
+            Text(
+                text = if (expanded) "Less" else "More",
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.accent,
+                modifier = Modifier
+                    .padding(horizontal = PAGE_GUTTER, vertical = 4.dp)
+                    .clickable { expanded = !expanded },
+            )
+        }
+    }
 }
 
 @Composable

@@ -8,6 +8,10 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.selects.select
 
 /**
  * Turns a queued track into an openable stream, using whichever source can
@@ -147,6 +151,14 @@ object SourceResolver {
             for (source in rankedAbove(configId, active)) {
                 if (!source.kind.canServeLossless) continue
                 val upgraded = matchAndStream(source, target, request) ?: continue
+                // Only a genuinely lossless answer is an upgrade. A source that
+                // *can* serve lossless but settled for a transcode of this
+                // particular track has not beaten the pinned source at anything
+                // — and returning its settle-for here jumped ahead of the
+                // track's own source, which is the one the user picked and may
+                // well hold something better. It falls through to the pinned
+                // source instead, and to [bestAcross] below if that fails.
+                if (upgraded.format.isLossless != true) continue
                 TrackLog.d(TAG, "lossless upgrade: '${target.title}' served by ${source.displayName}")
                 return upgraded
             }
@@ -160,14 +172,10 @@ object SourceResolver {
         // user asked for, and another source having it is not unlikely — this
         // is the difference between a dead server skipping the queue forward
         // and a dead server being invisible.
-        for (source in active) {
-            if (source.configId == configId) continue
-            matchAndStream(source, target, request)?.let {
-                TrackLog.d(TAG, "fallback: '${target.title}' served by ${source.displayName}")
-                return it
-            }
-        }
-        return null
+        val (fallbackSource, stream) =
+            bestAcross(active.filterNot { it.configId == configId }, target, request) ?: return null
+        TrackLog.d(TAG, "fallback: '${target.title}' served by ${fallbackSource.displayName}")
+        return stream
     }
 
     /**
@@ -185,26 +193,31 @@ object SourceResolver {
      * The match is the same strict one [resolve] uses, for the same reason:
      * this substitutes something else for the track the user picked, and a
      * loose match plays the wrong song under the right title.
+     *
+     * Every ranked source is asked at once and the first playable answer is
+     * taken — see [bestAcross]. This is the latency-critical half of the pair:
+     * it is racing YouTube's own walk, and a stream that arrives after that race
+     * is lost cannot start a track. The unhurried half is [upgradeFor], which
+     * runs with sound already playing and is where a slow source's better answer
+     * gets its hearing.
      */
     suspend fun substituteForYouTube(target: TrackMatcher.Target): SourceStream? {
         if (target.title.isBlank()) return null
         val active = SourceRegistry.active()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val request = requestForNow()
-        for (source in rankedAbove(youtube.configId, active)) {
-            val stream = matchAndStream(source, target, request) ?: continue
-            // Says what was found, not what the caller will do with it. This
-            // line used to read "substituted" unconditionally, including for
-            // streams the caller went on to refuse — which made a log of a
-            // track that played on YouTube look like a track that hadn't.
-            TrackLog.d(
-                TAG,
-                "substituted: '${target.title}' served by ${source.displayName} over YouTube" +
-                    " at ${stream.format.summary}" + if (stream.belowRequest) " (below request)" else "",
-            )
-            return stream
-        }
-        return null
+        val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request)
+            ?: return null
+        // Says what was found, not what the caller will do with it. This
+        // line used to read "substituted" unconditionally, including for
+        // streams the caller went on to refuse — which made a log of a
+        // track that played on YouTube look like a track that hadn't.
+        TrackLog.d(
+            TAG,
+            "substituted: '${target.title}' served by ${source.displayName} over YouTube" +
+                " at ${stream.format.summary}" + if (stream.belowRequest) " (below request)" else "",
+        )
+        return stream
     }
 
     /**
@@ -214,15 +227,33 @@ object SourceResolver {
      * The same search as [substituteForYouTube] with two differences, both of
      * which are only affordable because sound is already coming out:
      *
-     *  - Every module is waited for, including the one the live path gave up
-     *    on to get playback started. That module is frequently the point:
-     *    dropping it is what left the listener on a stream from whoever
-     *    happened to be quick.
+     *  - Every module *within* a source is waited for, including the one the
+     *    live path gave up on to get playback started (`waitForAll`). That
+     *    module is frequently the point: dropping it is what left the listener
+     *    on a stream from whoever happened to be quick.
      *  - A result that isn't lossless is still worth having when it is
      *    audibly better than what is playing — see [worthSwapping]. Refusing
      *    those outright is what left a track on YouTube's 160kbps Opus while
      *    a 320kbps AAC from a module sat in hand, unused, because it wasn't
      *    the FLAC that had been asked for.
+     *  - Every source is asked, not only the ones that can serve lossless. That
+     *    follows from the bullet above: once a lossy stream can win, a lossy
+     *    *source* has to be allowed to offer one.
+     *
+     * Where it matches [substituteForYouTube] exactly is in taking the first
+     * answer that clears the bar rather than the best of all of them — see
+     * [bestAcross]. The bar here is [worthSwapping] rather than "satisfies the
+     * request", and it is a high one: anything clearing it is lossless, or a
+     * gain of [UPGRADE_MIN_GAIN_KBPS] over what the listener is hearing. Holding
+     * such a stream back to see whether a slower source can do better trades a
+     * certain improvement now for a possible improvement later, and "later" here
+     * was measured at thirteen seconds.
+     *
+     * The cost of that choice is real and worth naming: a slow source holding a
+     * FLAC can lose to a fast one holding a 320kbps AAC, and the track then
+     * plays lossy for the rest of its length, because [QualityUpgrade][com.music.bitchord.playback.QualityUpgrade]
+     * marks a track asked once the answer is yes. It is the same trade the live
+     * path makes, made for the same reason.
      *
      * [target] must carry the runtime of the track *actually playing* — see
      * [matchAndStream]'s use of it. Swapping the audio under a listener is
@@ -242,35 +273,59 @@ object SourceResolver {
         val request = requestForNow()
         val active = SourceRegistry.active()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        for (source in rankedAbove(youtube.configId, active)) {
-            // Only lossless sources are worth asking when lossless is what was
-            // asked for. Without that request the bar is [worthSwapping]'s
-            // instead, and a lossy source ranked above YouTube clears it on
-            // bitrate alone — which is the case UPGRADE_MIN_GAIN_KBPS was sized
-            // for. Skipping those here is what left a 320kbps source unused
-            // behind YouTube's 160kbps Opus whenever lossless was switched off.
-            if (request is StreamRequest.Lossless && !source.kind.canServeLossless) continue
-            val stream = matchAndStream(
-                source, target, request, waitForAll = true, strictLength = true,
-            ) ?: continue
-            if (!worthSwapping(stream.format, playing)) {
+        // Every source gets asked, whether or not it can serve lossless, and
+        // they are asked at once.
+        //
+        // There used to be a `canServeLossless` skip here, applied whenever the
+        // request was [StreamRequest.Lossless] — which is what an unmetered
+        // connection asks for, i.e. nearly always. Its reasoning was that only a
+        // lossless source can satisfy a lossless request, and that is true and
+        // beside the point: this function is not serving the request, it is
+        // deciding whether anything beats what is *already playing*.
+        // [worthSwapping] is the bar for that, and a 320kbps source clears it
+        // over YouTube's 160kbps Opus by nearly twice the required margin.
+        //
+        // Racing them matters as much as asking them. Walked in rank order this
+        // took 13.6s on 'Bounce' — a module needed 7.6s to search and another
+        // 5.0s to produce a 128kbps MP3 that was then refused, and only after
+        // all of that was JioSaavn asked, which answered with 320kbps in 246ms:
+        //
+        // ```
+        //   46:44.823  'Bounce' is playing 141 kbps … looking for a better copy
+        //   46:57.477  Ricky's Addon offered MP3 · 128 kbps
+        //   46:57.478  … isn't worth swapping 'Bounce' off 141 kbps
+        //   46:57.478  ▶ JioSaavn searchSongs()        ← 12.65s in
+        //   46:58.608  upgraded to MP4 · 320 kbps at 13569ms
+        // ```
+        //
+        // Thirteen seconds of a 143-second track played at the wrong bitrate,
+        // and the seam then landed mid-song rather than near its start. Raced,
+        // the same swap happens inside a second.
+        val (source, chosen) = bestAcross(
+            rankedAbove(youtube.configId, active),
+            target,
+            request,
+            waitForAll = true,
+            strictLength = true,
+        ) { candidate, stream ->
+            worthSwapping(stream.format, playing).also { worth ->
                 // Named rather than skipped silently. This is the one refusal
                 // in the upgrade path that discards a stream already found,
-                // matched and length-checked, and a `continue` here reads in
-                // the log exactly like a source having nothing — which is how
-                // a null [playing] came to quietly turn the whole cached-track
-                // path lossless-only for a while without leaving a trace.
-                TrackLog.d(
-                    TAG,
-                    "${source.displayName}'s ${stream.format.summary} isn't worth swapping " +
-                        "'${target.title}' off ${playing?.summary ?: "an unmeasured stream"}",
-                )
-                continue
+                // matched and length-checked, and a silent skip reads in the log
+                // exactly like a source having nothing — which is how a null
+                // [playing] came to quietly turn the whole cached-track path
+                // lossless-only for a while without leaving a trace.
+                if (!worth) {
+                    TrackLog.d(
+                        TAG,
+                        "${candidate.displayName}'s ${stream.format.summary} isn't worth swapping " +
+                            "'${target.title}' off ${playing?.summary ?: "an unmeasured stream"}",
+                    )
+                }
             }
-            TrackLog.d(TAG, "upgrade found: '${target.title}' at ${stream.format.summary} from ${source.displayName}")
-            return stream
-        }
-        return null
+        } ?: return null
+        TrackLog.d(TAG, "upgrade found: '${target.title}' at ${chosen.format.summary} from ${source.displayName}")
+        return chosen
     }
 
     /**
@@ -414,6 +469,94 @@ object SourceResolver {
             .let { active.take(it) }
 
     /**
+     * The first stream any of [sources] can serve for [target] — **all of them
+     * asked at once** — or null if none of them has the recording.
+     *
+     * ### Why they race rather than queue
+     *
+     * Asking them in rank order is the obvious reading of an ordered list, and
+     * it is wrong here, because the sources differ in speed by nearly two orders
+     * of magnitude. Measured on '9:45':
+     *
+     * ```
+     *   JioSaavn        search 245ms + stream 131ms   ≈ 0.4s
+     *   Ricky's Addon   search → settled stream       ≈ 13.5s
+     * ```
+     *
+     * Queued behind the module, JioSaavn's answer arrives at ~14s. Nobody is
+     * waiting that long for a song to start, so YouTube wins the race in
+     * [PlaybackService][com.music.bitchord.playback.PlaybackService]'s
+     * `resolveWithModulePriority` every single time and the listener gets
+     * 160kbps Opus — while a 320kbps copy sat four tenths of a second away.
+     * Raced, the same answer arrives before YouTube's own walk finishes and the
+     * track starts on it.
+     *
+     * ### What rank still decides, and what it no longer does
+     *
+     * Rank decides who is *asked* — [rankedAbove] is still what builds this list
+     * — and it breaks ties between answers that arrive together, since each
+     * sweep folds in everything that has already crossed the line and picks the
+     * best of them with [isBetter]. What it no longer does is let a slow
+     * favourite hold up a fast alternative.
+     *
+     * **A slow source is not thereby lost.** Whatever is returned here starts
+     * playing; if it is [SourceStream.belowRequest] the track is marked for a
+     * second look, and [upgradeFor] then asks *every* source again with no time
+     * limit and swaps up only if what comes back genuinely beats what is playing
+     * — see [worthSwapping]. So a module that needed thirteen seconds to find a
+     * FLAC still gets to serve it, mid-track, and one that needed thirteen
+     * seconds to find a 128kbps MP3 is correctly ignored. That is the trade this
+     * whole path exists to make: sound now, quality shortly after.
+     *
+     * Sources still running when an answer is taken are cancelled — the second
+     * look re-asks them properly, and leaving them running would spend a
+     * listener's radio on a result nothing is waiting for.
+     *
+     * @return the winning source alongside its stream, so callers can name it in
+     *   a log line without searching the list again.
+     */
+    internal suspend fun bestAcross(
+        sources: List<MusicSource>,
+        target: TrackMatcher.Target,
+        request: StreamRequest,
+        waitForAll: Boolean = false,
+        strictLength: Boolean = false,
+        accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
+    ): Pair<MusicSource, SourceStream>? = coroutineScope {
+        val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = sources
+            .map { source ->
+                async { source to matchAndStream(source, target, request, waitForAll, strictLength) }
+            }
+            .toMutableList()
+        var best: Pair<MusicSource, SourceStream>? = null
+        try {
+            while (running.isNotEmpty()) {
+                val first = select {
+                    running.forEach { candidate -> candidate.onAwait { candidate } }
+                }
+                // Anything that crossed the line while that one was being waited
+                // on is already sitting there. Folding those in costs no time at
+                // all and is what lets rank break a tie between two sources that
+                // both answered quickly.
+                val ready = listOf(first) + running.filter { it !== first && it.isCompleted }
+                running -= ready.toSet()
+                for (done in ready) {
+                    val (source, stream) = done.await()
+                    if (stream == null) continue
+                    if (!accept(source, stream)) continue
+                    if (isBetter(stream.format, best?.second?.format)) best = source to stream
+                }
+                // Something usable is in hand. Everything better than it is a
+                // maybe, and waiting for a maybe costs the listener a certainty.
+                if (best != null) break
+            }
+        } finally {
+            running.forEach { it.cancel() }
+        }
+        best
+    }
+
+    /**
      * Searches [source] for the recording in [target] and streams it if one of
      * the answers really is that recording — see [TrackMatcher].
      *
@@ -555,16 +698,28 @@ object SourceResolver {
         return settleFor
     }
 
-    /** The higher-quality of two streams, by codec first and bitrate second. */
-    private fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream {
-        if (current == null) return candidate
-        val mine = current.format
-        val theirs = candidate.format
-        if (mine.isLossless != theirs.isLossless) {
-            return if (theirs.isLossless == true) candidate else current
-        }
-        return if ((theirs.kbps ?: 0) > (mine.kbps ?: 0)) candidate else current
+    /**
+     * Whether [candidate] is a better rendition than [current], by codec first
+     * and bitrate second. A null [current] is beaten by anything.
+     *
+     * The one rule for ranking two copies of the same recording, kept in one
+     * place because three different walks now need it: [streamBest] choosing
+     * between rows inside a source, [bestAcross] choosing between sources, and
+     * [upgradeFor] choosing what to cut into a track that is already playing.
+     *
+     * Note that this is *not* [worthSwapping]. This asks which of two streams is
+     * better; that one asks whether the difference is worth a break in the
+     * audio, which is a much higher bar and only meaningful mid-playback.
+     */
+    internal fun isBetter(candidate: StreamFormat, current: StreamFormat?): Boolean {
+        if (current == null) return true
+        if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
+        return (candidate.kbps ?: 0) > (current.kbps ?: 0)
     }
+
+    /** The higher-quality of two streams — see [isBetter]. */
+    private fun betterOf(current: SourceStream?, candidate: SourceStream): SourceStream =
+        if (current == null || isBetter(candidate.format, current.format)) candidate else current
 
     /**
      * Whether a format has said nothing that rules lossless out.

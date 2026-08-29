@@ -261,8 +261,30 @@ object InnertubeParser {
             songs, moreSongs, shelves,
             thumbnailUrl = artistThumbnail(header),
             name = credit.artistName,
+            description = parseDescription(response),
+            subscriberCountText = subscriberCount(header),
+            monthlyListenerCount = monthlyListeners(header),
         )
     }
+
+    /**
+     * "1.2M subscribers" off the artist header's subscribe button — YouTube
+     * ships two shapes of it depending on how the page was served, and the
+     * button itself carries the count under one of three different keys
+     * across those shapes.
+     */
+    private fun subscriberCount(header: JsonElement?): String? {
+        val immersive = header.o("musicImmersiveHeaderRenderer") ?: return null
+        val button2 = immersive.o("subscriptionButton2").o("subscribeButtonRenderer")
+        val button1 = immersive.o("subscriptionButton").o("subscribeButtonRenderer")
+        return button2.o("subscriberCountWithSubscribeText").firstRunText()
+            ?: button1.o("longSubscriberCountText").firstRunText()
+            ?: button1.o("shortSubscriberCountText").firstRunText()
+    }
+
+    /** "3.4M monthly listeners", off the same header as [subscriberCount]. */
+    private fun monthlyListeners(header: JsonElement?): String? =
+        header.o("musicImmersiveHeaderRenderer").o("monthlyListenerCount").firstRunText()
 
     /**
      * The name the page bills itself under. A track credited to a trio hands
@@ -621,6 +643,30 @@ object InnertubeParser {
             thumbnailUrl = collectRenderers(header, "musicThumbnailRenderer").firstOrNull()
                 .o("thumbnail").a("thumbnails").best(),
         )
+    }
+
+    /**
+     * The editorial blurb YouTube Music writes for a release or an artist —
+     * "About the album" / "About the artist" on the web player.
+     *
+     * It arrives as its own shelf (`musicDescriptionShelfRenderer`) on a
+     * current-layout page, but the field also turns up directly on the
+     * header itself on some responses, so both are tried. Absent from a
+     * playlist page — YouTube writes these for its own catalogue, not for
+     * something a user put together — which is why callers only surface it
+     * for [com.music.bitchord.data.model.BrowseType.ALBUM] and
+     * [com.music.bitchord.data.model.BrowseType.ARTIST].
+     */
+    fun parseDescription(root: JsonElement): String? {
+        val shelf = collectRenderers(root, "musicDescriptionShelfRenderer")
+            .firstOrNull()?.o("description").runs()
+        if (shelf.isNotBlank()) return shelf
+        val onHeader = (HEADER_RENDERERS + "musicImmersiveHeaderRenderer")
+            .firstNotNullOfOrNull { name ->
+                collectRenderers(root, name).firstOrNull()
+                    ?.o("description").runs().takeIf { it.isNotBlank() }
+            }
+        return onHeader
     }
 
     /**
@@ -992,6 +1038,10 @@ private fun JsonElement?.s(key: String): String? =
 
 private fun JsonElement?.runs(): String =
     this.a("runs")?.joinToString("") { it.s("text").orEmpty() }.orEmpty()
+
+/** The first run's text alone — for a field that is a count or a label, never a sentence. */
+private fun JsonElement?.firstRunText(): String? =
+    this.a("runs")?.firstOrNull().s("text")
 
 /**
  * Last thumbnail is the largest, taken exactly as offered.

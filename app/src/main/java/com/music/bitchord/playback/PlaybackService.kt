@@ -1862,19 +1862,20 @@ class PlaybackService : MediaSessionService() {
             return
         }
 
-        // Never in the first few seconds. An upgrade that lands the instant a
-        // track starts would otherwise cut it a millisecond in — the listener
-        // hears the song begin, stop and begin again, which reads as a bug
-        // whatever the bitrate afterwards. Letting the opening play through
-        // costs nothing: the better copy is not going anywhere.
+        // There used to be an unconditional five-second hold here, keyed off the
+        // track's own position, so that an upgrade arriving with the first note
+        // could not cut the song a millisecond in. Its own reasoning said it was
+        // "almost always already past by now", and that turned out to be the
+        // whole story: by the time this line is reached the search, the stream
+        // lookup and the audition have all run, and the audition alone spends
+        // seconds on the network. So the guard was not usually deciding to wait
+        // — it was adding its five seconds to whatever the swap had already
+        // cost, on exactly the tracks that had been quickest to find a better
+        // copy. Removed rather than shortened: it is the crossfade grace below
+        // that protects the case an upgrade can genuinely spoil, and it does so
+        // by asking whether a transition actually happened rather than assuming
+        // one might have.
         //
-        // Almost always already past by now: the audition above spends seconds
-        // on the network, and it spends them with the music still playing.
-        val settled = withContext(Dispatchers.Main) { player?.currentPosition ?: 0L }
-        if (settled < UPGRADE_NOT_BEFORE_MS) {
-            delay(UPGRADE_NOT_BEFORE_MS - settled)
-        }
-
         // Never cut into a crossfade in flight. `replaceMediaItem` tears the
         // session player's source down and rebuilds it — CrossfadeController
         // is either syncing its tail player's position against that same
@@ -1908,8 +1909,9 @@ class PlaybackService : MediaSessionService() {
         // milliseconds after the incoming track finally stood alone: the
         // listener hears the mix land and the music stop, in that order, which
         // reads as the transition having broken rather than as a track quietly
-        // getting better. [UPGRADE_NOT_BEFORE_MS] does not cover this — that is
-        // measured from the track's own start, and an Automix hands over at a
+        // getting better. This is the one delay on this path, and it is why the
+        // blanket one above it could go: a hold measured from the track's own
+        // start never covered this case anyway, since an Automix hands over at a
         // cue point that can be well past it.
         //
         // Keyed off when a transition last ended rather than off whether the
@@ -3303,12 +3305,6 @@ class PlaybackService : MediaSessionService() {
          */
         const val UPGRADE_MIN_REMAINING_MS = 20_000L
 
-        /**
-         * How far into a track a swap may happen at the earliest, so an
-         * upgrade that arrives with the first note doesn't cut it immediately.
-         */
-        const val UPGRADE_NOT_BEFORE_MS = 5_000L
-
         /** How often to recheck [CrossfadeController.isTransitioning] while an upgrade waits on one. */
         const val UPGRADE_CROSSFADE_POLL_MS = 250L
 
@@ -3442,8 +3438,8 @@ class PlaybackService : MediaSessionService() {
          * own length before giving up and going on the claimed one.
          *
          * Costs nothing when it isn't needed — a prepared track answers on the
-         * first poll — and the swap it feeds cannot happen inside
-         * [UPGRADE_NOT_BEFORE_MS] anyway.
+         * first poll — and it runs with the music still playing, so what it
+         * spends is patience rather than silence.
          */
         const val DURATION_SETTLE_MS = 8_000L
 

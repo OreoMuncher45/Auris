@@ -1428,6 +1428,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var suggested: List<Song> = emptyList()
             /** Whether this release is already saved — see [DetailPage.library]. */
             var library: LibraryState? = null
+            /** YouTube's own "About" blurb — see [DetailPage.description]. */
+            var description: String? = null
+            /** Artist header stats — see [DetailPage.subscriberCountText]. */
+            var subscriberCountText: String? = null
+            var monthlyListenerCount: String? = null
             val state = when {
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
@@ -1455,6 +1460,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             sections = page.sections
                             artwork = page.thumbnailUrl
                             name = page.name
+                            description = page.description
+                            subscriberCountText = page.subscriberCountText
+                            monthlyListenerCount = page.monthlyListenerCount
                             if (page.songs.isEmpty()) {
                                 UiState.Error(NO_TRACKS)
                             } else {
@@ -1480,6 +1488,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 if (subtitle.isBlank()) credit = header.subtitle
                                 if (thumbnailUrl == null) artwork = header.thumbnailUrl
                             }
+                            description = page.description
                             if (page.songs.isEmpty()) {
                                 UiState.Error(NO_TRACKS)
                             } else {
@@ -1504,6 +1513,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         subtitle = credit ?: it.subtitle,
                         suggestedSongs = suggested,
                         library = library,
+                        description = description,
+                        subscriberCountText = subscriberCountText,
+                        monthlyListenerCount = monthlyListenerCount,
                     )
                 } else {
                     it

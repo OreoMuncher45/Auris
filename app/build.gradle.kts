@@ -143,6 +143,17 @@ android {
         compose = true
         buildConfig = true
     }
+    testOptions {
+        unitTests {
+            // Unit tests run against a stub android.jar whose methods throw
+            // rather than return. That is the right default for anything whose
+            // behaviour depends on the framework, and wrong for android.util.Log
+            // — which [TrackLog] calls on every decision the source layer makes,
+            // so a test of that layer fails on the logging rather than on the
+            // logic it was written to check.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 kotlin {
