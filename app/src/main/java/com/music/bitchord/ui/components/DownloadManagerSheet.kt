@@ -43,10 +43,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.download.DownloadProgress
@@ -194,7 +196,7 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                             .forEach { Downloads.cancel(it.videoId) }
                     },
                 ) {
-                    Text("Cancel all")
+                    Text(stringResource(R.string.cancel_all))
                 }
             } else {
                 TextButton(
@@ -203,7 +205,7 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
                         onDismiss()
                     },
                 ) {
-                    Text("Clear")
+                    Text(stringResource(R.string.clear))
                 }
             }
         }

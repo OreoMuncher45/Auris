@@ -37,9 +37,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.sources.SourceConfig
@@ -135,8 +137,8 @@ fun SourcesScreen(
         ) {
             SettingsRow(
                 icon = Icons.Rounded.GraphicEq,
-                title = "Prefer lossless",
-                subtitle = "FLAC and ALAC straight from the source, while playing",
+                title = stringResource(R.string.prefer_lossless),
+                subtitle = stringResource(R.string.lossless_source_subtitle),
                 badge = "Overridden".takeIf { lossless && cappedByQuality },
                 trailing = {
                     Switch(
@@ -170,7 +172,7 @@ fun SourcesScreen(
             } else {
                 SettingsRow(
                     icon = Icons.Rounded.Add,
-                    title = "Add a module source",
+                    title = stringResource(R.string.add_module_source),
                     subtitle = SourceKind.MODULE.detail,
                     onClick = { editing = SourceConfig(kind = SourceKind.MODULE) },
                 )
@@ -340,7 +342,7 @@ private fun ServerEditorDialog(
                 OutlinedTextField(
                     value = baseUrl,
                     onValueChange = { baseUrl = it; result = null },
-                    label = { Text("Link") },
+                    label = { Text(stringResource(R.string.link)) },
                     placeholder = { Text("https://example.com/modules/index.json") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -357,7 +359,7 @@ private fun ServerEditorDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    label = { Text("Name (optional)") },
+                    label = { Text(stringResource(R.string.name_optional)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -383,7 +385,7 @@ private fun ServerEditorDialog(
                 if (!isNew) {
                     Spacer(Modifier.height(6.dp))
                     TextButton(onClick = onDelete, modifier = Modifier.align(Alignment.Start)) {
-                        Text("Remove this source", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.remove_source), color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -407,12 +409,12 @@ private fun ServerEditorDialog(
                     onClick = { onSave(candidate) },
                     enabled = !testing && candidate.isComplete,
                 ) {
-                    Text("Save")
+                    Text(stringResource(R.string.save))
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !testing) { Text("Cancel") }
+            TextButton(onClick = onDismiss, enabled = !testing) { Text(stringResource(R.string.cancel)) }
         },
     )
 }

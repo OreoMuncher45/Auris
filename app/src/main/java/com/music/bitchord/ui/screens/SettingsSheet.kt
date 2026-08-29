@@ -88,6 +88,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -106,6 +107,7 @@ import com.music.bitchord.data.model.Account
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.R
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.settings.AudioQuality
@@ -329,7 +331,7 @@ fun SettingsScreen(
         SettingsGroup(header = "Downloads") {
             SettingsRow(
                 icon = Icons.Rounded.Download,
-                title = "Download quality",
+                title = stringResource(R.string.download_quality),
                 subtitle = "${downloadQuality.perTrack} per track, whatever the connection",
                 value = downloadQuality.label,
                 onClick = { pickingDownloadQuality = true },
@@ -338,7 +340,7 @@ fun SettingsScreen(
             // of its own — same treatment as Play animated cover over
             // cellular gets under Animated cover art.
             SettingsSubRow(
-                title = "Download over Wi-Fi only",
+                title = stringResource(R.string.download_wifi_only),
                 checked = wifiOnlyDownloads,
                 onCheckedChange = AppSettings::setWifiOnlyDownloads,
                 badge = "Blocking".takeIf { wifiOnlyDownloads && metered == true },
@@ -402,8 +404,8 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.SurroundSound,
-                title = "Spatial audio",
-                subtitle = "Widens stereo tracks for a more immersive feel",
+                title = stringResource(R.string.spatial_audio),
+                subtitle = stringResource(R.string.spatial_audio_subtitle),
                 trailing = {
                     Switch(
                         checked = spatialAudio,
@@ -443,8 +445,8 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.SmartDisplay,
-                title = "Stop converting video songs to audio version",
-                subtitle = "Plays a music-video upload as itself instead of swapping it for its catalogue audio release",
+                title = stringResource(R.string.video_audio_conversion),
+                subtitle = stringResource(R.string.video_audio_conversion_subtitle),
                 trailing = {
                     Switch(
                         checked = !convertVideoToAudio,
@@ -550,7 +552,7 @@ fun SettingsScreen(
             // that cost repeated on every loop — see AppSettings.canvasOverCellular.
             if (animatedCanvas) {
                 SettingsSubRow(
-                    title = "Play animated cover over cellular",
+                    title = stringResource(R.string.animated_cover_cellular),
                     checked = canvasOverCellular,
                     onCheckedChange = AppSettings::setCanvasOverCellular,
                 )
@@ -638,14 +640,14 @@ fun SettingsScreen(
         SettingsGroup(header = "Your data") {
             SettingsRow(
                 icon = Icons.Rounded.BarChart,
-                title = "Replay",
-                subtitle = "Your top songs, artists, albums and genres",
+                title = stringResource(R.string.replay),
+                subtitle = stringResource(R.string.replay_subtitle),
                 onClick = onOpenReplay,
             )
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.LocalOffer,
-                title = "Work out genres",
+                title = stringResource(R.string.work_out_genres),
                 subtitle = if (replayGenres) {
                     "Asks Last.fm what an artist plays — their name is sent, nothing else"
                 } else {
@@ -666,15 +668,15 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.FileUpload,
-                title = "Export data",
-                subtitle = exportStatus ?: "Settings and listening history, as one JSON file",
+                title = stringResource(R.string.export_data),
+                subtitle = exportStatus ?: stringResource(R.string.export_data_subtitle),
                 onClick = { exportPicker.launch(Backup.suggestedName()) },
             )
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.FileDownload,
-                title = "Import data",
-                subtitle = importStatus ?: "Replaces the settings and history on this device",
+                title = stringResource(R.string.import_data),
+                subtitle = importStatus ?: stringResource(R.string.import_data_subtitle),
                 onClick = { confirmImport = true },
             )
         }
@@ -830,7 +832,7 @@ fun SettingsScreen(
     if (confirmImport) {
         AlertDialog(
             onDismissRequest = { confirmImport = false },
-            title = { Text("Import a backup?") },
+            title = { Text(stringResource(R.string.import_backup_title)) },
             text = {
                 Text(
                     "This replaces the settings and the listening history on this device " +
@@ -843,7 +845,7 @@ fun SettingsScreen(
                     confirmImport = false
                     importPicker.launch(arrayOf("application/json", "text/plain", "*/*"))
                 }) {
-                    Text("Choose file")
+                    Text(stringResource(R.string.choose_file))
                 }
             },
             dismissButton = {
