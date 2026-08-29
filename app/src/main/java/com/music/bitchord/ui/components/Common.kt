@@ -53,12 +53,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -339,7 +341,7 @@ private fun QueueSwipeLabel(playNext: Boolean) {
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = if (playNext) "Play next" else "Queue",
+            text = stringResource(if (playNext) R.string.play_next else R.string.queue),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -425,7 +427,7 @@ private fun SongRowContent(
             ) {
                 Icon(
                     Icons.Rounded.MoreVert,
-                    contentDescription = "More",
+                    contentDescription = stringResource(R.string.more),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
@@ -504,12 +506,12 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = "Sign in to YouTube Music",
+                text = stringResource(R.string.sign_in_youtube_music),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                text = "Get personalized recommendations for you",
+                text = stringResource(R.string.personalized_recommendations),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -517,7 +519,7 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
             )
         }
         Spacer(Modifier.width(12.dp))
-        Button(onClick = onSignIn) { Text("Sign in") }
+        Button(onClick = onSignIn) { Text(stringResource(R.string.sign_in)) }
     }
 }
 

@@ -1,27 +1,122 @@
 <resources>
     <string name="app_name">BitChord</string>
     <string name="playback_channel_name">Now playing</string>
-
-    <!--
-      Widget picker entries. Not prefixed with the app's name: the picker already
-      groups an app's widgets under it, and the dev flavour renames app_name
-      anyway, so a hardcoded "bitchord" here would read wrong on half the builds
-      installed on a test device.
-    -->
+    <string name="download_channel_name">Downloads</string>
+    <string name="download_channel_description">Songs being saved to your Music folder</string>
+    <string name="download_notification_title">Downloading</string>
+    <string name="download_notification_starting">Starting</string>
+    <string name="download_notification_queued">%1$s · %2$d more queued</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="close">Close</string>
+    <string name="back">Back</string>
+    <string name="settings">Settings</string>
+    <string name="search">Search</string>
+    <string name="clear_search">Clear search</string>
+    <string name="library">Library</string>
+    <string name="play">Play</string>
+    <string name="explore">Explore</string>
+    <string name="listen_now">Listen Now</string>
+    <string name="downloads">Downloads</string>
+    <string name="downloaded_songs">Downloaded songs</string>
+    <string name="local_music">Local Music</string>
+    <string name="audio_files_on_device">Audio files on device</string>
+    <string name="on_device">On Device</string>
+    <string name="playlists">Playlists</string>
+    <string name="new_playlist">New playlist</string>
+    <string name="saved_to_youtube_music">Saved to YouTube Music</string>
+    <string name="sign_in">Sign in</string>
+    <string name="sign_out">Sign out</string>
+    <string name="signed_in">Signed in</string>
+    <string name="not_signed_in">Not signed in</string>
+    <string name="retry">Retry</string>
+    <string name="shuffle">Shuffle</string>
+    <string name="more">More</string>
+    <string name="add_to_playlist">Add to playlist</string>
+    <string name="add_to_library">Add to library</string>
+    <string name="remove_from_library">Remove from library</string>
+    <string name="download_all">Download all</string>
+    <string name="top_songs">Top songs</string>
+    <string name="suggested">Suggested</string>
+    <string name="song_count">%1$d song</string>
+    <plurals name="song_count_plural">
+        <item quantity="one">%1$d song</item>
+        <item quantity="other">%1$d songs</item>
+    </plurals>
+    <plurals name="artist_count">
+        <item quantity="one">%1$d artist</item>
+        <item quantity="other">%1$d artists</item>
+    </plurals>
+    <plurals name="album_count">
+        <item quantity="one">%1$d album</item>
+        <item quantity="other">%1$d albums</item>
+    </plurals>
+    <string name="songs">Songs</string>
+    <string name="artists">Artists</string>
+    <string name="albums">Albums</string>
+    <string name="no_album_metadata">None of these tracks say what album they are from.</string>
+    <string name="search_empty">Search millions of songs on YouTube Music.</string>
+    <string name="recent_searches">Recent searches</string>
+    <string name="clear">Clear</string>
+    <string name="search_hint">Artists, Songs, Lyrics and More</string>
+    <string name="recent_search_edit">Edit “%1$s”</string>
+    <string name="recent_search_remove">Remove “%1$s” from recent searches</string>
+    <string name="storage_required_save">Storage access is needed to save songs</string>
+    <string name="storage_required_read">Storage permission is required to read local audio files</string>
+    <string name="sharing_coming_soon">Sharing is coming soon</string>
+    <string name="already_downloaded">Already downloaded</string>
+    <plurals name="downloading_song_count">
+        <item quantity="one">Downloading %1$d song</item>
+        <item quantity="other">Downloading %1$d songs</item>
+    </plurals>
+    <string name="source">Sources</string>
+    <string name="lossless_audio">Lossless audio</string>
+    <string name="prefer_lossless">Prefer lossless</string>
+    <string name="lossless_source_subtitle">FLAC and ALAC straight from the source</string>
+    <string name="overridden">Overridden</string>
+    <string name="add_module_source">Add a module source</string>
+    <string name="link">Link</string>
+    <string name="name_optional">Name (optional)</string>
+    <string name="remove_source">Remove this source</string>
+    <string name="test">Test</string>
+    <string name="testing">Testing…</string>
+    <string name="connected">Connected</string>
+    <string name="account_integrations">Account &amp; integrations</string>
+    <string name="account_scrobbling">Account &amp; scrobbling</string>
+    <string name="rich_presence">Rich presence</string>
+    <string name="scrobbling">Scrobbling</string>
+    <string name="now_playing">Now playing</string>
+    <string name="selected">Selected</string>
+    <string name="password">Password</string>
+    <string name="username">Username</string>
+    <string name="login_failed">Login failed</string>
+    <string name="song_cache_cleared">Song cache cleared</string>
+    <string name="image_cache_cleared">Image cache cleared</string>
+    <string name="no_equalizer">No system equalizer on this device</string>
+    <string name="no_dolby_atmos">No Dolby Atmos panel on this device</string>
+    <string name="dolby_atmos_open_failed">Couldn’t open Dolby Atmos settings</string>
+    <string name="update_available">Update available: v%1$s</string>
+    <string name="log_copied">Log copied · %1$d lines</string>
+    <string name="sign_in_youtube_music">Sign in to YouTube Music</string>
+    <string name="sign_in_discord">Sign in to Discord</string>
+    <string name="personalized_recommendations">Get personalized recommendations for you</string>
+    <string name="play_next">Play next</string>
+    <string name="queue">Queue</string>
+    <string name="source_setup_required">Tap to finish setting up</string>
+    <string name="source_unreachable">Can’t reach it right now · %1$s</string>
+    <string name="checking">Checking…</string>
+    <string name="failed">Failed</string>
     <string name="widget_square_label">Now playing 2×2</string>
     <string name="widget_wide_label">Now playing 4×2</string>
     <string name="widget_square_description">Album art with playback controls, in a square.</string>
     <string name="widget_wide_description">Album art with the track and playback controls, full width.</string>
-
     <string name="widget_play">Play</string>
     <string name="widget_pause">Pause</string>
     <string name="widget_next">Next</string>
     <string name="widget_previous">Previous</string>
     <string name="widget_artwork">Album art</string>
     <string name="widget_nothing_played">Nothing played yet</string>
-    <string name="widget_open_bitchord">Open bitchord</string>
-
-    <!-- Stand-in track for the 4×2 widget's picker preview, which has no real one. -->
+    <string name="widget_open_bitchord">Open BitChord</string>
     <string name="widget_preview_title">Song title</string>
     <string name="widget_preview_artist">Artist</string>
 </resources>
