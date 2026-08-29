@@ -39,12 +39,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -108,6 +110,10 @@ fun ReplayScreen(
     val summary = state.summary
     val leadArtwork = summary?.songs?.firstOrNull()?.song?.thumbnailUrl
     val palette = rememberArtworkColors(leadArtwork)
+    val topSongs = stringResource(R.string.top_songs)
+    val topArtists = stringResource(R.string.top_artists)
+    val topAlbums = stringResource(R.string.top_albums)
+    val topGenres = stringResource(R.string.top_genres)
 
     Box(modifier.fillMaxSize()) {
         MeshGradientBackground(palette = palette, trackKey = leadArtwork, animated = false)
@@ -159,7 +165,7 @@ fun ReplayScreen(
 
                     chart(
                         key = "songs",
-                        title = "Top songs",
+                        title = topSongs,
                         rows = summary.songRows(CHART_LENGTH),
                         onClick = { index ->
                             summary.songs.getOrNull(index)?.let { onPlaySong(it.song) }
@@ -167,7 +173,7 @@ fun ReplayScreen(
                     )
                     chart(
                         key = "artists",
-                        title = "Top artists",
+                        title = topArtists,
                         rows = summary.artistRows(CHART_LENGTH),
                         circular = true,
                         onClick = { index ->
@@ -177,7 +183,7 @@ fun ReplayScreen(
                     )
                     chart(
                         key = "albums",
-                        title = "Top albums",
+                        title = topAlbums,
                         rows = summary.albumRows(CHART_LENGTH),
                         onClick = { index ->
                             val album = summary.albums.getOrNull(index) ?: return@chart
@@ -187,7 +193,7 @@ fun ReplayScreen(
                     if (summary.genres.isNotEmpty()) {
                         chart(
                             key = "genres",
-                            title = "Top genres",
+                            title = topGenres,
                             rows = summary.genreRows(CHART_LENGTH),
                             onClick = {},
                         )
