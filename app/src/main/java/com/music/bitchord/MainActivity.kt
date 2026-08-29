@@ -7,12 +7,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
@@ -80,6 +80,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -172,7 +173,7 @@ import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -535,14 +536,12 @@ private fun BitChordApp(
         }
     }
 
-    val tabs = remember {
-        listOf(
-            BottomTab("Play", BitChordIcons.Play),
-            BottomTab("Explore", BitChordIcons.Explore),
-            BottomTab("Library", BitChordIcons.Library),
-            BottomTab("Search", BitChordIcons.Search),
-        )
-    }
+    val tabs = listOf(
+        BottomTab(stringResource(R.string.play), BitChordIcons.Play),
+        BottomTab(stringResource(R.string.explore), BitChordIcons.Explore),
+        BottomTab(stringResource(R.string.library), BitChordIcons.Library),
+        BottomTab(stringResource(R.string.search), BitChordIcons.Search),
+    )
 
     val scope = rememberCoroutineScope()
 

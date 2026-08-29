@@ -137,7 +137,7 @@ fun LibraryScreen(
         ) {
             item {
                 Text(
-                    text = "Library",
+                    text = stringResource(R.string.library),
                     style = MaterialTheme.typography.displayLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
