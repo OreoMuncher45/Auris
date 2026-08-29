@@ -164,6 +164,7 @@
     <string name="japanese">Japanisch</string>
     <string name="russian">Russisch</string>
     <string name="chinese">Chinesisch (vereinfacht)</string>
+    <string name="hebrew">Hebräisch</string>
     <string name="show_all">Alle anzeigen</string>
     <string name="audio_quality">Audioqualität</string>
     <string name="playback">Wiedergabe</string>
