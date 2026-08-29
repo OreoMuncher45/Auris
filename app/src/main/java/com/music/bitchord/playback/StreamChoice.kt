@@ -77,7 +77,26 @@ object StreamChoice {
      *   that fails has not.
      */
     fun remember(videoId: String, stream: SourceStream, substituted: Boolean) {
-        if (chosen.size >= MAX_REMEMBERED) chosen.clear()
+        if (chosen.size >= MAX_REMEMBERED) {
+            // Drop what can no longer be honoured, and only then the oldest of
+            // what can. This used to `clear()`, which is the one eviction
+            // capable of causing the corruption this class exists to prevent:
+            // every live entry is a promise that a half-filled cache entry will
+            // be finished by the stream that started filling it, and emptying
+            // the map frees *all* of those entries to be finished by a
+            // different server instead.
+            //
+            // Harmless while only playback wrote here — an entry was made and
+            // consumed within one track. Read-ahead now pins the next track
+            // before it is reached and caches its bytes on the strength of that
+            // pin, so a promise can outlive several other tracks' worth of
+            // entries, and the blunt version became reachable.
+            val now = SystemClock.elapsedRealtime()
+            chosen.entries.removeIf { now - it.value.at > TTL_MS }
+            if (chosen.size >= MAX_REMEMBERED) {
+                chosen.minByOrNull { it.value.at }?.let { chosen.remove(it.key) }
+            }
+        }
         chosen[videoId] = Choice(stream, SystemClock.elapsedRealtime(), substituted)
     }
 

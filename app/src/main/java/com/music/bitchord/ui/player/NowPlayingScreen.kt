@@ -171,6 +171,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
@@ -667,6 +668,10 @@ fun NowPlayingScreen(
         derivedStateOf { canvasCover.floatValue > 0.999f }
     }
     val meshColors = rememberArtworkColors(song.thumbnailUrl, canvasFrame)
+    // Spotify's own Canvas, specifically — see CanvasArtworkPlayer's
+    // refreshFrameEveryMs for why this is scoped to that one source rather
+    // than asked of every clip.
+    val meshRefreshMs = if (canvas?.source == CanvasSource.SPOTIFY) 3_000L else null
     LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow) {
         if (!canvasAllowedNow) {
             canvas = null
@@ -1100,6 +1105,7 @@ fun NowPlayingScreen(
                         isPlaying = isPlaying,
                         onRenderedChanged = { canvasRendered = it },
                         onFrameCaptured = { canvasFrame = it },
+                        refreshFrameEveryMs = meshRefreshMs,
                         onCoverChanged = { canvasCover.floatValue = it },
                         bottomFade = HERO_FADE_FRACTION,
                         modifier = Modifier
@@ -1541,6 +1547,7 @@ fun NowPlayingScreen(
                                     isPlaying = isPlaying,
                                     onRenderedChanged = { canvasRendered = it },
                                     onFrameCaptured = { canvasFrame = it },
+                                    refreshFrameEveryMs = meshRefreshMs,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -1844,7 +1851,6 @@ fun NowPlayingScreen(
                     ?.takeIf { !scrubbing && it.end > it.start }
                     ?.let { it.start..it.end },
             )
-            val losslessOn by AppSettings.losslessAudio.collectAsStateWithLifecycle()
             val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
             val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
             val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
@@ -1853,7 +1859,7 @@ fun NowPlayingScreen(
             // makes, mirrored here so "Loading lossless" only appears when a
             // lossless fetch is actually in flight, not on every buffering
             // YouTube track.
-            val losslessRequested = losslessOn &&
+            val losslessRequested =
                 (if (metered == true) cellularQuality else wifiQuality) == AudioQuality.HIGH
             // Whether a module is still racing YouTube for this exact track —
             // see [NerdStats.racingLossless]. YouTube can win that race and
@@ -3947,7 +3953,26 @@ private fun LosslessOrStats(
         // [stillRacing] — earns this label.
         (stillRacing && nerdStats?.isLossless != true) ||
             (isLoading && losslessRequested && nerdStats == null) -> LosslessLabel(
-            text = "Upgrading Quality",
+            // What is already true, ahead of what is still being looked for.
+            // A race running over JioSaavn's 320kbps AAC and one running over
+            // YouTube's 160kbps Opus were both drawn as a bare "Upgrading
+            // Quality", which reads as "this is not good yet" — wrong on the
+            // first, where the track is already at the top of what lossy gets
+            // and the search is only chasing a lossless copy that may not
+            // exist. Naming the floor first makes the label describe a track
+            // rather than a wait.
+            //
+            // Decided on [NerdStats.Snapshot.isHiQuality] rather than on which
+            // source won, for the reason that property already gives: a
+            // 320kbps stream is a 320kbps stream wherever it came from. It
+            // reads the claimed rate when nothing is measured yet, so a
+            // JioSaavn stream qualifies from its first frame; YouTube's Opus
+            // sits under the threshold and keeps the plain label it had.
+            text = if (nerdStats?.isHiQuality == true) {
+                "Hi-Quality, Upgrading Quality"
+            } else {
+                "Upgrading Quality"
+            },
             animated = false,
             modifier = modifier,
         )

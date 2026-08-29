@@ -66,10 +66,15 @@ import java.util.Locale
 @Composable
 fun SourcesScreen(
     contentPadding: PaddingValues,
+    /**
+     * Asks the activity to put the custom-module alert up. Raised rather than
+     * shown here so its scrim covers the tab bar and the mini player, the same
+     * way every other alert in the app is hosted — see [DiscordDialogHost].
+     */
+    onEditCustomModule: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val configs by SourceRegistry.configs.collectAsStateWithLifecycle()
-    val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
@@ -79,25 +84,31 @@ fun SourcesScreen(
     var editing by remember { mutableStateOf<SourceConfig?>(null) }
     val scope = rememberCoroutineScope()
 
+    // Only still singled out because it is the one kind that can be *added* —
+    // every other use of it below now goes through the list as a whole.
     val module = configs.firstOrNull { it.kind == SourceKind.MODULE }
-    val youtube = configs.first { it.kind == SourceKind.YOUTUBE }
+    val custom = configs.firstOrNull { it.kind == SourceKind.CUSTOM_MODULE }
 
-    // Re-probed whenever the module config changes — which is when its
-    // answer could have changed and when the user is most likely to be
-    // looking.
-    LaunchedEffect(module?.id, module?.baseUrl) {
-        val config = module ?: return@LaunchedEffect
-        val source = SourceRegistry.instance(config.id) ?: return@LaunchedEffect
-        if (!config.isComplete) return@LaunchedEffect
-        health[config.id] = withContext(Dispatchers.IO) {
-            runCatching { source.health() }
-                .getOrElse { SourceHealth.Unreachable(it.message ?: "Failed") }
+    // Every source that has a server to reach is probed, not just the built-in
+    // module, so a custom index gets the same reachability line — which is the
+    // only feedback that a URL just typed in was any good.
+    val probeKey = configs.filter { it.kind.needsServer }.joinToString { "${it.id}@${it.baseUrl}" }
+    LaunchedEffect(probeKey) {
+        configs.filter { it.kind.needsServer && it.isComplete }.forEach { config ->
+            val source = SourceRegistry.instance(config.id) ?: return@forEach
+            health[config.id] = withContext(Dispatchers.IO) {
+                runCatching { source.health() }
+                    .getOrElse { SourceHealth.Unreachable(it.message ?: "Failed") }
+            }
         }
     }
 
     /** Whether the ceiling in force right now would cap a lossless stream anyway. */
     val cappedByQuality = (if (metered == true) cellularQuality else wifiQuality) != AudioQuality.HIGH
-    val anyLosslessSource = module?.enabled == true && module.isComplete
+    // Asked of the kinds themselves rather than of the module specifically, so
+    // a source added later answers this on its own terms instead of being
+    // invisible to it.
+    val anyLosslessSource = configs.any { it.enabled && it.isComplete && it.kind.canServeLossless }
 
     Column(
         modifier = modifier
@@ -113,77 +124,60 @@ fun SourcesScreen(
         )
 
         SettingsGroup(
-            header = "Lossless audio",
-            // Said plainly because the alternative is a switch that appears to
-            // do something and doesn't. YouTube publishes no lossless
-            // rendition of anything, so on a stock install this toggle is
-            // inert until a module source that can serve lossless is added
-            // below.
-            footer = when {
-                !anyLosslessSource ->
-                    "Nothing enabled below can serve lossless yet. Add a module source below, " +
-                        "and tracks it holds a lossless rendition of will play as the file itself " +
-                        "rather than as a transcode."
-                cappedByQuality ->
-                    "Currently overridden for playback: the quality ceiling for this connection " +
-                        "is set below High, and that budget wins. Tracks are being transcoded. " +
-                        "Downloads are unaffected — they keep whatever Settings › Downloads asks for."
-                else ->
-                    "Asks the module source for the file it holds instead of a transcode of it. " +
-                        "Costs considerably more data than High, and does nothing when it has no " +
-                        "lossless rendition to give. Applies to playback; what a saved file keeps " +
-                        "is set by Download quality in Settings."
+            header = "Sources — tried in this order",
+            footer = buildString {
+                append(
+                    "A source that doesn't have the track, or can't be reached, is " +
+                        "stepped over rather than failing playback — the next one down plays it " +
+                        "instead. Anything ranked above YouTube is offered a YouTube track's " +
+                        "recording first, and keeps it if what it returns is better than what " +
+                        "YouTube would have served.",
+                )
+                if (cappedByQuality) {
+                    append(
+                        "\n\nThe quality ceiling for this connection is set below High, so " +
+                            "everything is being transcoded to fit it — lossless is not being " +
+                            "asked for. Downloads are unaffected.",
+                    )
+                } else if (!anyLosslessSource) {
+                    append(
+                        "\n\nNothing enabled here can serve lossless. Add a custom module below " +
+                            "and tracks it holds a lossless rendition of will play as the file " +
+                            "itself rather than as a transcode.",
+                    )
+                }
             },
         ) {
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = stringResource(R.string.prefer_lossless),
-                subtitle = stringResource(R.string.lossless_source_subtitle),
-                badge = "Overridden".takeIf { lossless && cappedByQuality },
-                trailing = {
-                    Switch(
-                        checked = lossless,
-                        onCheckedChange = AppSettings::setLosslessAudio,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setLosslessAudio(!lossless) },
-            )
-        }
-
-        SettingsGroup(
-            header = "Sources — tried in this order",
-            footer = "A module source that doesn't have the track, or can't be reached, is " +
-                "stepped over rather than failing playback — YouTube Music plays it instead. " +
-                "With lossless on, the module is offered a YouTube track's recording first if " +
-                "it can serve it bit-exact.",
-        ) {
-            if (module != null) {
+            // One loop over the configured sources in the order they are
+            // actually tried, rather than a row per kind with its position
+            // worked out by hand. Every source is listed, numbered, probed and
+            // toggled on identical terms; a kind added later appears here
+            // without this block having to learn about it.
+            val ordered = configs.sortedBy { it.kind.ordinal }
+            ordered.forEachIndexed { index, config ->
+                if (index > 0) RowDivider()
                 SourceRow(
-                    position = 1,
-                    config = module,
-                    health = health[module.id],
-                    onClick = { editing = module },
-                    onToggle = { SourceRegistry.setEnabled(module.id, it) },
-                )
-            } else {
-                SettingsRow(
-                    icon = Icons.Rounded.Add,
-                    title = stringResource(R.string.add_module_source),
-                    subtitle = SourceKind.MODULE.detail,
-                    onClick = { editing = SourceConfig(kind = SourceKind.MODULE) },
+                    position = index + 1,
+                    config = config,
+                    health = health[config.id],
+                    // Only a source with a server to point at has anything to
+                    // edit — see [SourceKind.needsServer].
+                    onClick = if (config.kind.needsServer) ({ editing = config }) else null,
+                    // YouTube gets no switch at all — see
+                    // [SourceRegistry.setEnabled] for why one would be a lie.
+                    onToggle = if (config.kind == SourceKind.YOUTUBE) {
+                        null
+                    } else {
+                        ({ SourceRegistry.setEnabled(config.id, it) })
+                    },
                 )
             }
-            RowDivider()
-            SourceRow(
-                position = if (module != null) 2 else 1,
-                config = youtube,
-                health = null,
-                onClick = null,
-                onToggle = { SourceRegistry.setEnabled(youtube.id, it) },
+            if (ordered.isNotEmpty()) RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Add,
+                title = if (custom == null) "Add custom module" else "Replace custom module",
+                subtitle = custom?.baseUrl ?: SourceKind.CUSTOM_MODULE.detail,
+                onClick = onEditCustomModule,
             )
         }
 
@@ -220,6 +214,7 @@ fun SourcesScreen(
             scope = scope,
         )
     }
+
 }
 
 @Composable
@@ -228,7 +223,8 @@ private fun SourceRow(
     config: SourceConfig,
     health: SourceHealth?,
     onClick: (() -> Unit)?,
-    onToggle: (Boolean) -> Unit,
+    /** Null for a source that cannot be switched off, which gets a label instead. */
+    onToggle: ((Boolean) -> Unit)?,
 ) {
     Row(
         modifier = Modifier
@@ -249,7 +245,9 @@ private fun SourceRow(
         Spacer(Modifier.width(6.dp))
         Icon(
             imageVector = when (config.kind) {
+                SourceKind.CUSTOM_MODULE -> Icons.Rounded.Extension
                 SourceKind.MODULE -> Icons.Rounded.Extension
+                SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },
             contentDescription = null,
@@ -286,14 +284,22 @@ private fun SourceRow(
             )
         }
         Spacer(Modifier.width(8.dp))
-        Switch(
-            checked = config.enabled,
-            onCheckedChange = onToggle,
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedBorderColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
+        if (onToggle == null) {
+            Text(
+                text = "Always on",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Switch(
+                checked = config.enabled,
+                onCheckedChange = onToggle,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        }
     }
 }
 
@@ -349,7 +355,7 @@ private fun ServerEditorDialog(
                 )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = "Paste the URL of a Convx-compatible module index JSON. The index " +
+                    text = "Paste the URL of a compatible module index JSON. The index " +
                         "lists JS plugins that can search and stream from services like Tidal, " +
                         "Lossless, Apple Music and more.",
                     style = MaterialTheme.typography.bodySmall,

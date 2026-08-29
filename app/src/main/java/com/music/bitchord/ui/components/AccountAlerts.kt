@@ -242,6 +242,10 @@ fun TextValueAlert(
     onValueChange: (String) -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
+    /** False greys Save out — for a field that isn't worth saving empty. */
+    saveEnabled: Boolean = true,
+    /** A third action between Save and Cancel, for a value that can be cleared. */
+    onRemove: (() -> Unit)? = null,
 ) {
     AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
         Column(
@@ -272,7 +276,11 @@ fun TextValueAlert(
             )
         }
         AlertRule()
-        AlertAction(label = "Save", emphasised = true, onClick = onSave)
+        AlertAction(label = "Save", emphasised = true, onClick = onSave, enabled = saveEnabled)
+        if (onRemove != null) {
+            AlertRule()
+            AlertAction(label = "Remove", emphasised = false, onClick = onRemove)
+        }
         AlertRule()
         AlertAction(label = "Cancel", emphasised = false, onClick = onDismiss)
     }

@@ -147,7 +147,7 @@ internal object LyricsTag {
      * mid-lookup cannot interrupt a blocking socket read, so the queue still
      * waits out whichever HTTP call is in flight (its own timeouts, not this
      * one) before it moves on. The same is true of the lossless search this
-     * sits beside — see `Downloads.LOSSLESS_LOOKUP_MS`.
+     * sits beside — see `Downloads.SOURCE_LOOKUP_MS`.
      */
     private const val LOOKUP_MS = 15_000L
 }

@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MotionPhotosOff
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
@@ -104,6 +105,7 @@ import androidx.core.os.LocaleListCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.BuildConfig
@@ -141,6 +143,9 @@ fun SettingsScreen(
     onAccountScrobbling: () -> Unit,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
+    onSources: () -> Unit,
+    onSpotifyCanvasAuth: () -> Unit,
+    onAppLanguage: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -167,7 +172,6 @@ fun SettingsScreen(
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
-    val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
@@ -269,58 +273,18 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.language)) {
-            val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
-                ?: Locale.getDefault().language
+        // The row that used to sit at the top of this group was called
+        // "Lossless / HQ Audio" and toggled `SourceRegistry.setModuleEnabled` —
+        // it switched the *module source* on and off, not lossless. Sources
+        // above lists that as the module's own row now. Lossless itself is no
+        // longer a setting at all — see
+        // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow].
+        SettingsGroup(header = "Audio quality") {
             SettingsRow(
-                icon = Icons.Rounded.Language,
-                title = stringResource(R.string.app_language),
-                subtitle = when (selectedLanguage) {
-                    "es" -> stringResource(R.string.spanish)
-                    else -> stringResource(R.string.english)
-                },
-                onClick = { showLanguagePicker = true },
-            )
-        }
-
-        SettingsGroup(header = stringResource(R.string.audio_quality)) {
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = stringResource(R.string.lossless_hq_audio),
-                subtitle = if (!losslessConfigured) null else
-                    if (moduleEnabled) "Turn off if its playing a different version of the song or another song. Restart Required!"
-                    else "Turn on to experience lossless music quality. Restart Required!",
-                subtitleContent = if (!losslessConfigured) {
-                    {
-                        Text(
-                            text = "Lossless is not working — make sure the app is downloaded from the official source",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else null,
-                trailing = {
-                    Switch(
-                        checked = moduleEnabled && losslessConfigured,
-                        onCheckedChange = {
-                            if (losslessConfigured) {
-                                SourceRegistry.setModuleEnabled(it)
-                                AudioCache.clear {}
-                            }
-                        },
-                        enabled = losslessConfigured,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = {
-                    if (losslessConfigured) {
-                        SourceRegistry.setModuleEnabled(!moduleEnabled)
-                        AudioCache.clear {}
-                    }
-                },
+                icon = Icons.Rounded.Extension,
+                title = "Sources",
+                subtitle = "Where audio comes from, and in what order",
+                onClick = onSources,
             )
             RowDivider()
             SettingsRow(
@@ -571,6 +535,23 @@ fun SettingsScreen(
                     checked = canvasOverCellular,
                     onCheckedChange = AppSettings::setCanvasOverCellular,
                 )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onSpotifyCanvasAuth)
+                        .padding(start = ROW_INSET, end = ROW_INSET, top = 4.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Integrate Spotify Canvas",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Chevron()
+                }
             }
             RowDivider()
             SettingsRow(
@@ -770,6 +751,17 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
+            )
+        }
+
+        SettingsGroup(header = stringResource(R.string.language)) {
+            val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
+                ?: Locale.getDefault().language
+            SettingsRow(
+                icon = Icons.Rounded.Language,
+                title = stringResource(R.string.app_language),
+                subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
+                onClick = onAppLanguage,
             )
         }
 
@@ -976,27 +968,6 @@ fun SettingsScreen(
         )
     }
 
-    if (showLanguagePicker) {
-        AlertDialog(
-            onDismissRequest = { showLanguagePicker = false },
-            title = { Text(stringResource(R.string.app_language)) },
-            text = { Text(stringResource(R.string.app_language_description)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("es"))
-                }) {
-                    Text(stringResource(R.string.spanish))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
-                }) {
-                    Text(stringResource(R.string.english))
-                }
-            },
-        )
-    }
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */

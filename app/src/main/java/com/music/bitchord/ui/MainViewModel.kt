@@ -53,6 +53,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.StreamChoice
 import java.util.concurrent.atomic.AtomicLong
 import java.util.Locale
 
@@ -899,7 +902,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             // drop(1): the current value is just the count so far, not a play.
             PlaybackTracker.registeredPlays.drop(1).collect { homeStale = true }
         }
-        viewModelScope.launch { AppUpdateChecker.check() }
+        viewModelScope.launch {
+            // A leftover APK only means "Install Now" for the session that
+            // downloaded it — see AppUpdateChecker.clearCache.
+            AppUpdateChecker.clearCache(getApplication())
+            AppUpdateChecker.check()
+        }
     }
 
     /**
@@ -1334,7 +1342,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val song = rows.filterIsInstance<SearchResult.Track>().firstOrNull()?.song ?: return
         viewModelScope.launch {
             runCatching {
-                StreamResolver.resolve(YtMusicRepository.resolveAudio(song).videoId)
+                val audio = YtMusicRepository.resolveAudio(song)
+                // A source-backed row resolves through its own source already
+                // and never takes the YouTube path — warming either half of
+                // this for one would be work nothing asks for.
+                if (SourceRegistry.parseTrackKey(audio.videoId) != null) return@runCatching
+                // JioSaavn first, on the same reasoning as the queue's
+                // read-ahead: it is the copy that will actually be played if it
+                // has the track, so warming YouTube's URL instead warms the one
+                // that loses. Pinned through [StreamChoice] so playback opens
+                // this very stream rather than racing for it again — see
+                // [SourceResolver.prefetchSubstitute], which requires it.
+                val warmed = SourceResolver.prefetchSubstitute(
+                    TrackMatcher.Target(
+                        title = audio.title,
+                        artist = audio.artist,
+                        durationSec = TrackMatcher.secondsOf(audio.durationText),
+                    ),
+                )
+                if (warmed != null) {
+                    StreamChoice.remember(audio.videoId, warmed, substituted = true)
+                    return@runCatching
+                }
+                // Disabled, or hasn't got it: the tap path falls back to
+                // YouTube, so that is what is worth having ready.
+                StreamResolver.resolve(audio.videoId)
             }
         }
     }
@@ -1428,6 +1460,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var suggested: List<Song> = emptyList()
             /** Whether this release is already saved — see [DetailPage.library]. */
             var library: LibraryState? = null
+            /** YouTube's own "About" blurb — see [DetailPage.description]. */
+            var description: String? = null
+            /** Artist header stats — see [DetailPage.subscriberCountText]. */
+            var subscriberCountText: String? = null
+            var monthlyListenerCount: String? = null
             val state = when {
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
@@ -1455,6 +1492,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             sections = page.sections
                             artwork = page.thumbnailUrl
                             name = page.name
+                            description = page.description
+                            subscriberCountText = page.subscriberCountText
+                            monthlyListenerCount = page.monthlyListenerCount
                             if (page.songs.isEmpty()) {
                                 UiState.Error(NO_TRACKS)
                             } else {
@@ -1480,6 +1520,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 if (subtitle.isBlank()) credit = header.subtitle
                                 if (thumbnailUrl == null) artwork = header.thumbnailUrl
                             }
+                            description = page.description
                             if (page.songs.isEmpty()) {
                                 UiState.Error(NO_TRACKS)
                             } else {
@@ -1504,6 +1545,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         subtitle = credit ?: it.subtitle,
                         suggestedSongs = suggested,
                         library = library,
+                        description = description,
+                        subscriberCountText = subscriberCountText,
+                        monthlyListenerCount = monthlyListenerCount,
                     )
                 } else {
                     it

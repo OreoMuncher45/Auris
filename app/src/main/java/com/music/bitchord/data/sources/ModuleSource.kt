@@ -17,7 +17,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.Locale
 
 /**
- * A [MusicSource] backed by one or more Convx-compatible JS module plugins.
+ * A [MusicSource] backed by one or more compatible JS module plugins.
  *
  * The [config]'s [SourceConfig.baseUrl] points at a module-index JSON
  * (e.g. `https://example.com/index.json`). That index lists `SpineModule`
@@ -430,7 +430,7 @@ class ModuleSource(
         }
 
         /**
-         * The three tiers every Convx-compatible module speaks, whatever it
+         * The three tiers every compatible module speaks, whatever it
          * calls them on the way out: `LOSSLESS`, `FLAC 16-bit / 44.1kHz` and
          * `hires-96` are one tier; `320kbps` and `HIGH` are another.
          */

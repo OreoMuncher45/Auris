@@ -6,6 +6,16 @@ import java.text.Normalizer
 import java.util.Locale
 
 /**
+ * Which provider a clip came from — read in one place, by
+ * [CanvasArtworkPlayer][com.music.bitchord.ui.player.CanvasArtworkPlayer]'s
+ * caller, to decide whether the backdrop should keep re-tinting itself off
+ * the clip as it loops rather than settling on its first frame. See that
+ * call site for why Spotify's Canvas gets the periodic re-tint and the other
+ * three don't.
+ */
+enum class CanvasSource { SPOTIFY, OTHER }
+
+/**
  * A looping video that stands in for a track's cover art — what Spotify calls
  * a Canvas and Apple calls motion artwork.
  *
@@ -21,6 +31,7 @@ data class CanvasArtwork(
     val title: String? = null,
     val artist: String? = null,
     val album: String? = null,
+    val source: CanvasSource = CanvasSource.OTHER,
 ) {
     /**
      * Whether this clip really belongs to the track we asked about.
@@ -95,6 +106,22 @@ internal fun canvasGet(url: String, headers: Map<String, String> = emptyMap()): 
             if (response.isSuccessful) response.body?.string() else null
         }
     }.getOrNull()
+}
+
+/**
+ * Same as [canvasGet], but keeps the status code even on failure — for the
+ * few callers where "it wasn't a 2xx" needs to say *which* code, rather than
+ * collapsing every kind of failure into the same null.
+ */
+internal fun canvasGetWithStatus(url: String, headers: Map<String, String> = emptyMap()): Pair<Int, String?> {
+    val request = Request.Builder().url(url).apply {
+        headers.forEach { (name, value) -> header(name, value) }
+    }.build()
+    return runCatching {
+        Http.client.newCall(request).execute().use { response ->
+            response.code to if (response.isSuccessful) response.body?.string() else null
+        }
+    }.getOrDefault(-1 to null)
 }
 
 /** The browser UA these catalog endpoints expect; they 403 an unknown one. */

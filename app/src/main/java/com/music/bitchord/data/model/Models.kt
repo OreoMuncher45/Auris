@@ -211,6 +211,16 @@ data class DetailPage(
      * album or playlist fetched with a session; see [LibraryState].
      */
     val library: LibraryState? = null,
+    /**
+     * The editorial blurb YouTube Music writes for a release or an artist —
+     * absent for most playlists, which is also why the "About" section only
+     * ever shows for an album or an artist page.
+     */
+    val description: String? = null,
+    /** "1.2M subscribers" off an artist page's header — see [ArtistPage.subscriberCountText]. */
+    val subscriberCountText: String? = null,
+    /** "3.4M monthly listeners" off an artist page's header. */
+    val monthlyListenerCount: String? = null,
 )
 
 /**
@@ -237,6 +247,12 @@ data class ArtistPage(
     val thumbnailUrl: String? = null,
     /** The single artist this page is for, as the header bills them. */
     val name: String? = null,
+    /** The artist bio YouTube Music writes for the page, when it has one. */
+    val description: String? = null,
+    /** "1.2M subscribers" — the artist's YouTube channel, when subscribed counts are shown. */
+    val subscriberCountText: String? = null,
+    /** "3.4M monthly listeners", off the same header. */
+    val monthlyListenerCount: String? = null,
 )
 
 /**

@@ -303,6 +303,12 @@ object YtMusicRepository {
          * continuation, which carries rows and no header.
          */
         val header: InnertubeParser.BrowseHeader? = null,
+        /**
+         * The editorial blurb YouTube Music writes for the release, when it
+         * has one — see [InnertubeParser.parseDescription]. Null from a
+         * continuation, same as [header].
+         */
+        val description: String? = null,
     )
 
     /**
@@ -360,6 +366,7 @@ object YtMusicRepository {
             continuation = InnertubeParser.continuationToken(response),
             library = library,
             header = header,
+            description = InnertubeParser.parseDescription(response),
         )
     }
 

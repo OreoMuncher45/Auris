@@ -89,6 +89,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.YtMusicLoginScreen
+import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
@@ -111,13 +112,14 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.SourcesScreen
+import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.autoplaySectionStart
-import com.music.bitchord.playback.dropAutoplayTracks
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toggleAutoplay
@@ -139,12 +141,15 @@ import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
+import com.music.bitchord.ui.components.TextValueAlert
 import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
+import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -275,11 +280,19 @@ private fun BitChordApp(
     /** Which story card the share sheet is for, or null for the whole Replay. */
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
+    var showSources by remember { mutableStateOf(false) }
+    var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
+    
+    // Hosted here rather than inside SourcesScreen so its scrim covers the tab
+    // bar and mini player, like every other alert in the app.
+    var customModuleAlert by remember { mutableStateOf(false) }
+    var customModuleInput by remember { mutableStateOf("") }
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
     var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
     var showLyricsSources by remember { mutableStateOf(false) }
+    var showAppLanguage by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
     /**
@@ -1165,13 +1178,11 @@ private fun BitChordApp(
                         Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
                         else -> Player.REPEAT_MODE_OFF
                     }
-                    // Repeat-all loops the queue as it stands; AutoPlay's
-                    // tracks are the opposite of that — an endless supply
-                    // of new ones — so they come back out first. Native
-                    // REPEAT_MODE_ALL then wraps a plain queue exactly as
-                    // it should, and the service's AutoPlay loader leaves
-                    // it be for as long as repeat-all stays on.
-                    if (next == Player.REPEAT_MODE_ALL) it.dropAutoplayTracks()
+                    // Nothing else to do here: PlaybackService watches the
+                    // repeat mode itself and takes AutoPlay's tracks out of
+                    // the queue for the duration of repeat-all — and, unlike
+                    // this screen, is still around to put them back when the
+                    // loop ends.
                     it.repeatMode = next
                 }
             },
@@ -1238,7 +1249,8 @@ private fun BitChordApp(
             showReplay = false
         }
         BackHandler(
-            enabled = detail != null && !showSettings && !showAccountScrobbling && !showReplay,
+            enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources &&
+                !showReplay,
         ) { viewModel.closeDetail() }
         BackHandler(enabled = showDiscord) {
             showDiscord = false
@@ -1246,10 +1258,13 @@ private fun BitChordApp(
         BackHandler(enabled = showAccountScrobbling && !showDiscord) {
             showAccountScrobbling = false
         }
+        BackHandler(enabled = showSources) {
+            showSources = false
+        }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showAccountScrobbling) {
+        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources) {
             showSettings = false
             // Only when Settings was the whole of what was on screen. Opened
             // over Replay or over a release page, closing it reveals that again
@@ -1258,7 +1273,7 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling &&
-                !showReplay && selectedTab != TAB_HOME,
+                !showSources && !showReplay && selectedTab != TAB_HOME,
         ) {
             selectedTab = TAB_HOME
         }
@@ -1266,6 +1281,7 @@ private fun BitChordApp(
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
+        BackHandler(enabled = customModuleAlert) { customModuleAlert = false }
         BackHandler(enabled = showHistory) { showHistory = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
@@ -1291,6 +1307,7 @@ private fun BitChordApp(
                         // rather than keep showing the grid underneath.
                         libraryShowAll != null && detail == null -> "library_show_all"
                         showAccountScrobbling -> "account_scrobbling"
+                        showSources -> "sources"
                         // Above Replay, not below it. The top bar's account
                         // button sets `showSettings` from every page including
                         // this one, so with Replay winning the tie the button
@@ -1310,8 +1327,21 @@ private fun BitChordApp(
                     // window and the switch dips through a dimmer frame in the
                     // middle. Pushing a page or raising Settings is a real
                     // change of context and keeps the fade.
+                    //
+                    // "Show all" swapping with the Library tab underneath it is
+                    // the same case as a tab swap, not a pushed page: it's still
+                    // that tab, just laid out as a grid instead of a row, sharing
+                    // its background rather than painting its own — so this one
+                    // pair gets the tab's no-fade swap too, in both directions, or
+                    // the dip through a dim frame shows up on every hold of a
+                    // card there. A card opened *from* the grid is a real page
+                    // and keeps the fade, same as one opened from the row.
                     transitionSpec = {
-                        if (initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)) {
+                        val tabSwap = initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)
+                        val libraryTabKey = "$TAB_KEY$TAB_LIBRARY"
+                        val libraryShowAllSwap = (initialState == "library_show_all" && targetState == libraryTabKey) ||
+                            (targetState == "library_show_all" && initialState == libraryTabKey)
+                        if (tabSwap || libraryShowAllSwap) {
                             EnterTransition.None togetherWith ExitTransition.None
                         } else {
                             fadeIn(tween(180)) togetherWith fadeOut(tween(180))
@@ -1416,6 +1446,14 @@ private fun BitChordApp(
                             onOpenDiscord = { showDiscord = true },
                             contentPadding = listPadding,
                         )
+                    } else if (key == "sources") {
+                        SourcesScreen(
+                            contentPadding = listPadding,
+                            onEditCustomModule = {
+                                customModuleInput = SourceRegistry.customModule()?.baseUrl.orEmpty()
+                                customModuleAlert = true
+                            },
+                        )
                     } else if (key == "settings") {
                         SettingsScreen(
                             windowWidth = windowWidth,
@@ -1432,6 +1470,9 @@ private fun BitChordApp(
                                 showReplay = true
                             },
                             onLyricsSources = { showLyricsSources = true },
+                            onSources = { showSources = true },
+                            onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
+                            onAppLanguage = { showAppLanguage = true },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -1534,28 +1575,14 @@ private fun BitChordApp(
                                 }
                             },
                             onSectionItemLongPress = onBrowseLongPress,
-                            // The page names what it is, so a download from here
-                            // is recorded as the release rather than as its rows.
-                            // Only for something with a running order: an artist
-                            // page is a selection of their work, and grouping the
-                            // Downloads folder under "Radiohead" would be filing
-                            // an artist as an album.
-                            onDownloadAll = { songs ->
-                                startDownload(
-                                    songs.map(withAlbum),
-                                    DownloadTarget(
-                                        id = page.browseId,
-                                        title = page.title,
-                                        subtitle = page.subtitle,
-                                        thumbnailUrl = page.thumbnailUrl,
-                                        playlist = page.type == BrowseType.PLAYLIST,
-                                    ).takeIf { page.type != BrowseType.ARTIST },
-                                )
-                            },
                             // The page's own tracks, so the sheet has them already and
                             // Play, Shuffle and Open are the buttons beside the one that
-                            // opened it rather than rows on it.
-                            onMore = { songs, highlightDeleteDownload ->
+                            // opened it rather than rows on it. Download is the other
+                            // way round: the header no longer carries it, so the sheet
+                            // is where a whole release is asked for — and the tracks
+                            // arrive stamped with the album they came off, which is what
+                            // the download record groups them under.
+                            onMore = { songs ->
                                 browseActions = BrowseTarget(
                                     browseId = page.browseId,
                                     title = page.title,
@@ -1565,7 +1592,6 @@ private fun BitChordApp(
                                     songs = songs.map(withAlbum),
                                     fromCard = false,
                                     downloadId = downloadIdFor(page.browseId),
-                                    highlightDeleteDownload = highlightDeleteDownload,
                                 )
                             },
                             onArtistClick = { id, name ->
@@ -1738,7 +1764,7 @@ private fun BitChordApp(
                 // Every top bar is a fade rather than a pane — see [TopFadeBlur].
                 // Drawn before the bar so the bar's own content sits on top of it.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
-                    !showAccountScrobbling && !showReplay
+                    !showAccountScrobbling && !showSources && !showReplay
                 TopFadeBlur(
                     hazeState = hazeState,
                     // Replay paints its own full-bleed black backdrop up under the
@@ -1762,6 +1788,7 @@ private fun BitChordApp(
                         showHistory -> "History"
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> "Account & scrobbling"
+                        showSources -> "Sources"
                         showSettings -> "Settings"
                         showReplay -> "Replay"
                         detail != null -> detail.title
@@ -1772,7 +1799,7 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
-                        showSettings || showAccountScrobbling || showDiscord || showHistory ||
+                        showSettings || showAccountScrobbling || showSources || showDiscord || showHistory ||
                             (libraryShowAll != null && detail == null) -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
@@ -1787,6 +1814,7 @@ private fun BitChordApp(
                         showHistory -> ({ showHistory = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({ showAccountScrobbling = false })
+                        showSources -> ({ showSources = false })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
@@ -1796,11 +1824,9 @@ private fun BitChordApp(
                     actions = {
                         // Only worth surfacing where there's room for it and it won't
                         // be mistaken for a per-page action — Home, at rest.
-                        if (!showSettings && !showAccountScrobbling && detail == null && selectedTab == TAB_HOME) {
+                        if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
                             updateNotice?.let { update ->
-                                IconButton(onClick = {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
-                                }) {
+                                IconButton(onClick = { showUpdateDialog = true }) {
                                     Icon(
                                         Icons.Rounded.SystemUpdate,
                                         contentDescription = "Update available: v${update.version}",
@@ -2180,6 +2206,8 @@ private fun BitChordApp(
                 ?.takeIf { signedIn && ownedPlaylists[it] == true }
                 ?.let { id -> playlists.firstOrNull { it.browseId == id } }
             val remote = target.browseId?.startsWith("local:") == false
+            val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
+            val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
             ModalBottomSheet(
                 onDismissRequest = { browseActions = null },
                 containerColor = MaterialTheme.colorScheme.background,
@@ -2211,10 +2239,13 @@ private fun BitChordApp(
                                 )
                             }
                         },
-                    // The page already has a download button, and nothing on
-                    // this device needs fetching to be on it. What the card
-                    // carries that the tracks don't is the release's own name
-                    // and cover, which is exactly what the record wants.
+                    // The one place a whole release is asked for, from a card and
+                    // from the release's own page alike — its header spends that
+                    // spot on the search now. Nothing on this device needs
+                    // fetching to be on it, so a local page is the exception.
+                    // What the target carries that the tracks don't is the
+                    // release's own name and cover, which is exactly what the
+                    // record wants.
                     onDownloadAll = act { songs ->
                         startDownload(
                             songs,
@@ -2230,7 +2261,21 @@ private fun BitChordApp(
                                     )
                                 },
                         )
-                    }.takeIf { target.fromCard && remote },
+                    }.takeIf { remote },
+                    isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
+                    onTogglePin = pinnableId?.let { id ->
+                        {
+                            val nowPinned = AppSettings.togglePinnedPlaylist(id)
+                            if (!nowPinned && id !in pinnedPlaylists) {
+                                Toast.makeText(
+                                    context,
+                                    "Only ${AppSettings.MAX_PINNED_PLAYLISTS} playlists can be pinned",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            browseActions = null
+                        }
+                    },
                     onRename = playlist?.let { p ->
                         { name: String ->
                             browseActions = null
@@ -2294,9 +2339,29 @@ private fun BitChordApp(
             updateNotice?.let { update ->
                 UpdateAvailableDialog(
                     version = update.version,
+                    notes = update.notes,
                     hazeState = hazeState,
+                    // A download in progress keeps running behind the closed
+                    // sheet — only the sheet itself goes away. The top bar's
+                    // update icon reopens it onto whatever state it reached.
                     onDismiss = { showUpdateDialog = false },
-                    onUpdate = {
+                    onDownload = {
+                        if (update.apkUrl != null) {
+                            scope.launch { AppUpdateChecker.downloadApk(context) }
+                        } else {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
+                            showUpdateDialog = false
+                        }
+                    },
+                    onCancelDownload = {
+                        AppUpdateChecker.cancelDownload()
+                    },
+                    onInstall = {
+                        val ready = AppUpdateChecker.download.value as? AppUpdateChecker.DownloadState.Ready
+                        ready?.let { AppUpdateChecker.installApk(context, it.file) }
+                    },
+                    onOpenReleasePage = {
+                        AppUpdateChecker.resetDownload()
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
                         showUpdateDialog = false
                     },
@@ -2309,6 +2374,14 @@ private fun BitChordApp(
             LyricsSourcesDialog(
                 hazeState = hazeState,
                 onDismiss = { showLyricsSources = false },
+            )
+        }
+
+        if (showAppLanguage) {
+            BackHandler { showAppLanguage = false }
+            AppLanguageDialog(
+                hazeState = hazeState,
+                onDismiss = { showAppLanguage = false },
             )
         }
 
@@ -2404,11 +2477,45 @@ private fun BitChordApp(
             }
         }
 
+        if (showSpotifyCanvasAuth) {
+            BackHandler { showSpotifyCanvasAuth = false }
+            SpotifyCanvasAuthScreen(
+                onNavigateUp = { showSpotifyCanvasAuth = false }
+            )
+        }
+
         discordDialog?.let { which ->
             DiscordDialogHost(
                 which = which,
                 hazeState = hazeState,
                 onDismiss = { discordDialog = null },
+            )
+        }
+
+        if (customModuleAlert) {
+            val existing = SourceRegistry.customModule()
+            TextValueAlert(
+                hazeState = hazeState,
+                title = "Custom module",
+                message = "A compatible module index, tried ahead of the built-in one. " +
+                    "Only one at a time — saving replaces the current one.",
+                placeholder = "Module index URL",
+                value = customModuleInput,
+                onValueChange = { customModuleInput = it },
+                saveEnabled = customModuleInput.isNotBlank(),
+                onSave = {
+                    SourceRegistry.setCustomModule(customModuleInput)
+                    customModuleAlert = false
+                },
+                onRemove = if (existing != null) {
+                    {
+                        SourceRegistry.setCustomModule("")
+                        customModuleAlert = false
+                    }
+                } else {
+                    null
+                },
+                onDismiss = { customModuleAlert = false },
             )
         }
     }
