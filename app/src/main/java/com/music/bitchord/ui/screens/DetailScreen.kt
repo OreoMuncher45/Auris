@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.R
+
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -50,6 +52,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
@@ -73,7 +77,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -104,6 +107,7 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.theme.ArtworkPalette
+import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlin.math.roundToInt
 import java.util.Locale
@@ -251,9 +255,7 @@ fun DetailScreen(
     // The credit line the header shows is the artist as far as the catalogue
     // services are concerned. A browse card's subtitle sometimes omits it, in
     // which case the tracks themselves know who it is.
-    val credit = remember(page.subtitle, songs) {
-        page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
-    }
+    val credit = page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
     var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
     LaunchedEffect(page.browseId, page.title, credit, canvasEnabled) {
         if (!canvasEnabled || page.type != BrowseType.ALBUM) {
@@ -388,7 +390,9 @@ fun DetailScreen(
             ) {
                 item(key = "about") {
                     AboutSection(
-                        title = if (isArtist) "About the artist" else "About the album",
+                        title = stringResource(
+                            if (isArtist) R.string.about_artist else R.string.about_album,
+                        ),
                         text = page.description,
                         palette = palette,
                     )
@@ -403,7 +407,7 @@ fun DetailScreen(
                     // it pages sideways four at a time and stops at twenty.
                     item {
                         val top = state.data.take(MAX_ARTIST_SONGS)
-                        SectionHeading("Top songs", palette)
+                        SectionHeading(stringResource(R.string.top_songs), palette)
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -430,7 +434,7 @@ fun DetailScreen(
                     val numbered = page.type == BrowseType.ALBUM
                     if (matches.isEmpty() && state.data.isNotEmpty()) {
                         item(key = "no-matches") {
-                            MessageState("Nothing here matches “$query”")
+                            MessageState(stringResource(R.string.nothing_matches, query))
                         }
                     }
                     itemsIndexed(matches) { position, entry ->
@@ -470,7 +474,7 @@ fun DetailScreen(
             // into the list above — see [DetailPage.suggestedSongs].
             if (suggested.isNotEmpty()) {
                 item(key = "suggested-heading") {
-                    SectionHeading("Suggested", palette)
+                    SectionHeading(stringResource(R.string.suggested), palette)
                 }
                 itemsIndexed(
                     suggested,
@@ -652,9 +656,9 @@ private fun ReleaseHeader(
                             // "not yet / done", which is what the state is.
                             icon = if (library.saved) BitChordIcons.Check else BitChordIcons.Plus,
                             contentDescription = if (library.saved) {
-                                "Remove from library"
+                                stringResource(R.string.remove_from_library)
                             } else {
-                                "Add to library"
+                                stringResource(R.string.add_to_library)
                             },
                             palette = palette,
                             onClick = { onToggleLibrary?.invoke() },
@@ -664,7 +668,7 @@ private fun ReleaseHeader(
                     }
                     CircleIconButton(
                         icon = BitChordIcons.Shuffle,
-                        contentDescription = "Shuffle",
+                        contentDescription = stringResource(R.string.shuffle),
                         palette = palette,
                         onClick = onShuffle,
                         haptic = Haptic.Resume,
@@ -686,7 +690,9 @@ private fun ReleaseHeader(
                     // the download moved to the overflow beside it.
                     CircleIconButton(
                         icon = if (searching) Icons.Rounded.Close else BitChordIcons.Search,
-                        contentDescription = if (searching) "Close search" else "Search this list",
+                        contentDescription = stringResource(
+                            if (searching) R.string.close_search else R.string.search_this_list,
+                        ),
                         palette = palette,
                         onClick = onSearch,
                         size = circleSize,
@@ -694,7 +700,7 @@ private fun ReleaseHeader(
                     onMore?.let { more ->
                         CircleIconButton(
                             icon = Icons.Rounded.MoreHoriz,
-                            contentDescription = "More",
+                            contentDescription = stringResource(R.string.more),
                             palette = palette,
                             onClick = { more(songs) },
                             size = circleSize,
@@ -760,7 +766,7 @@ private fun DetailSearchField(
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
-                    text = "Search this ${type.label?.lowercase(Locale.ROOT) ?: "list"}",
+                    text = stringResource(R.string.search_this_list),
                     style = MaterialTheme.typography.bodyLarge,
                     color = palette.onBackgroundVariant,
                     maxLines = 1,
@@ -790,7 +796,9 @@ private fun DetailSearchField(
         ) {
             Icon(
                 imageVector = Icons.Rounded.Close,
-                contentDescription = if (query.isEmpty()) "Close search" else "Clear search",
+                contentDescription = stringResource(
+                    if (query.isEmpty()) R.string.close_search else R.string.clear_search,
+                ),
                 tint = palette.onBackgroundVariant,
                 modifier = Modifier.size(17.dp),
             )
@@ -981,7 +989,7 @@ private fun MergeBand(
                         ).roundToInt(),
                 )
             }
-            .hazeEffect(hazeState) {
+            .optimizedHazeEffect(hazeState) {
                 // Without this the band draws nothing at all.
                 //
                 // Haze defaults to only blurring sources *below* it, which it
@@ -1062,7 +1070,7 @@ private fun ActionRow(
         // Circular Shuffle button
         CircleIconButton(
             icon = BitChordIcons.Shuffle,
-            contentDescription = "Shuffle",
+            contentDescription = stringResource(R.string.shuffle),
             palette = palette,
             onClick = onShuffle,
             haptic = Haptic.Resume,
@@ -1112,7 +1120,7 @@ private fun PlayPill(
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text = "Play",
+            text = stringResource(R.string.play),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -1186,14 +1194,14 @@ private fun ArtistStatsRow(
         subscriberCountText?.let {
             StatChip(
                 icon = Icons.Rounded.Person,
-                text = "${it.substringBefore(' ')} subscribers",
+                text = stringResource(R.string.subscribers, it.substringBefore(' ')),
                 palette = palette,
             )
         }
         monthlyListenerCount?.let {
             StatChip(
                 icon = Icons.Rounded.GraphicEq,
-                text = "${it.substringBefore(' ')} monthly listeners",
+                text = stringResource(R.string.monthly_listeners, it.substringBefore(' ')),
                 palette = palette,
             )
         }
@@ -1265,7 +1273,7 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
         )
         if (clipped || expanded) {
             Text(
-                text = if (expanded) "Less" else "More",
+                text = stringResource(if (expanded) R.string.less else R.string.more),
                 style = MaterialTheme.typography.labelLarge,
                 color = palette.accent,
                 modifier = Modifier
@@ -1344,7 +1352,7 @@ private fun CompactSongRow(
         ) {
             Icon(
                 Icons.Rounded.MoreVert,
-                contentDescription = "More",
+                contentDescription = stringResource(R.string.more),
                 tint = palette.onBackgroundVariant,
                 modifier = Modifier.size(20.dp),
             )
@@ -1416,7 +1424,7 @@ private fun SuggestedSongRow(
         ) {
             Icon(
                 Icons.Rounded.Add,
-                contentDescription = "Add to playlist",
+                contentDescription = stringResource(R.string.add_to_playlist),
                 tint = palette.accent,
                 modifier = Modifier.size(20.dp),
             )
@@ -1474,16 +1482,19 @@ private fun SectionCard(
  * it: the player knows an album's artist but not its year, search knows both,
  * and a home card frequently knows neither.
  */
+@Composable
 private fun DetailPage.headerLines(trackCount: Int): Pair<String, String> {
     val parts = subtitle.split("•", "·").map { it.trim() }.filter { it.isNotEmpty() }
     val year = parts.lastOrNull { it.length == 4 && it.all(Char::isDigit) }
     val kind = parts.firstOrNull { it.lowercase(Locale.ROOT) in KIND_WORDS }
     val credit = parts.filter { it != year && it != kind }.joinToString(", ")
     val meta = listOfNotNull(
-        kind ?: type.label,
+        kind ?: type.localizedLabel(),
         year,
-        trackCount.takeIf { it > 0 }?.let { "$it ${if (it == 1) "song" else "songs"}" },
-    ).joinToString(" • ").uppercase(Locale.ROOT)
+        trackCount.takeIf { it > 0 }?.let {
+            pluralStringResource(R.plurals.song_count_plural, it, it)
+        },
+    ).joinToString(" • ").uppercase(Locale.getDefault())
     return credit to meta
 }
 
@@ -1492,26 +1503,31 @@ private val KIND_WORDS = setOf(
     "album", "single", "ep", "playlist", "artist", "podcast", "episode", "song", "video",
 )
 
-private val BrowseType.label: String?
-    get() = when (this) {
-        BrowseType.ALBUM -> "Album"
-        BrowseType.PLAYLIST -> "Playlist"
-        BrowseType.ARTIST -> "Artist"
+@Composable
+private fun BrowseType.localizedLabel(): String? = when (this) {
+        BrowseType.ALBUM -> stringResource(R.string.album)
+        BrowseType.PLAYLIST -> stringResource(R.string.playlist)
+        BrowseType.ARTIST -> stringResource(R.string.artist)
         BrowseType.OTHER -> null
     }
 
 /** "12 songs, 41 minutes" — omitting the time when the rows carry no durations. */
+@Composable
 private fun List<Song>.playtimeSummary(): String {
-    val count = "$size ${if (size == 1) "song" else "songs"}"
+    val count = pluralStringResource(R.plurals.song_count_plural, size, size)
     val minutes = sumOf { it.durationText.toSeconds() } / 60
     return when {
         minutes <= 0 -> count
-        minutes < 60 -> "$count, $minutes minutes"
+        minutes < 60 -> stringResource(R.string.song_count_with_minutes, count, minutes)
         else -> {
             val hours = minutes / 60
             val rest = minutes % 60
-            val hourLabel = "$hours ${if (hours == 1) "hour" else "hours"}"
-            if (rest == 0) "$count, $hourLabel" else "$count, $hourLabel $rest minutes"
+            val hourLabel = pluralStringResource(R.plurals.hour_count, hours.toInt(), hours)
+            if (rest == 0) {
+                stringResource(R.string.song_count_with_duration, count, hourLabel)
+            } else {
+                stringResource(R.string.song_count_with_hours_minutes, count, hourLabel, rest)
+            }
         }
     }
 }

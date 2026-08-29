@@ -29,7 +29,19 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Restore stable debug signing key
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.BITCHORD_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$DEBUG_KEYSTORE_BASE64"
+          printf '%s' "$DEBUG_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/bitchord-debug.jks"
+
       - name: Build APK
+        env:
+          BITCHORD_DEBUG_STORE_FILE: ${{ runner.temp }}/bitchord-debug.jks
+          BITCHORD_DEBUG_STORE_PASSWORD: ${{ secrets.BITCHORD_DEBUG_STORE_PASSWORD }}
+          BITCHORD_DEBUG_KEY_ALIAS: ${{ secrets.BITCHORD_DEBUG_KEY_ALIAS }}
+          BITCHORD_DEBUG_KEY_PASSWORD: ${{ secrets.BITCHORD_DEBUG_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon :app:assembleProdDebug

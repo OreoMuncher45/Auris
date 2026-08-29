@@ -3,6 +3,7 @@ package com.music.bitchord.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.music.bitchord.R
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
@@ -588,7 +589,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun createPlaylist(title: String, privacy: PlaylistPrivacy, song: Song? = null) {
         if (!requireSignIn()) return
-        val name = title.trim().ifBlank { "New playlist" }
+        val name = title.trim().ifBlank { text(R.string.new_playlist) }
         viewModelScope.launch {
             YtMusicRepository.createPlaylist(
                 title = name,
@@ -715,7 +716,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * is open — where YouTube itself puts it, so the order survives the next
      * fetch.
      *
-     * An empty playlist counts as open: it renders as [NO_TRACKS], and the
+     * An empty playlist counts as open: it renders as an empty-state message, and the
      * first track added to one has to replace that message rather than be
      * dropped for want of a list to join. Only that message, though — any other
      * error is a page that failed to load, whose real contents are unknown, and
@@ -729,7 +730,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (page.browseId != browseId) return@map page
             val songs = when (val state = page.songs) {
                 is UiState.Success -> state.data
-                is UiState.Error -> if (state.message == NO_TRACKS) emptyList() else return@map page
+                is UiState.Error -> if (state.message == text(R.string.no_tracks_here)) emptyList() else return@map page
                 UiState.Loading -> return@map page
             }
             // Already there — a track added twice is two real entries on
@@ -979,7 +980,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun fetchExplore() {
         _explore.value = YtMusicRepository.explore().fold(
             onSuccess = { shelves ->
-                if (shelves.isEmpty()) UiState.Error("Nothing to explore right now")
+                if (shelves.isEmpty()) UiState.Error(text(R.string.nothing_to_explore))
                 else UiState.Success(shelves)
             },
             onFailure = { UiState.Error(it.friendly()) },
@@ -1003,7 +1004,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             onSuccess = { feed ->
                 homeContinuation = feed.continuation
                 val shelves = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-                if (shelves.isEmpty()) UiState.Error("No results from YouTube Music")
+                if (shelves.isEmpty()) UiState.Error(text(R.string.no_youtube_music_results))
                 else UiState.Success(shelves)
             },
             onFailure = { UiState.Error(it.friendly()) },
@@ -1044,7 +1045,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun fetchLibrary() {
         _library.value = YtMusicRepository.library().fold(
             onSuccess = { page ->
-                if (page.isEmpty) UiState.Error("Nothing in your library yet")
+                if (page.isEmpty) UiState.Error(text(R.string.library_empty))
                 else UiState.Success(page)
             },
             onFailure = { UiState.Error(it.friendly()) },
@@ -1062,14 +1063,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun loadHistory() {
         if (!_signedIn.value) {
-            _history.value = UiState.Error("Sign in to see what you've been listening to")
+            _history.value = UiState.Error(text(R.string.history_sign_in_required))
             return
         }
         _history.value = UiState.Loading
         viewModelScope.launch {
             _history.value = YtMusicRepository.history().fold(
                 onSuccess = { songs ->
-                    if (songs.isEmpty()) UiState.Error("Nothing played yet")
+                    if (songs.isEmpty()) UiState.Error(text(R.string.history_empty))
                     else UiState.Success(songs)
                 },
                 onFailure = { UiState.Error(it.friendly()) },
@@ -1286,7 +1287,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Caches and publishes one result list. */
     private fun published(rows: List<SearchResult>, key: String): UiState<List<SearchResult>> {
-        if (rows.isEmpty()) return UiState.Error("No results")
+        if (rows.isEmpty()) return UiState.Error(text(R.string.no_results))
         searchCache.put(key, rows)
         prefetchTopResult(rows)
         return UiState.Success(rows)
@@ -1414,7 +1415,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * first track to it has to be able to tell "this page is empty" apart
          * from "this page failed to load" — see [appendToOpenPlaylist].
          */
-        private const val NO_TRACKS = "No tracks here"
 
         /**
          * What a downloaded playlist's page says once the files under it are
@@ -1426,7 +1426,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * the page, its refresh, and the long-press menu that queues it without
          * opening it.
          */
-        private const val DOWNLOADS_GONE = "Nothing from this playlist is on this device any more"
     }
 
     fun openDetail(
@@ -1475,7 +1474,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val state = when {
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
-                    if (songs.isEmpty()) UiState.Error(DOWNLOADS_GONE) else UiState.Success(songs)
+                    if (songs.isEmpty()) UiState.Error(text(R.string.downloaded_playlist_empty))
+                    else UiState.Success(songs)
                 }
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
@@ -1486,10 +1486,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == "local:all" -> {
                     val context = getApplication<Application>()
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
-                        UiState.Error("Storage permission required to view local audio files")
+                        UiState.Error(text(R.string.storage_required_read))
                     } else {
                         val songs = LocalMediaRepository.getLocalMusic(context)
-                        if (songs.isEmpty()) UiState.Error("No audio files found on device")
+                        if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
                         else UiState.Success(songs)
                     }
                 }
@@ -1503,7 +1503,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             subscriberCountText = page.subscriberCountText
                             monthlyListenerCount = page.monthlyListenerCount
                             if (page.songs.isEmpty()) {
-                                UiState.Error(NO_TRACKS)
+                                UiState.Error(text(R.string.no_tracks_here))
                             } else {
                                 UiState.Success(page.songs.withArtwork(thumbnailUrl))
                             }
@@ -1529,7 +1529,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             }
                             description = page.description
                             if (page.songs.isEmpty()) {
-                                UiState.Error(NO_TRACKS)
+                                UiState.Error(text(R.string.no_tracks_here))
                             } else {
                                 more = page.continuation
                                 suggested = page.suggested.withArtwork(thumbnailUrl)
@@ -1572,7 +1572,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val state: UiState<List<Song>> = when {
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
-                    if (songs.isEmpty()) UiState.Error(DOWNLOADS_GONE) else UiState.Success(songs)
+                    if (songs.isEmpty()) UiState.Error(text(R.string.downloaded_playlist_empty))
+                    else UiState.Success(songs)
                 }
                 browseId == "local:downloads" -> {
                     val songs = LocalMediaRepository.getDownloadedSongs(context)
@@ -1581,10 +1582,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 browseId == "local:all" -> {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
-                        UiState.Error("Storage permission required to view local audio files")
+                        UiState.Error(text(R.string.storage_required_read))
                     } else {
                         val songs = LocalMediaRepository.getLocalMusic(context)
-                        if (songs.isEmpty()) UiState.Error("No audio files found on device")
+                        if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
                         else UiState.Success(songs)
                     }
                 }
@@ -1608,7 +1609,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * see [Downloads.collectionsAmong], of which this is a single-playlist view.
      *
      * Empty is the honest answer for a record whose files have all been deleted
-     * from under it, and callers turn that into [DOWNLOADS_GONE] rather than
+     * from under it, and callers turn that into an empty-state message rather than
      * into a blank page.
      */
     private suspend fun downloadedPlaylist(browseId: String): List<Song> {
@@ -1718,7 +1719,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val context = getApplication<Application>()
             val result = when {
                 Downloads.recordIdOf(browseId) != null -> runCatching {
-                    downloadedPlaylist(browseId).ifEmpty { error(DOWNLOADS_GONE) }
+                    downloadedPlaylist(browseId).ifEmpty {
+                        error(text(R.string.downloaded_playlist_empty))
+                    }
                 }
                 browseId == "local:downloads" -> runCatching {
                     LocalMediaRepository.getDownloadedSongs(context)
@@ -1726,10 +1729,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 browseId == "local:all" -> runCatching {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
-                        error("Storage permission required to read local audio files")
+                        error(text(R.string.storage_required_read))
                     }
                     LocalMediaRepository.getLocalMusic(context)
-                        .ifEmpty { error("No audio files found on device") }
+                        .ifEmpty { error(text(R.string.no_local_audio_found)) }
                 }
                 else -> YtMusicRepository.allSongs(browseId)
             }
@@ -1791,9 +1794,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun Throwable.friendly(): String = when {
         message?.contains("resolve host", true) == true ||
-            message?.contains("Unable to resolve", true) == true -> "No internet connection"
+            message?.contains("Unable to resolve", true) == true -> text(R.string.no_internet_connection)
         message?.contains("401") == true || message?.contains("403") == true ->
-            "YouTube Music rejected the request — try signing in again"
-        else -> message ?: "Something went wrong"
+            text(R.string.youtube_request_rejected)
+        else -> message ?: text(R.string.something_went_wrong)
     }
+
+    private fun text(id: Int): String = getApplication<Application>().getString(id)
 }

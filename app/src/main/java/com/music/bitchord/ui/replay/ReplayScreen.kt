@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -107,6 +108,7 @@ fun ReplayScreen(
     modifier: Modifier = Modifier,
     listState: LazyListState = rememberLazyListState(),
 ) {
+    val context = LocalContext.current
     val summary = state.summary
     val leadArtwork = summary?.songs?.firstOrNull()?.song?.thumbnailUrl
     val palette = rememberArtworkColors(leadArtwork)
@@ -151,14 +153,14 @@ fun ReplayScreen(
                 else -> {
                     item("cards") {
                         ReplayCardRow(
-                            cards = summary.cards(),
+                            cards = summary.cards(context),
                             holder = holder,
                             memberSince = state.memberSince,
                             onOpenStory = onOpenStory,
                         )
                     }
                     item("open") {
-                        ReplayActionRow(BitChordIcons.Play, "Play your Replay") {
+                        ReplayActionRow(BitChordIcons.Play, stringResource(R.string.play_your_replay)) {
                             onOpenStory(ReplayStoryPage.INTRO)
                         }
                     }
@@ -200,9 +202,7 @@ fun ReplayScreen(
                     } else if (ArtistFacts.genresAvailable) {
                         item("genres-pending") {
                             Note(
-                                text = "Genres are still being worked out. They fill in " +
-                                    "as you listen, and the chart appears once there is " +
-                                    "enough to rank.",
+                                text = stringResource(R.string.genres_pending),
                                 modifier = Modifier.padding(horizontal = PAGE_GUTTER + 10.dp),
                             )
                         }
@@ -210,7 +210,11 @@ fun ReplayScreen(
 
                     item("habits") { Habits(summary) }
                     item("share") {
-                        ReplayActionRow(Icons.Rounded.IosShare, "Share my Replay", onShare)
+                        ReplayActionRow(
+                            Icons.Rounded.IosShare,
+                            stringResource(R.string.share_my_replay),
+                            onShare,
+                        )
                     }
                 }
             }
@@ -222,6 +226,7 @@ fun ReplayScreen(
 
 @Composable
 private fun Heading(state: ReplayState, onPeriodChange: (ReplayPeriod) -> Unit) {
+    val context = LocalContext.current
     Column(Modifier.padding(horizontal = PAGE_GUTTER + 10.dp)) {
         // Clear of the fade under the top bar, which runs a good way past the
         // bar itself — see [TopFadeBlur]. A release page has its sleeve up here
@@ -234,13 +239,13 @@ private fun Heading(state: ReplayState, onPeriodChange: (ReplayPeriod) -> Unit) 
         // rest was a screen's worth of nothing above the heading.
         Spacer(Modifier.height(48.dp))
         Text(
-            text = "Replay",
+            text = stringResource(R.string.replay),
             style = MaterialTheme.typography.displayLarge,
             fontWeight = FontWeight.W800,
             color = Color.White,
         )
         Text(
-            text = state.summary?.label ?: state.period.chip,
+            text = state.summary?.localizedLabel(context) ?: state.period.localizedChip(context),
             style = MaterialTheme.typography.titleMedium,
             color = Color.White.copy(alpha = 0.6f),
         )
@@ -260,6 +265,7 @@ private fun Heading(state: ReplayState, onPeriodChange: (ReplayPeriod) -> Unit) 
  */
 @Composable
 private fun PeriodPicker(selected: ReplayPeriod, onSelect: (ReplayPeriod) -> Unit) {
+    val context = LocalContext.current
     Row(
         Modifier
             .clip(RoundedCornerShape(12.dp))
@@ -275,7 +281,7 @@ private fun PeriodPicker(selected: ReplayPeriod, onSelect: (ReplayPeriod) -> Uni
                 label = "periodChip",
             )
             Text(
-                text = period.chip,
+                text = period.localizedChip(context),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.W700,
                 color = if (active) Color.Black else Color.White.copy(alpha = 0.75f),
@@ -433,7 +439,7 @@ private fun ReplayChartRow(row: ReplayRow, circular: Boolean, onClick: () -> Uni
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = listOfNotNull(row.subtitle, formatListening(row.ms))
+                text = listOfNotNull(row.subtitle, formatListening(LocalContext.current, row.ms))
                     .joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.55f),
@@ -455,23 +461,27 @@ private fun ReplayChartRow(row: ReplayRow, circular: Boolean, onClick: () -> Uni
 
 @Composable
 private fun Habits(summary: ReplaySummary) {
+    val context = LocalContext.current
     Column(Modifier.padding(horizontal = PAGE_GUTTER + 10.dp)) {
-        SectionTitleInline("The shape of it")
+        SectionTitleInline(stringResource(R.string.listening_shape))
         Spacer(Modifier.height(4.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("Songs", summary.distinctSongs.toString(), Modifier.weight(1f))
-            StatTile("Artists", summary.distinctArtists.toString(), Modifier.weight(1f))
-            StatTile("Albums", summary.distinctAlbums.toString(), Modifier.weight(1f))
+            StatTile(stringResource(R.string.songs), summary.distinctSongs.toString(), Modifier.weight(1f))
+            StatTile(stringResource(R.string.artists), summary.distinctArtists.toString(), Modifier.weight(1f))
+            StatTile(stringResource(R.string.albums), summary.distinctAlbums.toString(), Modifier.weight(1f))
         }
         summary.peakHour?.let {
             Spacer(Modifier.height(10.dp))
-            Note("You listen most around ${formatHour(it)}.")
+            Note(stringResource(R.string.listen_most_around, formatHour(context, it)))
         }
         summary.busiestDay?.let {
             Spacer(Modifier.height(6.dp))
             Note(
-                "Your biggest day was ${formatDay(it)} — " +
-                    "${formatListening(summary.busiestDayMs)} of it.",
+                stringResource(
+                    R.string.biggest_day_note,
+                    formatDay(context, it),
+                    formatListening(context, summary.busiestDayMs),
+                ),
             )
         }
     }
@@ -536,7 +546,7 @@ private fun EmptyReplay(period: ReplayPeriod) {
         )
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "Not enough listening yet",
+            text = stringResource(R.string.not_enough_listening),
             style = MaterialTheme.typography.titleLarge,
             color = Color.White,
             textAlign = TextAlign.Center,
@@ -544,10 +554,8 @@ private fun EmptyReplay(period: ReplayPeriod) {
         Spacer(Modifier.height(8.dp))
         Text(
             text = when (period) {
-                ReplayPeriod.THIS_MONTH -> "There isn't much from this month yet. " +
-                    "Try All time, or come back after a few more sessions."
-                else -> "Play some music and your Replay builds itself — every " +
-                    "minute is counted here on the device, and nothing is sent anywhere."
+                ReplayPeriod.THIS_MONTH -> stringResource(R.string.not_enough_this_month)
+                else -> stringResource(R.string.replay_empty_description)
             },
             style = MaterialTheme.typography.bodyMedium,
             color = Color.White.copy(alpha = 0.6f),

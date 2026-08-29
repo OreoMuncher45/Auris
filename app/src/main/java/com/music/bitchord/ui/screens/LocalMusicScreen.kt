@@ -34,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreHoriz
@@ -42,6 +43,9 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.Sort
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,8 +61,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -69,7 +76,10 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.R
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.LocalMusicSort
 import com.music.bitchord.download.DownloadedCollection
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -133,6 +143,7 @@ fun LocalMusicScreen(
      * the tags are all there is.
      */
     collections: List<DownloadedCollection> = emptyList(),
+    isDownloads: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // Which top-level tab is selected.
@@ -142,6 +153,12 @@ fun LocalMusicScreen(
     // and albums by name. Not saved across process death: a filter left on a
     // folder that was never reopened is more surprising than one that reset.
     var searchQuery by rememberSaveable { mutableStateOf("") }
+    val sortOrder by if (isDownloads) {
+        AppSettings.downloadedMusicSort.collectAsStateWithLifecycle()
+    } else {
+        AppSettings.localMusicSort.collectAsStateWithLifecycle()
+    }
+    val sortedSongs = remember(songs, sortOrder) { songs.sortedForLibrary(sortOrder) }
 
     // When non-null, we are showing a drill-down list for that artist or album.
     var drillDownLabel by remember { mutableStateOf<String?>(null) }
@@ -178,6 +195,11 @@ fun LocalMusicScreen(
         LocalSearchField(
             query = searchQuery,
             onQueryChange = { searchQuery = it },
+            sortOrder = sortOrder,
+            onSortOrderChange = {
+                if (isDownloads) AppSettings.setDownloadedMusicSort(it)
+                else AppSettings.setLocalMusicSort(it)
+            },
             modifier = Modifier.padding(
                 // The same clearance every other page under the frosted bar
                 // gets — see topBarContentPadding, which this screen can't use
@@ -204,7 +226,7 @@ fun LocalMusicScreen(
         ) {
             LocalTab(
                 icon = Icons.Rounded.MusicNote,
-                label = "Songs",
+                label = stringResource(R.string.songs),
                 selected = selectedTab == LOCAL_TAB_SONGS,
                 onClick = {
                     selectedTab = LOCAL_TAB_SONGS
@@ -213,7 +235,7 @@ fun LocalMusicScreen(
             )
             LocalTab(
                 icon = Icons.Rounded.Person,
-                label = "Artists",
+                label = stringResource(R.string.artists),
                 selected = selectedTab == LOCAL_TAB_ARTISTS,
                 onClick = {
                     selectedTab = LOCAL_TAB_ARTISTS
@@ -222,7 +244,7 @@ fun LocalMusicScreen(
             )
             LocalTab(
                 icon = Icons.Rounded.Album,
-                label = "Albums",
+                label = stringResource(R.string.albums),
                 selected = selectedTab == LOCAL_TAB_ALBUMS,
                 onClick = {
                     selectedTab = LOCAL_TAB_ALBUMS
@@ -250,7 +272,7 @@ fun LocalMusicScreen(
                 // Nothing to tab through. The tab row stays put rather than
                 // being swapped out with the list, so the page still reads as
                 // itself while it says why it's empty.
-                songs.isEmpty() && emptyMessage != null -> {
+                sortedSongs.isEmpty() && emptyMessage != null -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -279,9 +301,9 @@ fun LocalMusicScreen(
                 }
 
                 key == "tab:$LOCAL_TAB_SONGS" -> {
-                    val filteredSongs = remember(songs, searchQuery) {
-                        if (searchQuery.isBlank()) songs
-                        else songs.filter { it.matchesSearch(searchQuery) }
+                    val filteredSongs = remember(sortedSongs, searchQuery) {
+                        if (searchQuery.isBlank()) sortedSongs
+                        else sortedSongs.filter { it.matchesSearch(searchQuery) }
                     }
                     SongsTab(
                         songs = filteredSongs,
@@ -293,8 +315,8 @@ fun LocalMusicScreen(
                 }
 
                 key == "tab:$LOCAL_TAB_ARTISTS" -> {
-                    val artists = remember(songs, searchQuery) {
-                        songs.groupBy { it.artist }
+                    val artists = remember(sortedSongs, searchQuery) {
+                        sortedSongs.groupBy { it.artist }
                             .entries
                             .filter { searchQuery.isBlank() || it.key.contains(searchQuery, ignoreCase = true) }
                             .sortedBy { it.key.lowercase(Locale.ROOT) }
@@ -313,8 +335,8 @@ fun LocalMusicScreen(
 
                 else -> {
                     // LOCAL_TAB_ALBUMS
-                    val albums = remember(songs, collections, searchQuery) {
-                        albumEntries(songs, collections).filter {
+                    val albums = remember(sortedSongs, collections, searchQuery) {
+                        albumEntries(sortedSongs, collections).filter {
                             searchQuery.isBlank() ||
                                 it.title.contains(searchQuery, ignoreCase = true) ||
                                 it.artist.contains(searchQuery, ignoreCase = true)
@@ -355,7 +377,7 @@ private fun SongsTab(
         item {
             SectionHeader(
                 icon = Icons.Rounded.LibraryMusic,
-                title = "${songs.size} songs",
+                title = pluralStringResource(R.plurals.song_count_plural, songs.size, songs.size),
             )
         }
         itemsIndexed(songs) { index, song ->
@@ -394,7 +416,7 @@ private fun ArtistsTab(
         item {
             SectionHeader(
                 icon = Icons.Rounded.Person,
-                title = "${artists.size} artists",
+                title = pluralStringResource(R.plurals.artist_count, artists.size, artists.size),
             )
         }
         items(artists) { (artist, artistSongs) ->
@@ -453,7 +475,7 @@ private fun ArtistRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "$songCount ${if (songCount == 1) "song" else "songs"}",
+                text = pluralStringResource(R.plurals.song_count_plural, songCount, songCount),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -568,7 +590,7 @@ private fun AlbumsTab(
         item {
             SectionHeader(
                 icon = Icons.Rounded.Album,
-                title = "${albums.size} ${if (albums.size == 1) "album" else "albums"}",
+                title = pluralStringResource(R.plurals.album_count, albums.size, albums.size),
             )
         }
         // Songs but no albums: nothing here was downloaded as a release and
@@ -578,8 +600,7 @@ private fun AlbumsTab(
         if (albums.isEmpty()) {
             item {
                 MessageState(
-                    message = "Nothing here belongs to an album or playlist yet. " +
-                        "Download a whole one and it turns up here.",
+                    message = stringResource(R.string.no_local_albums),
                 )
             }
         }
@@ -626,17 +647,24 @@ private fun AlbumRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            val songCount = pluralStringResource(
+                R.plurals.song_count_plural,
+                entry.songs.size,
+                entry.songs.size,
+            )
+            val playlistLabel = stringResource(R.string.playlist)
             Text(
                 text = buildString {
                     // A playlist's tracks are off forty different releases, so
                     // the first one's artist is not a credit for it — the kind
                     // of thing it is says more, and is true.
                     if (entry.playlist) {
-                        append("Playlist · ")
+                        append(playlistLabel)
+                        append(" · ")
                     } else if (entry.artist.isNotBlank() && entry.artist != entry.title) {
                         append("${entry.artist} · ")
                     }
-                    append("${entry.songs.size} ${if (entry.songs.size == 1) "song" else "songs"}")
+                    append(songCount)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -731,7 +759,7 @@ private fun DrillDownSongList(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.back),
                         tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
@@ -764,7 +792,7 @@ private fun DrillDownSongList(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.MoreHoriz,
-                            contentDescription = "More",
+                            contentDescription = stringResource(R.string.more),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -800,7 +828,7 @@ private fun DrillDownSongList(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "Play",
+                        text = stringResource(R.string.play),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onPrimary,
                     )
@@ -825,7 +853,7 @@ private fun DrillDownSongList(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "Shuffle",
+                        text = stringResource(R.string.shuffle),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
@@ -861,6 +889,19 @@ private fun Song.matchesSearch(query: String): Boolean =
         artist.contains(query, ignoreCase = true) ||
         albumName?.contains(query, ignoreCase = true) == true
 
+private fun List<Song>.sortedForLibrary(order: LocalMusicSort): List<Song> = when (order) {
+    LocalMusicSort.TITLE_ASC -> sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
+    LocalMusicSort.TITLE_DESC -> sortedWith(compareByDescending<Song> { it.title.lowercase(Locale.ROOT) })
+    LocalMusicSort.DATE_ADDED -> sortedWith(
+        compareByDescending<Song> { it.localDateAddedSeconds ?: Long.MIN_VALUE }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+    )
+    LocalMusicSort.DATE_MODIFIED -> sortedWith(
+        compareByDescending<Song> { it.localDateModifiedSeconds ?: Long.MIN_VALUE }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it.title },
+    )
+}
+
 /**
  * The filter box above the tab row.
  *
@@ -872,8 +913,11 @@ private fun Song.matchesSearch(query: String): Boolean =
 private fun LocalSearchField(
     query: String,
     onQueryChange: (String) -> Unit,
+    sortOrder: LocalMusicSort,
+    onSortOrderChange: (LocalMusicSort) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var sortMenuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -892,7 +936,7 @@ private fun LocalSearchField(
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
-                    text = "Search this folder",
+                    text = stringResource(R.string.search_this_folder),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -918,13 +962,62 @@ private fun LocalSearchField(
             ) {
                 Icon(
                     Icons.Rounded.Close,
-                    contentDescription = "Clear search",
+                    contentDescription = stringResource(R.string.clear_search),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(16.dp),
                 )
             }
         }
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable { sortMenuOpen = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Sort,
+                    contentDescription = stringResource(R.string.sort_music),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(19.dp),
+                )
+            }
+            DropdownMenu(
+                expanded = sortMenuOpen,
+                onDismissRequest = { sortMenuOpen = false },
+            ) {
+                LocalMusicSort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.localizedLabel()) },
+                        trailingIcon = if (option == sortOrder) {
+                            {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = stringResource(R.string.selected),
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        onClick = {
+                            onSortOrderChange(option)
+                            sortMenuOpen = false
+                        },
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun LocalMusicSort.localizedLabel(): String = when (this) {
+    LocalMusicSort.TITLE_ASC -> stringResource(R.string.sort_title_ascending)
+    LocalMusicSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
+    LocalMusicSort.DATE_ADDED -> stringResource(R.string.sort_date_added)
+    LocalMusicSort.DATE_MODIFIED -> stringResource(R.string.sort_date_modified)
 }
 
 @Composable

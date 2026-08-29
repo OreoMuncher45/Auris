@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.R
+
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -50,7 +52,7 @@ fun HistoryScreen(
             is UiState.Error -> item(key = "history:message") {
                 MessageState(
                     message = state.message,
-                    actionLabel = "Try again",
+                    actionLabel = stringResource(R.string.try_again),
                     onAction = onRetry,
                 )
             }

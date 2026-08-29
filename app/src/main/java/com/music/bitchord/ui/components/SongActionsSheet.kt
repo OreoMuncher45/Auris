@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.R
+
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -52,6 +54,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -157,28 +161,28 @@ fun SongActionsSheet(
         if (signedIn && !isOffline) {
             ActionRow(
                 icon = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (liked) "Remove from Liked Music" else "Like",
+                label = if (liked) stringResource(R.string.remove_from_liked) else stringResource(R.string.like),
                 tint = if (liked) palette.accent else null,
                 accent = palette.accent,
                 onClick = onToggleLike,
             )
             ActionRow(
                 icon = if (disliked) Icons.Rounded.ThumbDown else Icons.Rounded.ThumbDownOffAlt,
-                label = if (disliked) "Undo dislike" else "Dislike",
+                label = if (disliked) stringResource(R.string.undo_dislike) else stringResource(R.string.dislike),
                 tint = if (disliked) palette.accent else null,
                 accent = palette.accent,
                 onClick = onToggleDislike,
             )
             ActionRow(
                 icon = Icons.AutoMirrored.Rounded.PlaylistAdd,
-                label = "Add to playlist",
+                label = stringResource(R.string.add_to_playlist),
                 accent = palette.accent,
                 onClick = onAddToPlaylist,
             )
             onRemoveFromPlaylist?.let {
                 ActionRow(
                     icon = Icons.Rounded.PlaylistRemove,
-                    label = "Remove from this playlist",
+                    label = stringResource(R.string.remove_from_playlist),
                     accent = palette.accent,
                     onClick = it,
                 )
@@ -193,42 +197,54 @@ fun SongActionsSheet(
         DownloadRow(song, palette, isOffline, onDownload)
         ActionRow(
             icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
-            label = "Play next",
+            label = stringResource(R.string.play_next),
             accent = palette.accent,
             onClick = onPlayNext,
         )
         ActionRow(
             icon = Icons.AutoMirrored.Rounded.QueueMusic,
-            label = "Add to queue",
+            label = stringResource(R.string.add_to_queue),
             accent = palette.accent,
             onClick = onAddToQueue,
         )
         when (val id = song.albumId) {
-            null -> if (resolvingLinks) LoadingActionRow(Icons.Rounded.Album, "Open album", palette)
-            else -> ActionRow(Icons.Rounded.Album, "Open album", accent = palette.accent) { onOpenAlbum(id) }
+            null -> if (resolvingLinks) {
+                LoadingActionRow(Icons.Rounded.Album, stringResource(R.string.open_album), palette)
+            }
+            else -> ActionRow(
+                Icons.Rounded.Album,
+                stringResource(R.string.open_album),
+                accent = palette.accent,
+            ) { onOpenAlbum(id) }
         }
         when (val id = song.artistId) {
-            null -> if (resolvingLinks) LoadingActionRow(Icons.Rounded.Person, "Open artist", palette)
-            else -> ActionRow(Icons.Rounded.Person, "Open artist", accent = palette.accent) { onOpenArtist(id) }
+            null -> if (resolvingLinks) {
+                LoadingActionRow(Icons.Rounded.Person, stringResource(R.string.open_artist), palette)
+            }
+            else -> ActionRow(
+                Icons.Rounded.Person,
+                stringResource(R.string.open_artist),
+                accent = palette.accent,
+            ) { onOpenArtist(id) }
         }
         if (showSleepTimer) {
             ActionRow(
                 icon = Icons.Rounded.Bedtime,
-                label = "Sleep timer",
+                label = stringResource(R.string.sleep_timer),
                 value = sleepTimerStatus(),
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
         }
         if (!isOffline) {
             onShare?.let {
-                ActionRow(Icons.Rounded.Share, "Share", accent = palette.accent, onClick = it)
+                ActionRow(Icons.Rounded.Share, stringResource(R.string.share), accent = palette.accent, onClick = it)
             }
         }
         // Last, and only from the player: it is about the track playing right
         // now rather than about the song as a thing in a library, and it is
         // the one row here nobody reaches for by accident.
         onCopyLog?.let {
-            ActionRow(Icons.Rounded.BugReport, "Copy Log", accent = palette.accent, onClick = it)
+            ActionRow(Icons.Rounded.BugReport, stringResource(R.string.copy_log), accent = palette.accent, onClick = it)
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -333,14 +349,14 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
     when (val state = active[song.videoId]) {
         is DownloadState.Queued -> ActionRow(
             icon = Icons.Rounded.Downloading,
-            label = "Queued",
-            value = "Cancel",
+            label = stringResource(R.string.queued),
+            value = stringResource(R.string.cancel),
             accent = palette.accent,
         ) { Downloads.cancel(song.videoId) }
 
         is DownloadState.Running -> ActionRow(
             icon = Icons.Rounded.Downloading,
-            label = "Downloading",
+            label = stringResource(R.string.download_notification_title),
             // Indeterminate until the first response names a length; a
             // stuck "0%" reads as broken where a bare label reads as starting.
             value = if (state.fraction > 0f) "${(state.fraction * 100).toInt()}%" else null,
@@ -351,7 +367,7 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
         is DownloadState.Failed -> ActionRow(
             icon = Icons.Rounded.ErrorOutline,
             label = state.reason,
-            value = "Retry",
+            value = stringResource(R.string.retry),
             // Not the artwork's colour: a failure has to stay legible as a
             // failure whatever the sleeve happens to be tinted.
             tint = MaterialTheme.colorScheme.error,
@@ -362,15 +378,15 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
         null -> if (file != null) {
             ActionRow(
                 icon = Icons.Rounded.DownloadDone,
-                label = "Saved to Downloads",
-                value = "Delete",
+                label = stringResource(R.string.saved_to_downloads),
+                value = stringResource(R.string.delete),
                 tint = palette.accent,
                 accent = palette.accent,
             ) { scope.launch { Downloads.delete(context, song.videoId) } }
         } else if (!isOffline) {
             ActionRow(
                 icon = Icons.Rounded.Download,
-                label = "Download",
+                label = stringResource(R.string.download),
                 accent = palette.accent,
                 onClick = onDownload,
             )
@@ -395,21 +411,21 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.back),
                     tint = MaterialTheme.colorScheme.onBackground,
                 )
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "Sleep timer",
+                    text = stringResource(R.string.sleep_timer),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Text(
                     text = when {
-                        countdown != null -> "$countdown until playback pauses"
-                        afterTrack -> "Pausing when this song ends"
-                        else -> "Pause playback after a while"
+                        countdown != null -> stringResource(R.string.pause_countdown, countdown)
+                        afterTrack -> stringResource(R.string.pause_after_song)
+                        else -> stringResource(R.string.pause_after_a_while)
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -420,13 +436,21 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
 
         // Finishing the song is the one people reach for at the end of a
         // listen, so it leads rather than sitting under the durations.
-        SleepOption(label = "After this song", selected = afterTrack, accent = palette.accent) {
+        SleepOption(
+            label = stringResource(R.string.after_this_song),
+            selected = afterTrack,
+            accent = palette.accent,
+        ) {
             SleepTimer.startAfterTrack()
             onBack()
         }
         SleepTimer.PRESETS.forEach { minutes ->
             SleepOption(
-                label = if (minutes == 60) "1 hour" else "$minutes minutes",
+                label = if (minutes == 60) {
+                    stringResource(R.string.one_hour)
+                } else {
+                    pluralStringResource(R.plurals.minute_count, minutes, minutes)
+                },
                 selected = minutes == chosen,
                 accent = palette.accent,
             ) {
@@ -435,7 +459,7 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
             }
         }
         if (chosen != null || afterTrack) {
-            ActionRow(Icons.Rounded.Close, "Turn off timer", accent = palette.accent) {
+            ActionRow(Icons.Rounded.Close, stringResource(R.string.turn_off_timer), accent = palette.accent) {
                 SleepTimer.cancel()
                 onBack()
             }
@@ -467,7 +491,7 @@ private fun SleepOption(
         if (selected) {
             Icon(
                 Icons.Rounded.Check,
-                contentDescription = "Running",
+                contentDescription = stringResource(R.string.running),
                 tint = accent,
                 modifier = Modifier.size(22.dp),
             )
@@ -479,7 +503,7 @@ private fun SleepOption(
 @Composable
 private fun sleepTimerStatus(): String? {
     val afterTrack by SleepTimer.afterTrack.collectAsStateWithLifecycle()
-    return sleepTimerCountdown() ?: "After this song".takeIf { afterTrack }
+    return sleepTimerCountdown() ?: stringResource(R.string.after_this_song).takeIf { afterTrack }
 }
 
 /** Live "m:ss" until the sleep timer fires, or null when none is running. */
