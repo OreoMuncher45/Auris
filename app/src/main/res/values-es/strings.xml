@@ -135,7 +135,6 @@
     <string name="import_data_subtitle">Sustituye los ajustes y el historial de este dispositivo</string>
     <string name="import_backup_title">¿Importar una copia de seguridad?</string>
     <string name="choose_file">Elegir archivo</string>
-    <string name="top_songs">Canciones principales</string>
     <string name="top_artists">Artistas principales</string>
     <string name="top_albums">Álbumes principales</string>
     <string name="top_genres">Géneros principales</string>
