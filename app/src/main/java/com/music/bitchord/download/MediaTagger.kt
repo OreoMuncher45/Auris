@@ -13,8 +13,8 @@ import java.io.File
 import kotlin.math.max
 
 /**
- * Embeds title, artist, album and cover art into a track [Downloads] just
- * finished saving, so it reads correctly in a file manager or another
+ * Embeds title, artist, album, lyrics and cover art into a track [Downloads]
+ * just finished saving, so it reads correctly in a file manager or another
  * player rather than only inside this app, where the filename is otherwise
  * the only thing carrying that.
  *
@@ -25,6 +25,11 @@ import kotlin.math.max
  * Every step here is caught rather than left to propagate, because a download
  * this runs after has already landed — a tagging failure should cost the tags,
  * not the file.
+ *
+ * The lyrics are the one thing not fetched here. They come in as text from
+ * [LyricsTag], started by [Downloads] early enough to overlap the transfer,
+ * because that lookup races four services and is the one piece of this worth
+ * not paying for in wall-clock time after the last byte has landed.
  */
 object MediaTagger {
 
@@ -44,10 +49,30 @@ object MediaTagger {
      */
     private val TAGGABLE = setOf("m4a", "webm", "flac")
 
-    fun embed(context: Context, uri: Uri, track: Song, extension: String) {
-        if (extension !in TAGGABLE) return
+    /**
+     * Whether a file of [extension] gets tags at all.
+     *
+     * Asked by [Downloads] before it starts fetching anything that exists only
+     * to be tagged, so a `.wav` download doesn't spend four lyric lookups on a
+     * field it has nowhere to put.
+     */
+    fun carriesTags(extension: String): Boolean = extension in TAGGABLE
+
+    /** @param lyrics what [LyricsTag] found, or null when there are none to write. */
+    internal fun embed(
+        context: Context,
+        uri: Uri,
+        track: Song,
+        extension: String,
+        lyrics: LyricsTag.Embeddable? = null,
+    ) {
+        if (!carriesTags(extension)) return
         val original = readAll(context, uri) ?: return
         val cover = fetchCover(track)
+        // The portable field and this app's own. Split here rather than inside
+        // each tagger so all three agree on which string goes where.
+        val plain = lyrics?.plain
+        val words = lyrics?.enhanced
 
         val tagged = runCatching {
             when (extension) {
@@ -56,24 +81,30 @@ object MediaTagger {
                     track.title,
                     track.artist,
                     track.albumName,
+                    plain,
                     cover?.bytes,
                     coverIsPng = false,
+                    wordLyrics = words,
                 )
                 "flac" -> FlacTagger.tag(
                     original,
                     track.title,
                     track.artist,
                     track.albumName,
+                    plain,
                     cover?.bytes,
                     cover?.mime ?: "image/jpeg",
+                    wordLyrics = words,
                 )
                 else -> WebmTagger.tag(
                     original,
                     track.title,
                     track.artist,
                     track.albumName,
+                    plain,
                     cover?.bytes,
                     cover?.mime ?: "image/jpeg",
+                    wordLyrics = words,
                 )
             }
         }.getOrNull() ?: return

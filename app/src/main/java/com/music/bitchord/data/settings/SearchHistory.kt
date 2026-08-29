@@ -36,6 +36,18 @@ object SearchHistory {
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+        reload()
+    }
+
+    /**
+     * Re-reads the list off disk.
+     *
+     * This shares its preference file with [AppSettings], so an import replaces
+     * what is stored here without ever calling [record] — and the flow above
+     * would otherwise go on serving the list the old device had.
+     */
+    fun reload() {
+        if (!this::prefs.isInitialized) return
         _recent.value = runCatching {
             json.decodeFromString(serializer, prefs.getString(KEY_HISTORY, null) ?: "[]")
         }.getOrDefault(emptyList())

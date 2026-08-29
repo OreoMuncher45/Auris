@@ -28,6 +28,7 @@ import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToLong
 import kotlin.math.sin
+import java.util.Locale
 
 /**
  * A real crossfade: two tracks audible at once, the outgoing one falling as the
@@ -434,8 +435,6 @@ class CrossfadeController(
     private fun considerAutoTransition() {
         val player = active()
         if (!player.isPlaying) return
-        // Repeating one track would crossfade it into itself.
-        if (player.repeatMode == Player.REPEAT_MODE_ONE) return
         // Nothing to transition *into*, so any analysis state left over from the
         // previous pair is stale — the last track of a queue should not still be
         // claiming both songs are measured.
@@ -446,6 +445,29 @@ class CrossfadeController(
 
         val duration = player.duration
         if (duration == C.TIME_UNSET || duration <= 0L) return
+
+        // Repeating one track would crossfade it into itself, so nothing is
+        // armed and no window is marked — but the queue behind the loop has not
+        // moved, and what sits after it is still the track that plays next the
+        // moment repeat-one comes off.
+        //
+        // Returning here outright is what made turning repeat off look like it
+        // lost an analysis. Analysis is only ever asked for on the way to
+        // planning a transition, so for as long as the loop ran nothing asked
+        // for the following track at all, and the request that finally arrived
+        // when repeat came off was the *first* one — a whole-track decode
+        // starting from nothing on a song that was by then seconds away, where
+        // an unlooped queue would have had it measured minutes earlier. The
+        // measurement is the same either way, so it may as well be made during
+        // the loop rather than after it.
+        if (player.repeatMode == Player.REPEAT_MODE_ONE) {
+            if (AppSettings.smartFadeEnabled.value) requestAnalysisAround(player, duration)
+            // Stale otherwise: the marker would keep describing the transition
+            // planned for this pair before the loop went on, at a point the
+            // playhead now runs past on every lap without anything happening.
+            AppSettings.smartTransitionWindow.value = null
+            return
+        }
 
         // Automix is its own on/off, independent of the manual crossfade
         // length: it decides its own duration from each pair of tracks (beats,
@@ -492,11 +514,7 @@ class CrossfadeController(
         val nextItem = player.getMediaItemAt(nextIndex)
         val nextDuration = nextItemDurationMs(nextIndex, nextItem)
 
-        // Cheap no-ops once a track is analysed or already in flight; called
-        // every tick so a track that finishes caching mid-song is picked up
-        // without a separate trigger.
-        requestAnalysis(currentItem, duration)
-        requestAnalysis(nextItem, nextDuration)
+        requestAnalysisAround(player, duration)
 
         // Only used before analysis lands, or when the evidence is too weak
         // for more than a plain fade (see [TransitionTier.PLAIN_CROSSFADE]):
@@ -528,7 +546,7 @@ class CrossfadeController(
         // log says what the planner decided for this pair without burying it.
         val verdict = "${plan.reason}|${plan.transitionStyle}|fade=${plan.fadeMs}" +
             "|cue=${plan.incomingCueTime}|rate=${plan.incomingPlaybackRate}" +
-            "|vocalOverlap=${"%.2f".format(plan.vocalOverlap)}" +
+            "|vocalOverlap=${"%.2f".format(Locale.ROOT, plan.vocalOverlap)}" +
             "|blocked=${plan.blocked}|policy=${plan.policyReasons.joinToString(",")}"
         if (verdict != lastPlanVerdict) {
             lastPlanVerdict = verdict
@@ -608,6 +626,27 @@ class CrossfadeController(
                 vocalOverlap = plan.vocalOverlap,
             ),
         )
+    }
+
+    /**
+     * Queues the playing track and the one queued after it for analysis.
+     *
+     * Cheap no-ops once a track is analysed or already in flight; called every
+     * tick so a track that finishes caching mid-song is picked up without a
+     * separate trigger.
+     *
+     * Not folded into [considerSmartTransition], because the pair still needs
+     * measuring in the one case that never plans a transition at all: a track
+     * on repeat-one, which will hand over to this same next track as soon as
+     * the loop is switched off.
+     */
+    private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
+        val currentItem = player.currentMediaItem ?: return
+        val nextIndex = player.nextMediaItemIndex
+        if (nextIndex == C.INDEX_UNSET) return
+        val nextItem = player.getMediaItemAt(nextIndex)
+        requestAnalysis(currentItem, duration)
+        requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem))
     }
 
     /**

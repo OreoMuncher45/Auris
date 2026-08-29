@@ -72,6 +72,7 @@ import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
  * Long-press menu for a track, in the shape music apps normally use.
@@ -494,7 +495,7 @@ private fun sleepTimerCountdown(): String? {
     }
     return remaining?.let {
         val seconds = it / 1000
-        "%d:%02d".format(seconds / 60, seconds % 60)
+        "%d:%02d".format(Locale.ROOT, seconds / 60, seconds % 60)
     }
 }
 

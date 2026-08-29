@@ -106,7 +106,13 @@ fun AccountAndScrobblingScreen(
                     trailing = {
                         Switch(
                             checked = listenBrainzEnabled,
-                            onCheckedChange = AppSettings::setListenBrainzEnabled,
+                            onCheckedChange = { checked ->
+                                if (checked && listenBrainzToken.isBlank()) {
+                                    onOpenListenBrainzLogin()
+                                } else {
+                                    AppSettings.setListenBrainzEnabled(checked)
+                                }
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                                 checkedBorderColor = MaterialTheme.colorScheme.primary,
@@ -123,7 +129,13 @@ fun AccountAndScrobblingScreen(
                     trailing = {
                         Switch(
                             checked = lastfmEnabled,
-                            onCheckedChange = AppSettings::setLastfmEnabled,
+                            onCheckedChange = { checked ->
+                                if (checked && lastfmSessionKey.isBlank()) {
+                                    onOpenLastfmLogin()
+                                } else {
+                                    AppSettings.setLastfmEnabled(checked)
+                                }
+                            },
                             colors = SwitchDefaults.colors(
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                                 checkedBorderColor = MaterialTheme.colorScheme.primary,

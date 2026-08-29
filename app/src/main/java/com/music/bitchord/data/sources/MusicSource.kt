@@ -1,6 +1,7 @@
 package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.model.Song
+import java.util.Locale
 
 /**
  * What a source is about to hand the decoder, as far as the source will say.
@@ -35,9 +36,9 @@ data class StreamFormat(
     /** "24-bit · 192 kHz", "FLAC", "320 kbps" — whichever parts are known. */
     val summary: String
         get() = listOfNotNull(
-            codec?.uppercase(),
+            codec?.uppercase(Locale.ROOT),
             bitDepth?.let { "$it-bit" },
-            sampleRateHz?.let { "${"%.1f".format(it / 1000f).removeSuffix(".0")} kHz" },
+            sampleRateHz?.let { "${"%.1f".format(Locale.ROOT, it / 1000f).removeSuffix(".0")} kHz" },
             kbps?.takeIf { isLossless != true }?.let { "$it kbps" },
         ).joinToString(" · ").ifEmpty { "Unknown format" }
 

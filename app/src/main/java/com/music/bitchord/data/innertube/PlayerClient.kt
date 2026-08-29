@@ -1,6 +1,7 @@
 package com.music.bitchord.data.innertube
 
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.util.Locale
 
 /**
  * One client identity for the `player` endpoint.
@@ -236,7 +237,7 @@ data class PlayerClient(
          */
         fun forStreamUrl(url: String): PlayerClient {
             val parsed = url.toHttpUrlOrNull() ?: return IOS
-            val name = parsed.queryParameter("c")?.uppercase() ?: return IOS
+            val name = parsed.queryParameter("c")?.uppercase(Locale.ROOT) ?: return IOS
             val version = parsed.queryParameter("cver")
             return when {
                 name.startsWith("IOS") ->

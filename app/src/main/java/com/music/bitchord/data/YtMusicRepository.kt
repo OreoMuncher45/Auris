@@ -17,6 +17,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.UserPlaylist
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
+import java.util.Locale
 
 /** Suspend API over Innertube. Every call returns a Result so the UI can show a real error. */
 object YtMusicRepository {
@@ -87,10 +89,7 @@ object YtMusicRepository {
      */
     private suspend fun recentlyPlayed(): HomeShelf? {
         if (Innertube.cookie == null) return null
-        val songs = InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY))
-            // A track played three times today is three rows in the feed.
-            .distinctBy { it.videoId }
-            .take(RECENT_LIMIT)
+        val songs = fetchHistory().take(RECENT_LIMIT)
         if (songs.isEmpty()) return null
         return HomeShelf(
             title = RECENT_TITLE,
@@ -105,6 +104,29 @@ object YtMusicRepository {
             },
         )
     }
+
+    /**
+     * The raw fetch behind both [recentlyPlayed] and [history]: the account's
+     * listening history, newest first, one row per play collapsed to one row
+     * per track.
+     *
+     * A track played three times today is three rows in the feed — what that
+     * dedupe costs is the times, which is fine for "what you have been
+     * listening to" but would matter for a log. YouTube's own page groups them
+     * under Today and Yesterday headings that the shelf parser doesn't carry
+     * through either.
+     */
+    private suspend fun fetchHistory(): List<Song> =
+        InnertubeParser.collectSongsDeep(Innertube.browse(HISTORY)).distinctBy { it.videoId }
+
+    /**
+     * The account's listening history, in the order YouTube Music keeps it.
+     *
+     * The same feed [recentlyPlayed] reads, without the truncation: that one is
+     * a shelf on the home page and stops at [RECENT_LIMIT] so it stays a shelf,
+     * whereas this is the page you open when twenty is not enough.
+     */
+    suspend fun history(): Result<List<Song>> = call("history") { fetchHistory() }
 
     private const val HISTORY = "FEmusic_history"
     private const val RECENT_TITLE = "Recently played"
@@ -126,7 +148,7 @@ object YtMusicRepository {
                 .map { id -> async { runCatching { shelvesOf(id) }.getOrDefault(emptyList()) } }
                 .awaitAll()
             val seen = mutableSetOf<String>()
-            feeds.flatten().filter { seen.add(it.title.lowercase()) }
+            feeds.flatten().filter { seen.add(it.title.lowercase(Locale.ROOT)) }
         }
     }
 
@@ -165,14 +187,16 @@ object YtMusicRepository {
      * Returns [song] unchanged when it isn't a video, or when nothing better
      * turns up — playing the video's own audio track beats guessing at a
      * substitute, and [song] is what a queue restore or offline retry falls
-     * back to as well.
+     * back to as well. Also unchanged when
+     * [AppSettings.convertVideoToAudio][com.music.bitchord.data.settings.AppSettings.convertVideoToAudio]
+     * is off — the listener has asked to keep video uploads as themselves.
      *
      * [search] already drops video rows from its results (see
      * [InnertubeParser.parseSearch]), so every candidate here is audio-only
      * without a second check.
      */
     suspend fun resolveAudio(song: Song): Song {
-        if (!song.isVideo) return song
+        if (!song.isVideo || !AppSettings.convertVideoToAudio.value) return song
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
             val candidates = search(query, SearchFilter.SONGS)
@@ -218,6 +242,7 @@ object YtMusicRepository {
 
             val likedSongs = liked.await()
             val likedIds = likedSongs.mapTo(HashSet()) { it.videoId }
+            LikeState.seedLiked(likedIds)
             LibraryPage(
                 likedSongs = likedSongs,
                 // Thumbs-up'd tracks are also in the library feed; only what
@@ -266,6 +291,24 @@ object YtMusicRepository {
          * [browseSongs] already established.
          */
         val library: LibraryState? = null,
+        /**
+         * Whether this page's playlist is one the account made rather than one
+         * it saved — see [InnertubeParser.parsePlaylistOwned]. Null for an
+         * album, a continuation, or a page that doesn't say.
+         */
+        val owned: Boolean? = null,
+        /**
+         * What the page calls itself — only needed by callers that opened it
+         * with nothing but a browse id, i.e. a tapped link. Null on a
+         * continuation, which carries rows and no header.
+         */
+        val header: InnertubeParser.BrowseHeader? = null,
+        /**
+         * The editorial blurb YouTube Music writes for the release, when it
+         * has one — see [InnertubeParser.parseDescription]. Null from a
+         * continuation, same as [header].
+         */
+        val description: String? = null,
     )
 
     /**
@@ -278,7 +321,12 @@ object YtMusicRepository {
      * being read — see [moreSongs].
      */
     suspend fun browseSongs(browseId: String): Result<SongPage> = call("browse:$browseId") {
-        pageOf(Innertube.browse(browseId))
+        val response = Innertube.browse(browseId)
+        val page = pageOf(response)
+        // Only a playlist has an owner in the sense that matters — see
+        // parsePlaylistOwned — and only its own first response can be asked.
+        if (!browseId.startsWith("VL")) page
+        else page.copy(owned = InnertubeParser.parsePlaylistOwned(response))
     }
 
     /** The page [SongPage.continuation] points at. */
@@ -286,14 +334,29 @@ object YtMusicRepository {
         pageOf(Innertube.browseContinuation(token))
     }
 
+    /**
+     * Whether [browseId] is a playlist the account made — see
+     * [InnertubeParser.parsePlaylistOwned].
+     *
+     * The same question [browseSongs] answers on the way past, asked on its own
+     * by whatever needs it without a page open: holding a playlist card offers
+     * Rename and Delete, and the card itself cannot say whether either applies.
+     * The rows it fetches are thrown away, which is the price of one request for
+     * a menu that would otherwise have to guess.
+     */
+    suspend fun playlistOwned(browseId: String): Result<Boolean?> = call("owner:$browseId") {
+        InnertubeParser.parsePlaylistOwned(Innertube.browse(browseId))
+    }
+
     private fun pageOf(response: JsonObject): SongPage {
         val library = InnertubeParser.parseLibraryState(response)
+        val header = InnertubeParser.parseBrowseHeader(response)
         // A playlist page is scoped to its own shelf so its "Suggested
         // tracks" never read as songs the user added — see
         // parsePlaylistShelf. Anything else (album, library, history) has no
         // such shelf, and falls back to the layout-agnostic walk.
         InnertubeParser.parsePlaylistShelf(response)?.let { shelf ->
-            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library)
+            return SongPage(shelf.songs, shelf.continuation, shelf.suggested, library, header = header)
         }
         return SongPage(
             // One response can name the same track twice — an album page that
@@ -302,7 +365,24 @@ object YtMusicRepository {
             songs = InnertubeParser.collectSongsDeep(response).distinctBy { it.videoId },
             continuation = InnertubeParser.continuationToken(response),
             library = library,
+            header = header,
+            description = InnertubeParser.parseDescription(response),
         )
+    }
+
+    /**
+     * The complete track listing behind an album or playlist browse id.
+     *
+     * The whole list rather than [browseSongs]' first page, because the callers
+     * are the ones that act on all of it at once — "Add to queue" on a card
+     * whose page was never opened. Queueing the first hundred rows of a
+     * three-hundred-track playlist and calling it the playlist would be a
+     * quieter kind of wrong than failing outright.
+     *
+     * Takes as long as the list is long — see [songsPaged].
+     */
+    suspend fun allSongs(browseId: String): Result<List<Song>> = call("all:$browseId") {
+        songsPaged(browseId).ifEmpty { error("No tracks here") }
     }
 
     /**
@@ -349,8 +429,20 @@ object YtMusicRepository {
     /** Saved and own playlists; also what the "add to playlist" picker lists. */
     private const val LIBRARY_PLAYLISTS = "FEmusic_liked_playlists"
 
+    /**
+     * What the playlists shelf is called in a [LibraryPage].
+     *
+     * Coined here, and named here rather than spelt out at each use, because it
+     * is the only shelf in the library anything else looks for by name: it is
+     * the one the create tile leads (see LibraryScreen) and the one a rename or
+     * a delete has to reach into (see MainViewModel's `editPlaylistShelf`).
+     * Three copies of a bare "Playlists" is three places a retitling silently
+     * turns those features off.
+     */
+    const val PLAYLISTS_SHELF = "Playlists"
+
     private val LIBRARY_FEEDS = listOf(
-        "Playlists" to LIBRARY_PLAYLISTS,
+        PLAYLISTS_SHELF to LIBRARY_PLAYLISTS,
         "Albums" to "FEmusic_liked_albums",
         "Artists" to "FEmusic_library_corpus_track_artists",
         "Subscriptions" to "FEmusic_library_corpus_artists",
@@ -405,7 +497,16 @@ object YtMusicRepository {
         Innertube.createPlaylist(title, privacy, videoIds = videoIds)
     }
 
-    suspend fun addToPlaylist(playlistId: String, videoIds: List<String>): Result<Unit> =
+    /**
+     * Adds tracks to a playlist. Succeeds with the per-entry ids YouTube minted
+     * for them — see [Innertube.addToPlaylist]. A caller with nothing on screen
+     * to update can ignore the map; one splicing the row into a playlist it is
+     * looking at needs it for the row's "remove".
+     */
+    suspend fun addToPlaylist(
+        playlistId: String,
+        videoIds: List<String>,
+    ): Result<Map<String, String>> =
         call("playlist:add") { Innertube.addToPlaylist(playlistId, videoIds) }
 
     /** [entries] are (setVideoId, videoId) pairs — see [Song.setVideoId]. */

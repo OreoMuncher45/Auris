@@ -7,7 +7,6 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
-import com.music.bitchord.data.sources.StreamRequest
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.Deferred
 import java.util.concurrent.ConcurrentHashMap
@@ -173,9 +172,14 @@ object QualityUpgrade {
         inFlight: Deferred<SourceStream?>? = null,
         playing: StreamFormat? = null,
     ): Boolean {
+        // Not gated on the request being lossless. A source ranked above
+        // YouTube can be worth swapping to on bitrate alone — see
+        // [SourceResolver.worthSwapping] — and requiring lossless here meant a
+        // lookup that was still running got cancelled outright the moment
+        // YouTube won the race, so a 320kbps source never finished and never
+        // played. [SourceResolver.upgradeFor] applies the real quality bar.
         if (target.title.isBlank() ||
             mediaId in refused ||
-            SourceResolver.requestForNow() !is StreamRequest.Lossless ||
             !SourceResolver.canSubstituteForYouTube()
         ) {
             inFlight?.cancel()
@@ -249,8 +253,10 @@ object QualityUpgrade {
         // Already upgraded: this *is* the better copy.
         if (uri.getQueryParameter(MARKER) != null) return false
         if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false
-        return SourceResolver.requestForNow() is StreamRequest.Lossless &&
-            SourceResolver.canSubstituteForYouTube()
+        // Same widening as [settledForLess]: a track playing off the cache is
+        // worth a second look whenever anything outranks YouTube, not only
+        // when lossless was asked for.
+        return SourceResolver.canSubstituteForYouTube()
     }
 
     /**

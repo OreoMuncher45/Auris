@@ -5,6 +5,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -19,12 +20,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.ColorUtils
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -36,6 +39,7 @@ import coil3.request.allowHardware
 import coil3.toBitmap
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
@@ -72,6 +76,34 @@ fun MeshGradientBackground(
     modifier: Modifier = Modifier,
     trackKey: Any? = null,
     driftMillis: Int = 8_000,
+    /**
+     * Keep the blobs orbiting instead of letting them settle.
+     *
+     * Off everywhere the mesh fills a screen, for the reason in the class note:
+     * a full-screen blur re-drawn at refresh rate is the most expensive thing
+     * this app does, and nobody is looking at it. On the Replay's cards it is
+     * the opposite trade — the surface is a few hundred dp of a card the user
+     * has deliberately opened and is looking straight at, the motion is what
+     * makes the card feel like an object rather than a picture of one, and
+     * "reduce animation" still stops it dead.
+     */
+    continuous: Boolean = false,
+    /**
+     * How far the blobs are smeared. The default is sized for a full screen;
+     * a small surface needs proportionally less, or the four colours blend into
+     * one wash before they reach its edges.
+     */
+    blurRadius: Dp = 64.dp,
+    /**
+     * Off for a surface that should read as a still image: colours snap
+     * straight to target instead of crossfading, and the blobs never drift
+     * on a [trackKey] change, only settling once on first composition. The
+     * Replay page and its cards use this — a grid of these redrawing a
+     * blurred layer every time a card is opened or swiped past was the
+     * expensive case the class note above warns about, multiplied by however
+     * many cards are on screen.
+     */
+    animated: Boolean = true,
 ) {
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
 
@@ -81,7 +113,7 @@ fun MeshGradientBackground(
 
     // Each colour slot crossfades independently when the track (palette) changes,
     // unless "reduce animation" is on, in which case colours snap straight to target.
-    val colorSpec: AnimationSpec<Color> = if (reduceAnimation) snap() else tween(1400)
+    val colorSpec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
     val animatedColors = tuned.mapIndexed { index, color ->
         animateColorAsState(color, colorSpec, label = "meshColor$index").value
     }
@@ -90,11 +122,20 @@ fun MeshGradientBackground(
     // Read in the draw lambda, not here: an Animatable read during draw
     // invalidates only the drawing, leaving composition out of the loop.
     val phase = remember { Animatable(0f) }
-    LaunchedEffect(trackKey, reduceAnimation) {
-        if (reduceAnimation) {
-            phase.snapTo(0f)
-        } else {
-            phase.animateTo(
+    LaunchedEffect(trackKey, reduceAnimation, continuous, animated) {
+        when {
+            !animated || reduceAnimation -> phase.snapTo(0f)
+            // A full turn at a time, restarted rather than looped with an
+            // infinite spec: the blobs' speeds are irrational multiples of each
+            // other, so the pattern never repeats, and a linear phase keeps the
+            // orbit even instead of easing to a halt each lap.
+            continuous -> while (isActive) {
+                phase.animateTo(
+                    targetValue = phase.value + (2 * PI).toFloat(),
+                    animationSpec = tween(driftMillis * 4, easing = LinearEasing),
+                )
+            }
+            else -> phase.animateTo(
                 targetValue = phase.value + DRIFT_RADIANS,
                 animationSpec = tween(driftMillis, easing = FastOutSlowInEasing),
             )
@@ -104,15 +145,27 @@ fun MeshGradientBackground(
     // Scale up slightly so the blur's clamped edges never show, then blur the
     // whole layer (RenderEffect, API 31+; a no-op below — the radial falloff
     // already reads soft there).
+    //
+    // Clipped on the way out, and from a layer of its own rather than by setting
+    // `clip` on the one below: that one clips what is drawn *into* it, in its own
+    // coordinates, and the scale is applied after — so the overhang the scale
+    // creates survives it. This has to sit outside the scale to contain it.
+    //
+    // The overhang is a third of the backdrop's width and it is painted, not
+    // transparent: whatever this is standing in gets it. Off a full-window sheet
+    // that is the far side of the window and nobody ever saw it, which is how it
+    // went unnoticed; in a pane beside a page it was a hand's width of gradient
+    // laid over the feed.
     Canvas(
         modifier = modifier
             .fillMaxSize()
+            .clipToBounds()
             .graphicsLayer {
                 scaleX = 1.3f
                 scaleY = 1.3f
             }
             .background(baseColor)
-            .blur(64.dp),
+            .blur(blurRadius),
     ) {
         val anchors = listOf(
             Offset(0.20f, 0.25f),

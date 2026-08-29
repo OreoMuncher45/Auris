@@ -6,6 +6,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.my.kizzy.rpc.KizzyRPC
 import com.my.kizzy.rpc.RpcImage
+import java.util.Locale
 
 /**
  * Publishes what's playing to Discord as a Rich Presence activity.
@@ -20,12 +21,12 @@ import com.my.kizzy.rpc.RpcImage
  * The presence Discord renders from one [updateSong] call:
  *
  * ```
- *   Listening to bitchord          <- activityName, or the app's own name
+ *   Listening to BitChord          <- activityName, or the app's own name
  *   ┌────┐  Song title             <- details
  *   │art │  Artist                 <- state
  *   └────┘  ▁▁▁▁▁▁ 1:04 / 3:47     <- from the timestamps
  *   [ Listen on YouTube Music ]    <- button 1
- *   [ Visit bitchord           ]   <- button 2
+ *   [ Visit BitChord           ]   <- button 2
  * ```
  */
 class DiscordRPC(
@@ -71,7 +72,7 @@ class DiscordRPC(
         val calculatedStartTime = currentTime - adjustedPlaybackTime
 
         val songTitleWithRate = if (playbackSpeed != 1.0f) {
-            "${song.title} [${String.format("%.2fx", playbackSpeed)}]"
+            "${song.title} [${String.format(Locale.ROOT, "%.2fx", playbackSpeed)}]"
         } else {
             song.title
         }
@@ -156,7 +157,7 @@ class DiscordRPC(
         const val PROJECT_URL = "https://github.com/kushagrasinghx/BitChord"
 
         const val DEFAULT_BUTTON_1 = "Listen on YouTube Music"
-        const val DEFAULT_BUTTON_2 = "Visit bitchord"
+        const val DEFAULT_BUTTON_2 = "Visit BitChord"
 
         /** Discord draws the sleeve at roughly 96dp; 480px covers it on any density. */
         private const val ART_PX = 480

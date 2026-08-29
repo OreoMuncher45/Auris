@@ -111,16 +111,14 @@ object BitChordIcons {
         }.build()
     }
 
-    val Repeat: ImageVector by lazy { repeatLoop("bc_repeat", withOne = false) }
-
-    val RepeatOne: ImageVector by lazy { repeatLoop("bc_repeat_one", withOne = true) }
+    val Repeat: ImageVector by lazy { repeatLoop("bc_repeat") }
 
     /**
      * Two straight runs joined by semicircles, with the arrow heads lying flat
      * at the ends of the straights. Putting them on the curves instead — as a
      * first pass did — makes the glyph read as a refresh/sync symbol.
      */
-    private fun repeatLoop(name: String, withOne: Boolean): ImageVector =
+    private fun repeatLoop(name: String): ImageVector =
         ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp, defaultHeight = 24.dp,
@@ -141,11 +139,6 @@ object BitChordIcons {
                 // Direction of travel: right along the top, left along the bottom.
                 moveTo(13.5f, 5.7f); lineTo(15.4f, 7.6f); lineTo(13.5f, 9.5f)
                 moveTo(10.5f, 14.5f); lineTo(8.6f, 16.4f); lineTo(10.5f, 18.3f)
-
-                if (withOne) {
-                    // Slim "1" inside the loop
-                    moveTo(10.9f, 10.9f); lineTo(12.2f, 10f); lineTo(12.2f, 14f)
-                }
             }
         }.build()
 
@@ -350,6 +343,66 @@ object BitChordIcons {
                 moveTo(7.5f, 11f); lineTo(12f, 15.5f); lineTo(16.5f, 11f)
                 // Tray base
                 moveTo(4.5f, 18f); lineTo(19.5f, 18f)
+            }
+        }.build()
+    }
+
+    /**
+     * Clock face with two hands — a download asked for but not yet on disk.
+     *
+     * The dial is the same 8.6 radius as [Explore]'s, so the two sit at the same
+     * optical weight when they appear in the same row of header buttons. The
+     * hands are one polyline through the centre rather than two strokes: the
+     * round join is then the pivot, which is what stops the middle reading as a
+     * pair of lines that happen to cross.
+     */
+    val Clock: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_clock",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Dial (full circle from two arcs)
+                moveTo(3.4f, 12f)
+                arcToRelative(8.6f, 8.6f, 0f, isMoreThanHalf = true, isPositiveArc = true, 17.2f, 0f)
+                arcToRelative(8.6f, 8.6f, 0f, isMoreThanHalf = true, isPositiveArc = true, -17.2f, 0f)
+                // Minute hand up, hour hand down to the right
+                moveTo(12f, 7.4f); lineTo(12f, 12f); lineTo(15.4f, 13.8f)
+            }
+        }.build()
+    }
+
+    /**
+     * A pushpin, not a map marker: a round head with a straight needle
+     * kicked out to one side, the way it sits once it's stuck into something.
+     * A teardrop reads as "location" the moment it's this small — the two
+     * disjoint strokes here are what keep it read as "pinned" instead.
+     */
+    val Pin: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_pin",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Round head.
+                moveTo(9.6f, 8.4f)
+                arcToRelative(3.4f, 3.4f, 0f, isMoreThanHalf = true, isPositiveArc = true, 6.8f, 0f)
+                arcToRelative(3.4f, 3.4f, 0f, isMoreThanHalf = true, isPositiveArc = true, -6.8f, 0f)
+                // Needle, kicked out from the underside of the head to a point.
+                moveTo(10.8f, 10.8f)
+                lineTo(5.6f, 19.6f)
             }
         }.build()
     }

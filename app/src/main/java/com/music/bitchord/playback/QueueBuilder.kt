@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.data.model.Song
+import java.util.Locale
 
 /**
  * Builds the station that plays on after a one-off song.
@@ -87,7 +88,7 @@ object QueueBuilder {
      * recording as far as a queue is concerned. Remix and cover markers are
      * deliberately left in — those really are different tracks.
      */
-    internal fun normalisedTitle(raw: String): String = raw.lowercase()
+    internal fun normalisedTitle(raw: String): String = raw.lowercase(Locale.ROOT)
         .substringBefore(" | ")
         .replace(NOISE, " ")
         .replace(PUNCTUATION, " ")
@@ -95,7 +96,7 @@ object QueueBuilder {
         .trim()
 
     /** The cast behind a credit, split out so billing order stops mattering. */
-    internal fun artistSet(raw: String): Set<String> = raw.lowercase()
+    internal fun artistSet(raw: String): Set<String> = raw.lowercase(Locale.ROOT)
         .replace(TOPIC, " ")
         .split(",", "&", "·", "•", ";", " feat", " ft.", " ft ", " x ", " with ")
         .map { it.replace(PUNCTUATION, " ").replace(SPACES, " ").trim() }

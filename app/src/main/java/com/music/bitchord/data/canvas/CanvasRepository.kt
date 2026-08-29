@@ -11,11 +11,16 @@ import kotlinx.coroutines.withContext
  * Finds the looping video that belongs behind a track's or a release's cover
  * art — Spotify's Canvas, Apple's motion artwork.
  *
- * Three sources, asked in turn until one answers. They cover genuinely
- * different ground rather than being three routes to the same catalogue:
+ * Four sources, asked in turn until one answers. They cover genuinely
+ * different ground rather than being four routes to the same catalogue:
  * Apple has the most, Tidal has square covers on a lot of what Apple misses,
- * and the community index is the only one that reaches back catalogue. Order
- * is by hit rate, so the later two are rarely reached.
+ * the community index is the only one that reaches back catalogue, and
+ * Spotify has the original Canvas but needs the listener's own session
+ * cookie to reach (see [SpotifyCanvas]) and is a free no-op without one.
+ * Spotify goes last rather than first even once it's set up: it's the
+ * heaviest of the four to reach (an offscreen WebView, not just a request)
+ * and the other three between them already cover most of what it would
+ * have answered.
  *
  * Every one of them is a public endpoint belonging to someone else, reached
  * without an account, and all of them will confidently answer a search with
@@ -82,6 +87,7 @@ object CanvasRepository {
                 { AppleMusicCanvas.search(title, artist, album) },
                 { TidalCanvas.search(title, artist, album) },
                 { CommunityCanvas.search(title, artist, album) },
+                { SpotifyCanvas.search(title, artist, album) },
             ) { it.matches(title, artist, album) }
         }
     }
@@ -114,6 +120,7 @@ object CanvasRepository {
                 { AppleMusicCanvas.searchAlbum(name, credit) },
                 { TidalCanvas.searchAlbum(name, credit) },
                 { CommunityCanvas.searchAlbum(name, credit) },
+                { SpotifyCanvas.searchAlbum(name, credit) },
                 // Album artwork names itself in both fields, so this is the
                 // same check the track path makes.
             ) { it.matches(name, credit, name) }
@@ -123,7 +130,7 @@ object CanvasRepository {
     private suspend fun resolve(
         key: String,
         withAlbum: Boolean,
-        lookUp: () -> CanvasArtwork?,
+        lookUp: suspend () -> CanvasArtwork?,
     ): CanvasArtwork? = lock.withLock {
         synchronized(cache) {
             cache[key]?.let { if (it.reusable(withAlbum)) return@withLock it.artwork }
@@ -151,8 +158,8 @@ object CanvasRepository {
      * one that found nothing: none of these hosts are ours, and a missing
      * canvas is not worth surfacing as an error.
      */
-    private fun firstHit(
-        vararg sources: () -> CanvasArtwork?,
+    private suspend fun firstHit(
+        vararg sources: suspend () -> CanvasArtwork?,
         accept: (CanvasArtwork) -> Boolean,
     ): CanvasArtwork? {
         for (source in sources) {

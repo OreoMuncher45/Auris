@@ -1,8 +1,9 @@
 package com.music.bitchord.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -43,23 +44,86 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.haptics.Haptic
+import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 data class BottomTab(
     val label: String,
     val icon: ImageVector,
 )
+
+/**
+ * The gap between the pill's glass edge and the tabs inside it.
+ *
+ * Tighter than the 8 it was, which shows up as a selection indicator reaching
+ * closer to the edge on all four sides rather than floating in the middle of a
+ * wide margin.
+ */
+private val PILL_INSET = 6.dp
+
+/**
+ * Each tab's own vertical padding, and the counterweight to [PILL_INSET].
+ *
+ * The pill has no height of its own — it is whatever its contents come to — so
+ * taking 2dp off the inset above would have shortened the whole bar by 4. The
+ * same 2dp is added back here instead, which leaves the bar's outer height
+ * exactly where it was and moves the boundary rather than the bar. The two
+ * numbers are a pair: change one and the bar's height moves unless the other
+ * moves against it.
+ */
+private val TAB_VERTICAL_PADDING = 9.dp
+
+/**
+ * The spring the selection indicator and the tab glyphs both travel on.
+ *
+ * Damping 0.72 rather than the 0.5 it was: half-damped overshoots two or three
+ * times, and a run of diminishing bounces is what makes a control read as a
+ * spring rather than as a material. This settles on the second approach — one
+ * soft pass beyond the mark and done — which is the difference between bouncy
+ * and alive.
+ *
+ * Stiffness 320 puts the whole movement at roughly a third of a second, quick
+ * enough that the tap and the arrival feel like one event.
+ */
+private val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
+
+/**
+ * How far the indicator elongates along its travel, at full stride.
+ *
+ * This is the part that reads as liquid rather than as a sliding rectangle. A
+ * shape crossing a gap under its own momentum does not stay the shape it was:
+ * it draws out along the direction it is going and gathers itself back at the
+ * end. Driven off how far there is still to go, so it is widest in the middle
+ * of the trip and exactly itself once it arrives — no state to keep, and it
+ * falls out of a drag for free, since dragging is nothing but a long way still
+ * to go.
+ *
+ * Sixteen percent is enough to be felt and not enough to be caught at: past
+ * about a fifth the pill starts reading as a stretched image of itself.
+ */
+private const val STRETCH = 0.16f
+
+/**
+ * How much of the stretch is taken back out of the indicator's height.
+ *
+ * Half, not all. Conserving area exactly is what a drop of water does, and it
+ * is too much here — the indicator sits behind a glyph that is not deforming
+ * with it, and a full counter-squash reads as the pill being crushed rather
+ * than drawn. Half keeps the sense of something with a volume to redistribute
+ * while leaving the glyph its ground.
+ */
+private const val SQUASH = 0.5f
 
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
@@ -73,9 +137,14 @@ fun FloatingBottomBar(
     val pillShape = RoundedCornerShape(percent = 50)
     val container = MaterialTheme.colorScheme.surface
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // The liquid settle is exactly the motion "reduce animation" promises to
+    // drop — snapping both the indicator's travel and the glyph's pop to
+    // their target leaves the tap itself instant rather than eased.
+    val glassSpec: AnimationSpec<Float> = if (reduceAnimation) snap() else GlassSpring
 
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    val haptics = LocalHapticFeedback.current
+    val haptics = rememberHaptics()
     val density = LocalDensity.current
     val currentSelectedIndex by rememberUpdatedState(selectedIndex)
 
@@ -99,12 +168,20 @@ fun FloatingBottomBar(
 
     val animatedPillOffset by animateFloatAsState(
         targetValue = pillTargetPx,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = glassSpec,
         label = "pillOffset",
     )
+
+    // How much of a tab's stride is still ahead of the indicator: 0 at rest,
+    // toward 1 in the middle of a move or under a drag that has run away from
+    // it. The stretch below is a function of this and nothing else, which is
+    // what keeps it honest — the shape can only be deformed while it is
+    // actually behind where it is going.
+    val lag = if (tabStepPx > 0f) {
+        (abs(pillTargetPx - animatedPillOffset) / tabStepPx).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
 
     var lastHapticTab by remember { mutableIntStateOf(selectedIndex) }
 
@@ -128,14 +205,23 @@ fun FloatingBottomBar(
                 },
             )
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), pillShape)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
+            .padding(horizontal = PILL_INSET, vertical = PILL_INSET),
     ) {
         if (tabWidthPx > 0f) {
             Box(
                 modifier = Modifier
                     .width(with(density) { tabWidthPx.toDp() })
                     .height(with(density) { rowSize.height.toDp() })
-                    .graphicsLayer { translationX = animatedPillOffset }
+                    .graphicsLayer {
+                        translationX = animatedPillOffset
+                        // Around its own centre, so the indicator draws out
+                        // both ways rather than growing a tail off one edge —
+                        // a leading edge that ran ahead of the glyph it is
+                        // meant to be behind would read as two things moving,
+                        // not one thing stretching.
+                        scaleX = 1f + lag * STRETCH
+                        scaleY = 1f - lag * STRETCH * SQUASH
+                    }
                     .clip(pillShape)
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
             )
@@ -181,7 +267,7 @@ fun FloatingBottomBar(
                                     .coerceIn(0f, tabs.lastIndex.toFloat())
                                     .roundToInt()
                             if (approxTab != lastHapticTab) {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.play(Haptic.Tick)
                                 lastHapticTab = approxTab
                             }
                         },
@@ -194,6 +280,7 @@ fun FloatingBottomBar(
                 BottomBarItem(
                     tab = tab,
                     selected = index == selectedIndex,
+                    glassSpec = glassSpec,
                     onClick = { onTabSelected(index) },
                     modifier = Modifier.weight(1f),
                 )
@@ -206,17 +293,18 @@ fun FloatingBottomBar(
 private fun BottomBarItem(
     tab: BottomTab,
     selected: Boolean,
+    glassSpec: AnimationSpec<Float>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // The same spring the indicator rides, so the glyph arriving and the glass
+    // arriving are one movement rather than two that nearly agree.
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.08f else 1f,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioMediumBouncy,
-            stiffness = Spring.StiffnessMediumLow,
-        ),
+        animationSpec = glassSpec,
         label = "tabScale",
     )
+    val haptics = rememberHaptics()
     val tint by animateColorAsState(
         targetValue = if (selected) {
             MaterialTheme.colorScheme.primary
@@ -234,9 +322,11 @@ private fun BottomBarItem(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onClick,
-            )
-            .padding(vertical = 7.dp),
+            ) {
+                if (!selected) haptics.play(Haptic.Select)
+                onClick()
+            }
+            .padding(vertical = TAB_VERTICAL_PADDING),
     ) {
         Icon(
             imageVector = tab.icon,

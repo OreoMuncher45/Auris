@@ -16,12 +16,11 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.net.URI
 import java.security.MessageDigest
+import java.util.Locale
 
 object LastFM {
     const val DEFAULT_API_ENDPOINT = "https://ws.audioscrobbler.com/2.0/"
     const val LIBREFM_API_ENDPOINT = "https://libre.fm/2.0/"
-    const val FALLBACK_COMPAT_API_KEY = "bitchord"
-    const val FALLBACK_COMPAT_SECRET = "bitchord"
 
     @Serializable
     data class Session(val name: String, val key: String, val subscriber: Int)
@@ -76,7 +75,7 @@ object LastFM {
         val sorted = toSortedMap()
         val toHash = sorted.entries.joinToString("") { it.key + it.value } + secret
         val digest = MessageDigest.getInstance("MD5").digest(toHash.toByteArray())
-        return digest.joinToString("") { "%02x".format(it) }
+        return digest.joinToString("") { "%02x".format(Locale.ROOT, it) }
     }
 
     private fun HttpRequestBuilder.lastfmParams(
@@ -196,6 +195,9 @@ object LastFM {
         apiKey: String,
         secret: String,
     ) {
+        require(apiKey.isNotBlank() && secret.isNotBlank()) {
+            "Last.fm API credentials are not configured for this build"
+        }
         configure(
             endpoint = runtimeConfig.endpoint,
             apiKey = apiKey,
@@ -225,7 +227,7 @@ object LastFM {
 
     fun normalizeEndpoint(endpoint: String): String {
         val uri = URI(endpoint.trim())
-        val scheme = uri.scheme?.lowercase()
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
         require(scheme == "http" || scheme == "https")
         require(!uri.host.isNullOrBlank())
         require(uri.query == null && uri.fragment == null)

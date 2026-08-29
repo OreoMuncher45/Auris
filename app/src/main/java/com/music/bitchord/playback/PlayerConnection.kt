@@ -2,10 +2,13 @@ package com.music.bitchord.playback
 
 import android.content.ComponentName
 import android.net.Uri
+import android.os.Bundle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -17,20 +20,55 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.delay
 import java.io.File
+import java.util.Locale
+
+/**
+ * The playhead, deliberately kept out of [PlayerState].
+ *
+ * It moves twice a second; everything else on [PlayerState] moves on a track
+ * change. Carried in the same object, the two are one snapshot read — and
+ * [rememberPlayerState] returns a value, which makes it non-restartable, which
+ * pushes that read up into its *caller's* scope. In this app the caller is the
+ * root of the whole UI, so a ticking playhead invalidated the entire tree twice
+ * a second: every tab, both floating bars, and the three real-time blurs
+ * underneath them, whether or not anything on screen showed a position.
+ *
+ * Split out and held behind a stable object, the tick is a read of this alone.
+ * Whoever draws a scrubber reads it and recomposes; nobody else hears about it.
+ * Take care to keep it that way — reading [positionMs] high in the tree and
+ * passing the `Long` down puts the invalidation straight back where it was.
+ */
+@Stable
+class PlaybackPosition internal constructor() {
+    var positionMs by mutableLongStateOf(0L)
+        internal set
+}
 
 /** Snapshot of playback state, driven by the MediaController. */
 data class PlayerState(
     val song: Song? = null,
     val isPlaying: Boolean = false,
-    val positionMs: Long = 0L,
+    /**
+     * The playhead. A field rather than a value: its identity never changes, so
+     * carrying it here costs no invalidation — see [PlaybackPosition].
+     */
+    val position: PlaybackPosition = PlaybackPosition(),
+    /**
+     * Left here rather than moved alongside the position: it settles once per
+     * track, and [mutableStateOf] compares structurally, so the poll writing it
+     * back unchanged every tick invalidates nothing.
+     */
     val durationMs: Long = 0L,
     val error: String? = null,
     /** True while ExoPlayer is buffering — including our own stream-URL resolution. */
@@ -68,22 +106,31 @@ fun rememberMediaController(): MediaController? {
     return controller
 }
 
+/** Routes the player-screen AutoPlay button through the playback service. */
+fun MediaController.toggleAutoplay() {
+    sendCustomCommand(
+        SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY),
+        Bundle.EMPTY,
+    )
+}
+
 /** Mirrors the controller into Compose state, polling position while playing. */
 @Composable
 fun rememberPlayerState(controller: MediaController?): PlayerState {
-    var state by remember { mutableStateOf(PlayerState()) }
+    val position = remember { PlaybackPosition() }
+    var state by remember { mutableStateOf(PlayerState(position = position)) }
 
     DisposableEffect(controller) {
         val player = controller ?: return@DisposableEffect onDispose {}
 
         fun sync(error: String? = null) {
             val item = player.currentMediaItem
+            // Synced here too, so seeking while paused or buffering still moves
+            // the scrubber (the poll loop only runs on play).
+            position.positionMs = player.currentPosition.coerceAtLeast(0L)
             state = state.copy(
                 song = item?.toSong(),
                 isPlaying = player.isPlaying,
-                // Sync position here too, so seeking while paused or buffering
-                // still moves the scrubber (the poll loop only runs on play).
-                positionMs = player.currentPosition.coerceAtLeast(0L),
                 durationMs = player.duration.coerceAtLeast(0L),
                 error = error,
                 isLoading = player.playbackState == Player.STATE_BUFFERING,
@@ -106,12 +153,18 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
         onDispose { player.removeListener(listener) }
     }
 
-    LaunchedEffect(controller, state.isPlaying) {
-        while (controller != null && state.isPlaying) {
-            state = state.copy(
-                positionMs = controller.currentPosition.coerceAtLeast(0L),
-                durationMs = controller.duration.coerceAtLeast(0L),
-            )
+    // Only while the app is on screen. The poll exists to move a scrubber, and
+    // a scrubber behind a locked screen is not being read — but the loop is a
+    // plain `delay`, so without this it went on making two binder round-trips a
+    // second to the media session for the whole time the phone was in a pocket.
+    // Nothing is lost by stopping: `sync` above runs on the controller's own
+    // events, and the first thing that happens on the way back is a fresh read.
+    val foreground = rememberIsForeground()
+    LaunchedEffect(controller, state.isPlaying, foreground) {
+        while (controller != null && state.isPlaying && foreground) {
+            position.positionMs = controller.currentPosition.coerceAtLeast(0L)
+            val duration = controller.duration.coerceAtLeast(0L)
+            if (duration != state.durationMs) state = state.copy(durationMs = duration)
             delay(500)
         }
     }
@@ -134,6 +187,9 @@ fun MediaItem.toSong() = Song(
     artist = mediaMetadata.artist?.toString().orEmpty(),
     thumbnailUrl = mediaMetadata.artworkUri?.toString(),
     durationText = mediaMetadata.extras?.getString(EXTRA_DURATION),
+    artistId = mediaMetadata.extras?.getString(EXTRA_ARTIST_ID),
+    albumId = mediaMetadata.extras?.getString(EXTRA_ALBUM_ID),
+    albumName = mediaMetadata.albumTitle?.toString(),
     fromAutoplay = this.fromAutoplay,
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
@@ -149,6 +205,17 @@ val MediaItem.fromAutoplay: Boolean
  * the player, and the UI only ever sees it back through a MediaController.
  */
 private const val EXTRA_FROM_AUTOPLAY = "bitchord.fromAutoplay"
+
+/**
+ * The artist and album pages this track hangs under, when they are known.
+ *
+ * Carried so they survive the round trip through the session: the player's own
+ * menu backfills them with a lookup when they are missing (see MainActivity's
+ * `links`), but a queue restored after a restart, or a track read back by the
+ * service, has only what the item carries.
+ */
+private const val EXTRA_ARTIST_ID = "bitchord.artistId"
+private const val EXTRA_ALBUM_ID = "bitchord.albumId"
 
 /** @see Song.localUri */
 private const val EXTRA_LOCAL_URI = "bitchord.localUri"
@@ -193,17 +260,6 @@ fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
 )
 
 /**
- * Takes back what AutoPlay queued and hasn't played yet — what switching
- * AutoPlay off means for a queue it has already been extending. Removed from
- * the bottom up so the indexes ahead of each removal still hold.
- */
-fun MediaController.dropAutoplayTracks() {
-    for (i in mediaItemCount - 1 downTo currentMediaItemIndex + 1) {
-        if (getMediaItemAt(i).fromAutoplay) removeMediaItem(i)
-    }
-}
-
-/**
  * Custom scheme; PlaybackService resolves the real stream URL at play time.
  *
  * A video-tagged [Song] is expected to already have been swapped for its
@@ -227,7 +283,7 @@ private val DIRECT_FILE_URI_EXTENSIONS = setOf(
 
 private fun resolvePlaybackUri(uriString: String, localPath: String?): String {
     if (localPath.isNullOrBlank() || !uriString.startsWith("content://")) return uriString
-    val ext = localPath.substringAfterLast('.', "").lowercase()
+    val ext = localPath.substringAfterLast('.', "").lowercase(Locale.ROOT)
     if (ext !in DIRECT_FILE_URI_EXTENSIONS) return uriString
     val file = File(localPath)
     return if (file.exists() && file.canRead()) Uri.fromFile(file).toString() else uriString
@@ -250,7 +306,34 @@ private fun Song.matchQuery(): String = buildString {
 
 fun Song.toMediaItem(): MediaItem {
     val sourceTrack = SourceRegistry.parseTrackKey(videoId)
-    val uriString = localUri ?: when {
+    // A row from search or a playlist carries no file of its own, but the track
+    // may still be on disk from a download — see [Downloads.saved].
+    //
+    // Answered *here*, where the item is built, rather than in the player's
+    // stream resolver, because everything downstream decides what to do by the
+    // scheme the item arrives with: [AudioCache.playbackFactory] sends file and
+    // content URIs past the disk cache instead of writing a second copy of
+    // them, and DefaultDataSource picks ContentDataSource off the same scheme.
+    // A local URI substituted further down lands inside the half of the chain
+    // that only speaks HTTP, where OkHttp rejects it as a malformed URL — which
+    // is what a downloaded track played from search used to do, four times over,
+    // before giving up.
+    //
+    // Both halves are checked, not just the record: a claim about a folder this
+    // app does not own — see [Downloads] — outlives the file it names whenever
+    // one is deleted from a file manager, and trusting either unchecked sent the
+    // player a `file://` uri to a path that had simply stopped existing.
+    //
+    // [localUri] needs it just as much as the lookup does, and for a reason that
+    // is easy to miss: it is not only set from a folder read that just verified
+    // the file. It also round-trips off the player's own item through
+    // [MediaItem.toSong], and is persisted and restored by [LastPlayed] — so a
+    // queue restored after a restart carries whatever was true whenever it was
+    // last saved. Checking only the lookup leaves exactly that path unguarded,
+    // which is the one a resumed queue takes.
+    val offlineUri = localUri?.takeUnless(Downloads::isMissingLocalFile)
+        ?: Downloads.verifiedSavedUri(videoId)
+    val uriString = offlineUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
         // Title, artist and runtime ride along in the URI because they are what
         // a cross-source match is made on, and the resolver runs on ExoPlayer's
@@ -274,6 +357,16 @@ fun Song.toMediaItem(): MediaItem {
         MediaMetadata.Builder()
             .setTitle(title)
             .setArtist(artist)
+            // The release this track came off, when whoever queued it knew.
+            //
+            // A native field rather than an extra because Media3 bundles this
+            // one across the session on its own, and because the lock screen and
+            // Android Auto both draw it — a track queued from an album page had
+            // the name in hand all along and was arriving at those surfaces
+            // without it. It is also what the Replay's album chart is counted
+            // on: read back off the player, a track with no album here is a
+            // track that cannot be filed under one.
+            .setAlbumTitle(albumName)
             // Sized here rather than left as stored: this is what the lock
             // screen, the notification and Android Auto draw, all of them
             // large, and none of them go back for a better copy later.
@@ -300,13 +393,17 @@ fun Song.toMediaItem(): MediaItem {
             // back a null duration, [LastPlayed] stored a null, and the restored
             // queue lost the `&d=` its matching depends on.
             .apply {
-                if (fromAutoplay || localUri != null || durationText != null) {
+                if (fromAutoplay || offlineUri != null || durationText != null ||
+                    artistId != null || albumId != null
+                ) {
                     setExtras(
                         bundleOf(
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
-                            EXTRA_LOCAL_URI to localUri,
+                            EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
                             EXTRA_DURATION to durationText,
+                            EXTRA_ARTIST_ID to artistId,
+                            EXTRA_ALBUM_ID to albumId,
                         ),
                     )
                 }

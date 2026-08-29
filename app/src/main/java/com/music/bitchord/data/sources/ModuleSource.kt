@@ -14,9 +14,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import java.util.Locale
 
 /**
- * A [MusicSource] backed by one or more Convx-compatible JS module plugins.
+ * A [MusicSource] backed by one or more compatible JS module plugins.
  *
  * The [config]'s [SourceConfig.baseUrl] points at a module-index JSON
  * (e.g. `https://example.com/index.json`). That index lists `SpineModule`
@@ -122,7 +123,18 @@ class ModuleSource(
                 // holding the best copy, and the grace period is what buys the
                 // chance to compare them.
                 if (waitForAll) {
-                    withTimeoutOrNull(SEARCH_PATIENT_MS) { jobs.joinAll() }
+                    // Patient, not indefinite. A flat join on everyone made the
+                    // *slowest* module the price of every single track — and on
+                    // a batch download, where this path runs once per track back
+                    // to back, a module that simply never answers was 20s of
+                    // dead time per song and nothing to show for it. Every
+                    // module still gets a real hearing, several times what the
+                    // live path allows; what it no longer gets is unlimited
+                    // time while the queue stands still.
+                    withTimeoutOrNull(SEARCH_PATIENT_MS) {
+                        withTimeoutOrNull(SEARCH_BUDGET_MS) { first.await() }
+                        withTimeoutOrNull(SEARCH_PATIENT_GRACE_MS) { jobs.joinAll() }
+                    }
                 } else {
                     withTimeoutOrNull(SEARCH_BUDGET_MS) { first.await() }
                     withTimeoutOrNull(SEARCH_GRACE_MS) { jobs.joinAll() }
@@ -157,7 +169,7 @@ class ModuleSource(
                 albumName = track.album.ifBlank { null },
                 thumbnailUrl = track.albumCover,
                 durationText = track.duration.takeIf { it > 0 }
-                    ?.let { "${it / 60}:${"%02d".format(it % 60)}" },
+                    ?.let { "${it / 60}:${"%02d".format(Locale.ROOT, it % 60)}" },
                 sourceQuality = rowTier(track),
             )
         }
@@ -270,11 +282,11 @@ class ModuleSource(
      * guessed at — [kbpsFor] carries what is known about those instead.
      */
     private fun codecOf(mimeType: String?, quality: String?, url: String): String? {
-        mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase()
+        mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
             ?.takeIf { it.isNotEmpty() }
             ?.let { return it }
         if (qualityTier(quality.orEmpty()) == LOSSLESS) return "flac"
-        return url.substringBefore('?').substringAfterLast('.').lowercase()
+        return url.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)
             .takeIf { it in AUDIO_EXTENSIONS }
     }
 
@@ -418,7 +430,7 @@ class ModuleSource(
         }
 
         /**
-         * The three tiers every Convx-compatible module speaks, whatever it
+         * The three tiers every compatible module speaks, whatever it
          * calls them on the way out: `LOSSLESS`, `FLAC 16-bit / 44.1kHz` and
          * `hires-96` are one tier; `320kbps` and `HIGH` are another.
          */
@@ -437,7 +449,7 @@ class ModuleSource(
          * codec, and it is the codec that settles it.
          */
         fun qualityTier(label: String): String? {
-            val text = label.uppercase()
+            val text = label.uppercase(Locale.ROOT)
             return when {
                 text.isBlank() -> null
                 LOSSLESS_HINTS.any { it in text } -> LOSSLESS
@@ -477,6 +489,19 @@ class ModuleSource(
          * routinely the one holding the lossless copy.
          */
         const val SEARCH_PATIENT_MS = 25_000L
+
+        /**
+         * How long the stragglers get once someone useful has answered, on the
+         * patient path.
+         *
+         * The counterpart to [SEARCH_GRACE_MS], sized for a caller that is not
+         * holding up audio: long enough for a slow-but-working module to land
+         * its answer and be compared, short enough that a module which is not
+         * going to answer at all cannot define the cost of the track. Ends the
+         * search the moment everyone has spoken, so a healthy index never
+         * spends any of it.
+         */
+        const val SEARCH_PATIENT_GRACE_MS = 8_000L
 
         /**
          * Delimiter between the module id and the upstream track id inside
