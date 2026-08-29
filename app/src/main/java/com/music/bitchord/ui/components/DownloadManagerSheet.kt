@@ -172,7 +172,7 @@ fun DownloadManagerSheet(onDismiss: () -> Unit, modifier: Modifier = Modifier) {
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "Downloads",
+                    text = stringResource(R.string.downloads),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
