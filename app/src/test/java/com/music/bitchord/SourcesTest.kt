@@ -565,6 +565,67 @@ class SourcesTest {
         assertNull(TrackMatcher.best(emptyList(), target))
     }
 
+    // ---- What a lossy source has to beat to become a file -------------------
+
+    /**
+     * The case the floor exists for: JioSaavn's top rendition is better than
+     * anything YouTube's AAC ladder holds, so a download takes it rather than
+     * filing a copy worse than the one that would have been streamed.
+     */
+    @Test
+    fun `a 320 from a source is worth keeping over youtube's aac`() {
+        assertTrue(SourceResolver.beatsYouTubeAac(StreamFormat(codec = "mp4", kbps = 320)))
+    }
+
+    /**
+     * Below the top of YouTube's own ladder, a source's copy is trading one
+     * lossy file for another and giving up the more reliable fetch to do it —
+     * including at 256, where the two are a wash and the tie goes to YouTube.
+     */
+    @Test
+    fun `a thinner rendition loses to youtube's aac`() {
+        assertFalse(SourceResolver.beatsYouTubeAac(StreamFormat(codec = "mp3", kbps = 128)))
+        assertFalse(SourceResolver.beatsYouTubeAac(StreamFormat(codec = "mp4", kbps = 160)))
+        assertFalse(SourceResolver.beatsYouTubeAac(StreamFormat(codec = "aac", kbps = 256)))
+    }
+
+    /**
+     * A download has to name the file before the first byte lands, so a source
+     * that described its rendition as nothing has said nothing worth keeping —
+     * unlike playback, which can hand the URL to the decoder and find out.
+     */
+    @Test
+    fun `an unstated rendition is not worth keeping`() {
+        assertFalse(SourceResolver.beatsYouTubeAac(StreamFormat()))
+        assertFalse(SourceResolver.beatsYouTubeAac(StreamFormat(codec = "mp4")))
+    }
+
+    // ---- Which sources are worth asking before a track is played ------------
+
+    /**
+     * Read-ahead resolves the track *after* the one playing, so a source that
+     * needs ten seconds to answer is usually still answering when the listener
+     * arrives — and a wasted module resolve costs a QuickJS engine and several
+     * backend searches, where a wasted JioSaavn one costs a round trip. Only
+     * JioSaavn earns the speculative ask.
+     */
+    @Test
+    fun `only the quick source is worth resolving ahead of playback`() {
+        assertTrue(SourceKind.JIOSAAVN.worthPrefetching)
+        assertFalse(SourceKind.MODULE.worthPrefetching)
+        assertFalse(SourceKind.CUSTOM_MODULE.worthPrefetching)
+    }
+
+    /**
+     * YouTube is warmed ahead of time too, but through its own read-ahead,
+     * which speaks video ids and needs no cross-source match. Marking it here
+     * would send it through the substitution path to find itself.
+     */
+    @Test
+    fun `youtube is not prefetched as a substitute for itself`() {
+        assertFalse(SourceKind.YOUTUBE.worthPrefetching)
+    }
+
     // ---- Racing the sources -------------------------------------------------
 
     /**

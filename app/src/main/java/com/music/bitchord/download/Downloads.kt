@@ -876,7 +876,7 @@ object Downloads {
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
     private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
-        lossless(track, quality)?.let { (stream, storable) ->
+        fromSources(track, quality)?.let { (stream, storable) ->
             return Route(
                 extension = storable.extension,
                 mimeType = storable.mimeType,
@@ -898,8 +898,14 @@ object Downloads {
     }
 
     /**
-     * The lossless stream to keep for [track], with how to file it — or null,
-     * which is not a failure, just YouTube's turn.
+     * The stream to keep for [track] from a configured source, with how to file
+     * it — or null, which is not a failure, just YouTube's turn.
+     *
+     * Usually a bit-exact one; not always. [SourceResolver.forDownload] falls
+     * back to the best lossy copy any enabled source holds when nothing has the
+     * recording losslessly, and only gives up on the sources entirely when what
+     * they offer would not beat YouTube's own AAC. Which of those happened is
+     * the resolver's business — from here it is a URL and a codec either way.
      *
      * Bounded, because a module search waits on every backend it has (see
      * `ModuleSource.SEARCH_PATIENT_MS`) and does that once per query the matcher
@@ -917,11 +923,11 @@ object Downloads {
      *   spend searching cannot be a window in which the setting changes and the
      *   two halves of one decision disagree.
      */
-    private suspend fun lossless(
+    private suspend fun fromSources(
         track: Song,
         quality: DownloadQuality,
     ): Pair<SourceStream, DownloadStore.Storable>? {
-        val stream = withTimeoutOrNull(LOSSLESS_LOOKUP_MS) {
+        val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS) {
             try {
                 SourceResolver.forDownload(
                     TrackMatcher.targetOf(track),
@@ -930,7 +936,7 @@ object Downloads {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "lossless lookup failed for ${track.videoId}: ${e.message}")
+                Log.w(TAG, "source lookup failed for ${track.videoId}: ${e.message}")
                 null
             }
         } ?: return null
@@ -972,7 +978,7 @@ object Downloads {
     }
 
     /**
-     * How long a lossless lookup may hold a download up before it goes to
+     * How long the source lookup may hold a download up before it goes to
      * YouTube regardless.
      *
      * Matched to `PlaybackService.SUBSTITUTE_TIMEOUT_MS`, which bounds the same
@@ -980,8 +986,13 @@ object Downloads {
      * first note here and a found FLAC is worth some patience — but finite,
      * because the alternative is the queue stalled per track on modules that
      * simply do not have it.
+     *
+     * It bounds the lossy half of that lookup too, which is why
+     * [SourceResolver.forDownload] runs both halves at once rather than in
+     * turn: a fast source queued behind a slow one would spend this budget
+     * waiting for a module and never be asked.
      */
-    private const val LOSSLESS_LOOKUP_MS = 20_000L
+    private const val SOURCE_LOOKUP_MS = 20_000L
 
     /**
      * The extensions a file in Music can carry that say, on their own, that a

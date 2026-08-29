@@ -22,6 +22,25 @@ enum class SourceKind(
     val needsServer: Boolean,
     /** Whether this kind can serve bit-exact audio when asked. */
     val canServeLossless: Boolean,
+    /**
+     * Whether this kind answers quickly enough to be worth asking *before* a
+     * track is played, so its copy can be pinned and cached ahead of time.
+     *
+     * Measured on this device, the gap is not close: JioSaavn answers a search
+     * and hands back a stream URL in about 0.4s, while a module index takes
+     * 7-13s to walk its backends — and read-ahead runs on the track *after* the
+     * one playing, so a lookup that slow is usually still going when the
+     * listener arrives. A wasted JioSaavn resolve costs one HTTP round trip; a
+     * wasted module resolve costs a QuickJS engine, an index fetch and several
+     * backend searches. The first is worth spending speculatively and the
+     * second is not.
+     *
+     * False for [YOUTUBE] as well, though it *is* warmed ahead of time — that
+     * happens through its own read-ahead in
+     * [AudioCache][com.music.bitchord.playback.AudioCache], which speaks video
+     * ids directly and needs no cross-source match to find the track.
+     */
+    val worthPrefetching: Boolean = false,
 ) {
     /**
      * A module index the user pointed at themselves, tried ahead of the one
@@ -67,6 +86,7 @@ enum class SourceKind(
         labels = listOf("High Quality", "320kbps"),
         needsServer = false,
         canServeLossless = false,
+        worthPrefetching = true,
     ),
 
     /**

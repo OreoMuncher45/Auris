@@ -260,17 +260,6 @@ fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
 )
 
 /**
- * Takes back what AutoPlay queued and hasn't played yet — what switching
- * AutoPlay off means for a queue it has already been extending. Removed from
- * the bottom up so the indexes ahead of each removal still hold.
- */
-fun MediaController.dropAutoplayTracks() {
-    for (i in mediaItemCount - 1 downTo currentMediaItemIndex + 1) {
-        if (getMediaItemAt(i).fromAutoplay) removeMediaItem(i)
-    }
-}
-
-/**
  * Custom scheme; PlaybackService resolves the real stream URL at play time.
  *
  * A video-tagged [Song] is expected to already have been swapped for its

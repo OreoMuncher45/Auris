@@ -118,7 +118,6 @@ import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.autoplaySectionStart
-import com.music.bitchord.playback.dropAutoplayTracks
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toggleAutoplay
@@ -1177,13 +1176,11 @@ private fun BitChordApp(
                         Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
                         else -> Player.REPEAT_MODE_OFF
                     }
-                    // Repeat-all loops the queue as it stands; AutoPlay's
-                    // tracks are the opposite of that — an endless supply
-                    // of new ones — so they come back out first. Native
-                    // REPEAT_MODE_ALL then wraps a plain queue exactly as
-                    // it should, and the service's AutoPlay loader leaves
-                    // it be for as long as repeat-all stays on.
-                    if (next == Player.REPEAT_MODE_ALL) it.dropAutoplayTracks()
+                    // Nothing else to do here: PlaybackService watches the
+                    // repeat mode itself and takes AutoPlay's tracks out of
+                    // the queue for the duration of repeat-all — and, unlike
+                    // this screen, is still around to put them back when the
+                    // loop ends.
                     it.repeatMode = next
                 }
             },
@@ -1250,7 +1247,8 @@ private fun BitChordApp(
             showReplay = false
         }
         BackHandler(
-            enabled = detail != null && !showSettings && !showAccountScrobbling && !showReplay,
+            enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources &&
+                !showReplay,
         ) { viewModel.closeDetail() }
         BackHandler(enabled = showDiscord) {
             showDiscord = false
@@ -1258,10 +1256,13 @@ private fun BitChordApp(
         BackHandler(enabled = showAccountScrobbling && !showDiscord) {
             showAccountScrobbling = false
         }
+        BackHandler(enabled = showSources) {
+            showSources = false
+        }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showAccountScrobbling) {
+        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources) {
             showSettings = false
             // Only when Settings was the whole of what was on screen. Opened
             // over Replay or over a release page, closing it reveals that again
@@ -1270,7 +1271,7 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling &&
-                !showReplay && selectedTab != TAB_HOME,
+                !showSources && !showReplay && selectedTab != TAB_HOME,
         ) {
             selectedTab = TAB_HOME
         }

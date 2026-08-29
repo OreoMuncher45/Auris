@@ -203,6 +203,37 @@ class PlaybackService : MediaSessionService() {
     private var autoplaySeed: String? = null
 
     /**
+     * What AutoPlay had queued when repeat-all was switched on, held so
+     * switching it off again puts back the same tracks rather than a fresh
+     * mix.
+     *
+     * Repeat-all loops the queue as it stands, so AutoPlay's endless supply of
+     * new tracks comes out of it first — see [onRepeatModeChanged]. Fetching a
+     * replacement mix afterwards is the obvious thing to do and the wrong one:
+     * the track that was queued next has usually been analysed for the
+     * transition into it by then (see
+     * [com.music.bitchord.playback.smart.TrackAnalyzer]), and a different track
+     * in its place means that several-second decode is spent again, on a song
+     * that is now much closer than it was. Turning repeat on and back off
+     * should leave the queue where it found it.
+     */
+    private var repeatAllStash: List<MediaItem> = emptyList()
+
+    /**
+     * The track that was playing when [repeatAllStash] was taken. The stash
+     * describes what came after *that* track, so it is only put back if the
+     * queue has not moved on in the meantime.
+     */
+    private var repeatAllStashSeed: String? = null
+
+    /**
+     * The last repeat mode seen, so [onRepeatModeChanged] can tell which
+     * direction the change went in: the callback reports where the player has
+     * arrived, and leaving repeat-all is the half that has to restore.
+     */
+    private var lastRepeatMode = Player.REPEAT_MODE_OFF
+
+    /**
      * Every song AutoPlay has offered or played this service instance, kept
      * only so "don't repeat suggestions" has something to check against once
      * a song scrolls out of the live queue or the queue itself is replaced.
@@ -444,6 +475,24 @@ class PlaybackService : MediaSessionService() {
         }
 
         override fun onRepeatModeChanged(repeatMode: Int) {
+            val previous = lastRepeatMode
+            lastRepeatMode = repeatMode
+            // Repeat-all loops the queue as it stands; AutoPlay's tracks are the
+            // opposite of that — an endless supply of new ones — so they come
+            // back out first, and native REPEAT_MODE_ALL then wraps a plain
+            // queue exactly as it should. [loadAutoplayForCurrentTrack] leaves
+            // it alone for as long as repeat-all stays on.
+            //
+            // Done here rather than in the UI that used to do it because this is
+            // the only place that sees the *previous* mode, and taking the
+            // tracks back is only half the job: they have to go in again when
+            // the loop ends, or a listener who cycles repeat on and straight
+            // back off is left with a queue that simply stops after the playing
+            // track.
+            when {
+                repeatMode == Player.REPEAT_MODE_ALL -> stashAutoplayTracks()
+                previous == Player.REPEAT_MODE_ALL -> restoreAutoplayTracks()
+            }
             // Turning repeat-all back off can leave the current item at the end
             // of the queue, which is the same trigger as a normal transition.
             loadAutoplayForCurrentTrack()
@@ -687,6 +736,24 @@ class PlaybackService : MediaSessionService() {
             // the middle of an MP4 ended up appended to a WebM. See
             // [StreamChoice].
             StreamChoice.of(videoId)?.let { serving ->
+                // What the stream claims to be, restated on every open rather
+                // than only on the one that chose it.
+                //
+                // The race below is what used to report this, and it was enough
+                // while the race was the only way a substitution could be made.
+                // Read-ahead now pins one before the track is reached, so a
+                // warmed track arrives *here* on its very first open and never
+                // reaches the race at all — leaving the player with a 320kbps
+                // stream and nothing on record saying so, and the quality badge
+                // reading blank until the decoder got far enough to measure it
+                // for itself.
+                //
+                // Only when the format states something. A plain YouTube choice
+                // is remembered with an empty one, and writing that over a
+                // claim some other path made would be worse than saying nothing.
+                if (serving.format != StreamFormat()) {
+                    NerdStats.onSourceStream(videoId, serving.format)
+                }
                 return@Factory dataSpec.buildUpon()
                     .setUri(Uri.parse(serving.url))
                     .setHttpRequestHeaders(serving.headers)
@@ -787,6 +854,7 @@ class PlaybackService : MediaSessionService() {
 
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
+        lastRepeatMode = exoPlayer.repeatMode
         exoPlayer.addListener(playbackListener)
         loadAutoplayForCurrentTrack()
 
@@ -884,6 +952,11 @@ class PlaybackService : MediaSessionService() {
             autoplayLoadJob = null
             autoplaySeed = null
             dropAutoplayTracksFromQueue()
+            // Switching AutoPlay off is the listener saying they don't want
+            // those tracks; leaving a stash behind would put them back the next
+            // time repeat-all ended.
+            repeatAllStash = emptyList()
+            repeatAllStashSeed = null
         }
         mediaSession?.setCustomLayout(notificationButtons())
     }
@@ -933,13 +1006,69 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    private fun dropAutoplayTracksFromQueue() {
-        val exoPlayer = player ?: return
+    /**
+     * Takes back what AutoPlay queued and hasn't played yet — what switching
+     * AutoPlay off means for a queue it has already been extending. Removed
+     * from the bottom up so the indexes ahead of each removal still hold, and
+     * handed back in queue order for the one caller that intends to put them
+     * in again.
+     */
+    private fun dropAutoplayTracksFromQueue(): List<MediaItem> {
+        val exoPlayer = player ?: return emptyList()
+        val dropped = mutableListOf<MediaItem>()
         for (index in exoPlayer.mediaItemCount - 1 downTo exoPlayer.currentMediaItemIndex + 1) {
-            if (exoPlayer.getMediaItemAt(index).fromAutoplay) {
-                exoPlayer.removeMediaItem(index)
-            }
+            val item = exoPlayer.getMediaItemAt(index)
+            if (!item.fromAutoplay) continue
+            dropped += item
+            exoPlayer.removeMediaItem(index)
         }
+        return dropped.reversed()
+    }
+
+    /** Clears the queue's AutoPlay tail for the duration of repeat-all, keeping it to put back. */
+    private fun stashAutoplayTracks() {
+        val exoPlayer = player ?: return
+        // Only ever taken once per stretch of repeat-all: cycling
+        // OFF -> ALL -> ONE -> OFF sets the mode three times, and the second
+        // and third of those must not overwrite a full stash with the empty
+        // queue tail the first one left behind.
+        if (repeatAllStash.isNotEmpty()) return
+        val dropped = dropAutoplayTracksFromQueue()
+        if (dropped.isEmpty()) return
+        repeatAllStash = dropped
+        repeatAllStashSeed = exoPlayer.currentMediaItem?.mediaId
+    }
+
+    /**
+     * Puts the stashed AutoPlay tracks back when repeat-all ends.
+     *
+     * Refused, rather than forced, in the cases where the stash no longer
+     * describes the queue: AutoPlay switched off while the loop ran, or the
+     * loop played on past the track the stash was taken behind. Both leave
+     * [loadAutoplayForCurrentTrack] to fill the queue the ordinary way.
+     */
+    private fun restoreAutoplayTracks() {
+        val exoPlayer = player ?: return
+        val stashed = repeatAllStash
+        val seed = repeatAllStashSeed
+        repeatAllStash = emptyList()
+        repeatAllStashSeed = null
+        // The seed is stale now either way, so the queue can be topped up again
+        // for this track — without this the guard in [loadAutoplayForCurrentTrack]
+        // reads a track it has already loaded for and returns, which is how a
+        // queue whose stash was refused ended up with nothing after it at all.
+        autoplayLoadJob?.cancel()
+        autoplayLoadJob = null
+        autoplaySeed = null
+        if (stashed.isEmpty() || !AppSettings.autoplay.value) return
+        if (exoPlayer.currentMediaItem?.mediaId != seed) return
+        // A track the listener queued by hand during the loop is not queued
+        // twice for having been in the mix before it.
+        val present = (0 until exoPlayer.mediaItemCount)
+            .mapTo(mutableSetOf()) { exoPlayer.getMediaItemAt(it).mediaId }
+        val restored = stashed.filter { it.mediaId !in present }
+        if (restored.isEmpty()) return
+        exoPlayer.addMediaItems(restored)
     }
 
     private fun toggleFavoriteFromNotification(videoId: String) {
@@ -2588,13 +2717,25 @@ class PlaybackService : MediaSessionService() {
      */
     private fun prefetchAround(player: ExoPlayer) {
         val nextIndex = player.nextMediaItemIndex
-        val upcomingIds = if (nextIndex != C.INDEX_UNSET) {
+        val upcoming = if (nextIndex != C.INDEX_UNSET) {
             val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
-            (nextIndex..end).map { player.getMediaItemAt(it).mediaId }
+            (nextIndex..end).map { index ->
+                val item = player.getMediaItemAt(index)
+                // The title, artist and runtime the item was built with — see
+                // [Song.toMediaItem]. Read here, on the player's own thread,
+                // because read-ahead runs off the queue rather than off the
+                // session and has no other way to reach the track's metadata.
+                AudioCache.Upcoming(
+                    mediaId = item.mediaId,
+                    target = item.localConfiguration?.uri
+                        ?.let(SourceResolver::targetIn)
+                        ?: TrackMatcher.Target("", ""),
+                )
+            }
         } else {
             emptyList()
         }
-        AudioCache.prefetchQueue(upcomingIds)
+        AudioCache.prefetchQueue(upcoming)
     }
 
     /**

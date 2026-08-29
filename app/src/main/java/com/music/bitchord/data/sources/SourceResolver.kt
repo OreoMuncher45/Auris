@@ -88,7 +88,7 @@ object SourceResolver {
      * @param quality defaults to the setting as it stands, which is what a
      *   caller with no download in flight wants. A caller that is already
      *   fetching one passes the value it started with — a lossless search can
-     *   run for twenty seconds (`Downloads.LOSSLESS_LOOKUP_MS`), which is long
+     *   run for twenty seconds (`Downloads.SOURCE_LOOKUP_MS`), which is long
      *   enough for someone to open Settings and change the answer underneath a
      *   file that is half written.
      */
@@ -221,6 +221,45 @@ object SourceResolver {
     }
 
     /**
+     * The copy of [target] held by a source quick enough to ask about *before*
+     * the track is played — or null when no such source is enabled, or none of
+     * them has it.
+     *
+     * This is the same substitution [substituteForYouTube] makes, moved earlier.
+     * The difference is only which sources are asked: [SourceKind.worthPrefetching]
+     * narrows it to the ones that answer in a round trip rather than in ten
+     * seconds, because this runs speculatively for a track nobody has reached
+     * yet and a slow lookup would still be going when they did.
+     *
+     * ### What the caller must do with the answer
+     *
+     * Pin it. A returned stream is only useful if the *same* stream is what
+     * playback goes on to open, and the caller is expected to record it with
+     * [StreamChoice][com.music.bitchord.playback.StreamChoice] before caching a
+     * byte of it. Without that, playback re-runs the race, may land on a
+     * different source, and writes a second file into the cache entry the warm
+     * one already half-filled — which is the exact corruption
+     * [StreamChoice] exists to prevent, arrived at from a new direction.
+     *
+     * Returning null is not a failure and needs no handling beyond falling back
+     * to YouTube, which is what the caller would have done anyway: nothing has
+     * been pinned, so the ordinary resolve at playback time is untouched.
+     */
+    suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
+        if (target.title.isBlank()) return null
+        val active = SourceRegistry.active()
+        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val quick = rankedAbove(youtube.configId, active).filter { it.kind.worthPrefetching }
+        if (quick.isEmpty()) return null
+        val (source, stream) = bestAcross(quick, target, requestForNow()) ?: return null
+        TrackLog.d(
+            TAG,
+            "warmed: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+        )
+        return stream
+    }
+
+    /**
      * A stream that genuinely satisfies the current request, for a track that
      * is already playing on one that doesn't — or null if there isn't one.
      *
@@ -329,8 +368,8 @@ object SourceResolver {
     }
 
     /**
-     * The lossless copy of a track about to be downloaded, or null when nothing
-     * configured has one worth keeping.
+     * The copy of a track about to be downloaded that is worth keeping over
+     * YouTube's, or null when nothing configured has one.
      *
      * The download path has never come through here. It resolves YouTube
      * directly — see
@@ -339,29 +378,66 @@ object SourceResolver {
      * FLAC and *downloading* a transcode of the same recording. This closes that
      * gap, and it is the only search in this class whose result becomes a file.
      *
-     * Being a file is what makes it the strictest search here:
+     * ### The order it asks in
      *
-     *  - **Only [DownloadQuality.LOSSLESS][com.music.bitchord.data.settings.DownloadQuality.LOSSLESS]
-     *    gets this far.** [requestForDownload] returning anything but
-     *    [StreamRequest.Lossless] ends this rather than being read as "serve what
-     *    you can", because the rungs below it are AAC rungs and YouTube's AAC is
-     *    the more reliable fetch for those. Note which setting that is: the
-     *    connection's ceiling used to end it here instead, which meant a
-     *    download on mobile data took a transcode of a recording the user owns
-     *    losslessly. That was a data-plan setting deciding what a permanent file
-     *    was made of, and [AppSettings.wifiOnlyDownloads] does the data-plan job
-     *    properly now — before a byte is fetched rather than by quietly
-     *    downgrading the result.
-     *  - **A format that stated nothing is refused**, unlike [streamBest]'s
-     *    [statesNothingLossy] allowance. Playback can hand an undescribed URL to
-     *    the decoder and let it work the codec out; a download has to *name the
-     *    file* before the first byte lands, and an unstated codec is nothing to
-     *    name it after.
-     *  - **A [SourceStream.belowRequest] settle-for is refused too** — implied by
-     *    the same check, since that flag is only ever set on a format that
-     *    already failed to be lossless. Keeping a module's lossy transcode
-     *    forever would trade one lossy copy for another and give up the more
-     *    reliable fetch to do it.
+     *  1. **Bit-exact, in rank order** — on the Lossless rung only, since that
+     *     is the only rung asking for it. The first source that hands back a
+     *     genuinely lossless file wins outright and nothing else is asked: it is
+     *     the whole point of the setting and no bitrate competes with it.
+     *  2. **The best lossy copy otherwise.** A lossless source that settled for
+     *     a transcode is not thereby wasted — its offer is kept and weighed
+     *     against what the lossy sources hold, and the better rendition wins on
+     *     [isBetter]. This is where JioSaavn's 320kbps AAC comes in: it outranks
+     *     YouTube for playback and used to be skipped entirely here, so a track
+     *     streamed at 320 was filed at whatever YouTube's ladder gave.
+     *  3. **YouTube**, by this returning null. Which is not a failure — see the
+     *     floor below for when it is deliberately preferred.
+     *
+     * Steps 1 and 2 are started together rather than in sequence. A module
+     * search runs to twenty seconds and JioSaavn answers in about four tenths of
+     * one, and the whole lookup is bounded by `Downloads.SOURCE_LOOKUP_MS` —
+     * queued behind the modules, the fast source would routinely have the
+     * timeout land on it and the download would fall to YouTube holding a 320
+     * it never got to hear about. Same reasoning as [bestAcross], for the same
+     * measured reason.
+     *
+     * On the **High** rung step 1 is empty and every ranked source goes into
+     * step 2's race, asked for [StreamRequest.Best]. A bit-exact answer to that
+     * is refused rather than kept: someone who chose High over Lossless chose
+     * the smaller file, and a FLAC filed under this setting would additionally
+     * be missed by the already-on-disk check in `Downloads.prepare` — which only
+     * looks for lossless extensions when the setting keeps lossless — and so be
+     * re-downloaded on every pass through the queue.
+     *
+     * ### The floor, and why a lossy answer can still lose to YouTube
+     *
+     * A lossy candidate is only kept if it beats [YOUTUBE_BEST_AAC_KBPS] — the
+     * top of YouTube's own AAC ladder. Anything at or under that is trading one
+     * lossy copy for another and giving up the more reliable fetch to do it,
+     * which is what the old blanket refusal of settle-fors was really protecting
+     * against. So a 320 wins and a module's 128kbps MP3 does not, and neither
+     * does a format that never stated a bitrate: a download has to *name the
+     * file* before the first byte lands, and an unstated rendition is nothing to
+     * judge. That last part is stricter than [streamBest]'s
+     * [statesNothingLossy] allowance, deliberately — playback can hand an
+     * undescribed URL to the decoder and let it work the codec out.
+     *
+     * ### Which settings get this far
+     *
+     * [DownloadQuality.LOSSLESS][com.music.bitchord.data.settings.DownloadQuality.LOSSLESS]
+     * and [DownloadQuality.HIGH][com.music.bitchord.data.settings.DownloadQuality.HIGH];
+     * not [DownloadQuality.STANDARD][com.music.bitchord.data.settings.DownloadQuality.STANDARD].
+     * Standard is a 128kbps ceiling chosen to fit more on the device, and a
+     * source cannot be asked for *that* rung — only for the best it has, which
+     * is a bigger file than the setting exists to avoid. YouTube's ladder is the
+     * only one that can be capped, so Standard stays entirely YouTube's.
+     *
+     * Note which setting decides this, since it used to be the wrong one: the
+     * connection's ceiling ended this here instead, which meant a download on
+     * mobile data took a transcode of a recording the user owns losslessly. That
+     * was a data-plan setting deciding what a permanent file was made of, and
+     * [AppSettings.wifiOnlyDownloads] does the data-plan job properly now —
+     * before a byte is fetched rather than by quietly downgrading the result.
      *
      * @param target the recording to look for, off the row being downloaded. A
      *   blank title can only produce a wrong match; a null runtime is allowed
@@ -372,17 +448,78 @@ object SourceResolver {
     suspend fun forDownload(
         target: TrackMatcher.Target,
         request: StreamRequest = requestForDownload(),
-    ): SourceStream? {
-        if (target.title.isBlank()) return null
-        if (request !is StreamRequest.Lossless) return null
+    ): SourceStream? = coroutineScope {
+        if (target.title.isBlank()) return@coroutineScope null
+        val wantsLossless = when (request) {
+            is StreamRequest.Lossless -> true
+            is StreamRequest.Best -> false
+            // Standard, and the one rung the sources are no use for: it is a
+            // ceiling of 128kbps chosen to fit more on the device, and a source
+            // has no way to be asked for *that* rung rather than for the best it
+            // has. JioSaavn's 320 is not a better answer to it, it is the wrong
+            // answer to it. YouTube's ladder is the only one that can be capped.
+            is StreamRequest.Capped -> return@coroutineScope null
+        }
         val active = SourceRegistry.active()
         // YouTube can be switched off, and a download still goes to it when
         // nothing here answers — the download path never consults this list. So
         // an absent YouTube means everything enabled outranks it, which is
         // already what [rankedAbove] says about a config that isn't in the list.
         val youtubeId = active.firstOrNull { it.kind == SourceKind.YOUTUBE }?.configId
-        for (source in rankedAbove(youtubeId.orEmpty(), active)) {
-            if (!source.kind.canServeLossless) continue
+        val ranked = rankedAbove(youtubeId.orEmpty(), active)
+        val strictLength = target.durationSec != null
+
+        // Who is in the bit-exact walk, and who is left to the race below it.
+        //
+        // On the High rung nobody is: there is no lossless answer to look for,
+        // so every ranked source goes into the race and competes on rendition
+        // alone. That is what puts JioSaavn's 320 in front of YouTube's AAC for
+        // a setting whose own description is "best AAC on offer".
+        val bitExact = if (wantsLossless) ranked.filter { it.kind.canServeLossless } else emptyList()
+        val elsewhere = ranked - bitExact.toSet()
+
+        // Asked now, read at the end — and raced rather than walked, because
+        // these differ in speed by two orders of magnitude and the whole lookup
+        // is on a clock. See [bestAcross], which takes the first answer that
+        // clears the bar rather than the best of all of them: JioSaavn's four
+        // tenths of a second is what that rule is tuned for, and a module that
+        // beats it to the line with something thin is a case the floor below
+        // catches by sending the download to YouTube.
+        val elsewhereBest = async {
+            bestAcross(
+                elsewhere,
+                target,
+                // Their best lossy rendition, whichever rung is being served.
+                // Putting the lossless request to a source that cannot meet it
+                // would only come back marked [SourceStream.belowRequest] to
+                // say so.
+                StreamRequest.Best,
+                waitForAll = true,
+                strictLength = strictLength,
+            ) { source, stream ->
+                // Bit-exact audio is *over* budget on the High rung, not a
+                // bonus on it. Someone who picked High over Lossless picked the
+                // ~8MB file, and a FLAC filed under this setting would also be
+                // missed by the already-on-disk check in `Downloads.prepare`,
+                // which only looks for lossless extensions when the setting
+                // keeps lossless — so it would be re-downloaded every time.
+                val ok = wantsLossless || stream.format.isLossless != true
+                if (!ok) {
+                    TrackLog.d(
+                        TAG,
+                        "${source.displayName} offered ${stream.format.summary}; " +
+                            "more than this download asked for",
+                    )
+                }
+                ok
+            }
+        }
+
+        // The best lossy copy seen so far and who offered it — carried together
+        // so the log line at the end can say where the file came from, which is
+        // the only record of it there will be once it is on disk.
+        var best: Pair<MusicSource, SourceStream>? = null
+        for (source in bitExact) {
             val stream = matchAndStream(
                 source,
                 target,
@@ -390,23 +527,64 @@ object SourceResolver {
                 // second statement of it that could drift from the first.
                 request,
                 waitForAll = true,
-                strictLength = target.durationSec != null,
+                strictLength = strictLength,
             ) ?: continue
-            if (stream.format.isLossless != true) {
+            if (stream.format.isLossless == true) {
                 TrackLog.d(
                     TAG,
-                    "${source.displayName} offered ${stream.format.summary} to download; not keeping that",
+                    "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
                 )
-                continue
+                // Nothing is waiting on it any more, and leaving it running
+                // would hold this whole call open on a source whose answer has
+                // just been beaten by a bit-exact one.
+                elsewhereBest.cancel()
+                return@coroutineScope stream
             }
             TrackLog.d(
                 TAG,
-                "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+                "${source.displayName} offered ${stream.format.summary} to download; not bit-exact",
             )
-            return stream
+            if (isBetter(stream.format, best?.second?.format)) best = source to stream
         }
-        return null
+
+        // Nothing bit-exact anywhere — or nothing was being looked for.
+        // Whatever is left competes on rendition alone, wherever it came from.
+        elsewhereBest.await()?.let { (source, stream) ->
+            if (isBetter(stream.format, best?.second?.format)) best = source to stream
+        }
+        val (winner, chosen) = best ?: return@coroutineScope null
+        if (!beatsYouTubeAac(chosen.format)) {
+            TrackLog.d(
+                TAG,
+                "best offered for '${target.title}' is ${winner.displayName}'s " +
+                    "${chosen.format.summary}; taking YouTube's AAC over that",
+            )
+            return@coroutineScope null
+        }
+        TrackLog.d(
+            TAG,
+            "download: '${target.title}' from ${winner.displayName} at ${chosen.format.summary}, " +
+                "over YouTube's AAC",
+        )
+        chosen
     }
+
+    /**
+     * Whether a lossy [candidate] is worth keeping as a file over whatever
+     * YouTube's own AAC ladder would have given for the same track.
+     *
+     * The floor under [forDownload]'s step 2, and deliberately a floor rather
+     * than a comparison: see [YOUTUBE_BEST_AAC_KBPS] for why the rung YouTube
+     * actually holds is not worth the walk it would take to find out.
+     *
+     * An unstated bitrate is a no. A download has to name the file before the
+     * first byte lands, and a rendition that described itself as nothing is
+     * nothing to weigh against the alternative — which is stricter than
+     * [streamBest]'s [statesNothingLossy] allowance, deliberately: playback can
+     * hand an undescribed URL to the decoder and let it work the codec out.
+     */
+    internal fun beatsYouTubeAac(candidate: StreamFormat): Boolean =
+        (candidate.kbps ?: 0) > YOUTUBE_BEST_AAC_KBPS
 
     /**
      * Whether [candidate] is enough better than [playing] to be worth the
@@ -790,6 +968,22 @@ object SourceResolver {
      * sitting next to it in the same search results under the same name.
      */
     private const val SAME_RECORDING_SEC = 3
+
+    /**
+     * The top of YouTube's own AAC ladder, and so the bar a lossy source has to
+     * clear to be worth keeping as a file — see [forDownload].
+     *
+     * Not a measurement of any one track. Most of the catalogue offers itag 140
+     * at 128kbps and a signed-in account reaches itag 141 at 256, and which of
+     * those a given track has cannot be known without resolving it — a full
+     * player walk, spent to answer a question about a stream we may then not
+     * use. So the bar is the *best* YouTube could turn out to have: clearing it
+     * means the source's copy wins whichever rung was waiting, and failing it
+     * means YouTube might well be better and is certainly the more reliable
+     * fetch. JioSaavn's 320 clears it; its 160 does not, and neither does a
+     * module's 128kbps MP3 settle-for.
+     */
+    private const val YOUTUBE_BEST_AAC_KBPS = 256
 
     /**
      * How many kbps a lossy stream has to gain before it earns a seam in the

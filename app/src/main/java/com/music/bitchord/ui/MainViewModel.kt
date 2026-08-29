@@ -53,6 +53,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
+import com.music.bitchord.data.sources.SourceResolver
+import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.StreamChoice
 import java.util.concurrent.atomic.AtomicLong
 import java.util.Locale
 
@@ -1334,7 +1337,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val song = rows.filterIsInstance<SearchResult.Track>().firstOrNull()?.song ?: return
         viewModelScope.launch {
             runCatching {
-                StreamResolver.resolve(YtMusicRepository.resolveAudio(song).videoId)
+                val audio = YtMusicRepository.resolveAudio(song)
+                // A source-backed row resolves through its own source already
+                // and never takes the YouTube path — warming either half of
+                // this for one would be work nothing asks for.
+                if (SourceRegistry.parseTrackKey(audio.videoId) != null) return@runCatching
+                // JioSaavn first, on the same reasoning as the queue's
+                // read-ahead: it is the copy that will actually be played if it
+                // has the track, so warming YouTube's URL instead warms the one
+                // that loses. Pinned through [StreamChoice] so playback opens
+                // this very stream rather than racing for it again — see
+                // [SourceResolver.prefetchSubstitute], which requires it.
+                val warmed = SourceResolver.prefetchSubstitute(
+                    TrackMatcher.Target(
+                        title = audio.title,
+                        artist = audio.artist,
+                        durationSec = TrackMatcher.secondsOf(audio.durationText),
+                    ),
+                )
+                if (warmed != null) {
+                    StreamChoice.remember(audio.videoId, warmed, substituted = true)
+                    return@runCatching
+                }
+                // Disabled, or hasn't got it: the tap path falls back to
+                // YouTube, so that is what is worth having ready.
+                StreamResolver.resolve(audio.videoId)
             }
         }
     }
