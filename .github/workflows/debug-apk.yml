@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-debug-apk:
     name: Build prod debug APK
-    runs-on: ubuntu-latest
+    runs-on: warp-ubuntu-latest-x64-2x
     timeout-minutes: 30
 
     steps:
