@@ -31,12 +31,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.download.DownloadState
+import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.icons.BitChordIcons
 import java.util.Locale
 
@@ -97,14 +100,6 @@ data class BrowseTarget(
      * questions about the download record, not about what this sheet is.
      */
     val downloadId: String? = null,
-    /**
-     * Set when the sheet is being opened from the release page's own download
-     * circle after every track is already on disk — that tap means "I know
-     * it's downloaded, let me remove it", not "show me the menu", so the
-     * delete-download row opens already armed instead of making the tap land
-     * twice.
-     */
-    val highlightDeleteDownload: Boolean = false,
 )
 
 /**
@@ -115,7 +110,7 @@ data class BrowseTarget(
  * sheet serves a card on the home feed and the page that card opens. A card
  * has no other way to play its album without navigating to it, so it gets Play
  * and Shuffle; the page's own header already carries both, so there they are
- * null and the sheet is the two queue rows and nothing else.
+ * null and the sheet is the queue rows and the download.
  *
  * The queue rows are always offered. They are the reason this menu exists: a
  * release is exactly the kind of thing someone wants *after* what is playing
@@ -158,7 +153,7 @@ fun BrowseActionsSheet(
 ) {
     var renaming by remember { mutableStateOf(false) }
     var confirmingDelete by remember { mutableStateOf(false) }
-    var confirmingDeleteDownload by remember { mutableStateOf(target.highlightDeleteDownload) }
+    var confirmingDeleteDownload by remember { mutableStateOf(false) }
 
     val playlist = target.playlist
     if (renaming && playlist != null && onRename != null) {
@@ -179,7 +174,47 @@ fun BrowseActionsSheet(
         onShuffle?.let { ActionRow(BitChordIcons.Shuffle, "Shuffle", onClick = it) }
         ActionRow(Icons.AutoMirrored.Rounded.PlaylistPlay, "Play next", onClick = onPlayNext)
         ActionRow(Icons.AutoMirrored.Rounded.QueueMusic, "Add to queue", onClick = onAddToQueue)
-        onDownloadAll?.let { ActionRow(BitChordIcons.Download, "Download all", onClick = it) }
+        onDownloadAll?.let { download ->
+            // Saying which of the three it is, rather than offering the same row
+            // whatever the state — this is where a release is asked for now that
+            // its page's header spends that spot on the search, and a menu that
+            // can't say "already on the device" leaves the question open. The
+            // tap is left live in every state: [Downloads.enqueue] leaves a
+            // track that is saved, queued or running alone.
+            val active by Downloads.active.collectAsStateWithLifecycle()
+            val requested by Downloads.requested.collectAsStateWithLifecycle()
+            val saved by Downloads.saved.collectAsStateWithLifecycle()
+            // Only the tracks *this release* asked for — two releases can share
+            // a track, and reading the whole queue would show this release
+            // waiting on a download some other one started. Failed entries stay
+            // in [Downloads.active] until dismissed, and a failure is not a wait.
+            val waiting = target.browseId?.let { requested[it] }.orEmpty().any { id ->
+                when (active[id]) {
+                    is DownloadState.Queued, is DownloadState.Running -> true
+                    else -> false
+                }
+            }
+            // The same reading [DownloadedBadge] does per row: a release counts
+            // as downloaded once every one of its tracks is in the saved set,
+            // not from any record of the release itself. Empty for a card whose
+            // page was never opened, which is not an answer either way.
+            val ids = remember(target.songs) { target.songs.mapTo(HashSet()) { it.videoId } }
+            val downloaded = !waiting && ids.isNotEmpty() && ids.all { it in saved }
+            ActionRow(
+                icon = when {
+                    waiting -> BitChordIcons.Clock
+                    downloaded -> BitChordIcons.Check
+                    else -> BitChordIcons.Download
+                },
+                label = "Download all",
+                value = when {
+                    waiting -> "Downloading"
+                    downloaded -> "Downloaded"
+                    else -> null
+                },
+                onClick = download,
+            )
+        }
         onOpen?.let {
             ActionRow(BitChordIcons.ChevronRight, "Open ${target.type.noun}".trim(), onClick = it)
         }

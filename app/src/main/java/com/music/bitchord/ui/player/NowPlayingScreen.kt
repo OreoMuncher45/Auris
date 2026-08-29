@@ -171,6 +171,7 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
@@ -667,6 +668,10 @@ fun NowPlayingScreen(
         derivedStateOf { canvasCover.floatValue > 0.999f }
     }
     val meshColors = rememberArtworkColors(song.thumbnailUrl, canvasFrame)
+    // Spotify's own Canvas, specifically — see CanvasArtworkPlayer's
+    // refreshFrameEveryMs for why this is scoped to that one source rather
+    // than asked of every clip.
+    val meshRefreshMs = if (canvas?.source == CanvasSource.SPOTIFY) 3_000L else null
     LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow) {
         if (!canvasAllowedNow) {
             canvas = null
@@ -1100,6 +1105,7 @@ fun NowPlayingScreen(
                         isPlaying = isPlaying,
                         onRenderedChanged = { canvasRendered = it },
                         onFrameCaptured = { canvasFrame = it },
+                        refreshFrameEveryMs = meshRefreshMs,
                         onCoverChanged = { canvasCover.floatValue = it },
                         bottomFade = HERO_FADE_FRACTION,
                         modifier = Modifier
@@ -1541,6 +1547,7 @@ fun NowPlayingScreen(
                                     isPlaying = isPlaying,
                                     onRenderedChanged = { canvasRendered = it },
                                     onFrameCaptured = { canvasFrame = it },
+                                    refreshFrameEveryMs = meshRefreshMs,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }

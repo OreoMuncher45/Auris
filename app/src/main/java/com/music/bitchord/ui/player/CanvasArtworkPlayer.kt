@@ -48,6 +48,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasCache
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.util.Locale
 
 /**
@@ -74,6 +76,17 @@ fun CanvasArtworkPlayer(
     onRenderedChanged: (Boolean) -> Unit = {},
     /** A single frame off the playing clip, for callers that want to re-tint around it. */
     onFrameCaptured: (Bitmap) -> Unit = {},
+    /**
+     * Keep calling [onFrameCaptured] every so many milliseconds instead of
+     * only once — for a caller re-tinting its backdrop off a
+     * [CanvasSource.SPOTIFY][com.music.bitchord.data.canvas.CanvasSource.SPOTIFY]
+     * clip, which is worth following as it plays rather than settling on
+     * whatever colours its opening frame happened to have. Null everywhere
+     * else: re-reading a texture off the GPU costs a frame stall, and for the
+     * other three sources there is nothing about a clip's own colour that its
+     * first frame doesn't already say.
+     */
+    refreshFrameEveryMs: Long? = null,
     /**
      * How much of whatever is behind the clip it is currently hiding: 0 while
      * nothing is drawn, ramping to 1 as the first frame fades in, and back down
@@ -190,6 +203,21 @@ fun CanvasArtworkPlayer(
         withFrameMillis { }
         val view = textureView ?: return@LaunchedEffect
         runCatching { view.getBitmap() }.getOrNull()?.let(onFrameCaptured)
+    }
+
+    // The opt-in follow-up to the capture above, for a caller that asked for
+    // one — see [refreshFrameEveryMs]. A separate effect rather than a loop
+    // folded into the one above: that one is keyed on [rendered] so it fires
+    // again on every fade-in, and this one only needs to start once a fade-in
+    // has actually happened and then keep going for as long as it holds.
+    LaunchedEffect(rendered, refreshFrameEveryMs) {
+        val interval = refreshFrameEveryMs ?: return@LaunchedEffect
+        if (!rendered) return@LaunchedEffect
+        while (isActive) {
+            delay(interval)
+            val view = textureView ?: continue
+            runCatching { view.getBitmap() }.getOrNull()?.let(onFrameCaptured)
+        }
     }
 
     val alpha by animateFloatAsState(

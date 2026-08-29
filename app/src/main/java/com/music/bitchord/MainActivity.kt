@@ -111,6 +111,7 @@ import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourcesScreen
+import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
 import com.music.bitchord.playback.PlayerDeepLink
@@ -278,6 +279,8 @@ private fun BitChordApp(
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
     var showSources by remember { mutableStateOf(false) }
+    var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
+    
     // Hosted here rather than inside SourcesScreen so its scrim covers the tab
     // bar and mini player, like every other alert in the app.
     var customModuleAlert by remember { mutableStateOf(false) }
@@ -1321,8 +1324,21 @@ private fun BitChordApp(
                     // window and the switch dips through a dimmer frame in the
                     // middle. Pushing a page or raising Settings is a real
                     // change of context and keeps the fade.
+                    //
+                    // "Show all" swapping with the Library tab underneath it is
+                    // the same case as a tab swap, not a pushed page: it's still
+                    // that tab, just laid out as a grid instead of a row, sharing
+                    // its background rather than painting its own — so this one
+                    // pair gets the tab's no-fade swap too, in both directions, or
+                    // the dip through a dim frame shows up on every hold of a
+                    // card there. A card opened *from* the grid is a real page
+                    // and keeps the fade, same as one opened from the row.
                     transitionSpec = {
-                        if (initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)) {
+                        val tabSwap = initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)
+                        val libraryTabKey = "$TAB_KEY$TAB_LIBRARY"
+                        val libraryShowAllSwap = (initialState == "library_show_all" && targetState == libraryTabKey) ||
+                            (targetState == "library_show_all" && initialState == libraryTabKey)
+                        if (tabSwap || libraryShowAllSwap) {
                             EnterTransition.None togetherWith ExitTransition.None
                         } else {
                             fadeIn(tween(180)) togetherWith fadeOut(tween(180))
@@ -1452,6 +1468,7 @@ private fun BitChordApp(
                             },
                             onLyricsSources = { showLyricsSources = true },
                             onSources = { showSources = true },
+                            onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -1554,28 +1571,14 @@ private fun BitChordApp(
                                 }
                             },
                             onSectionItemLongPress = onBrowseLongPress,
-                            // The page names what it is, so a download from here
-                            // is recorded as the release rather than as its rows.
-                            // Only for something with a running order: an artist
-                            // page is a selection of their work, and grouping the
-                            // Downloads folder under "Radiohead" would be filing
-                            // an artist as an album.
-                            onDownloadAll = { songs ->
-                                startDownload(
-                                    songs.map(withAlbum),
-                                    DownloadTarget(
-                                        id = page.browseId,
-                                        title = page.title,
-                                        subtitle = page.subtitle,
-                                        thumbnailUrl = page.thumbnailUrl,
-                                        playlist = page.type == BrowseType.PLAYLIST,
-                                    ).takeIf { page.type != BrowseType.ARTIST },
-                                )
-                            },
                             // The page's own tracks, so the sheet has them already and
                             // Play, Shuffle and Open are the buttons beside the one that
-                            // opened it rather than rows on it.
-                            onMore = { songs, highlightDeleteDownload ->
+                            // opened it rather than rows on it. Download is the other
+                            // way round: the header no longer carries it, so the sheet
+                            // is where a whole release is asked for — and the tracks
+                            // arrive stamped with the album they came off, which is what
+                            // the download record groups them under.
+                            onMore = { songs ->
                                 browseActions = BrowseTarget(
                                     browseId = page.browseId,
                                     title = page.title,
@@ -1585,7 +1588,6 @@ private fun BitChordApp(
                                     songs = songs.map(withAlbum),
                                     fromCard = false,
                                     downloadId = downloadIdFor(page.browseId),
-                                    highlightDeleteDownload = highlightDeleteDownload,
                                 )
                             },
                             onArtistClick = { id, name ->
@@ -2235,10 +2237,13 @@ private fun BitChordApp(
                                 )
                             }
                         },
-                    // The page already has a download button, and nothing on
-                    // this device needs fetching to be on it. What the card
-                    // carries that the tracks don't is the release's own name
-                    // and cover, which is exactly what the record wants.
+                    // The one place a whole release is asked for, from a card and
+                    // from the release's own page alike — its header spends that
+                    // spot on the search now. Nothing on this device needs
+                    // fetching to be on it, so a local page is the exception.
+                    // What the target carries that the tracks don't is the
+                    // release's own name and cover, which is exactly what the
+                    // record wants.
                     onDownloadAll = act { songs ->
                         startDownload(
                             songs,
@@ -2254,7 +2259,7 @@ private fun BitChordApp(
                                     )
                                 },
                         )
-                    }.takeIf { target.fromCard && remote },
+                    }.takeIf { remote },
                     isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
                     onTogglePin = pinnableId?.let { id ->
                         {
@@ -2440,6 +2445,13 @@ private fun BitChordApp(
                     )
                 }
             }
+        }
+
+        if (showSpotifyCanvasAuth) {
+            BackHandler { showSpotifyCanvasAuth = false }
+            SpotifyCanvasAuthScreen(
+                onNavigateUp = { showSpotifyCanvasAuth = false }
+            )
         }
 
         discordDialog?.let { which ->

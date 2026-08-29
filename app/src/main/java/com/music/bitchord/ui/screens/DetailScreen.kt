@@ -28,8 +28,10 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.HorizontalDivider
@@ -41,21 +43,27 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
@@ -77,8 +85,6 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.download.DownloadState
-import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.ArtworkWash
 import com.music.bitchord.ui.components.DownloadedBadge
 import com.music.bitchord.ui.components.MessageState
@@ -88,6 +94,7 @@ import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
+import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -111,6 +118,13 @@ private const val SLEEVE_FRACTION = 0.80f
 
 private val SLEEVE_SHAPE = RoundedCornerShape(12.dp)
 private val PILL_SHAPE = RoundedCornerShape(12.dp)
+
+/**
+ * Where the search field sits once it is open — directly under the header,
+ * which is item zero. The one place that has to know, so that opening the
+ * search can carry the page up to it.
+ */
+private const val SEARCH_ITEM_INDEX = 1
 
 /** The inset the header text and the action pills share. */
 private val HEADER_GUTTER = PAGE_GUTTER + 14.dp
@@ -156,7 +170,6 @@ fun DetailScreen(
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     onSectionItemClick: (ShelfItem) -> Unit,
-    onDownloadAll: (List<Song>) -> Unit,
     onArtistClick: (String, String) -> Unit,
     onAddSuggested: (Song) -> Unit,
     contentPadding: PaddingValues,
@@ -170,16 +183,11 @@ fun DetailScreen(
     onSectionItemLongPress: ((ShelfItem) -> Unit)? = null,
     /**
      * The header's overflow: everything this page can do to its whole track
-     * list that isn't already one of the buttons beside it — see
-     * [com.music.bitchord.ui.components.BrowseActionsSheet]. Null on the pages
-     * with no list to act on.
-     *
-     * The second argument is whether the sheet should open with "Delete
-     * download" already armed — true only when the header's own download
-     * circle was the thing tapped, because by then it's showing a tick and a
-     * tap on a tick means "take it off the device", not "show me the menu".
+     * list that isn't already one of the buttons beside it — downloading it
+     * among them, see [com.music.bitchord.ui.components.BrowseActionsSheet].
+     * Null on the pages with no list to act on.
      */
-    onMore: ((List<Song>, Boolean) -> Unit)? = null,
+    onMore: ((List<Song>) -> Unit)? = null,
     /**
      * Saves this release to the account's library, or takes it out —
      * [DetailPage.library] says which way round. Null hides the control
@@ -192,6 +200,37 @@ fun DetailScreen(
     val songs = (page.songs as? UiState.Success)?.data.orEmpty()
     val isArtist = page.type == BrowseType.ARTIST
     val palette = rememberArtworkPalette(page.thumbnailUrl)
+
+    // Narrowing the running order in place — the release equivalent of the
+    // filter box on the Local Music tab, and the one thing a long track list
+    // needs that scrolling can't give it. Off by default and reset with the
+    // page: a filter left on an album that was closed and reopened would be a
+    // page that appears to have lost most of its tracks.
+    var searching by rememberSaveable(page.browseId) { mutableStateOf(false) }
+    var query by rememberSaveable(page.browseId) { mutableStateOf("") }
+    // Whether the field still owes the keyboard an appearance. Held here rather
+    // than in the field, which is a row in a lazy list: scrolled out of sight it
+    // is disposed, and a field that asks for focus every time it is composed
+    // would throw the keyboard back up each time it scrolled into view.
+    var focusSearch by remember(page.browseId) { mutableStateOf(false) }
+    val closeSearch = {
+        searching = false
+        query = ""
+    }
+    // Back closes the search first — this handler is registered after the one
+    // that pops the page, so it is the one that answers while it's enabled.
+    BackHandler(enabled = searching) { closeSearch() }
+
+    // Each surviving row still knows where it sat in the full running order, so
+    // an album's track numbers stay the album's rather than becoming positions
+    // in the filtered list.
+    val matches = remember(songs, query) { songs.matching(query) }
+    // What a tap plays: the list as it is being read. Playing the whole release
+    // from a filtered row would start a queue the user cannot see.
+    val queue = remember(matches) { matches.map { it.value } }
+    val suggested = remember(page.suggestedSongs, query) {
+        page.suggestedSongs.matching(query).map { it.value }
+    }
 
     // What marks a row as already downloaded, tinted from the sleeve like the
     // rest of the page. Null on any page that is itself a reading of this
@@ -222,6 +261,16 @@ fun DetailScreen(
     }
 
     val pageHaze = remember { HazeState() }
+
+    // Opening the search carries the page up to it, so the field lands just
+    // clear of the frosted bar with the tracks under it rather than at the foot
+    // of a screen still filled with artwork. Done as an effect rather than in
+    // the tap, so the row it scrolls to is already in the list by the time it
+    // runs.
+    val searchStop = with(LocalDensity.current) { topBarContentPadding().roundToPx() }
+    LaunchedEffect(searching) {
+        if (searching) listState.animateScrollToItem(SEARCH_ITEM_INDEX, -searchStop)
+    }
 
     BoxWithConstraints(modifier.fillMaxSize()) {
         // The artwork is drawn behind the list rather than in it, so both need
@@ -271,12 +320,32 @@ fun DetailScreen(
                         songs = songs,
                         onPlay = { onSongClick(songs, 0) },
                         onShuffle = { onShuffle(songs) },
-                        // A page of on-device tracks has nothing further away
-                        // to fetch — everything on it is already local.
-                        onDownload = onDownloadAll.takeUnless { page.browseId.startsWith("local:") },
+                        searching = searching,
+                        onSearch = {
+                            if (searching) {
+                                closeSearch()
+                            } else {
+                                searching = true
+                                focusSearch = true
+                            }
+                        },
                         onMore = onMore,
                         onArtistClick = onArtistClick,
                         onToggleLibrary = onToggleLibrary,
+                    )
+                }
+            }
+
+            if (searching) {
+                item(key = "search") {
+                    DetailSearchField(
+                        query = query,
+                        onQueryChange = { query = it },
+                        onClose = closeSearch,
+                        autoFocus = focusSearch,
+                        onFocused = { focusSearch = false },
+                        palette = palette,
+                        type = page.type,
                     )
                 }
             }
@@ -324,22 +393,30 @@ fun DetailScreen(
                     // already the largest thing on the page — Apple Music
                     // numbers those rows instead, and so does this.
                     val numbered = page.type == BrowseType.ALBUM
-                    itemsIndexed(state.data) { index, song ->
+                    if (matches.isEmpty() && state.data.isNotEmpty()) {
+                        item(key = "no-matches") {
+                            MessageState("Nothing here matches “$query”")
+                        }
+                    }
+                    itemsIndexed(matches) { position, entry ->
+                        val song = entry.value
                         SongRow(
                             song = if (numbered) {
                                 song
                             } else {
                                 song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
                             },
-                            onClick = { onSongClick(state.data, index) },
+                            onClick = { onSongClick(queue, position) },
                             onLongPress = { onSongLongPress(song) },
                             onSwipeToQueue = { onSongSwipe(song) },
                             rowBackground = Color.Transparent,
-                            trackNumber = (index + 1).takeIf { numbered },
+                            // The track's place on the release, not its place in
+                            // what the filter left standing.
+                            trackNumber = (entry.index + 1).takeIf { numbered },
                             subtitleColor = palette.onBackgroundVariant,
                             downloadedTint = downloadedTint,
                         )
-                        if (index < state.data.lastIndex) {
+                        if (position < matches.lastIndex) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
                                 thickness = 0.5.dp,
@@ -352,23 +429,23 @@ fun DetailScreen(
 
             // Tracks YouTube offers to round the playlist out, never folded
             // into the list above — see [DetailPage.suggestedSongs].
-            if (page.suggestedSongs.isNotEmpty()) {
+            if (suggested.isNotEmpty()) {
                 item(key = "suggested-heading") {
                     SectionHeading("Suggested", palette)
                 }
                 itemsIndexed(
-                    page.suggestedSongs,
+                    suggested,
                     key = { _, song -> "suggested-${song.videoId}" },
                 ) { index, song ->
                     SuggestedSongRow(
                         song = song,
                         palette = palette,
-                        onClick = { onSongClick(page.suggestedSongs, index) },
+                        onClick = { onSongClick(suggested, index) },
                         onLongPress = { onSongLongPress(song) },
                         onAdd = { onAddSuggested(song) },
                         downloadedTint = downloadedTint,
                     )
-                    if (index < page.suggestedSongs.lastIndex) {
+                    if (index < suggested.lastIndex) {
                         HorizontalDivider(
                             modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
                             thickness = 0.5.dp,
@@ -419,8 +496,9 @@ private fun ReleaseHeader(
     songs: List<Song>,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
-    onDownload: ((List<Song>) -> Unit)?,
-    onMore: ((List<Song>, Boolean) -> Unit)?,
+    searching: Boolean,
+    onSearch: () -> Unit,
+    onMore: ((List<Song>) -> Unit)?,
     onArtistClick: (String, String) -> Unit,
     onToggleLibrary: (() -> Unit)?,
 ) {
@@ -501,7 +579,7 @@ private fun ReleaseHeader(
                 // up: the pill sheds padding first, being the widest thing here,
                 // and the circles come down 4dp after that. The alternative is a
                 // row that runs off the edge of the screen.
-                val circles = listOfNotNull(library, onDownload, onMore).size + 1 // + Shuffle
+                val circles = listOfNotNull(library, onMore).size + 2 // + Shuffle, Search
                 val full = circles >= 4
                 val circleSize = if (full) 46.dp else 50.dp
                 Spacer(Modifier.height(14.dp))
@@ -548,67 +626,137 @@ private fun ReleaseHeader(
                             else -> 14.dp
                         },
                     )
-                    onDownload?.let { download ->
-                        // The queue is one queue for the whole app, so this asks
-                        // only about tracks *this page* asked to be downloaded —
-                        // not merely tracks it happens to contain. Two releases
-                        // can share a track (a song on both a playlist and an
-                        // album), and scanning the whole queue for any id this
-                        // page's songs carry would show this button waiting on a
-                        // download some other release started. Failed entries
-                        // stay in [Downloads.active] until dismissed, and a
-                        // failure is not a wait.
-                        val active by Downloads.active.collectAsStateWithLifecycle()
-                        val requested by Downloads.requested.collectAsStateWithLifecycle()
-                        val requestedIds = requested[page.browseId].orEmpty()
-                        // Same source [DownloadedBadge] reads per row — a release
-                        // counts as downloaded once every one of its own tracks is
-                        // in the saved set, not from any record of the release
-                        // itself.
-                        val saved by Downloads.saved.collectAsStateWithLifecycle()
-                        val ids = remember(songs) { songs.mapTo(HashSet()) { it.videoId } }
-                        val waiting = requestedIds.any { id ->
-                            when (active[id]) {
-                                is DownloadState.Queued, is DownloadState.Running -> true
-                                else -> false
-                            }
-                        }
-                        val downloaded = !waiting && ids.isNotEmpty() && ids.all { it in saved }
-                        CircleIconButton(
-                            icon = when {
-                                waiting -> BitChordIcons.Clock
-                                downloaded -> BitChordIcons.Check
-                                else -> BitChordIcons.Download
-                            },
-                            contentDescription = when {
-                                waiting -> "Downloading"
-                                downloaded -> "Downloaded"
-                                else -> "Download all"
-                            },
-                            palette = palette,
-                            onClick = {
-                                // A tick means the release is already on the
-                                // device — a second tap on "Download" would do
-                                // nothing (everything is filtered out before the
-                                // queue), so it opens the overflow with "Delete
-                                // download" already armed instead.
-                                if (downloaded) onMore?.invoke(songs, true) else download(songs)
-                            },
-                            size = circleSize,
-                        )
-                    }
+                    // Where the download circle used to be. Downloading a
+                    // release is a thing done once and then not thought about;
+                    // finding a track on a long playlist is a thing done while
+                    // reading the page, so it is the one that earns a button and
+                    // the download moved to the overflow beside it.
+                    CircleIconButton(
+                        icon = if (searching) Icons.Rounded.Close else BitChordIcons.Search,
+                        contentDescription = if (searching) "Close search" else "Search this list",
+                        palette = palette,
+                        onClick = onSearch,
+                        size = circleSize,
+                    )
                     onMore?.let { more ->
                         CircleIconButton(
                             icon = Icons.Rounded.MoreHoriz,
                             contentDescription = "More",
                             palette = palette,
-                            onClick = { more(songs, false) },
+                            onClick = { more(songs) },
                             size = circleSize,
                         )
                     }
                 }
             }
         }
+    }
+}
+
+/**
+ * The filter box, shown under the header while the search circle is lit.
+ *
+ * Live rather than submit-on-enter, and for the same reason the Local Music
+ * one is (see `LocalSearchField`): the list it narrows is already in memory, so
+ * there is nothing for a submit action to wait for.
+ *
+ * Glass rather than a filled field — it is one of the header's controls that
+ * happens to be typed into, and it sits close enough to the circles that a
+ * Material text field beside them would read as a different app's furniture.
+ */
+@Composable
+private fun DetailSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    autoFocus: Boolean,
+    onFocused: () -> Unit,
+    palette: ArtworkPalette,
+    type: BrowseType,
+) {
+    // Opened by a tap on a button, which is as clear a statement of intent as
+    // the keyboard is going to get — so it comes up with the field rather than
+    // making the tap land twice. Once only: see [autoFocus]'s owner.
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(autoFocus) {
+        if (autoFocus) {
+            focus.requestFocus()
+            onFocused()
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = HEADER_GUTTER)
+            .padding(bottom = 10.dp)
+            .height(46.dp)
+            .clip(PILL_SHAPE)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+            .border(0.5.dp, Color.White.copy(alpha = 0.10f), PILL_SHAPE)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = BitChordIcons.Search,
+            contentDescription = null,
+            tint = palette.onBackgroundVariant,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        Box(Modifier.weight(1f)) {
+            if (query.isEmpty()) {
+                Text(
+                    text = "Search this ${type.label?.lowercase(Locale.ROOT) ?: "list"}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = palette.onBackgroundVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = palette.onBackground),
+                cursorBrush = SolidColor(palette.accent),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focus),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(CircleShape)
+                // Clearing and closing are the same gesture: an empty filter
+                // showing an unfiltered list is a row of furniture with nothing
+                // left to do.
+                .clickable { if (query.isEmpty()) onClose() else onQueryChange("") },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = if (query.isEmpty()) "Close search" else "Clear search",
+                tint = palette.onBackgroundVariant,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The rows a typed query leaves standing, each still carrying its place in the
+ * full list — see the track numbers on an album, which are the release's own
+ * and not positions in whatever the filter left.
+ */
+private fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
+    val all = withIndex().toList()
+    if (query.isBlank()) return all
+    return all.filter { (_, song) ->
+        song.title.contains(query, ignoreCase = true) ||
+            song.artist.contains(query, ignoreCase = true) ||
+            song.albumName?.contains(query, ignoreCase = true) == true
     }
 }
 

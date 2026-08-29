@@ -139,6 +139,7 @@ fun SettingsScreen(
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
     onSources: () -> Unit,
+    onSpotifyCanvasAuth: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -263,13 +264,6 @@ fun SettingsScreen(
                     ?: if (signedIn) "Signed in" else "Not signed in",
                 onClick = onAccountScrobbling,
             )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Extension,
-                title = "Sources",
-                subtitle = "Where audio comes from, and in what order",
-                onClick = onSources,
-            )
         }
 
         // The row that used to sit at the top of this group was called
@@ -279,6 +273,13 @@ fun SettingsScreen(
         // longer a setting at all — see
         // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow].
         SettingsGroup(header = "Audio quality") {
+            SettingsRow(
+                icon = Icons.Rounded.Extension,
+                title = "Sources",
+                subtitle = "Where audio comes from, and in what order",
+                onClick = onSources,
+            )
+            RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.Wifi,
                 title = "On Wi-Fi",
@@ -529,6 +530,23 @@ fun SettingsScreen(
                     checked = canvasOverCellular,
                     onCheckedChange = AppSettings::setCanvasOverCellular,
                 )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onSpotifyCanvasAuth)
+                        .padding(start = ROW_INSET, end = ROW_INSET, top = 4.dp, bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Integrate Spotify Canvas",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Chevron()
+                }
             }
             RowDivider()
             SettingsRow(
