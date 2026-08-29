@@ -137,6 +137,14 @@ fun BrowseActionsSheet(
     /** Null where the sheet was opened from the page it would navigate to. */
     onOpen: (() -> Unit)? = null,
     onDownloadAll: (() -> Unit)? = null,
+    /**
+     * Set whenever [target] is a playlist, regardless of who owns it — pinning
+     * doesn't touch the account, only what sits at the top of this device's
+     * Library tab. Null everywhere else (albums, artists), where "pin" has
+     * nothing to mean.
+     */
+    isPinned: Boolean = false,
+    onTogglePin: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
     /**
@@ -174,6 +182,9 @@ fun BrowseActionsSheet(
         onDownloadAll?.let { ActionRow(BitChordIcons.Download, "Download all", onClick = it) }
         onOpen?.let {
             ActionRow(BitChordIcons.ChevronRight, "Open ${target.type.noun}".trim(), onClick = it)
+        }
+        onTogglePin?.let {
+            ActionRow(BitChordIcons.Pin, if (isPinned) "Unpin" else "Pin", onClick = it)
         }
         if (onRename != null) {
             ActionRow(Icons.Rounded.Edit, "Rename") { renaming = true }

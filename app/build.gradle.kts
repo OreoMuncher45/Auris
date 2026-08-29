@@ -51,7 +51,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = 9
-        versionName = "1.5-beta2"
+        versionName = "1.5-beta3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -254,7 +254,7 @@ dependencies {
     // ---- Auth/session storage ----
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
-    // ---- JS module execution: QuickJS VM for Convx-style source plugins ----
+    // ---- JS module execution: QuickJS VM for style source plugins ----
     implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
 
     // ---- Automix: on-device beat/downbeat model (Beat This!, MIT-licensed) ----

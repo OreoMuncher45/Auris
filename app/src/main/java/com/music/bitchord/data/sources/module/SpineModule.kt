@@ -7,7 +7,7 @@ import java.util.Locale
 /**
  * One plugin descriptor as published in a module-source index.
  *
- * Matches the exact JSON shape Convx-compatible index servers produce.
+ * Matches the exact JSON shape compatible index servers produce.
  * [download] is either an absolute URL or a filename relative to the
  * index's own base URL — [ModuleManager] resolves it either way.
  */

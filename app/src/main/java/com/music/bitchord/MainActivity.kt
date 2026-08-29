@@ -110,6 +110,7 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
 import com.music.bitchord.playback.PlayerDeepLink
@@ -138,7 +139,9 @@ import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
+import com.music.bitchord.ui.components.TextValueAlert
 import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopBarDownloadButton
@@ -274,6 +277,11 @@ private fun BitChordApp(
     /** Which story card the share sheet is for, or null for the whole Replay. */
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
+    var showSources by remember { mutableStateOf(false) }
+    // Hosted here rather than inside SourcesScreen so its scrim covers the tab
+    // bar and mini player, like every other alert in the app.
+    var customModuleAlert by remember { mutableStateOf(false) }
+    var customModuleInput by remember { mutableStateOf("") }
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
@@ -1267,6 +1275,7 @@ private fun BitChordApp(
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
+        BackHandler(enabled = customModuleAlert) { customModuleAlert = false }
         BackHandler(enabled = showHistory) { showHistory = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
@@ -1292,6 +1301,7 @@ private fun BitChordApp(
                         // rather than keep showing the grid underneath.
                         libraryShowAll != null && detail == null -> "library_show_all"
                         showAccountScrobbling -> "account_scrobbling"
+                        showSources -> "sources"
                         // Above Replay, not below it. The top bar's account
                         // button sets `showSettings` from every page including
                         // this one, so with Replay winning the tie the button
@@ -1417,6 +1427,14 @@ private fun BitChordApp(
                             onOpenDiscord = { showDiscord = true },
                             contentPadding = listPadding,
                         )
+                    } else if (key == "sources") {
+                        SourcesScreen(
+                            contentPadding = listPadding,
+                            onEditCustomModule = {
+                                customModuleInput = SourceRegistry.customModule()?.baseUrl.orEmpty()
+                                customModuleAlert = true
+                            },
+                        )
                     } else if (key == "settings") {
                         SettingsScreen(
                             windowWidth = windowWidth,
@@ -1433,6 +1451,7 @@ private fun BitChordApp(
                                 showReplay = true
                             },
                             onLyricsSources = { showLyricsSources = true },
+                            onSources = { showSources = true },
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -1739,7 +1758,7 @@ private fun BitChordApp(
                 // Every top bar is a fade rather than a pane — see [TopFadeBlur].
                 // Drawn before the bar so the bar's own content sits on top of it.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
-                    !showAccountScrobbling && !showReplay
+                    !showAccountScrobbling && !showSources && !showReplay
                 TopFadeBlur(
                     hazeState = hazeState,
                     // Replay paints its own full-bleed black backdrop up under the
@@ -1763,6 +1782,7 @@ private fun BitChordApp(
                         showHistory -> "History"
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> "Account & scrobbling"
+                        showSources -> "Sources"
                         showSettings -> "Settings"
                         showReplay -> "Replay"
                         detail != null -> detail.title
@@ -1773,7 +1793,7 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
-                        showSettings || showAccountScrobbling || showDiscord || showHistory ||
+                        showSettings || showAccountScrobbling || showSources || showDiscord || showHistory ||
                             (libraryShowAll != null && detail == null) -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
@@ -1788,6 +1808,7 @@ private fun BitChordApp(
                         showHistory -> ({ showHistory = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({ showAccountScrobbling = false })
+                        showSources -> ({ showSources = false })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
@@ -1797,7 +1818,7 @@ private fun BitChordApp(
                     actions = {
                         // Only worth surfacing where there's room for it and it won't
                         // be mistaken for a per-page action — Home, at rest.
-                        if (!showSettings && !showAccountScrobbling && detail == null && selectedTab == TAB_HOME) {
+                        if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
                             updateNotice?.let { update ->
                                 IconButton(onClick = {
                                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
@@ -2181,6 +2202,8 @@ private fun BitChordApp(
                 ?.takeIf { signedIn && ownedPlaylists[it] == true }
                 ?.let { id -> playlists.firstOrNull { it.browseId == id } }
             val remote = target.browseId?.startsWith("local:") == false
+            val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
+            val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
             ModalBottomSheet(
                 onDismissRequest = { browseActions = null },
                 containerColor = MaterialTheme.colorScheme.background,
@@ -2232,6 +2255,20 @@ private fun BitChordApp(
                                 },
                         )
                     }.takeIf { target.fromCard && remote },
+                    isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
+                    onTogglePin = pinnableId?.let { id ->
+                        {
+                            val nowPinned = AppSettings.togglePinnedPlaylist(id)
+                            if (!nowPinned && id !in pinnedPlaylists) {
+                                Toast.makeText(
+                                    context,
+                                    "Only ${AppSettings.MAX_PINNED_PLAYLISTS} playlists can be pinned",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            browseActions = null
+                        }
+                    },
                     onRename = playlist?.let { p ->
                         { name: String ->
                             browseActions = null
@@ -2410,6 +2447,33 @@ private fun BitChordApp(
                 which = which,
                 hazeState = hazeState,
                 onDismiss = { discordDialog = null },
+            )
+        }
+
+        if (customModuleAlert) {
+            val existing = SourceRegistry.customModule()
+            TextValueAlert(
+                hazeState = hazeState,
+                title = "Custom module",
+                message = "A compatible module index, tried ahead of the built-in one. " +
+                    "Only one at a time — saving replaces the current one.",
+                placeholder = "Module index URL",
+                value = customModuleInput,
+                onValueChange = { customModuleInput = it },
+                saveEnabled = customModuleInput.isNotBlank(),
+                onSave = {
+                    SourceRegistry.setCustomModule(customModuleInput)
+                    customModuleAlert = false
+                },
+                onRemove = if (existing != null) {
+                    {
+                        SourceRegistry.setCustomModule("")
+                        customModuleAlert = false
+                    }
+                } else {
+                    null
+                },
+                onDismiss = { customModuleAlert = false },
             )
         }
     }

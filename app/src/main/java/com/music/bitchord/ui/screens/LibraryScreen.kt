@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,11 +37,13 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.download.SavedCollection
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -122,6 +125,7 @@ fun LibraryScreen(
      */
     downloadedPlaylists: List<SavedCollection> = emptyList(),
 ) {
+    val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -225,12 +229,14 @@ fun LibraryScreen(
                     shelves.forEach { shelf ->
                         item(key = "shelf:${shelf.title}") {
                             if (shelf.title == PLAYLISTS) {
+                                val pinnedFirst = shelf.pinnedFirst(pinnedPlaylists)
                                 PlaylistShelf(
-                                    shelf = shelf,
+                                    shelf = pinnedFirst,
                                     onItemClick = onShelfItemClick,
                                     onItemLongPress = onShelfItemLongPress,
                                     onNewPlaylist = onNewPlaylist,
-                                    onShowAll = { onShowAll(shelf) },
+                                    onShowAll = { onShowAll(pinnedFirst) },
+                                    pinnedPlaylists = pinnedPlaylists,
                                 )
                             } else {
                                 LibraryGridShelf(
@@ -358,12 +364,14 @@ private fun PlaylistShelf(
     onItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
     onShowAll: () -> Unit,
+    pinnedPlaylists: List<String> = emptyList(),
 ) {
     LibraryGridShelf(
         shelf = shelf,
         onItemClick = onItemClick,
         onItemLongPress = onItemLongPress,
         onShowAll = onShowAll,
+        pinnedPlaylists = pinnedPlaylists,
         leadingCard = {
             NewShelfCard(
                 icon = BitChordIcons.Plus,
@@ -395,6 +403,7 @@ internal fun LibraryGridShelf(
     onItemLongPress: (ShelfItem) -> Unit,
     onShowAll: () -> Unit,
     leadingCard: (@Composable () -> Unit)? = null,
+    pinnedPlaylists: List<String> = emptyList(),
 ) {
     val leadingCount = if (leadingCard != null) 1 else 0
     val visibleItems = shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
@@ -414,6 +423,7 @@ internal fun LibraryGridShelf(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
+                    isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
                 )
             }
         }
@@ -434,6 +444,12 @@ fun LibraryGridPage(
     modifier: Modifier = Modifier,
     onNewPlaylist: (() -> Unit)? = null,
 ) {
+    // Re-read live rather than trusting [shelf] to already be sorted: this page
+    // is opened from a snapshot (see `libraryShowAll` in MainActivity), and a
+    // pin toggled from this page's own long-press menu must move the card
+    // immediately rather than waiting for the row underneath to be revisited.
+    val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
+    val sortedShelf = shelf.pinnedFirst(pinnedPlaylists)
     BoxWithConstraints(modifier.fillMaxSize()) {
         val grid = libraryGrid(maxWidth - PAGE_GUTTER * 2)
         LazyVerticalGrid(
@@ -455,16 +471,34 @@ fun LibraryGridPage(
                     )
                 }
             }
-            items(shelf.items, key = { it.browseId ?: it.title }) { item ->
+            items(sortedShelf.items, key = { it.browseId ?: it.title }) { item ->
                 ShelfCard(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
                     modifier = Modifier.fillMaxWidth(),
+                    isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
                 )
             }
         }
     }
+}
+
+/**
+ * Moves whichever of this shelf's cards are in [pinned] to the front, in the
+ * order they were pinned, leaving everything else in its existing order behind
+ * them.
+ *
+ * A no-op on any shelf that isn't Playlists: [pinned] only ever holds playlist
+ * browse ids, so an album or artist shelf never has a card that matches.
+ */
+private fun HomeShelf.pinnedFirst(pinned: List<String>): HomeShelf {
+    if (pinned.isEmpty()) return this
+    val byId = items.filter { it.browseId != null }.associateBy { it.browseId }
+    val pinnedItems = pinned.mapNotNull { byId[it] }
+    if (pinnedItems.isEmpty()) return this
+    val pinnedSet = pinnedItems.toSet()
+    return copy(items = pinnedItems + items.filter { it !in pinnedSet })
 }
 
 /** The library feed whose cards are the account's own — see [PlaylistShelf]. */

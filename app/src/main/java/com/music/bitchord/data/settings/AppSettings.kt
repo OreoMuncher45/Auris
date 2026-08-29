@@ -129,21 +129,12 @@ object AppSettings {
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
 
-    /**
-     * Ask sources for the file they hold rather than a transcode of it.
-     *
-     * Off by default, and honestly labelled in Settings: YouTube has no
-     * lossless rendition of anything, so this does nothing at all until a
-     * source that holds real files is added on the Sources screen. It also
-     * loses to [effectiveAudioQuality] — see
-     * [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow] —
-     * because a capped connection is a budget, and a preference should not
-     * quietly overspend one.
-     *
-     * Playback only. Downloads used to read this too, which made one switch
-     * mean two things; [downloadQuality] is where that question is asked now.
-     */
-    val losslessAudio = MutableStateFlow(true)
+    // `losslessAudio` used to live here, behind a "Prefer lossless" switch on
+    // the Sources screen. It is gone: sources are asked for their best and each
+    // degrades on its own terms, so the switch's only real effect was to ask a
+    // module for a worse file than it was holding. See
+    // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow],
+    // which now reads [effectiveAudioQuality] and nothing else.
 
     val crossfadeSeconds = MutableStateFlow(0)
 
@@ -290,6 +281,22 @@ object AppSettings {
      */
     val replayGenres = MutableStateFlow(true)
 
+    // ── Library ─────────────────────────────────────────────────────────────
+
+    /**
+     * Browse ids of the playlists pinned to the top of the Library tab, in the
+     * order they were pinned.
+     *
+     * A [List] rather than a [Set]: pin order is part of what a pin means here —
+     * the whole point is a small, hand-picked front row, and a set would leave
+     * that order to hash iteration. Capped at [MAX_PINNED_PLAYLISTS] by
+     * [togglePinnedPlaylist], the only way this is ever written.
+     */
+    val pinnedPlaylists = MutableStateFlow<List<String>>(emptyList())
+
+    /** How many playlists [pinnedPlaylists] can hold at once. */
+    const val MAX_PINNED_PLAYLISTS = 5
+
     // ── Scrobbling ──────────────────────────────────────────────────────
 
     /** One release gate shared by the settings UI and the playback service. */
@@ -431,8 +438,6 @@ object AppSettings {
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
-        losslessAudio.value = prefs.getBoolean(KEY_LOSSLESS, true)
-        // After losslessAudio, which is what it seeds itself from.
         migrateDownloadQuality()
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
@@ -476,6 +481,7 @@ object AppSettings {
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
+        pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
         discordName.value = prefs.getString(KEY_DISCORD_NAME, "").orEmpty()
@@ -550,8 +556,10 @@ object AppSettings {
      */
     private fun migrateDownloadQuality() {
         if (prefs.contains(KEY_QUALITY_DOWNLOAD)) return
-        val quality = if (losslessAudio.value) DownloadQuality.LOSSLESS else DownloadQuality.HIGH
-        prefs.edit().putString(KEY_QUALITY_DOWNLOAD, quality.name).apply()
+        // Was derived from the old `losslessAudio` switch, which defaulted to
+        // on; LOSSLESS is what that produced for all but the few installs that
+        // had turned it off, and is the default a fresh install gets anyway.
+        prefs.edit().putString(KEY_QUALITY_DOWNLOAD, DownloadQuality.LOSSLESS.name).apply()
     }
 
     private fun readDownloadQuality(): DownloadQuality {
@@ -610,11 +618,6 @@ object AppSettings {
     fun setWifiOnlyDownloads(value: Boolean) {
         wifiOnlyDownloads.value = value
         prefs.edit().putBoolean(KEY_WIFI_ONLY_DOWNLOADS, value).apply()
-    }
-
-    fun setLosslessAudio(value: Boolean) {
-        losslessAudio.value = value
-        prefs.edit().putBoolean(KEY_LOSSLESS, value).apply()
     }
 
     fun setCrossfadeSeconds(value: Int) {
@@ -916,6 +919,31 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_REPLAY_GENRES, value).apply()
     }
 
+    /**
+     * Pins or unpins [browseId], returning whether it is pinned afterwards.
+     *
+     * Pinning past [MAX_PINNED_PLAYLISTS] is refused rather than evicting the
+     * oldest pin: a silent swap would mean a playlist someone pinned on purpose
+     * disappears from the row without them ever having touched it, the moment
+     * they pin a sixth. Unpinning always succeeds.
+     */
+    fun togglePinnedPlaylist(browseId: String): Boolean {
+        val current = pinnedPlaylists.value
+        val updated = when {
+            browseId in current -> current - browseId
+            current.size >= MAX_PINNED_PLAYLISTS -> return false
+            else -> current + browseId
+        }
+        pinnedPlaylists.value = updated
+        prefs.edit().putString(KEY_PINNED_PLAYLISTS, updated.joinToString(",")).apply()
+        return browseId in updated
+    }
+
+    private fun readPinnedPlaylists(): List<String> {
+        val stored = prefs.getString(KEY_PINNED_PLAYLISTS, null) ?: return emptyList()
+        return stored.split(",").filter { it.isNotBlank() }
+    }
+
     /** Forgets the account: token and cached profile. */
     fun clearDiscordAccount() {
         setDiscordToken("")
@@ -1038,6 +1066,7 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_REPLAY_GENRES = "replay_genres"
+    private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"
     private const val KEY_LASTFM_USERNAME = "lastfm_username"

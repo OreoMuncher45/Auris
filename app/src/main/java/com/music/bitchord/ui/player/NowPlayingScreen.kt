@@ -1844,7 +1844,6 @@ fun NowPlayingScreen(
                     ?.takeIf { !scrubbing && it.end > it.start }
                     ?.let { it.start..it.end },
             )
-            val losslessOn by AppSettings.losslessAudio.collectAsStateWithLifecycle()
             val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
             val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
             val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
@@ -1853,7 +1852,7 @@ fun NowPlayingScreen(
             // makes, mirrored here so "Loading lossless" only appears when a
             // lossless fetch is actually in flight, not on every buffering
             // YouTube track.
-            val losslessRequested = losslessOn &&
+            val losslessRequested =
                 (if (metered == true) cellularQuality else wifiQuality) == AudioQuality.HIGH
             // Whether a module is still racing YouTube for this exact track —
             // see [NerdStats.racingLossless]. YouTube can win that race and

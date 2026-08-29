@@ -49,10 +49,19 @@ object SourceResolver {
      */
     fun requestForNow(): StreamRequest {
         val ceiling = AppSettings.effectiveAudioQuality
-        return when {
-            ceiling != AudioQuality.HIGH -> StreamRequest.Capped(ceiling.maxKbps)
-            AppSettings.losslessAudio.value -> StreamRequest.Lossless
-            else -> StreamRequest.Best
+        // Always the best the sources can do, bounded only by the connection's
+        // own ceiling. There used to be a "Prefer lossless" switch in front of
+        // this and it earned its removal: every source already degrades on its
+        // own terms — a module hands back its best rendition, JioSaavn its
+        // 320kbps AAC, YouTube its Opus — so switching it off asked the module
+        // for a *worse* file than it was holding (`StreamRequest.Best` maps to
+        // the module's `HIGH` tier) while changing nothing about the two lossy
+        // sources. It was a switch whose only real effect was to downgrade the
+        // one source that could do better.
+        return if (ceiling != AudioQuality.HIGH) {
+            StreamRequest.Capped(ceiling.maxKbps)
+        } else {
+            StreamRequest.Lossless
         }
     }
 
@@ -231,11 +240,16 @@ object SourceResolver {
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null) return null
         val request = requestForNow()
-        if (request !is StreamRequest.Lossless) return null
         val active = SourceRegistry.active()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         for (source in rankedAbove(youtube.configId, active)) {
-            if (!source.kind.canServeLossless) continue
+            // Only lossless sources are worth asking when lossless is what was
+            // asked for. Without that request the bar is [worthSwapping]'s
+            // instead, and a lossy source ranked above YouTube clears it on
+            // bitrate alone — which is the case UPGRADE_MIN_GAIN_KBPS was sized
+            // for. Skipping those here is what left a 320kbps source unused
+            // behind YouTube's 160kbps Opus whenever lossless was switched off.
+            if (request is StreamRequest.Lossless && !source.kind.canServeLossless) continue
             val stream = matchAndStream(
                 source, target, request, waitForAll = true, strictLength = true,
             ) ?: continue

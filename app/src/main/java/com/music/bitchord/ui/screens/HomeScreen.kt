@@ -388,6 +388,8 @@ internal fun ShelfCard(
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
+    /** Set on a Library playlist card that's in [AppSettings.pinnedPlaylists][com.music.bitchord.data.settings.AppSettings.pinnedPlaylists]. */
+    isPinned: Boolean = false,
 ) {
     Column(
         modifier = modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress),
@@ -454,13 +456,28 @@ internal fun ShelfCard(
             }
         }
         Spacer(Modifier.height(10.dp))
-        Text(
-            text = item.title,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (isPinned) {
+                Icon(
+                    imageVector = BitChordIcons.Pin,
+                    contentDescription = "Pinned",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(14.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+        }
         Text(
             text = item.subtitle,
             style = MaterialTheme.typography.bodyMedium,

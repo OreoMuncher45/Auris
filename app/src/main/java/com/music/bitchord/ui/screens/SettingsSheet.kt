@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MotionPhotosOff
+import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
@@ -137,6 +138,7 @@ fun SettingsScreen(
     onAccountScrobbling: () -> Unit,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
+    onSources: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -163,7 +165,6 @@ fun SettingsScreen(
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
-    val lossless by AppSettings.losslessAudio.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
@@ -262,48 +263,22 @@ fun SettingsScreen(
                     ?: if (signedIn) "Signed in" else "Not signed in",
                 onClick = onAccountScrobbling,
             )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Extension,
+                title = "Sources",
+                subtitle = "Where audio comes from, and in what order",
+                onClick = onSources,
+            )
         }
 
+        // The row that used to sit at the top of this group was called
+        // "Lossless / HQ Audio" and toggled `SourceRegistry.setModuleEnabled` —
+        // it switched the *module source* on and off, not lossless. Sources
+        // above lists that as the module's own row now. Lossless itself is no
+        // longer a setting at all — see
+        // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow].
         SettingsGroup(header = "Audio quality") {
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = "Lossless / HQ Audio",
-                subtitle = if (!losslessConfigured) null else
-                    if (moduleEnabled) "Turn off if its playing a different version of the song or another song. Restart Required!"
-                    else "Turn on to experience lossless music quality. Restart Required!",
-                subtitleContent = if (!losslessConfigured) {
-                    {
-                        Text(
-                            text = "Lossless is not working — make sure the app is downloaded from the official source",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                } else null,
-                trailing = {
-                    Switch(
-                        checked = moduleEnabled && losslessConfigured,
-                        onCheckedChange = {
-                            if (losslessConfigured) {
-                                SourceRegistry.setModuleEnabled(it)
-                                AudioCache.clear {}
-                            }
-                        },
-                        enabled = losslessConfigured,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = {
-                    if (losslessConfigured) {
-                        SourceRegistry.setModuleEnabled(!moduleEnabled)
-                        AudioCache.clear {}
-                    }
-                },
-            )
-            RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.Wifi,
                 title = "On Wi-Fi",
