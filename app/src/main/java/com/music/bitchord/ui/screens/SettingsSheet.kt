@@ -578,7 +578,7 @@ fun SettingsScreen(
             SettingsRow(
                 icon = Icons.Rounded.BlurOn,
                 title = "Blur unfocused lyrics",
-                subtitle = "Highlights the line being sung",
+                subtitle = "Keeps the spotlight on the current line",
                     trailing = {
                         Switch(
                             checked = lyricsBlur,
