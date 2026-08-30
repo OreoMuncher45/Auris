@@ -476,4 +476,94 @@ object BitChordIcons {
             }
         }.build()
     }
+
+    /** 2x2 grid icon (4 rounded squares) for switching layout to grid view. */
+    val GridView: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_grid_view",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Top-left
+                moveTo(6.5f, 4.5f)
+                lineTo(8.5f, 4.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, 2f)
+                lineTo(10.5f, 8.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, 2f)
+                lineTo(6.5f, 10.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, -2f)
+                lineTo(4.5f, 6.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, -2f)
+                close()
+
+                // Top-right
+                moveTo(15.5f, 4.5f)
+                lineTo(17.5f, 4.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, 2f)
+                lineTo(19.5f, 8.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, 2f)
+                lineTo(15.5f, 10.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, -2f)
+                lineTo(13.5f, 6.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, -2f)
+                close()
+
+                // Bottom-left
+                moveTo(6.5f, 13.5f)
+                lineTo(8.5f, 13.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, 2f)
+                lineTo(10.5f, 17.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, 2f)
+                lineTo(6.5f, 19.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, -2f)
+                lineTo(4.5f, 15.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, -2f)
+                close()
+
+                // Bottom-right
+                moveTo(15.5f, 13.5f)
+                lineTo(17.5f, 13.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, 2f)
+                lineTo(19.5f, 17.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, 2f)
+                lineTo(15.5f, 19.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2f, -2f)
+                lineTo(13.5f, 15.5f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2f, -2f)
+                close()
+            }
+        }.build()
+    }
+
+    /** List view icon (horizontal rows) for switching layout to list view. */
+    val ListView: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_list_view",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = STROKE,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                // Three horizontal lines with bullet markers
+                moveTo(4.5f, 6.5f); lineTo(5.5f, 6.5f)
+                moveTo(9.5f, 6.5f); lineTo(19.5f, 6.5f)
+
+                moveTo(4.5f, 12f); lineTo(5.5f, 12f)
+                moveTo(9.5f, 12f); lineTo(19.5f, 12f)
+
+                moveTo(4.5f, 17.5f); lineTo(5.5f, 17.5f)
+                moveTo(9.5f, 17.5f); lineTo(19.5f, 17.5f)
+            }
+        }.build()
+    }
 }

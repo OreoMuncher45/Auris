@@ -167,6 +167,10 @@
     <string name="chinese">Chino (simplificado)</string>
     <string name="hebrew">Hebreo</string>
     <string name="show_all">Ver todo</string>
+    <string name="grid_view">Cuadrícula</string>
+    <string name="list_view">Lista</string>
+    <string name="switch_to_grid_view">Cambiar a vista de cuadrícula</string>
+    <string name="switch_to_list_view">Cambiar a vista de lista</string>
     <string name="audio_quality">Calidad de audio</string>
     <string name="playback">Reproducción</string>
     <string name="appearance">Apariencia</string>

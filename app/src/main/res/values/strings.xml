@@ -167,6 +167,10 @@
     <string name="chinese">Chinese (Simplified)</string>
     <string name="hebrew">Hebrew</string>
     <string name="show_all">Show all</string>
+    <string name="grid_view">Grid</string>
+    <string name="list_view">List</string>
+    <string name="switch_to_grid_view">Switch to grid view</string>
+    <string name="switch_to_list_view">Switch to list view</string>
     <string name="audio_quality">Audio quality</string>
     <string name="playback">Playback</string>
     <string name="appearance">Appearance</string>
