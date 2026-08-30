@@ -68,6 +68,14 @@ enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark")
 }
 
+/** Stable persisted ordering for each on-device music library. */
+enum class LocalMusicSort {
+    TITLE_ASC,
+    TITLE_DESC,
+    DATE_ADDED,
+    DATE_MODIFIED,
+}
+
 /**
  * App settings, backed by SharedPreferences and exposed as flows.
  *
@@ -169,6 +177,12 @@ object AppSettings {
 
     /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
     val reduceAnimation = MutableStateFlow(false)
+
+    /** Requests a sustained high-refresh UI. Off keeps Android's automatic policy. */
+    val highPerformanceMode = MutableStateFlow(false)
+
+    /** Preferred UI refresh rate while [highPerformanceMode] is enabled. */
+    val performanceRefreshRate = MutableStateFlow(DEFAULT_PERFORMANCE_REFRESH_RATE)
 
     /** Stop playback when the app is swiped away from the recent apps screen. */
     val stopOnTaskRemoved = MutableStateFlow(false)
@@ -285,6 +299,15 @@ object AppSettings {
     val replayGenres = MutableStateFlow(true)
 
     // ── Library ─────────────────────────────────────────────────────────────
+
+    /** Hides short clips, recorder output and non-music formats from Local Music. */
+    val filterNonMusicAudio = MutableStateFlow(true)
+
+    val localMusicSort = MutableStateFlow(LocalMusicSort.TITLE_ASC)
+    val downloadedMusicSort = MutableStateFlow(LocalMusicSort.TITLE_ASC)
+
+    /** Empty means every MediaStore folder; otherwise this is a persisted SAF tree URI. */
+    val localMusicFolderUri = MutableStateFlow("")
 
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
@@ -456,6 +479,10 @@ object AppSettings {
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
         reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
+        highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
+        performanceRefreshRate.value = normalizePerformanceRefreshRate(
+            prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
+        )
         stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
@@ -463,6 +490,10 @@ object AppSettings {
         convertVideoToAudio.value = prefs.getBoolean(KEY_CONVERT_VIDEO_TO_AUDIO, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
+        if (highPerformanceMode.value) {
+            reduceAnimation.value = false
+            reduceDynamicBlur.value = false
+        }
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
@@ -487,6 +518,10 @@ object AppSettings {
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
         spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
+        filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
+        localMusicSort.value = readLocalMusicSort(KEY_LOCAL_MUSIC_SORT)
+        downloadedMusicSort.value = readLocalMusicSort(KEY_DOWNLOADED_MUSIC_SORT)
+        localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
@@ -663,7 +698,10 @@ object AppSettings {
 
     fun setReduceAnimation(value: Boolean) {
         reduceAnimation.value = value
-        prefs.edit().putBoolean(KEY_REDUCE_ANIMATION, value).apply()
+        if (value) highPerformanceMode.value = false
+        val editor = prefs.edit().putBoolean(KEY_REDUCE_ANIMATION, value)
+        if (value) editor.putBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
+        editor.apply()
     }
 
     fun setStopOnTaskRemoved(value: Boolean) {
@@ -693,7 +731,30 @@ object AppSettings {
 
     fun setReduceDynamicBlur(value: Boolean) {
         reduceDynamicBlur.value = value
-        prefs.edit().putBoolean(KEY_REDUCE_BLUR, value).apply()
+        if (value) highPerformanceMode.value = false
+        val editor = prefs.edit().putBoolean(KEY_REDUCE_BLUR, value)
+        if (value) editor.putBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
+        editor.apply()
+    }
+
+    fun setHighPerformanceMode(value: Boolean) {
+        highPerformanceMode.value = value
+        if (value) {
+            reduceAnimation.value = false
+            reduceDynamicBlur.value = false
+        }
+        val editor = prefs.edit().putBoolean(KEY_HIGH_PERFORMANCE_MODE, value)
+        if (value) {
+            editor.putBoolean(KEY_REDUCE_ANIMATION, false)
+            editor.putBoolean(KEY_REDUCE_BLUR, false)
+        }
+        editor.apply()
+    }
+
+    fun setPerformanceRefreshRate(value: Int) {
+        val normalized = normalizePerformanceRefreshRate(value)
+        performanceRefreshRate.value = normalized
+        prefs.edit().putInt(KEY_PERFORMANCE_REFRESH_RATE, normalized).apply()
     }
 
     fun setLyricsBlur(value: Boolean) {
@@ -935,6 +996,31 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_REPLAY_GENRES, value).apply()
     }
 
+    fun setFilterNonMusicAudio(value: Boolean) {
+        filterNonMusicAudio.value = value
+        prefs.edit().putBoolean(KEY_FILTER_NON_MUSIC_AUDIO, value).apply()
+    }
+
+    fun setLocalMusicSort(value: LocalMusicSort) {
+        localMusicSort.value = value
+        prefs.edit().putString(KEY_LOCAL_MUSIC_SORT, value.name).apply()
+    }
+
+    fun setDownloadedMusicSort(value: LocalMusicSort) {
+        downloadedMusicSort.value = value
+        prefs.edit().putString(KEY_DOWNLOADED_MUSIC_SORT, value.name).apply()
+    }
+
+    fun setLocalMusicFolderUri(value: String) {
+        localMusicFolderUri.value = value
+        prefs.edit().putString(KEY_LOCAL_MUSIC_FOLDER_URI, value).apply()
+    }
+
+    private fun readLocalMusicSort(key: String): LocalMusicSort =
+        prefs.getString(key, null)
+            ?.let { saved -> LocalMusicSort.entries.firstOrNull { it.name == saved } }
+            ?: LocalMusicSort.TITLE_ASC
+
     /**
      * Pins or unpins [browseId], returning whether it is pinned afterwards.
      *
@@ -1046,11 +1132,17 @@ object AppSettings {
         "downloaded_tracks",
         "downloaded_tracks_metadata",
         "downloaded_collections",
+        KEY_LOCAL_MUSIC_FOLDER_URI,
         KEY_LAST_VERSION_CODE,
     )
 
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
     const val MAX_CACHE_LIMIT_BYTES = 10L * 1024 * 1024 * 1024
+
+    private const val DEFAULT_PERFORMANCE_REFRESH_RATE = 120
+
+    private fun normalizePerformanceRefreshRate(value: Int): Int =
+        value.takeIf { it in 50..240 } ?: DEFAULT_PERFORMANCE_REFRESH_RATE
 
     private const val KEY_QUALITY_LEGACY = "audio_quality"
     private const val KEY_QUALITY_WIFI = "audio_quality_wifi"
@@ -1068,6 +1160,8 @@ object AppSettings {
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
+    private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
+    private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
@@ -1083,6 +1177,10 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_REPLAY_GENRES = "replay_genres"
+    private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
+    private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
+    private const val KEY_DOWNLOADED_MUSIC_SORT = "downloaded_music_sort"
+    private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"

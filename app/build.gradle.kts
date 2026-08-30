@@ -19,6 +19,13 @@ val signing = Properties().apply {
     if (file.exists()) file.inputStream().use { load(it) }
 }
 
+val stableDebugStore = System.getenv("BITCHORD_DEBUG_STORE_FILE")
+    ?.takeIf { it.isNotBlank() }
+    ?.let { rootProject.file(it) }
+val stableDebugStorePassword = System.getenv("BITCHORD_DEBUG_STORE_PASSWORD")
+val stableDebugKeyAlias = System.getenv("BITCHORD_DEBUG_KEY_ALIAS")
+val stableDebugKeyPassword = System.getenv("BITCHORD_DEBUG_KEY_PASSWORD")
+
 /**
  * Module index URL for lossless/HQ audio sourcing.
  * Set MODULE_INDEX_URL in local.properties to enable it.
@@ -95,6 +102,20 @@ android {
     }
 
     signingConfigs {
+        if (
+            stableDebugStore?.exists() == true &&
+            !stableDebugStorePassword.isNullOrBlank() &&
+            !stableDebugKeyAlias.isNullOrBlank() &&
+            !stableDebugKeyPassword.isNullOrBlank()
+        ) {
+            create("stableDebug") {
+                storeFile = stableDebugStore
+                storePassword = stableDebugStorePassword
+                keyAlias = stableDebugKeyAlias
+                keyPassword = stableDebugKeyPassword
+            }
+        }
+
         // Both halves have to be there, not just the properties file: it *names*
         // the keystore rather than containing it, and both are gitignored
         // separately, so a checkout can easily end up with the one and not the
@@ -114,6 +135,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // CI supplies one persistent key. Local checkouts keep Android's
+            // ordinary generated debug key when those environment variables
+            // are absent.
+            signingConfig = signingConfigs.findByName("stableDebug")
+                ?: signingConfigs.getByName("debug")
+        }
         release {
             /*
              * Off deliberately. Stream resolution runs YouTube's own player

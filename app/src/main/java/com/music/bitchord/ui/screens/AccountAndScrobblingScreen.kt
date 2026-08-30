@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
@@ -62,7 +63,7 @@ fun AccountAndScrobblingScreen(
             .padding(contentPadding),
     ) {
         Text(
-            text = "Account & integrations",
+            text = stringResource(R.string.account_integrations),
             style = MaterialTheme.typography.displayLarge,
             color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
@@ -72,23 +73,22 @@ fun AccountAndScrobblingScreen(
 
         if (signedIn) {
             SettingsGroup {
-                DestructiveRow(label = "Sign out", onClick = onSignOut)
+                DestructiveRow(label = stringResource(R.string.sign_out), onClick = onSignOut)
             }
         }
 
         SettingsGroup(
-            header = "Rich presence",
-            footer = "Show what you're playing on your Discord profile, updating as " +
-                "the track does.",
+            header = stringResource(R.string.rich_presence),
+            footer = stringResource(R.string.rich_presence_footer),
         ) {
             SettingsRow(
                 icon = ImageVector.vectorResource(R.drawable.ic_discord),
                 title = "Discord",
                 subtitle = when {
-                    discordToken.isEmpty() -> "Tap to connect"
-                    !discordRpcEnabled -> "Connected, presence off"
-                    discordUsername.isNotEmpty() -> "Sharing as @$discordUsername"
-                    else -> "Sharing your listens"
+                    discordToken.isEmpty() -> stringResource(R.string.tap_to_connect)
+                    !discordRpcEnabled -> stringResource(R.string.connected_presence_off)
+                    discordUsername.isNotEmpty() -> stringResource(R.string.sharing_as, discordUsername)
+                    else -> stringResource(R.string.sharing_listens)
                 },
                 onClick = onOpenDiscord,
             )
@@ -96,13 +96,17 @@ fun AccountAndScrobblingScreen(
 
         if (AppSettings.scrobblingAvailable) {
             SettingsGroup(
-                header = "Scrobbling",
-                footer = "Scrobble your listens to Last.fm and ListenBrainz.",
+                header = stringResource(R.string.scrobbling),
+                footer = stringResource(R.string.scrobbling_footer),
             ) {
                 SettingsRow(
                     icon = Icons.Rounded.Cloud,
                     title = "ListenBrainz",
-                    subtitle = if (listenBrainzEnabled && listenBrainzToken.isNotBlank()) "Connected" else "Enter a token to enable",
+                    subtitle = if (listenBrainzEnabled && listenBrainzToken.isNotBlank()) {
+                        stringResource(R.string.connected)
+                    } else {
+                        stringResource(R.string.enter_token_to_enable)
+                    },
                     trailing = {
                         Switch(
                             checked = listenBrainzEnabled,
@@ -125,7 +129,11 @@ fun AccountAndScrobblingScreen(
                 SettingsRow(
                     icon = Icons.Rounded.History,
                     title = "Last.fm",
-                    subtitle = if (lastfmSessionKey.isNotBlank()) "Signed in as $lastfmUsername" else "Tap to sign in",
+                    subtitle = if (lastfmSessionKey.isNotBlank()) {
+                        stringResource(R.string.signed_in_as, lastfmUsername)
+                    } else {
+                        stringResource(R.string.tap_to_sign_in)
+                    },
                     trailing = {
                         Switch(
                             checked = lastfmEnabled,
@@ -158,8 +166,8 @@ fun AccountAndScrobblingScreen(
                     RowDivider()
                     SettingsRow(
                         icon = Icons.Rounded.GraphicEq,
-                        title = "Scrobble tracks",
-                        subtitle = "Log plays to your Last.fm timeline",
+                        title = stringResource(R.string.scrobble_tracks),
+                        subtitle = stringResource(R.string.scrobble_tracks_subtitle),
                         trailing = {
                             Switch(
                                 checked = lastfmScrobbleEnabled,
@@ -175,8 +183,8 @@ fun AccountAndScrobblingScreen(
                     RowDivider()
                     SettingsRow(
                         icon = Icons.Rounded.GraphicEq,
-                        title = "Now playing",
-                        subtitle = "Update Last.fm with what you're listening to",
+                        title = stringResource(R.string.now_playing),
+                        subtitle = stringResource(R.string.lastfm_now_playing_subtitle),
                         trailing = {
                             Switch(
                                 checked = lastfmNowPlayingEnabled,
@@ -193,11 +201,11 @@ fun AccountAndScrobblingScreen(
             }
 
             if (lastfmEnabled && lastfmSessionKey.isNotBlank()) {
-                SettingsGroup(header = "Scrobble timing") {
+                SettingsGroup(header = stringResource(R.string.scrobble_timing)) {
                     SliderRow(
                         icon = Icons.Rounded.Tune,
-                        title = "Min song duration",
-                        subtitle = "Songs shorter than this won't scrobble",
+                        title = stringResource(R.string.min_song_duration),
+                        subtitle = stringResource(R.string.min_song_duration_subtitle),
                         value = "${scrobbleMinDuration}s",
                         sliderValue = scrobbleMinDuration.toFloat(),
                         onSliderValue = { AppSettings.setScrobbleMinDuration(it.roundToInt()) },
@@ -207,8 +215,8 @@ fun AccountAndScrobblingScreen(
                     RowDivider()
                     SliderRow(
                         icon = Icons.Rounded.Tune,
-                        title = "Scrobble delay",
-                        subtitle = "How far into a song before scrobbling",
+                        title = stringResource(R.string.scrobble_delay),
+                        subtitle = stringResource(R.string.scrobble_delay_subtitle),
                         value = "${(scrobbleDelayPercent * 100).roundToInt()}%",
                         sliderValue = scrobbleDelayPercent,
                         onSliderValue = { AppSettings.setScrobbleDelayPercent(it) },
@@ -218,8 +226,8 @@ fun AccountAndScrobblingScreen(
                     RowDivider()
                     SliderRow(
                         icon = Icons.Rounded.Tune,
-                        title = "Max delay",
-                        subtitle = "Cap on scrobble delay in seconds",
+                        title = stringResource(R.string.max_delay),
+                        subtitle = stringResource(R.string.max_delay_subtitle),
                         value = "${scrobbleDelaySeconds}s",
                         sliderValue = scrobbleDelaySeconds.toFloat(),
                         onSliderValue = { AppSettings.setScrobbleDelaySeconds(it.roundToInt()) },
@@ -233,22 +241,20 @@ fun AccountAndScrobblingScreen(
             // reads as a feature that never existed, and this one is coming back.
             // The rows are dimmed and inert via `enabled = false`.
             SettingsGroup(
-                header = "Scrobbling",
-                footer = "Last.fm and ListenBrainz are paused for this release and " +
-                    "will return in a future version. Anything you have already " +
-                    "connected stays saved.",
+                header = stringResource(R.string.scrobbling),
+                footer = stringResource(R.string.scrobbling_paused_footer),
             ) {
                 SettingsRow(
                     icon = Icons.Rounded.Cloud,
                     title = "ListenBrainz",
-                    subtitle = "Back in a future version",
+                    subtitle = stringResource(R.string.back_in_future_version),
                     enabled = false,
                 )
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.History,
                     title = "Last.fm",
-                    subtitle = "Back in a future version",
+                    subtitle = stringResource(R.string.back_in_future_version),
                     enabled = false,
                 )
             }
