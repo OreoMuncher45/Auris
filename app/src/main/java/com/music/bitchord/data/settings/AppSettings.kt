@@ -193,6 +193,9 @@ object AppSettings {
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
+    /** Blurs unfocused lyric lines, keeping the active line sharp. */
+    val lyricsBlur = MutableStateFlow(true)
+
     /**
      * Plays a looping video behind the cover art on the player when one is
      * published for the track — Spotify's Canvas, Apple's motion artwork.
@@ -459,6 +462,7 @@ object AppSettings {
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         convertVideoToAudio.value = prefs.getBoolean(KEY_CONVERT_VIDEO_TO_AUDIO, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
+        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
@@ -690,6 +694,11 @@ object AppSettings {
     fun setReduceDynamicBlur(value: Boolean) {
         reduceDynamicBlur.value = value
         prefs.edit().putBoolean(KEY_REDUCE_BLUR, value).apply()
+    }
+
+    fun setLyricsBlur(value: Boolean) {
+        lyricsBlur.value = value
+        prefs.edit().putBoolean(KEY_LYRICS_BLUR, value).apply()
     }
 
     fun setSyncedLyrics(value: Boolean) {
@@ -1065,6 +1074,7 @@ object AppSettings {
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_CONVERT_VIDEO_TO_AUDIO = "convert_video_to_audio"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
+    private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
