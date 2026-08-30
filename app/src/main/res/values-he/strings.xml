@@ -81,8 +81,8 @@
 <string name="test">בדיקה</string>
 <string name="testing">בודק…</string>
 <string name="connected">מחובר</string>
-<string name="account_integrations">חשבון & אינטגרציות</string>
-<string name="account_scrobbling">חשבון & סקרובלינג</string>
+<string name="account_integrations">חשבון &amp; אינטגרציות</string>
+<string name="account_scrobbling">חשבון &amp; סקרובלינג</string>
 <string name="rich_presence">נוכחות עשירה</string>
 <string name="scrobbling">סקרובלינג</string>
 <string name="now_playing">מתנגן כעת</string>
