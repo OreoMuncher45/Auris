@@ -333,7 +333,7 @@ private fun Stage(
         }
 
         StoryChrome(
-            label = summary.localizedLabel(context),
+            label = summary.localizedLabel(LocalContext.current),
             count = pages.size,
             current = current,
             progress = progress.value,
