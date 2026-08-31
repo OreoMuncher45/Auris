@@ -50,5 +50,6 @@ data class ModuleStreamTrack(
     @SerialName("mimeType") val mimeType: String? = null,
     @SerialName("bitDepth") val bitDepth: Int? = null,
     @SerialName("sampleRate") val sampleRate: Double? = null,
+    @SerialName("bitrate") val bitrate: Int? = null,
     @SerialName("audioModes") val audioModes: List<String>? = null,
 )

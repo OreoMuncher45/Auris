@@ -260,8 +260,10 @@ class ModuleSource(
                 url = url,
                 format = StreamFormat(
                     codec = codecOf(trackMeta?.mimeType, trackMeta?.audioQuality, url),
-                    kbps = kbpsFor(trackMeta?.audioQuality, url),
-                    sampleRateHz = trackMeta?.sampleRate?.toInt()?.takeIf { it > 0 },
+                    kbps = trackMeta?.bitrate ?: kbpsFor(trackMeta?.audioQuality, url),
+                    sampleRateHz = trackMeta?.sampleRate?.let {
+                        if (it < 1000) (it * 1000).toInt() else it.toInt()
+                    }?.takeIf { it > 0 },
                     bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
                 ),
             )

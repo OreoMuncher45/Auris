@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
@@ -60,6 +62,7 @@ import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.ui.theme.AccentRed
 
 /** Whether the Replay page is being shown in dark mode (vs light). */
+@Composable
 private fun isDarkMode(): Boolean =
     MaterialTheme.colorScheme.background.luminance() < 0.5f
 
@@ -421,7 +424,7 @@ private fun SectionTitle(text: String, dark: Boolean) {
 }
 
 @Composable
-private fun ReplayChartRow(row: ReplayRow, circular: Boolean, dark: Boolean) {
+private fun ReplayChartRow(row: ReplayRow, circular: Boolean, dark: Boolean, onClick: () -> Unit) {
     val textColor = if (dark) Color.White else Color.Black
     val textVariant = if (dark) Color.White.copy(alpha = 0.55f) else Color.Black.copy(alpha = 0.55f)
     val shape = if (circular) CircleShape else RoundedCornerShape(6.dp)
