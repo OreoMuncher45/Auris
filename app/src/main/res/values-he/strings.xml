@@ -460,7 +460,7 @@
     <string name="couldnt_draw_picture">לא ניתן ליצור תמונה</string>
     <string name="default_replay_holder">מאזין BitChord</string>
     <string name="different_albums">אלבומים שונים</string>
-    <string name="genres_pending">ז'אנרים יופיעו ככל שהיסטוריית ההאזנה שלך תגדל</string>
+    <string name="genres_pending">ז\'אנרים יופיעו ככל שהיסטוריית ההאזנה שלך תגדל</string>
     <string name="hour_am">%1$d AM</string>
     <string name="hour_pm">%1$d PM</string>
     <string name="hours_minutes_short">%1$dh %2$dm</string>
@@ -471,9 +471,9 @@
     <string name="midday">אמצע היום</string>
     <string name="midnight">חצות</string>
     <string name="minutes">דקות</string>
-    <string name="minutes_grouped_short">%1$s דק'</string>
+    <string name="minutes_grouped_short">%1$s דק\'</string>
     <string name="minutes_listened">דקות שהואזנו</string>
-    <string name="minutes_short">%1$d דק'</string>
+    <string name="minutes_short">%1$d דק\'</string>
     <string name="not_enough_listening">אין עדיין מספיק האזנה</string>
     <string name="not_enough_this_month">הפעל עוד כמה שירים החודש כדי לבטל את הנעילה של ה-Replay שלך.</string>
     <string name="pinned">נעוץ</string>
@@ -486,7 +486,7 @@
     <string name="replay_artist_start">כל החודש, </string>
     <string name="replay_empty_description">האזן קצת יותר ו-BitChord יהפוך את ההיסטוריה שלך ל-Replay.</string>
     <string name="replay_genre_end"> עיצבו את הצליל שלך.</string>
-    <string name="replay_genre_focus">הז'אנרים שלך</string>
+    <string name="replay_genre_focus">הז\'אנרים שלך</string>
     <string name="replay_genre_start">ביחד, </string>
     <string name="replay_habits_middle"> מתוך </string>
     <string name="replay_habits_start">חקרת </string>
@@ -509,7 +509,7 @@
     <string name="tap_share_for_picture">הקש שתף כדי ליצור תמונה</string>
     <string name="top_album">אלבום מוביל</string>
     <string name="top_artist">אמן מוביל</string>
-    <string name="top_genre">ז'אנר מוביל</string>
+    <string name="top_genre">ז\'אנר מוביל</string>
     <string name="top_song">שיר מוביל</string>
     <string name="when_you_listen_most">מתי אתה מאזין הכי הרבה</string>
     <string name="your_biggest_day">היום הגדול ביותר שלך: %1$s</string>
@@ -548,8 +548,8 @@
     <string name="no_lyrics_sources_enabled">אין. מילים לא יורדו.</string>
     <string name="song_cache_large_subtitle">שומר עד %1$s של שמע שהורד בכונן. זה יכול לתפוס נתח משמעותי מהמקום הפנוי שלך.</string>
     <string name="song_cache_limit_subtitle">שומר שמע שהורד בכונן לחיפוש מיידי ולהשמעות חוזרות</string>
-    <string name="replay_genres_enabled_subtitle">מבקש מ-Last.fm את הז'אנרים של האמן. רק שם האמן נשלח.</string>
-    <string name="replay_genres_disabled_subtitle">תרשים הז'אנרים של Replay נשאר מוסתר כל עוד זה כבוי</string>
+    <string name="replay_genres_enabled_subtitle">מבקש מ-Last.fm את הז\'אנרים של האמן. רק שם האמן נשלח.</string>
+    <string name="replay_genres_disabled_subtitle">תרשים הז\'אנרים של Replay נשאר מוסתר כל עוד זה כבוי</string>
     <string name="swipe_plays_next">החלקה של שיר מנגנת אותו בהמשך</string>
     <string name="swipe_adds_to_queue">כאשר מושבת, החלקה מוסיפה את השיר לסוף התור</string>
     <string name="import_backup_warning">זה מחליף את ההגדרות והיסטוריית ההאזנה של מכשיר זה בתוכן הקובץ. ייצא את הנתונים הנוכחיים תחילה אם תרצה לשמור אותם.</string>
