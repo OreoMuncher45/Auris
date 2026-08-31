@@ -152,10 +152,36 @@ object YtMusicRepository {
         }
     }
 
+    /**
+     * Search results across every page YouTube exposes for the chosen filter.
+     *
+     * The first response normally carries only about two dozen rows plus a
+     * continuation token. Returning it as the whole answer made filters such as
+     * Playlists stop around 20–25 rows even when the account had much more to
+     * show. Follow the same bounded paging contract as browse feeds: dedupe by
+     * the row's real identity, stop at [MAX_PAGES], and keep what was already
+     * collected if a later page fails.
+     */
     suspend fun search(query: String, filter: SearchFilter): Result<List<SearchResult>> =
         call("search:${filter.name}") {
-            InnertubeParser.parseSearch(Innertube.search(query, filter.params))
+            val out = LinkedHashMap<String, SearchResult>()
+            var page = InnertubeParser.parseSearchPage(Innertube.search(query, filter.params))
+            var count = 1
+            while (true) {
+                page.rows.forEach { row -> out.putIfAbsent(row.identityKey(), row) }
+                val token = page.continuation ?: break
+                if (count++ >= MAX_PAGES) break
+                page = runCatching {
+                    InnertubeParser.parseSearchPage(Innertube.searchContinuation(token))
+                }.getOrNull() ?: break
+            }
+            out.values.toList()
         }
+
+    private fun SearchResult.identityKey(): String = when (this) {
+        is SearchResult.Track -> "v:${song.videoId}"
+        is SearchResult.Browse -> "b:${item.browseId}"
+    }
 
     /**
      * What YouTube Music would suggest completing [input] to, for the search
@@ -231,10 +257,7 @@ object YtMusicRepository {
             val shelves = LIBRARY_FEEDS
                 .map { (title, browseId) ->
                     async {
-                        val items = runCatching {
-                            InnertubeParser.parseLibraryItems(Innertube.browse(browseId))
-                        }.getOrDefault(emptyList())
-                        HomeShelf(title, items)
+                        HomeShelf(title, runCatching { libraryItemsPaged(browseId) }.getOrDefault(emptyList()))
                     }
                 }
                 .awaitAll()
@@ -414,6 +437,32 @@ object YtMusicRepository {
         return out.values.toList()
     }
 
+    /**
+     * Every saved library card behind a feed browse id, following continuations.
+     *
+     * The library shelves are capped by YouTube's first page just like search:
+     * playlists, albums and artists often stop at about twenty-five rows unless
+     * their feed continuation is followed. These are background library loads,
+     * so collecting the full bounded set before publishing is preferable to a
+     * shelf that looks complete and silently is not.
+     */
+    private suspend fun libraryItemsPaged(browseId: String): List<ShelfItem> {
+        val out = LinkedHashMap<String, ShelfItem>()
+        var response = Innertube.browse(browseId)
+        var page = 1
+        while (true) {
+            val parsed = InnertubeParser.parseLibraryItemPage(response)
+            parsed.items.forEach { item ->
+                val key = item.browseId ?: item.videoId ?: "${item.title}\n${item.subtitle}"
+                out.putIfAbsent(key, item)
+            }
+            val token = parsed.continuation ?: break
+            if (page++ >= MAX_PAGES) break
+            response = runCatching { Innertube.browseContinuation(token) }.getOrNull() ?: break
+        }
+        return out.values.toList()
+    }
+
     const val MAX_PAGES = 10
 
     /**
@@ -480,12 +529,12 @@ object YtMusicRepository {
         call("library:$playlistId") { Innertube.ratePlaylist(playlistId, saved) }
 
     /**
-     * The playlists a track can be added to. Not paged: an account with more
-     * than one page of playlists is rare, and the picker is a list to scroll
-     * rather than a feed to follow.
+     * The playlists a track can be added to. Paged because accounts with long
+     * playlist collections otherwise lose everything past YouTube's first
+     * library-feed response.
      */
     suspend fun userPlaylists(): Result<List<UserPlaylist>> = call("playlists") {
-        InnertubeParser.parseUserPlaylists(Innertube.browse(LIBRARY_PLAYLISTS))
+        InnertubeParser.parseUserPlaylists(libraryItemsPaged(LIBRARY_PLAYLISTS))
     }
 
     /** Creates a playlist, optionally seeded with [videoIds]; returns its id. */
