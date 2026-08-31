@@ -110,6 +110,10 @@
     <string name="whats_new">What’s new</string>
     <string name="log_copied">Log copied · %1$d lines</string>
     <string name="sign_in_youtube_music">Sign in to YouTube Music</string>
+    <string name="choose_a_channel">Choose a channel</string>
+    <string name="channel_session_unavailable">No session on this page yet — open YouTube Music first</string>
+    <string name="channel_switch_instructions">Switch with the avatar, then tap Use this channel</string>
+    <string name="use_this_channel">Use this channel</string>
     <string name="sign_in_discord">Sign in to Discord</string>
     <string name="personalized_recommendations">Get personalized recommendations for you</string>
     <string name="play_next">Play next</string>
