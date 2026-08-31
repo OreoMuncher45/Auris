@@ -12,6 +12,7 @@ import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -2115,7 +2116,10 @@ class PlaybackService : MediaSessionService() {
             swapCutAt = SystemClock.elapsedRealtime()
             player.replaceMediaItem(
                 player.currentMediaItemIndex,
-                now.item.buildUpon().setUri(upgradedUri).build(),
+                now.item.buildUpon()
+                    .setUri(upgradedUri)
+                    .withResolvedStreamType(stream.url)
+                    .build(),
             )
             player.seekTo(player.currentMediaItemIndex, now.position)
             player.prepare()
@@ -2232,7 +2236,12 @@ class PlaybackService : MediaSessionService() {
         }
         val audition = withContext(Dispatchers.Main) {
             buildAuditionPlayer().apply {
-                setMediaItem(at.item.buildUpon().setUri(upgradedUri).build())
+                setMediaItem(
+                    at.item.buildUpon()
+                        .setUri(upgradedUri)
+                        .withResolvedStreamType(stream.url)
+                        .build(),
+                )
                 seekTo(at.position)
                 prepare()
             }
@@ -2281,6 +2290,23 @@ class PlaybackService : MediaSessionService() {
         TrackLog.d("BitChord", AudioCache.cachedSummary(Uri.parse(upgradedUri)))
         return warmedThrough
     }
+
+    /**
+     * Tells Media3 the type of a stream found behind one of our virtual
+     * `bitchord://` playback URIs.
+     *
+     * The resolver replaces that URI with the real URL only after
+     * [DefaultMediaSourceFactory] has selected a source implementation. A
+     * Tidal upgrade is an HLS manifest, but its virtual URI has no `.m3u8`
+     * suffix, so the factory otherwise locks it into a progressive source and
+     * fails to parse the manifest as audio bytes.
+     */
+    private fun MediaItem.Builder.withResolvedStreamType(streamUrl: String): MediaItem.Builder =
+        if (streamUrl.substringBefore('?').endsWith(".m3u8", ignoreCase = true)) {
+            setMimeType(MimeTypes.APPLICATION_M3U8)
+        } else {
+            this
+        }
 
     /** How an audition in progress is coming along — see [auditionUpgrade]. */
     private sealed interface Audition {
