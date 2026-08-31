@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -80,6 +81,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
@@ -175,6 +177,7 @@ import com.music.bitchord.ui.replay.rememberReplayState
 import com.music.bitchord.ui.theme.BitChordTheme
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.ui.theme.SystemBarIcons
+import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import kotlinx.coroutines.launch
@@ -191,6 +194,12 @@ class MainActivity : AppCompatActivity() {
         MusicLink.consume(intent)
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
+            val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
+            val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
+            val composeView = LocalView.current
+            LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
+                applyPerformanceMode(highPerformance, performanceRefreshRate, composeView)
+            }
             val darkTheme = when (theme) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
                 ThemeMode.LIGHT -> false
@@ -211,6 +220,26 @@ class MainActivity : AppCompatActivity() {
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth)
                 }
+            }
+        }
+    }
+
+    /**
+     * Requests a window refresh rate without forcing a display mode or
+     * resolution. Android may still lower it for temperature, battery state or
+     * hardware limits, which is why Settings describes this as a preference.
+     */
+    private fun applyPerformanceMode(enabled: Boolean, refreshRate: Int, composeView: View) {
+        val supportedRefreshRate = composeView.display.resolvePerformanceRefreshRate(refreshRate)
+        window.attributes = window.attributes.apply {
+            preferredRefreshRate = if (enabled) supportedRefreshRate.toFloat() else 0f
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            window.setFrameRatePowerSavingsBalanced(!enabled)
+            composeView.requestedFrameRate = if (enabled) {
+                supportedRefreshRate.toFloat()
+            } else {
+                View.REQUESTED_FRAME_RATE_CATEGORY_DEFAULT
             }
         }
     }
@@ -434,6 +463,8 @@ private fun BitChordApp(
     // stale counts and a missing row in three places rather than one. So it is
     // taken again whenever the record of what's on disk changes.
     val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
+    val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
+    val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     // The releases those files were asked for as — read here rather than in the
     // page so the Downloads folder recomposes when one is added, the same way it
     // does when a file is.
@@ -461,6 +492,11 @@ private fun BitChordApp(
         // that play nothing.
         if (open == "local:downloads" || Downloads.recordIdOf(open) != null) {
             viewModel.reloadLocalDetail(open)
+        }
+    }
+    LaunchedEffect(localMusicFolderUri, filterNonMusicAudio) {
+        if (detail?.browseId == "local:all") {
+            viewModel.reloadLocalDetail("local:all")
         }
     }
 
@@ -571,7 +607,10 @@ private fun BitChordApp(
 
     val play: (List<Song>, Int) -> Unit = { songs, index ->
         scope.launch {
-            val starting = YtMusicRepository.resolveAudio(songs[index])
+            val selected = songs[index]
+            val starting = YtMusicRepository.resolveAudio(selected).copy(
+                setVideoId = selected.setVideoId,
+            )
             val queued = songs.toMutableList().also { it[index] = starting }
             controller?.playSongs(queued, index)
             // Nothing to raise where the player is already open beside the page.
@@ -582,7 +621,9 @@ private fun BitChordApp(
             queued.forEachIndexed { i, song ->
                 if (i == index || !song.isVideo) return@forEachIndexed
                 launch {
-                    val resolved = YtMusicRepository.resolveAudio(song)
+                    val resolved = YtMusicRepository.resolveAudio(song).copy(
+                        setVideoId = song.setVideoId,
+                    )
                     if (resolved.videoId == song.videoId) return@launch
                     // Found by id rather than by the index it went in at:
                     // shuffling and queue edits both move tracks around while
@@ -660,7 +701,9 @@ private fun BitChordApp(
         artwork: String? = null,
     ) {
         if (browseId != null) {
-            val credit = subtitle ?: if (type == BrowseType.ARTIST) "Artist" else "Album"
+            val credit = subtitle ?: context.getString(
+                if (type == BrowseType.ARTIST) R.string.artist else R.string.album,
+            )
             viewModel.openDetail(browseId, name, credit, artwork, type)
             return
         }
@@ -676,7 +719,11 @@ private fun BitChordApp(
                 ?.firstOrNull()
                 ?.item
             if (hit == null) {
-                Toast.makeText(context, "Couldn't find $name", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.couldnt_find, name),
+                    Toast.LENGTH_SHORT,
+                ).show()
             } else {
                 viewModel.openDetail(
                     hit.browseId,
@@ -719,8 +766,11 @@ private fun BitChordApp(
                         c.autoplaySectionStart()
                     }
                     c.addMediaItems(at, songs.map { it.toMediaItem() })
-                    val count = "${songs.size} song" + if (songs.size == 1) "" else "s"
-                    val message = if (next) "$count will play next" else "Added $count to queue"
+                    val message = context.resources.getQuantityString(
+                        if (next) R.plurals.songs_will_play_next else R.plurals.songs_added_to_queue,
+                        songs.size,
+                        songs.size,
+                    )
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     // Video uploads are swapped for their catalogue audio
                     // release behind the queue rather than in front of it, for
@@ -772,7 +822,11 @@ private fun BitChordApp(
             is LinkRequest.Track -> {
                 val song = YtMusicRepository.trackLinks(request.videoId).getOrNull()
                 if (song == null) {
-                    Toast.makeText(context, "Couldn't open that link", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.couldnt_open_link),
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 } else {
                     // A link is one song named on purpose, which is exactly the
                     // case [playRadio] exists for: play it and let AutoPlay
@@ -863,12 +917,12 @@ private fun BitChordApp(
         when {
             target.songs.isNotEmpty() -> stamp(target.songs)
             target.browseId == null ->
-                Toast.makeText(context, "No tracks here", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.no_tracks_here), Toast.LENGTH_SHORT).show()
             else -> viewModel.collectSongs(target.browseId, target.thumbnailUrl) { result ->
                 result.fold(
                     onSuccess = stamp,
                     onFailure = {
-                        val message = it.message ?: "Couldn't load these tracks"
+                        val message = it.message ?: context.getString(R.string.couldnt_load_tracks)
                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     },
                 )
@@ -909,7 +963,7 @@ private fun BitChordApp(
             // The one case where refusing is fatal: below API 29 there is no
             // other way to reach the Music folder.
             else -> Toast
-                .makeText(context, "Storage access is needed to save songs", Toast.LENGTH_SHORT)
+                .makeText(context, context.getString(R.string.storage_required_save), Toast.LENGTH_SHORT)
                 .show()
         }
     }
@@ -919,7 +973,7 @@ private fun BitChordApp(
         if (granted) {
             viewModel.reloadLocalDetail("local:all")
         } else {
-            Toast.makeText(context, "Storage permission is required to read local audio files", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.storage_required_read), Toast.LENGTH_SHORT).show()
         }
     }
     // Shared by the Library tab itself and by a shelf's "Show all" page, so a
@@ -1013,14 +1067,18 @@ private fun BitChordApp(
             // long message. So this one is said whatever the count.
             blocked -> Toast.makeText(
                 context,
-                "${Downloads.WIFI_ONLY_REFUSAL} — turn that off in Settings to use mobile data",
+                context.getString(R.string.wifi_only_download_refusal),
                 Toast.LENGTH_LONG,
             ).show()
             requested.size > 1 -> {
                 val message = if (songs.isEmpty()) {
-                    "Already downloaded"
+                    context.getString(R.string.already_downloaded)
                 } else {
-                    "Downloading ${songs.size} song" + if (songs.size == 1) "" else "s"
+                    context.resources.getQuantityString(
+                        R.plurals.downloading_song_count,
+                        songs.size,
+                        songs.size,
+                    )
                 }
                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             }
@@ -1074,7 +1132,7 @@ private fun BitChordApp(
         (selectedTab == TAB_LIBRARY && detail == null && !showSettings)
     val (replay, setReplayPeriod) = rememberReplayState(replayOpen)
     val replayCards = remember(replay.summary) {
-        replay.summary?.takeUnless { it.isEmpty }?.cards().orEmpty()
+        replay.summary?.takeUnless { it.isEmpty }?.cards(context).orEmpty()
     }
 
     // ---- The track in the player ----
@@ -1226,7 +1284,13 @@ private fun BitChordApp(
                 showNowPlaying = false
                 // No artwork: this track's cover isn't the artist's
                 // picture, and the page fills its own in once loaded.
-                viewModel.openDetail(id, song.artist, "Artist", null, BrowseType.ARTIST)
+                viewModel.openDetail(
+                    id,
+                    song.artist,
+                    context.getString(R.string.artist),
+                    null,
+                    BrowseType.ARTIST,
+                )
             },
             lyrics = lyrics,
             lyricsSource = lyricsSource,
@@ -1522,6 +1586,7 @@ private fun BitChordApp(
                         LocalMusicScreen(
                             songs = localSongs,
                             collections = downloadCollections,
+                            isDownloads = page.browseId == "local:downloads",
                             onSongClick = play,
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
@@ -1571,6 +1636,8 @@ private fun BitChordApp(
                         }
                         DetailScreen(
                             page = page,
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
                             listState = detailListState,
                             onSongClick = play,
                             onSongLongPress = { openSongMenu(withAlbum(it)) },
@@ -1631,6 +1698,7 @@ private fun BitChordApp(
                         TAB_HOME -> HomeScreen(
                             state = homeState,
                             listState = homeListState,
+                            title = stringResource(R.string.listen_now),
                             signedIn = signedIn,
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onItemClick = { item ->
@@ -1668,7 +1736,7 @@ private fun BitChordApp(
                         TAB_EXPLORE -> HomeScreen(
                             state = exploreState,
                             listState = exploreListState,
-                            title = "Explore",
+                            title = stringResource(R.string.explore),
                             onItemClick = { item ->
                                 when {
                                     item.videoId != null -> playRadio(
@@ -1804,15 +1872,15 @@ private fun BitChordApp(
                 FrostedTopBar(
                     title = when {
                         showDiscord -> "Discord"
-                        showHistory -> "History"
+                        showHistory -> stringResource(R.string.history)
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
-                        showAccountScrobbling -> "Account & scrobbling"
-                        showSources -> "Sources"
-                        showSettings -> "Settings"
-                        showReplay -> "Replay"
+                        showAccountScrobbling -> stringResource(R.string.account_scrobbling)
+                        showSources -> stringResource(R.string.sources)
+                        showSettings -> stringResource(R.string.settings)
+                        showReplay -> stringResource(R.string.replay)
                         detail != null -> detail.title
                         else -> tabs[selectedTab].let {
-                            if (it.label == "Play") "Listen Now" else it.label
+                            if (it.label == "Play") stringResource(R.string.listen_now) else it.label
                         }
                     },
                     // Search has no large in-list header to hand the title back to —
@@ -1848,7 +1916,7 @@ private fun BitChordApp(
                                 IconButton(onClick = { showUpdateDialog = true }) {
                                     Icon(
                                         Icons.Rounded.SystemUpdate,
-                                        contentDescription = "Update available: v${update.version}",
+                                        contentDescription = stringResource(R.string.update_available, update.version),
                                         tint = MaterialTheme.colorScheme.primary,
                                     )
                                 }
@@ -1869,7 +1937,7 @@ private fun BitChordApp(
                                 ) {
                                     Icon(
                                         Icons.Rounded.History,
-                                        contentDescription = "Listening history",
+                                        contentDescription = stringResource(R.string.listening_history),
                                         tint = MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
@@ -2102,7 +2170,7 @@ private fun BitChordApp(
                         )
                     },
                     onOpenArtist = { id ->
-                        openPage(id, song.artist, "Artist", BrowseType.ARTIST)
+                        openPage(id, song.artist, context.getString(R.string.artist), BrowseType.ARTIST)
                     },
                     // Only the player's copy of a track is ever missing these
                     // and backfilling — a row opened from a list already has
@@ -2126,7 +2194,11 @@ private fun BitChordApp(
                                 // outcome worth seeing rather than a silent one.
                                 Toast.makeText(
                                     context,
-                                    "Log copied · ${text.lineSequence().count()} lines",
+                                    context.resources.getQuantityString(
+                                        R.plurals.log_copied_line_count,
+                                        text.lineSequence().count(),
+                                        text.lineSequence().count(),
+                                    ),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
@@ -2288,7 +2360,10 @@ private fun BitChordApp(
                             if (!nowPinned && id !in pinnedPlaylists) {
                                 Toast.makeText(
                                     context,
-                                    "Only ${AppSettings.MAX_PINNED_PLAYLISTS} playlists can be pinned",
+                                    context.getString(
+                                        R.string.pinned_playlist_limit,
+                                        AppSettings.MAX_PINNED_PLAYLISTS,
+                                    ),
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
@@ -2338,15 +2413,15 @@ private fun BitChordApp(
                         IconButton(onClick = { webSession = null }) {
                             Icon(
                                 Icons.Rounded.Close,
-                                contentDescription = "Close",
+                                contentDescription = stringResource(R.string.close),
                                 tint = MaterialTheme.colorScheme.onBackground,
                             )
                         }
                         Column(Modifier.weight(1f)) {
                             Text(
                                 text = when (mode) {
-                                    WebSessionMode.SIGN_IN -> "Sign in to YouTube Music"
-                                    WebSessionMode.SWITCH_CHANNEL -> "Choose a channel"
+                                    WebSessionMode.SIGN_IN -> stringResource(R.string.sign_in_youtube_music)
+                                    WebSessionMode.SWITCH_CHANNEL -> stringResource(R.string.choose_a_channel)
                                 },
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -2354,9 +2429,9 @@ private fun BitChordApp(
                             if (mode == WebSessionMode.SWITCH_CHANNEL) {
                                 Text(
                                     text = if (captureFailed) {
-                                        "No session on this page yet — open YouTube Music first"
+                                        stringResource(R.string.channel_session_unavailable)
                                     } else {
-                                        "Switch with the avatar, then tap Use this channel"
+                                        stringResource(R.string.channel_switch_instructions)
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2369,7 +2444,7 @@ private fun BitChordApp(
                                 captureFailed = false
                                 captureRequest++
                             }) {
-                                Text("Use this channel")
+                                Text(stringResource(R.string.use_this_channel))
                             }
                         }
                     }
@@ -2498,10 +2573,10 @@ private fun BitChordApp(
                                     showLastfmLogin = false
                                 }
                                 .onFailure { e ->
-                                    lastfmError = e.message ?: "Login failed"
+                                    lastfmError = e.message ?: context.getString(R.string.login_failed)
                                 }
                         } catch (e: Exception) {
-                            lastfmError = e.message ?: "Login failed"
+                            lastfmError = e.message ?: context.getString(R.string.login_failed)
                         } finally {
                             lastfmLoading = false
                         }
@@ -2526,7 +2601,7 @@ private fun BitChordApp(
                         IconButton(onClick = { showDiscordLogin = false }) {
                             Icon(
                                 Icons.Rounded.Close,
-                                contentDescription = "Close",
+                                contentDescription = stringResource(R.string.close),
                                 tint = MaterialTheme.colorScheme.onBackground,
                             )
                         }
@@ -2565,10 +2640,9 @@ private fun BitChordApp(
             val existing = SourceRegistry.customModule()
             TextValueAlert(
                 hazeState = hazeState,
-                title = "Custom module",
-                message = "A compatible module index, tried ahead of the built-in one. " +
-                    "Only one at a time — saving replaces the current one.",
-                placeholder = "Module index URL",
+                title = stringResource(R.string.custom_module),
+                message = stringResource(R.string.custom_module_description),
+                placeholder = stringResource(R.string.module_index_url),
                 value = customModuleInput,
                 onValueChange = { customModuleInput = it },
                 saveEnabled = customModuleInput.isNotBlank(),
@@ -2656,12 +2730,12 @@ private fun DockedPlayer(
                 )
                 Spacer(Modifier.height(14.dp))
                 Text(
-                    text = "Nothing playing",
+                    text = stringResource(R.string.nothing_playing),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = "Pick something and it turns up here",
+                    text = stringResource(R.string.pick_something),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                     textAlign = TextAlign.Center,
