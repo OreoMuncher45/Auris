@@ -573,6 +573,14 @@ object Innertube {
             params?.let { put("params", it) }
         }
 
+    /** The next page of a filtered search result. */
+    suspend fun searchContinuation(token: String): JsonObject = postMusic(
+        endpoint = "search",
+        query = mapOf("ctoken" to token, "continuation" to token, "type" to "next"),
+    ) {
+        put("continuation", token)
+    }
+
     /**
      * The typeahead list YouTube Music's own search box shows for a
      * half-typed query — query strings, not results.

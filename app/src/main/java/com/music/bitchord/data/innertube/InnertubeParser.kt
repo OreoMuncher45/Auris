@@ -34,12 +34,17 @@ object InnertubeParser {
     fun parseSearchSongs(response: JsonObject): List<Song> =
         parseSearch(response).filterIsInstance<SearchResult.Track>().map { it.song }
 
+    /** One page of search rows, plus the token for the next page if YouTube offers one. */
+    data class SearchPage(val rows: List<SearchResult>, val continuation: String?)
+
     /**
      * Search results are heterogeneous: songs carry a videoId, while albums,
      * artists and playlists carry a browseId plus a page type. Both arrive as
      * `musicResponsiveListItemRenderer`, so each row is classified on the way out.
      */
-    fun parseSearch(response: JsonObject): List<SearchResult> {
+    fun parseSearch(response: JsonObject): List<SearchResult> = parseSearchPage(response).rows
+
+    fun parseSearchPage(response: JsonObject): SearchPage {
         // The "All" tab spreads results across several shelf types (card shelf
         // for the top result, then one shelf per category), and the shapes
         // differ per filter. Walking for the row renderer itself is far more
@@ -47,7 +52,7 @@ object InnertubeParser {
         val rows = collectRenderers(response, "musicResponsiveListItemRenderer")
 
         val seen = HashSet<String>()
-        return rows.mapNotNull { renderer ->
+        val parsed = rows.mapNotNull { renderer ->
             // Browse rows are tested first: an album row also carries a
             // "play album" videoId in its overlay, so checking for a track
             // first would misread every album as a single song.
@@ -63,6 +68,7 @@ object InnertubeParser {
                 if (seen.add("v:${song.videoId}")) SearchResult.Track(song) else null
             }
         }
+        return SearchPage(parsed, continuationToken(response))
     }
 
     /**
@@ -380,25 +386,38 @@ object InnertubeParser {
         val scope: JsonElement = root.o("continuationContents")
             ?: root.o("contents").o("twoColumnBrowseResultsRenderer").o("secondaryContents")
             ?: return null
-        val looksLikePlaylist = collectRenderers(scope, "musicPlaylistShelfRenderer").isNotEmpty() ||
-            scope.o("musicPlaylistShelfContinuation") != null ||
-            collectRenderers(scope, "musicShelfRenderer").any { it.o("title").runs() == "Suggestions" }
-        if (!looksLikePlaylist) return null
+        val playlistScope = scope.o("musicPlaylistShelfContinuation")
+            ?: collectRenderers(scope, "musicPlaylistShelfRenderer").firstOrNull()
+        val suggestionShelves = collectRenderers(scope, "musicShelfRenderer")
+            .filter { it.o("title").runs() == "Suggestions" }
+        if (playlistScope == null && suggestionShelves.isEmpty()) return null
 
         val pageCredit = pageCredit(root)
-        val (songs, suggested) = collectRenderers(scope, "musicResponsiveListItemRenderer")
+        val songs = playlistScope?.let { playlist ->
+            collectRenderers(playlist, "musicResponsiveListItemRenderer")
+                .mapNotNull { parseResponsiveListItem(it, pageCredit) }
+                .distinctBy { it.videoId }
+        }.orEmpty()
+        val knownSongs = songs.mapTo(HashSet()) { it.videoId }
+        val suggested = suggestionShelves
+            .flatMap { collectRenderers(it, "musicResponsiveListItemRenderer") }
             .mapNotNull { parseResponsiveListItem(it, pageCredit) }
+            .filterNot { it.videoId in knownSongs }
             .distinctBy { it.videoId }
-            .partition { it.setVideoId != null }
         // The "Suggestions" shelf's own continuation reloads it with a fresh
         // batch rather than paging it (see its "Refresh" button, wired to a
-        // `reloadContinuationData` token) — only the real `nextContinuationData`
-        // / `continuationItemRenderer` found in scope means more to fetch.
-        val token = collectRenderers(scope, "continuationItemRenderer").firstOrNull()
-            .o("continuationEndpoint").o("continuationCommand").s("token")
-            ?: collectRenderers(scope, "nextContinuationData").firstOrNull().s("continuation")
+        // `reloadContinuationData` token). Only the playlist shelf's own
+        // continuation means more real tracks.
+        val token = playlistScope?.let { playlist ->
+            collectRenderers(playlist, "continuationItemRenderer").firstOrNull()
+                .o("continuationEndpoint").o("continuationCommand").s("token")
+                ?: collectRenderers(playlist, "nextContinuationData").firstOrNull().s("continuation")
+        }
         return PlaylistShelfPage(songs, suggested, token)
     }
+
+    /** One page of saved library cards, plus the token for the next page. */
+    data class LibraryItemPage(val items: List<ShelfItem>, val continuation: String?)
 
     /**
      * The cards on a library feed — saved playlists, albums, artists, podcasts.
@@ -407,7 +426,9 @@ object InnertubeParser {
      * view, and serve `musicTwoRowItemRenderer` cards for one and
      * `musicResponsiveListItemRenderer` rows for the other, so both are read.
      */
-    fun parseLibraryItems(root: JsonElement): List<ShelfItem> {
+    fun parseLibraryItems(root: JsonElement): List<ShelfItem> = parseLibraryItemPage(root).items
+
+    fun parseLibraryItemPage(root: JsonElement): LibraryItemPage {
         val out = LinkedHashMap<String, ShelfItem>()
         collectRenderers(root, "musicTwoRowItemRenderer").forEach { renderer ->
             val item = parseTwoRowItem(renderer) ?: return@forEach
@@ -420,7 +441,7 @@ object InnertubeParser {
                 ShelfItem(item.title, item.subtitle, item.thumbnailUrl, null, item.browseId),
             )
         }
-        return out.values.toList()
+        return LibraryItemPage(out.values.toList(), continuationToken(root))
     }
 
     /**
@@ -961,7 +982,10 @@ object InnertubeParser {
      * playlist out of being renamed or deleted.
      */
     fun parseUserPlaylists(root: JsonElement): List<UserPlaylist> =
-        parseLibraryItems(root).mapNotNull { item ->
+        parseUserPlaylists(parseLibraryItems(root))
+
+    fun parseUserPlaylists(items: List<ShelfItem>): List<UserPlaylist> =
+        items.mapNotNull { item ->
             val browseId = item.browseId ?: return@mapNotNull null
             if (!browseId.startsWith("VL")) return@mapNotNull null
             if (NOT_EDITABLE.any { browseId.startsWith("VL$it") }) return@mapNotNull null
