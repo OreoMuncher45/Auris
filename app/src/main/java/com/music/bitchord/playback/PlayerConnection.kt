@@ -190,6 +190,7 @@ fun MediaItem.toSong() = Song(
     artistId = mediaMetadata.extras?.getString(EXTRA_ARTIST_ID),
     albumId = mediaMetadata.extras?.getString(EXTRA_ALBUM_ID),
     albumName = mediaMetadata.albumTitle?.toString(),
+    setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
     fromAutoplay = this.fromAutoplay,
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
@@ -216,6 +217,9 @@ private const val EXTRA_FROM_AUTOPLAY = "bitchord.fromAutoplay"
  */
 private const val EXTRA_ARTIST_ID = "bitchord.artistId"
 private const val EXTRA_ALBUM_ID = "bitchord.albumId"
+
+/** @see Song.setVideoId */
+private const val EXTRA_SET_VIDEO_ID = "bitchord.setVideoId"
 
 /** @see Song.localUri */
 private const val EXTRA_LOCAL_URI = "bitchord.localUri"
@@ -394,7 +398,7 @@ fun Song.toMediaItem(): MediaItem {
             // queue lost the `&d=` its matching depends on.
             .apply {
                 if (fromAutoplay || offlineUri != null || durationText != null ||
-                    artistId != null || albumId != null
+                    artistId != null || albumId != null || setVideoId != null
                 ) {
                     setExtras(
                         bundleOf(
@@ -404,6 +408,7 @@ fun Song.toMediaItem(): MediaItem {
                             EXTRA_DURATION to durationText,
                             EXTRA_ARTIST_ID to artistId,
                             EXTRA_ALBUM_ID to albumId,
+                            EXTRA_SET_VIDEO_ID to setVideoId,
                         ),
                     )
                 }
