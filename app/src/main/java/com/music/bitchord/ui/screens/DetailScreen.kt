@@ -94,6 +94,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.ArtworkWash
 import com.music.bitchord.ui.components.DownloadedBadge
+import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
@@ -1325,12 +1326,10 @@ private fun CompactSongRow(
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                text = song.title,
+            ExplicitSongTitle(
+                song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = palette.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = song.artist,
@@ -1394,12 +1393,10 @@ private fun SuggestedSongRow(
         )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                text = song.title,
+            ExplicitSongTitle(
+                song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = palette.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
             Text(

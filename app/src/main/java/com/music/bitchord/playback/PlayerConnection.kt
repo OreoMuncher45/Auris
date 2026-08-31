@@ -190,6 +190,9 @@ fun MediaItem.toSong() = Song(
     artistId = mediaMetadata.extras?.getString(EXTRA_ARTIST_ID),
     albumId = mediaMetadata.extras?.getString(EXTRA_ALBUM_ID),
     albumName = mediaMetadata.albumTitle?.toString(),
+    isExplicit = mediaMetadata.extras?.takeIf { it.containsKey(EXTRA_EXPLICIT) }
+        ?.getBoolean(EXTRA_EXPLICIT),
+    isVideo = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
     fromAutoplay = this.fromAutoplay,
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
@@ -239,6 +242,8 @@ private const val EXTRA_LOCAL_PATH = "bitchord.localPath"
  * playback URI.
  */
 private const val EXTRA_DURATION = "bitchord.durationText"
+private const val EXTRA_EXPLICIT = "bitchord.explicit"
+private const val EXTRA_IS_VIDEO = "bitchord.isVideo"
 
 /**
  * Where AutoPlay's section of the queue begins, and so where a track queued by
@@ -306,6 +311,9 @@ private fun Song.matchQuery(): String = buildString {
     append("&n=").append(Uri.encode(title))
     append("&a=").append(Uri.encode(artist))
     TrackMatcher.secondsOf(durationText)?.let { append("&d=").append(it) }
+    albumName?.takeIf { it.isNotBlank() }?.let { append("&l=").append(Uri.encode(it)) }
+    isExplicit?.let { append("&e=").append(if (it) "1" else "0") }
+    if (isVideo) append("&m=1")
 }
 
 fun Song.toMediaItem(): MediaItem {
@@ -398,7 +406,8 @@ fun Song.toMediaItem(): MediaItem {
             // queue lost the `&d=` its matching depends on.
             .apply {
                 if (fromAutoplay || offlineUri != null || durationText != null ||
-                    artistId != null || albumId != null || setVideoId != null
+                    artistId != null || albumId != null || setVideoId != null ||
+                    isExplicit != null || isVideo
                 ) {
                     setExtras(
                         bundleOf(
@@ -409,6 +418,8 @@ fun Song.toMediaItem(): MediaItem {
                             EXTRA_ARTIST_ID to artistId,
                             EXTRA_ALBUM_ID to albumId,
                             EXTRA_SET_VIDEO_ID to setVideoId,
+                            EXTRA_EXPLICIT to isExplicit,
+                            EXTRA_IS_VIDEO to isVideo,
                         ),
                     )
                 }

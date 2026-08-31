@@ -1401,6 +1401,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         title = audio.title,
                         artist = audio.artist,
                         durationSec = TrackMatcher.secondsOf(audio.durationText),
+                        album = audio.albumName,
+                        isExplicit = audio.isExplicit,
+                        isVideo = audio.isVideo,
                     ),
                 )
                 if (warmed != null) {

@@ -7,10 +7,41 @@ import com.music.bitchord.data.model.ShelfItem
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SearchPagingTest {
+
+    @Test
+    fun `YouTube explicit badge is carried onto the song`() {
+        fun row(id: String, badge: String) = """
+          {
+            "musicResponsiveListItemRenderer": {
+              "playlistItemData": { "videoId": "$id" },
+              "flexColumns": [
+                { "musicResponsiveListItemFlexColumnRenderer": {
+                  "text": { "runs": [{ "text": "Starboy" }] }
+                } },
+                { "musicResponsiveListItemFlexColumnRenderer": {
+                  "text": { "runs": [{ "text": "The Weeknd" }, { "text": " • " }, { "text": "3:50" }] }
+                } }
+              ],
+              "badges": $badge
+            }
+          }
+        """.trimIndent()
+        val explicitBadge = """[{"musicInlineBadgeRenderer":{"icon":{"iconType":"MUSIC_EXPLICIT_BADGE"}}}]"""
+        val json = """{"contents":[${row("explicit", explicitBadge)},${row("clean", "[]") }]}"""
+
+        val songs = InnertubeParser.parseSearchSongs(Json.parseToJsonElement(json).jsonObject)
+
+        assertTrue(songs.first { it.videoId == "explicit" }.isExplicit == true)
+        // No badge is not proof of a clean edition: several YouTube renderer
+        // shapes simply omit badges altogether.
+        assertNull(songs.first { it.videoId == "clean" }.isExplicit)
+    }
 
     @Test
     fun `search page keeps rows and next continuation`() {

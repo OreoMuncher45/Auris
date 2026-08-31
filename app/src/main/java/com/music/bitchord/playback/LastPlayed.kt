@@ -46,6 +46,9 @@ object LastPlayed {
                     it.localUri,
                     it.localPath,
                     it.durationText,
+                    it.albumName,
+                    it.isExplicit,
+                    it.isVideo,
                 )
             },
             index = (index - start).coerceIn(0, window.lastIndex),
@@ -71,6 +74,9 @@ object LastPlayed {
                     it.artist,
                     it.artwork,
                     durationText = it.duration,
+                    albumName = it.album,
+                    isExplicit = it.explicit,
+                    isVideo = it.video,
                     fromAutoplay = it.auto,
                     localUri = it.local,
                     localPath = it.path,
@@ -113,6 +119,10 @@ object LastPlayed {
          * ago the app was opened.
          */
         val duration: String? = null,
+        /** Release and content edition both participate in cross-source matching. */
+        val album: String? = null,
+        val explicit: Boolean? = null,
+        val video: Boolean = false,
     )
 
     @Serializable

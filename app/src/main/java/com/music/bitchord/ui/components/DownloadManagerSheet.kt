@@ -311,12 +311,10 @@ private fun DownloadManagerRow(
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                text = item.song.title,
+            ExplicitSongTitle(
+                song = item.song,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 // The release is worth naming where there is one: in a list of

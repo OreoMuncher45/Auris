@@ -167,12 +167,10 @@ fun MiniPlayer(
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = song.title,
+                ExplicitSongTitle(
+                    song = song,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = song.artist,

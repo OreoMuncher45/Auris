@@ -85,6 +85,7 @@ import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.R
+import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibraryViewType
@@ -496,12 +497,10 @@ private fun SongGridCard(
             }
         }
         Spacer(Modifier.height(8.dp))
-        Text(
-            text = song.title,
+        ExplicitSongTitle(
+            song = song,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = song.artist.ifBlank { stringResource(R.string.unknown_artist) },

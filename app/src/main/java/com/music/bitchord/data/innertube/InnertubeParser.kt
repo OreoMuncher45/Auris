@@ -527,6 +527,7 @@ object InnertubeParser {
             // otherwise a music-video upload gives itself away with widescreen
             // art where a catalogue track has square album cover art.
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
+            isExplicit = renderer.hasExplicitBadge(),
         )
     }
 
@@ -781,6 +782,7 @@ object InnertubeParser {
                 // A catalogue track is credited "Artist • Album • Year"; the
                 // matching music video is "Artist • 417M views • 2.4M likes".
                 isVideo = byline.any { it.contains("views", ignoreCase = true) },
+                isExplicit = renderer.hasExplicitBadge(),
             )
         }
         return out.values.toList()
@@ -1059,6 +1061,17 @@ object InnertubeParser {
      * generated radio mix, and `OLAK`/`MPRE` are albums wearing a playlist id.
      */
     private val NOT_EDITABLE = listOf("LM", "SE", "RD", "OLAK", "MPRE")
+
+    /** YouTube nests this badge differently across search, album and queue renderers. */
+    private fun JsonElement?.hasExplicitBadge(): Boolean? =
+        true.takeIf {
+            when (this) {
+                is JsonPrimitive -> contentOrNull == "MUSIC_EXPLICIT_BADGE"
+                is JsonArray -> any { it.hasExplicitBadge() == true }
+                is JsonObject -> values.any { it.hasExplicitBadge() == true }
+                null -> false
+            }
+        }
 
     private val DURATION = Regex("""\d+:\d{2}""")
     private val YEAR = Regex("""\d{4}""")

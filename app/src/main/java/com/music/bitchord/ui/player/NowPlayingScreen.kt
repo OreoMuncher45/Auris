@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.player
 
 import com.music.bitchord.R
+import com.music.bitchord.ui.components.ExplicitSongTitle
 
 import android.database.ContentObserver
 import android.graphics.Bitmap
@@ -1553,14 +1554,12 @@ fun NowPlayingScreen(
                         // Shrinks as the header collapses, so the queue's
                         // heading doesn't have to compete with it.
                         val titleSize = lerp(20.sp, 16.sp, p)
-                        Text(
-                            text = song.title,
+                        ExplicitSongTitle(
+                            song = song,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontSize = titleSize,
                             ),
                             color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             // Only the tracks YouTube hands us a browse id for
                             // lead anywhere; the rest stay plain text.
                             modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
@@ -3773,12 +3772,10 @@ private fun InlineQueueRow(
         )
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(
-                text = song.title,
+            ExplicitSongTitle(
+                song = song,
                 style = MaterialTheme.typography.titleMedium,
                 color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.92f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = song.artist,

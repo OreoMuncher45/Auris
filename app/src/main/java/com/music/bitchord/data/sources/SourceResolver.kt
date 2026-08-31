@@ -126,6 +126,9 @@ object SourceResolver {
         title = uri.getQueryParameter("n").orEmpty(),
         artist = uri.getQueryParameter("a").orEmpty(),
         durationSec = uri.getQueryParameter("d")?.toIntOrNull(),
+        album = uri.getQueryParameter("l"),
+        isExplicit = uri.getQueryParameter("e")?.let { it == "1" },
+        isVideo = uri.getQueryParameter("m") == "1",
     )
 
     /**
@@ -767,6 +770,21 @@ object SourceResolver {
                 source.search(query, limit = MATCH_CANDIDATES, waitForAll = waitForAll)
             } ?: return null
             var matches = TrackMatcher.ranked(candidates, target)
+            // JioSaavn can return different audio under the same title and
+            // artist on different releases. With no album on the requested
+            // track there is no honest way to choose between those rows;
+            // duration is not enough when the wrong recording is only a
+            // second away. Treat it as this source missing and retain the
+            // known-correct fallback.
+            if (source.kind == SourceKind.JIOSAAVN &&
+                TrackMatcher.hasConflictingAlbums(matches, target)
+            ) {
+                TrackLog.w(
+                    TAG,
+                    "${source.displayName} returned conflicting albums for '${target.title}'; refusing to guess",
+                )
+                continue
+            }
             // The extra bar for standing in for one specific recording: the
             // replacement has to be the same *length*, to the second or so. A
             // title and an artist can agree across two different edits of a
@@ -860,11 +878,19 @@ object SourceResolver {
             if (!wantsLossless || served.isLossless == true || served.statesNothingLossy) {
                 TrackLog.d(
                     TAG,
-                    "${source.displayName} matched '${match.title}' by '${match.artist}' → ${served.summary}",
+                    "${source.displayName} matched '${match.title}' by '${match.artist}' " +
+                        "id='${match.videoId}' album='${match.albumName ?: "?"}' " +
+                        "duration=${match.durationText ?: "?"} explicit=${match.isExplicit ?: "?"} " +
+                        "→ ${served.summary}",
                 )
                 return stream
             }
-            TrackLog.d(TAG, "${source.displayName} offered ${served.summary} for '${match.title}'; looking further")
+            TrackLog.d(
+                TAG,
+                "${source.displayName} offered ${served.summary} for '${match.title}' " +
+                    "by '${match.artist}' id='${match.videoId}' album='${match.albumName ?: "?"}' " +
+                    "duration=${match.durationText ?: "?"} explicit=${match.isExplicit ?: "?"}; looking further",
+            )
             // The floor is the *best* of what was refused, not the first of
             // it. These arrive in match order, which has nothing to do with
             // quality: a 320kbps AAC and a 128kbps MP3 are both rejections,
