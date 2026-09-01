@@ -2988,6 +2988,11 @@ class PlaybackService : MediaSessionService() {
     private fun applySettings(player: ExoPlayer) {
         player.skipSilenceEnabled = AppSettings.skipSilence.value
         player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+        // Restore persisted shuffle and repeat states on startup.
+        if (AppSettings.shuffleEnabled.value) {
+            QueueShuffle.setEnabled(true)
+        }
+        player.repeatMode = AppSettings.repeatMode.value
     }
 
     /** Runs [body] against both players, in whichever roles they currently hold. */
