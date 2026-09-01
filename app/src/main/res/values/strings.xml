@@ -416,6 +416,8 @@
     <string name="lastfm_login">Last.fm login</string>
     <string name="lastfm_login_description">Sign in with your Last.fm account to enable scrobbling.</string>
     <string name="lastfm_now_playing_subtitle">Update Last.fm with what you are listening to</string>
+    <string name="scrobble_primary_artist_only">Only scrobble primary artist</string>
+    <string name="scrobble_primary_artist_only_subtitle">Use the first artist when a track credits multiple artists</string>
     <string name="lead_with_song">Lead with the song</string>
     <string name="lead_with_song_subtitle">Puts the title on the bold line instead of the artist</string>
     <string name="like">Like</string>
@@ -598,6 +600,7 @@
     <string name="album">album</string>
     <string name="artist">artist</string>
     <string name="playlist">playlist</string>
+    <string name="playlist_action">Playlist</string>
     <string name="open">Open</string>
     <string name="open_playlist">Open playlist</string>
     <string name="pin">Pin</string>

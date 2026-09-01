@@ -127,7 +127,15 @@ fun HomeScreen(
                 }
                 is UiState.Success -> {
                     if (recentlyPlayedLoading) recentlyPlayedSkeleton()
-                    itemsIndexedShelves(state.data, onItemClick, onItemLongPress)
+                    // The loading skeleton already owns the hero slot. Until
+                    // Recently Played lands, every real shelf must retain its
+                    // compact-card layout instead of briefly becoming a hero.
+                    itemsIndexedShelves(
+                        shelves = state.data,
+                        onItemClick = onItemClick,
+                        onItemLongPress = onItemLongPress,
+                        firstIsHero = !recentlyPlayedLoading,
+                    )
                     if (loadingMore) feedMoreSkeleton()
                 }
             }
@@ -160,10 +168,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
+    firstIsHero: Boolean = true,
 ) {
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
-            if (index == 0) {
+            if (index == 0 && firstIsHero) {
                 HeroShelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
             } else {
                 Shelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)

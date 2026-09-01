@@ -31,11 +31,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.NorthWest
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,6 +92,8 @@ fun SearchScreen(
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
+    onTopResultPlay: (Song) -> Unit,
+    onTopResultPlaylist: (Song) -> Unit,
     onBrowseClick: (BrowseItem) -> Unit,
     /**
      * Holding an album or playlist hit rather than tapping it — the same menu
@@ -169,8 +177,22 @@ fun SearchScreen(
                 results is UiState.Error -> item { MessageState(results.message) }
                 results is UiState.Success -> {
                     val tracks = results.data
-                        .filterIsInstance<SearchResult.Track>()
-                        .map { it.song }
+                        .mapNotNull { row -> when (row) {
+                            is SearchResult.TopTrack -> row.song
+                            is SearchResult.Track -> row.song
+                            is SearchResult.Browse -> null
+                        } }
+                    val topResult = results.data.filterIsInstance<SearchResult.TopTrack>().firstOrNull()
+                    if (filter == SearchFilter.ALL && topResult != null) {
+                        item(key = "search:top-result:${topResult.song.videoId}") {
+                            TopResultCard(
+                                song = topResult.song,
+                                onPlay = { onTopResultPlay(topResult.song) },
+                                onPlaylist = { onTopResultPlaylist(topResult.song) },
+                                onLongPress = { onSongLongPress(topResult.song) },
+                            )
+                        }
+                    }
                     searchSections(results.data, filter).forEach { section ->
                         section.title?.let { title ->
                             item(key = "search-section:$title") {
@@ -189,6 +211,7 @@ fun SearchScreen(
                         }
                         itemsIndexed(section.rows) { index, row ->
                             when (row) {
+                                is SearchResult.TopTrack -> Unit
                                 is SearchResult.Track -> SongRow(
                                     song = row.song,
                                     onClick = {
@@ -235,6 +258,81 @@ private fun searchSections(rows: List<SearchResult>, filter: SearchFilter): List
         SearchSection("Playlists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.PLAYLIST }),
         SearchSection("More", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.OTHER }),
     ).filter { it.rows.isNotEmpty() }
+}
+
+/** The All response carries its highest-confidence music hit as a promoted card. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TopResultCard(
+    song: Song,
+    onPlay: () -> Unit,
+    onPlaylist: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 18.dp, bottom = 8.dp)
+            .combinedClickable(onClick = onPlay, onLongClick = onLongPress),
+    ) {
+        Text(
+            text = "Top result",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(
+                model = song.thumbnailUrl?.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                modifier = Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),
+            )
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = song.artist,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(
+                onClick = onPlay,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+            ) {
+                Icon(Icons.Rounded.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.play))
+            }
+            OutlinedButton(
+                onClick = onPlaylist,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface),
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.playlist_action))
+            }
+            IconButton(onClick = onLongPress, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    Icons.Rounded.MoreVert,
+                    contentDescription = stringResource(R.string.more),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
+    }
 }
 
 /**

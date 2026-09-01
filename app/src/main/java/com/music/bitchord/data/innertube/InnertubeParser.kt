@@ -48,28 +48,40 @@ object InnertubeParser {
 
     fun parseSearchPage(response: JsonObject, includeVideos: Boolean = false): SearchPage {
         // The "All" tab spreads results across several shelf types (card shelf
-        // for the top result, then one shelf per category), and the shapes
-        // differ per filter. Walking for the row renderer itself is far more
-        // robust than chasing each container path.
+        // for the top result, then one shelf per category). Its promoted top
+        // result lives on the card itself, not in a responsive row, so read it
+        // first before walking the ordinary result rows.
+        val topResults = if (includeVideos) emptyList() else {
+            collectRenderers(response, "musicCardShelfRenderer")
+                .mapNotNull(::parseCardShelfSong)
+        }
         val rows = collectRenderers(response, "musicResponsiveListItemRenderer")
 
         val seen = HashSet<String>()
-        val parsed = rows.mapNotNull { renderer ->
+        val parsed = buildList {
+            topResults.forEach { song ->
+                // The mixed All page stays music-only; music-video uploads
+                // belong exclusively to the dedicated Videos tab.
+                if (!song.isVideo && seen.add("v:${song.videoId}")) {
+                    add(SearchResult.TopTrack(song))
+                }
+            }
+            rows.forEach { renderer ->
             // Browse rows are tested first: an album row also carries a
             // "play album" videoId in its overlay, so checking for a track
             // first would misread every album as a single song.
-            parseBrowseItem(renderer)?.let { item ->
-                return@mapNotNull if (seen.add("b:${item.browseId}")) {
-                    SearchResult.Browse(item)
+                val browse = parseBrowseItem(renderer)
+                if (browse != null) {
+                    if (seen.add("b:${browse.browseId}")) add(SearchResult.Browse(browse))
                 } else {
-                    null
+                    parseResponsiveListItem(renderer)?.let { song ->
+                        // The mixed All page stays music-only; the dedicated Videos
+                        // filter is the one place music-video uploads belong.
+                        if (song.isVideo == includeVideos && seen.add("v:${song.videoId}")) {
+                            add(SearchResult.Track(song))
+                        }
+                    }
                 }
-            }
-            parseResponsiveListItem(renderer)?.let { song ->
-                // The mixed All page stays music-only; the dedicated Videos
-                // filter is the one place music-video uploads belong.
-                if (song.isVideo != includeVideos) return@mapNotNull null
-                if (seen.add("v:${song.videoId}")) SearchResult.Track(song) else null
             }
         }
         return SearchPage(parsed, continuationToken(response))
@@ -559,6 +571,44 @@ object InnertubeParser {
             // art where a catalogue track has square album cover art.
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer.hasExplicitBadge(),
+        )
+    }
+
+    /**
+     * The promoted result at the top of an unfiltered search is a
+     * `musicCardShelfRenderer`. Unlike the rows below it, its playable id and
+     * credits are placed directly on the card, so it would otherwise vanish
+     * from the All tab while remaining first in the Songs tab.
+     */
+    private fun parseCardShelfSong(renderer: JsonObject): Song? {
+        val videoId = renderer.o("onTap").o("watchEndpoint").s("videoId") ?: return null
+        val title = renderer.o("title").runs()
+        if (title.isBlank()) return null
+
+        val subtitleRuns = renderer.o("subtitle").a("runs").orEmpty()
+        val subtitle = subtitleRuns.joinToString("") { it.s("text").orEmpty() }
+        val parts = subtitle.split(" • ").filter { it.isNotBlank() }
+        val duration = parts.lastOrNull()?.takeIf { it.matches(DURATION) }
+        val rowType = parts.firstOrNull { it.lowercase(Locale.ROOT) in TYPE_WORDS }
+            ?.lowercase(Locale.ROOT)
+        val credits = creditsOf(subtitleRuns)
+        val artist = parts.firstOrNull {
+            !it.matches(DURATION) && it.lowercase(Locale.ROOT) !in TYPE_WORDS && !it.matches(TALLY)
+        }
+        val thumbnails = renderer.o("thumbnail").o("musicThumbnailRenderer")
+            .o("thumbnail").a("thumbnails")
+
+        return Song(
+            videoId = videoId,
+            title = title,
+            artist = credits.artistName?.takeIf { it.isNotBlank() } ?: artist ?: "Unknown artist",
+            thumbnailUrl = thumbnails.best(),
+            durationText = duration,
+            artistId = credits.artistId,
+            albumId = credits.albumId,
+            albumName = credits.albumName,
+            isVideo = rowType == "video" || thumbnails.isNotSquare(),
+            isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
         )
     }
 

@@ -63,7 +63,6 @@ object YtMusicRepository {
     val HOME_SUPPLEMENT_BROWSE_IDS = listOf(
         "FEmusic_new_releases",
         "FEmusic_explore",
-        "FEmusic_charts",
     )
 
     /**
@@ -207,6 +206,7 @@ object YtMusicRepository {
         searchPage(query, filter).map { it.rows }
 
     private fun SearchResult.identityKey(): String = when (this) {
+        is SearchResult.TopTrack -> "v:${song.videoId}"
         is SearchResult.Track -> "v:${song.videoId}"
         is SearchResult.Browse -> "b:${item.browseId}"
     }

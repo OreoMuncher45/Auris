@@ -3028,6 +3028,7 @@ class PlaybackService : MediaSessionService() {
                 AppSettings.lastfmEnabled,
                 AppSettings.lastfmScrobbleEnabled,
                 AppSettings.lastfmNowPlaying,
+                AppSettings.lastfmPrimaryArtistOnly,
                 AppSettings.lastfmSessionKey,
                 AppSettings.lastfmApiKey,
                 AppSettings.lastfmSecret,
@@ -3040,13 +3041,14 @@ class PlaybackService : MediaSessionService() {
                     lastfmEnabled = values[0] as Boolean,
                     scrobbleEnabled = values[1] as Boolean,
                     nowPlaying = values[2] as Boolean,
-                    sessionKey = values[3] as String,
-                    apiKey = values[4] as String,
-                    secret = values[5] as String,
-                    endpoint = values[6] as String,
-                    minDuration = values[7] as Int,
-                    delayPercent = values[8] as Float,
-                    delaySeconds = values[9] as Int,
+                    primaryArtistOnly = values[3] as Boolean,
+                    sessionKey = values[4] as String,
+                    apiKey = values[5] as String,
+                    secret = values[6] as String,
+                    endpoint = values[7] as String,
+                    minDuration = values[8] as Int,
+                    delayPercent = values[9] as Float,
+                    delaySeconds = values[10] as Int,
                 )
             }.collectLatest { snapshot ->
                 val shouldEnable = AppSettings.scrobblingAvailable &&
@@ -3075,6 +3077,7 @@ class PlaybackService : MediaSessionService() {
                 manager.scrobbleDelayPercent = snapshot.delayPercent
                 manager.scrobbleDelaySeconds = snapshot.delaySeconds
                 manager.useNowPlaying = snapshot.nowPlaying
+                manager.usePrimaryArtistOnly = snapshot.primaryArtistOnly
 
                 player?.let { exoPlayer ->
                     if (exoPlayer.isPlaying) {
@@ -3093,6 +3096,7 @@ class PlaybackService : MediaSessionService() {
         val lastfmEnabled: Boolean,
         val scrobbleEnabled: Boolean,
         val nowPlaying: Boolean,
+        val primaryArtistOnly: Boolean,
         val sessionKey: String,
         val apiKey: String,
         val secret: String,
@@ -3280,7 +3284,7 @@ class PlaybackService : MediaSessionService() {
         if (!lbEnabled || lbToken.isBlank()) return
         val endMs = System.currentTimeMillis()
         scope.launch {
-            ListenBrainzManager.submitFinished(lbToken, song, startMs, endMs, durationMs)
+            ListenBrainzManager.submitFinished(lbToken, song, startMs, endMs, durationMs, AppSettings.listenBrainzPrimaryArtistOnly.value)
         }
     }
 
@@ -3290,7 +3294,7 @@ class PlaybackService : MediaSessionService() {
         val lbToken = AppSettings.listenBrainzToken.value
         if (!lbEnabled || lbToken.isBlank()) return
         scope.launch {
-            ListenBrainzManager.submitPlayingNow(lbToken, song, positionMs, durationMs)
+            ListenBrainzManager.submitPlayingNow(lbToken, song, positionMs, durationMs, AppSettings.listenBrainzPrimaryArtistOnly.value)
         }
     }
 
@@ -3350,6 +3354,7 @@ class PlaybackService : MediaSessionService() {
                 CoroutineScope(Dispatchers.IO).launch {
                     ListenBrainzManager.submitFinished(
                         lbToken, lastSong, lastStart, System.currentTimeMillis(), lastDuration,
+                        AppSettings.listenBrainzPrimaryArtistOnly.value,
                     )
                 }
             }

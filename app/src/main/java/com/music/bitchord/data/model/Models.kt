@@ -145,6 +145,8 @@ data class BrowseItem(
 
 /** Search rows are heterogeneous once filters other than "Songs" are used. */
 sealed interface SearchResult {
+    /** The promoted card returned only at the head of an unfiltered search. */
+    data class TopTrack(val song: Song) : SearchResult
     data class Track(val song: Song) : SearchResult
     data class Browse(val item: BrowseItem) : SearchResult
 }

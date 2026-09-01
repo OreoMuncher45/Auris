@@ -352,11 +352,13 @@ object AppSettings {
     val lastfmEndpoint = MutableStateFlow("")
     val lastfmScrobbleEnabled = MutableStateFlow(false)
     val lastfmNowPlaying = MutableStateFlow(false)
+    val lastfmPrimaryArtistOnly = MutableStateFlow(false)
     val scrobbleMinDuration = MutableStateFlow(30)
     val scrobbleDelayPercent = MutableStateFlow(0.5f)
     val scrobbleDelaySeconds = MutableStateFlow(180)
     val listenBrainzEnabled = MutableStateFlow(false)
     val listenBrainzToken = MutableStateFlow("")
+    val listenBrainzPrimaryArtistOnly = MutableStateFlow(false)
     val spotifySpdcToken = MutableStateFlow("")
 
     // ── Discord Rich Presence ───────────────────────────────────────────
@@ -534,11 +536,13 @@ object AppSettings {
         lastfmEndpoint.value = prefs.getString(KEY_LASTFM_ENDPOINT, "").orEmpty()
         lastfmScrobbleEnabled.value = prefs.getBoolean(KEY_LASTFM_SCROBBLE_ENABLED, false)
         lastfmNowPlaying.value = prefs.getBoolean(KEY_LASTFM_NOW_PLAYING, false) && lastfmScrobbleEnabled.value
+        lastfmPrimaryArtistOnly.value = prefs.getBoolean(KEY_LASTFM_PRIMARY_ARTIST_ONLY, false)
         scrobbleMinDuration.value = prefs.getInt(KEY_SCROBBLE_MIN_DURATION, 30)
         scrobbleDelayPercent.value = prefs.getFloat(KEY_SCROBBLE_DELAY_PERCENT, 0.5f)
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
+        listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
         spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
         filterNonMusicAudio.value = prefs.getBoolean(KEY_FILTER_NON_MUSIC_AUDIO, true)
@@ -934,6 +938,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LASTFM_NOW_PLAYING, value).apply()
     }
 
+    fun setLastfmPrimaryArtistOnly(value: Boolean) {
+        lastfmPrimaryArtistOnly.value = value
+        prefs.edit().putBoolean(KEY_LASTFM_PRIMARY_ARTIST_ONLY, value).apply()
+    }
+
     fun setScrobbleMinDuration(value: Int) {
         scrobbleMinDuration.value = value
         prefs.edit().putInt(KEY_SCROBBLE_MIN_DURATION, value).apply()
@@ -957,6 +966,11 @@ object AppSettings {
     fun setListenBrainzToken(value: String) {
         listenBrainzToken.value = value
         prefs.edit().putString(KEY_LISTENBRAINZ_TOKEN, value).apply()
+    }
+
+    fun setListenBrainzPrimaryArtistOnly(value: Boolean) {
+        listenBrainzPrimaryArtistOnly.value = value
+        prefs.edit().putBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, value).apply()
     }
 
     /** Writes through to the encrypted store; pass "" to disconnect. */
@@ -1251,11 +1265,13 @@ object AppSettings {
     private const val KEY_LASTFM_ENDPOINT = "lastfm_endpoint"
     private const val KEY_LASTFM_SCROBBLE_ENABLED = "lastfm_scrobble_enabled"
     private const val KEY_LASTFM_NOW_PLAYING = "lastfm_now_playing"
+    private const val KEY_LASTFM_PRIMARY_ARTIST_ONLY = "lastfm_primary_artist_only"
     private const val KEY_SCROBBLE_MIN_DURATION = "scrobble_min_duration"
     private const val KEY_SCROBBLE_DELAY_PERCENT = "scrobble_delay_percent"
     private const val KEY_SCROBBLE_DELAY_SECONDS = "scrobble_delay_seconds"
     private const val KEY_LISTENBRAINZ_ENABLED = "listenbrainz_enabled"
     private const val KEY_LISTENBRAINZ_TOKEN = "listenbrainz_token"
+    private const val KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY = "listenbrainz_primary_artist_only"
     private const val KEY_SPOTIFY_SPDC_TOKEN = "spotify_spdc_token"
 
     private const val KEY_DISCORD_USERNAME = "discord_username"

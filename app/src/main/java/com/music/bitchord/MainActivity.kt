@@ -1822,6 +1822,15 @@ private fun BitChordApp(
                             },
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
+                            onTopResultPlay = { song ->
+                                viewModel.recordSearch()
+                                playRadio(song)
+                            },
+                            onTopResultPlaylist = { song ->
+                                viewModel.recordSearch()
+                                viewModel.loadPlaylists()
+                                playlistTarget = song
+                            },
                             onBrowseClick = { item ->
                                 viewModel.recordSearch()
                                 viewModel.openDetail(

@@ -1566,6 +1566,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun searchResultKey(row: SearchResult): String = when (row) {
+        is SearchResult.TopTrack -> "v:${row.song.videoId}"
         is SearchResult.Track -> "v:${row.song.videoId}"
         is SearchResult.Browse -> "b:${row.item.browseId}"
     }
@@ -1623,7 +1624,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * own audio by default; catalogue matching is only requested manually.
      */
     private fun prefetchTopResult(rows: List<SearchResult>) {
-        val song = rows.filterIsInstance<SearchResult.Track>().firstOrNull()?.song ?: return
+        val song = rows.firstNotNullOfOrNull {
+            when (it) {
+                is SearchResult.TopTrack -> it.song
+                is SearchResult.Track -> it.song
+                is SearchResult.Browse -> null
+            }
+        } ?: return
         viewModelScope.launch {
             runCatching {
                 val audio = song
