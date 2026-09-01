@@ -63,6 +63,7 @@ import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
@@ -693,6 +694,26 @@ class PlaybackService : MediaSessionService() {
             }
             val videoId = dataSpec.uri.getQueryParameter("v")
                 ?: return@Factory dataSpec
+            // Automix owns a base-cache Opus rendition. It must bypass the
+            // playback race winner (JioSaavn, a module, or a lossless upgrade)
+            // and resolve directly to YouTube for this analysis-only request.
+            if (AutomixAnalysisSource.requestsYouTubeOpus(
+                    dataSpec.uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
+                )
+            ) {
+                val streamUrl = try {
+                    runBlocking(about) {
+                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    throw java.io.IOException("Automix Opus resolution timed out for $videoId", e)
+                }
+                val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
+                return@Factory dataSpec.buildUpon()
+                    .setUri(Uri.parse(streamUrl))
+                    .setHttpRequestHeaders(headers)
+                    .build()
+            }
             // An upgraded item carries a marker and its stream has already
             // been found — see [QualityUpgrade]. Answered before anything
             // else, and without re-resolving: this exact URL is what the
@@ -2127,6 +2148,18 @@ class PlaybackService : MediaSessionService() {
             QualityUpgrade.unshelve(mediaId)
             TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
+            if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
+                // The immediate JioSaavn improvement stays audible while a
+                // slower lossless source is checked against its higher-quality
+                // floor. Wait for this pass to release `upgradeJob`; otherwise
+                // the second pass would see the first one as still active and
+                // return without starting its lookup.
+                val firstPass = upgradeJob
+                scope.launch {
+                    firstPass?.join()
+                    lookForBetterCopy(player)
+                }
+            }
             // The opening again, this time sized for Automix rather than for
             // a container header.
             //
@@ -2148,13 +2181,16 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
-    /** Main thread. Null unless [mediaId] is still current and still un-upgraded. */
+    /** Main thread. Null unless [mediaId] is still current and has another upgrade slot. */
     private fun swapPointFor(mediaId: String): SwapPoint? {
         val player = player ?: return null
         val item = player.currentMediaItem ?: return null
         if (item.mediaId != mediaId) return null
         val uri = item.localConfiguration?.uri?.toString() ?: return null
-        if (uri.contains("${QualityUpgrade.MARKER}=")) return null
+        // One mid-track lossy improvement (typically Opus → JioSaavn) must not
+        // prevent the requested lossless copy from replacing it. Two marked
+        // URIs get distinct cache entries through [QualityUpgrade.upgradedUri].
+        if (uri.contains("${QualityUpgrade.MARKER}=hifi-")) return null
         return SwapPoint(item, uri, player.currentPosition, player.duration)
     }
 

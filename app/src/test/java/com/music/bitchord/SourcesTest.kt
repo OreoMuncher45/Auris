@@ -429,6 +429,40 @@ class SourcesTest {
     }
 
     @Test
+    fun `uses the uniquely fullest credit to resolve a JioSaavn release collision`() {
+        val target = TrackMatcher.Target("Ek Dil Ek Jaan", "Shivam Pathak", durationSec = 220)
+        val original = song(
+            "Ek Dil Ek Jaan",
+            "Shivam Pathak, Mujtaba Aziz Naza, Kunal Pandit, Farhan Sabri",
+            "3:40",
+        ).copy(albumName = "Padmaavat")
+        val compilation = song("Ek Dil Ek Jaan", "Shivam Pathak", "3:39")
+            .copy(albumName = "Top 20 - Romantic Songs 2018")
+        val fromCompilation = song(
+            "Ek Dil Ek Jaan (From Padmaavat)",
+            "Shivam Pathak, Sanjay Leela Bhansali, A.M. Turaz",
+            "3:39",
+        ).copy(albumName = "Bollywood Magic Mix")
+
+        assertEquals(
+            original,
+            TrackMatcher.uniquelyMostCreditedCloseMatch(
+                listOf(original, compilation, fromCompilation),
+                target,
+            ),
+        )
+    }
+
+    @Test
+    fun `retains JioSaavn refusal when conflicting releases tie on credit coverage`() {
+        val target = TrackMatcher.Target("Mere Bina", "Pritam, Nikhil D'Souza", durationSec = 290)
+        val first = song("Mere Bina", "Pritam, Nikhil D'Souza", "4:49").copy(albumName = "Crook")
+        val second = song("Mere Bina", "Pritam, Nikhil D'Souza", "4:51").copy(albumName = "Sad Love Hits")
+
+        assertNull(TrackMatcher.uniquelyMostCreditedCloseMatch(listOf(first, second), target))
+    }
+
+    @Test
     fun `target keeps the queued album identity`() {
         val queued = song("Brown Rang", "Yo Yo Honey Singh", "2:59")
             .copy(albumName = "International Villager")

@@ -5,6 +5,7 @@ import android.media.MediaDataSource
 import android.net.Uri
 import android.os.SystemClock
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -799,7 +800,10 @@ object AudioCache {
                 if (!clearPartialHead(videoId, want)) return@launch
                 fetch(
                     cacheKey = videoId,
-                    uri = Uri.parse("bitchord://watch?v=$videoId"),
+                    // Do not inherit a JioSaavn/lossless StreamChoice from
+                    // playback. The base key is reserved for the lightweight
+                    // YouTube Opus copy used by Automix analysis.
+                    uri = Uri.parse(AutomixAnalysisSource.opusUri(videoId)),
                     position = 0,
                     length = want,
                     pinKey = true,

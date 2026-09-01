@@ -225,6 +225,27 @@ object TrackMatcher {
     }
 
     /**
+     * Resolves a JioSaavn release collision only when one candidate is plainly
+     * more specifically credited than every other close-duration candidate.
+     *
+     * A film's original release often names the complete vocal ensemble while
+     * compilation rows reduce it to the lead singer or add composer/lyricist
+     * credits. That is useful evidence, but not enough to guess on a tie: a
+     * unique, fuller credit may win; otherwise callers must keep the fallback.
+     */
+    fun uniquelyMostCreditedCloseMatch(candidates: List<Song>, target: Target): Song? {
+        val close = candidates.filter { withinSeconds(it, target, DURATION_LIMIT_SEC) }
+        if (close.size < 2) return null
+        val ranked = close.map { it to artistNames(it.artist).size }
+        val topCredits = ranked.maxOfOrNull { it.second } ?: return null
+        // A single name cannot establish that a row is the canonical recording
+        // rather than a compilation's abbreviated credit.
+        if (topCredits < 2) return null
+        val winners = ranked.filter { it.second == topCredits }.map { it.first }
+        return winners.singleOrNull()
+    }
+
+    /**
      * Whether [candidate] states a runtime, and one within [seconds] of
      * [target]'s.
      *

@@ -769,7 +769,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             try {
                 val match = findYouTubeMatch(target)
                 if (match != null) {
-                    sourceAnalysisUris[trackId] = Uri.parse("bitchord://watch?v=${match.videoId}")
+                    sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
                     Log.d(TAG, "Automix analysis for $trackId will use YouTube Opus ${match.videoId}")
                 } else {
                     Log.d(TAG, "No YouTube match for Automix analysis of $trackId")

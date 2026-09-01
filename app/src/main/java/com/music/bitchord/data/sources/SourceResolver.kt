@@ -779,11 +779,20 @@ object SourceResolver {
             if (source.kind == SourceKind.JIOSAAVN &&
                 TrackMatcher.hasConflictingAlbums(matches, target)
             ) {
-                TrackLog.w(
+                val canonical = TrackMatcher.uniquelyMostCreditedCloseMatch(matches, target)
+                if (canonical == null) {
+                    TrackLog.w(
+                        TAG,
+                        "${source.displayName} returned conflicting albums for '${target.title}'; refusing to guess",
+                    )
+                    continue
+                }
+                TrackLog.d(
                     TAG,
-                    "${source.displayName} returned conflicting albums for '${target.title}'; refusing to guess",
+                    "${source.displayName} resolved conflicting albums for '${target.title}' " +
+                        "using the uniquely fullest credit: '${canonical.artist}'",
                 )
-                continue
+                matches = listOf(canonical)
             }
             // The extra bar for standing in for one specific recording: the
             // replacement has to be the same *length*, to the second or so. A

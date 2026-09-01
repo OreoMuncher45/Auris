@@ -10,6 +10,20 @@ package com.music.bitchord.playback.smart
  * upgrades.
  */
 internal object AutomixAnalysisSource {
+    const val OPUS_QUERY_PARAMETER = "automix_opus"
+
     fun isCanonicalYouTubeRendition(videoId: String?, cacheKey: String): Boolean =
         videoId == null || cacheKey == videoId
+
+    /**
+     * A private playback URI for analysis-only reads.
+     *
+     * A normal `watch?v=` URI is allowed to reuse the source race already
+     * pinned for audible playback. That is exactly the wrong thing for
+     * Automix: its independently cached copy must always be YouTube Opus,
+     * even while playback is JioSaavn or a lossless upgrade.
+     */
+    fun opusUri(videoId: String): String = "bitchord://watch?v=$videoId&$OPUS_QUERY_PARAMETER=1"
+
+    fun requestsYouTubeOpus(marker: String?): Boolean = marker == "1"
 }
