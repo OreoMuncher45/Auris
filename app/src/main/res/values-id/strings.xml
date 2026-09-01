@@ -129,8 +129,6 @@
     <string name="widget_preview_artist">Artis</string>
     <string name="download_quality">Kualitas unduhan</string>
     <string name="download_wifi_only">Unduh hanya lewat Wi-Fi</string>
-    <string name="spatial_audio">Audio spasial</string>
-    <string name="spatial_audio_subtitle">Melebarkan trek stereo untuk pengalaman yang lebih imersif</string>
     <string name="video_audio_conversion">Jangan ubah lagu video ke versi audio</string>
     <string name="video_audio_conversion_subtitle">Memutar unggahan video musik apa adanya, alih-alih menggantinya dengan rilisan audio dari katalog</string>
     <string name="animated_cover_cellular">Putar sampul animasi lewat data seluler</string>

@@ -133,8 +133,6 @@
     <string name="widget_preview_artist">कलाकार</string>
     <string name="download_quality">डाउनलोड क्वालिटी</string>
     <string name="download_wifi_only">केवल Wi-Fi पर डाउनलोड करें</string>
-    <string name="spatial_audio">स्पेशियल ऑडियो</string>
-    <string name="spatial_audio_subtitle">ज़्यादा इमर्सिव अनुभव के लिए स्टीरियो ट्रैक को चौड़ा करता है</string>
     <string name="video_audio_conversion">वीडियो गानों को ऑडियो वर्शन में बदलना बंद करें</string>
     <string name="video_audio_conversion_subtitle">म्यूज़िक-वीडियो अपलोड को उसके कैटलॉग ऑडियो वर्शन से बदलने के बजाय उसे वैसे ही चलाता है</string>
     <string name="animated_cover_cellular">मोबाइल डेटा पर एनिमेटेड कवर चलाएं</string>
