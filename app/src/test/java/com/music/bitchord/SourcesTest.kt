@@ -978,33 +978,25 @@ class SourcesTest {
     }
 
     /**
-     * The 'Bounce' case: a source whose answer is *refused* must not hold up one
-     * whose answer is taken.
-     *
-     * This is the upgrade path's shape — [SourceResolver.upgradeFor] passes a
-     * predicate that drops anything [SourceResolver.worthSwapping] rejects — and
-     * it went wrong differently from the '9:45' case. Nothing was skipped here:
-     * the slow module was asked, answered 128kbps, and was correctly refused.
-     * The cost was that it was asked *first and alone*, so the 320kbps answer
-     * that did get taken waited 12.65s behind a stream nobody wanted.
+     * The background upgrade is deliberately patient. Its source searches have
+     * already been given their full budget, so it must not cancel a slower FLAC
+     * merely because JioSaavn's valid 320kbps answer arrived first.
      */
     @Test
-    fun `a refused answer from a slow source does not hold up an accepted one`() = runBlocking {
+    fun `patient upgrade chooses the better later answer`() = runBlocking {
         val playing = StreamFormat(codec = "opus", kbps = 141)
-        val slowRefused = FakeSource("Ricky's Addon", answerAfterMs = 2_000, format = StreamFormat("mp3", kbps = 128))
-        val quickTaken = FakeSource("JioSaavn", answerAfterMs = 5, format = StreamFormat("mp4", kbps = 320))
-        val elapsed = measureTimeMillis {
-            val (source, stream) = SourceResolver.bestAcross(
-                listOf(slowRefused, quickTaken),
-                raceTarget(),
-                StreamRequest.Lossless,
-                waitForAll = true,
-                strictLength = true,
-            ) { _, candidate -> SourceResolver.worthSwapping(candidate.format, playing) }!!
-            assertEquals("JioSaavn", source.displayName)
-            assertEquals(320, stream.format.kbps)
-        }
-        assertTrue("took ${elapsed}ms — it waited for the refused answer", elapsed < 1_000)
+        val slowLossless = FakeSource("Ricky's Addon", answerAfterMs = 200, format = StreamFormat("flac"))
+        val quickLossy = FakeSource("JioSaavn", answerAfterMs = 5, format = StreamFormat("mp4", kbps = 320))
+        val (source, stream) = SourceResolver.bestAcross(
+            listOf(slowLossless, quickLossy),
+            raceTarget(),
+            StreamRequest.Lossless,
+            waitForAll = true,
+            strictLength = true,
+        ) { _, candidate -> SourceResolver.worthSwapping(candidate.format, playing) }!!
+        assertEquals("Ricky's Addon", source.displayName)
+        assertEquals("flac", stream.format.codec)
+        assertFalse("the patient lookup cancelled the later source", slowLossless.cancelled)
     }
 
     /**

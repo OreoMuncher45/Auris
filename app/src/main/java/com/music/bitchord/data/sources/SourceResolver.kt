@@ -650,8 +650,8 @@ object SourceResolver {
             .let { active.take(it) }
 
     /**
-     * The first stream any of [sources] can serve for [target] — **all of them
-     * asked at once** — or null if none of them has the recording.
+     * The best stream the configured [sources] can serve for [target] — **all
+     * of them asked at once** — or null if none of them has the recording.
      *
      * ### Why they race rather than queue
      *
@@ -689,9 +689,15 @@ object SourceResolver {
      * seconds to find a 128kbps MP3 is correctly ignored. That is the trade this
      * whole path exists to make: sound now, quality shortly after.
      *
-     * Sources still running when an answer is taken are cancelled — the second
-     * look re-asks them properly, and leaving them running would spend a
-     * listener's radio on a result nothing is waiting for.
+     * On the latency-critical path, sources still running when an answer is
+     * taken are cancelled — the second look re-asks them properly, and leaving
+     * them running would spend a listener's radio on a result nothing is waiting
+     * for. The background-upgrade path passes [waitForAll], however: it already
+     * chose to wait for every source's patient search window, so it must also
+     * collect the resulting streams before choosing. Previously that flag only
+     * reached each source's search call; this loop still returned the first
+     * usable stream and cancelled the rest, which could discard an exact Tidal
+     * FLAC or JioSaavn 320 result during an upgrade.
      *
      * @return the winning source alongside its stream, so callers can name it in
      *   a log line without searching the list again.
@@ -727,9 +733,12 @@ object SourceResolver {
                     if (!accept(source, stream)) continue
                     if (isBetter(stream.format, best?.second?.format)) best = source to stream
                 }
-                // Something usable is in hand. Everything better than it is a
-                // maybe, and waiting for a maybe costs the listener a certainty.
-                if (best != null) break
+                // Playback needs the first usable answer so sound can start.
+                // An upgrade is different: it runs while audio is already
+                // playing, and its caller explicitly requested every source's
+                // patient result. Let every source finish so a fast lower tier
+                // cannot cancel a later, better rendition.
+                if (best != null && !waitForAll) break
             }
         } finally {
             running.forEach { it.cancel() }

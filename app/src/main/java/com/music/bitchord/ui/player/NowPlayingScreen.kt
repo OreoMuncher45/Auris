@@ -2773,7 +2773,10 @@ private fun CurrentLyricLine(
     val intro = instrumental && firstSung >= 0 && index < firstSung
     // The intro gets one of the slang lines; mid-song breaks stay plain.
     val introLines = stringArrayResource(R.array.lyrics_intro_lines)
-    val introLine = remember(trackKey, introLines) { introLines.random() }
+    // `stringArrayResource` may return a new array on every recomposition.
+    // Keying this selection to that array made the intro copy change whenever
+    // the playback clock recomposed the strip. Pick it once for this track.
+    val introLine = remember(trackKey) { introLines.random() }
     // The strip is one line and switches the moment the next one is due, so
     // the answering vocal — where there is one — has nowhere to go: showing
     // it would mean either cutting it short when the next line arrives or
@@ -2882,7 +2885,9 @@ private fun LyricsUnavailableLine(trackKey: Any, modifier: Modifier = Modifier) 
 @Composable
 private fun LyricsLoadingLine(trackKey: Any, modifier: Modifier = Modifier) {
     val loadingLines = stringArrayResource(R.array.lyrics_loading_lines)
-    val text = remember(trackKey, loadingLines) { loadingLines.random() }
+    // Keep the loading copy stable while this track's lyric lookup is pending.
+    // The resource array itself is not a stable Compose key.
+    val text = remember(trackKey) { loadingLines.random() }
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
