@@ -63,6 +63,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -109,7 +110,8 @@ import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ThemeMode
-import com.music.bitchord.ui.components.AccountChannelDialog
+import com.music.bitchord.ui.components.AccountProfileSelector
+import com.music.bitchord.ui.components.LocalLiquidGlassState
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
@@ -180,6 +182,8 @@ import com.music.bitchord.ui.theme.SystemBarIcons
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import io.github.fletchmckee.liquid.liquefiable
+import io.github.fletchmckee.liquid.rememberLiquidState
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -195,6 +199,8 @@ class MainActivity : AppCompatActivity() {
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
+            val liquidGlassBeta by AppSettings.liquidGlassBeta.collectAsStateWithLifecycle()
+            val liquidState = rememberLiquidState()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             val composeView = LocalView.current
             LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
@@ -206,6 +212,11 @@ class MainActivity : AppCompatActivity() {
                 ThemeMode.DARK -> true
             }
             BitChordTheme(darkTheme = darkTheme) {
+                CompositionLocalProvider(
+                    LocalLiquidGlassState provides liquidState.takeIf {
+                        liquidGlassBeta && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    },
+                ) {
                 // The window's width, measured rather than asked for.
                 //
                 // `Configuration.screenWidthDp` is the wrong question here: in a
@@ -219,6 +230,7 @@ class MainActivity : AppCompatActivity() {
                 // the split is about to be laid out in.
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth)
+                }
                 }
             }
         }
@@ -328,7 +340,7 @@ private fun BitChordApp(
     var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showAppLanguage by remember { mutableStateOf(false) }
-    var showChannelPicker by remember { mutableStateOf(false) }
+    var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
     /**
@@ -421,10 +433,10 @@ private fun BitChordApp(
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val account by viewModel.account.collectAsStateWithLifecycle()
-    val channels by viewModel.channels.collectAsStateWithLifecycle()
-    val channelsLoading by viewModel.channelsLoading.collectAsStateWithLifecycle()
-    val selectedChannelKey by viewModel.selectedChannelKey.collectAsStateWithLifecycle()
     val selectedChannelName by viewModel.selectedChannelName.collectAsStateWithLifecycle()
+    val googleAccounts by viewModel.googleAccounts.collectAsStateWithLifecycle()
+    val activeAccountId by viewModel.activeAccountId.collectAsStateWithLifecycle()
+    val activeProfileId by viewModel.activeProfileId.collectAsStateWithLifecycle()
     val historyState by viewModel.history.collectAsStateWithLifecycle()
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
@@ -1422,7 +1434,9 @@ private fun BitChordApp(
                             fadeIn(tween(180)) togetherWith fadeOut(tween(180))
                         }
                     },
-                    modifier = Modifier.hazeSource(hazeState),
+                    modifier = Modifier
+                        .hazeSource(hazeState)
+                        .then(LocalLiquidGlassState.current?.let { Modifier.liquefiable(it) } ?: Modifier),
                     label = "content",
                 ) { key ->
                     // Every branch below reads `key` rather than the state that
@@ -1517,11 +1531,8 @@ private fun BitChordApp(
                                 webSession = WebSessionMode.SIGN_IN
                             },
                             onSwitchChannel = {
-                                // Asked for on open rather than on sign-in: it
-                                // is a request per session that most listeners,
-                                // who have exactly one channel, never need.
                                 viewModel.loadChannels()
-                                showChannelPicker = true
+                                showAccountSelector = true
                             },
                             onSignOut = { viewModel.signOut() },
                             onOpenListenBrainzLogin = { showListenBrainzLogin = true },
@@ -1949,7 +1960,13 @@ private fun BitChordApp(
                             TopBarDownloadButton(onClick = { showDownloadManager = true })
                             TopBarAccountButton(
                                 account = account,
-                                onClick = { showSettings = true },
+                                onClick = {
+                                    if (signedIn) {
+                                        viewModel.loadChannels()
+                                        showAccountSelector = true
+                                    } else showSettings = true
+                                },
+                                onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
                             )
                         }
                     },
@@ -2421,7 +2438,7 @@ private fun BitChordApp(
                             Text(
                                 text = when (mode) {
                                     WebSessionMode.SIGN_IN -> stringResource(R.string.sign_in_youtube_music)
-                                    WebSessionMode.SWITCH_CHANNEL -> stringResource(R.string.choose_a_channel)
+                                    WebSessionMode.SWITCH_CHANNEL -> stringResource(R.string.choose_profile)
                                 },
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -2429,9 +2446,9 @@ private fun BitChordApp(
                             if (mode == WebSessionMode.SWITCH_CHANNEL) {
                                 Text(
                                     text = if (captureFailed) {
-                                        stringResource(R.string.channel_session_unavailable)
-                                    } else {
-                                        stringResource(R.string.channel_switch_instructions)
+                                         stringResource(R.string.profile_unavailable)
+                                     } else {
+                                         stringResource(R.string.switch_profile_hint)
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2444,7 +2461,7 @@ private fun BitChordApp(
                                 captureFailed = false
                                 captureRequest++
                             }) {
-                                Text(stringResource(R.string.use_this_channel))
+                                Text(stringResource(R.string.use_this_profile))
                             }
                         }
                     }
@@ -2505,19 +2522,27 @@ private fun BitChordApp(
             )
         }
 
-        if (showChannelPicker) {
-            BackHandler { showChannelPicker = false }
-            AccountChannelDialog(
-                channels = channels,
-                loading = channelsLoading,
-                selectedKey = selectedChannelKey,
+        if (showAccountSelector) {
+            BackHandler { showAccountSelector = false }
+            AccountProfileSelector(
+                accounts = googleAccounts,
+                activeAccountId = activeAccountId,
+                activeProfileId = activeProfileId,
                 hazeState = hazeState,
-                onSelect = { viewModel.selectChannel(it) },
-                onChooseInYouTube = {
-                    showChannelPicker = false
-                    webSession = WebSessionMode.SWITCH_CHANNEL
+                onSelect = { selected, profile -> viewModel.selectProfile(selected.accountId, profile.profileId) },
+                onAddAccount = {
+                    showAccountSelector = false
+                    webSession = WebSessionMode.SIGN_IN
                 },
-                onDismiss = { showChannelPicker = false },
+                onRemoveAccount = { selected ->
+                    viewModel.removeAccount(selected.accountId)
+                    showAccountSelector = false
+                },
+                onOpenSettings = {
+                    showAccountSelector = false
+                    showSettings = true
+                },
+                onDismiss = { showAccountSelector = false },
             )
         }
 

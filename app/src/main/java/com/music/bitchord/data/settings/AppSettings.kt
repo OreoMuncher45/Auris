@@ -68,6 +68,13 @@ enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark")
 }
 
+/** CPU budget for Automix's background analysis, not its audible mix algorithm. */
+enum class AutomixPerformanceMode(val inferenceThreads: Int) {
+    EFFICIENT(1),
+    BALANCED(2),
+    PERFORMANCE(4),
+}
+
 /** Stable persisted ordering for each on-device music library. */
 enum class LocalMusicSort {
     TITLE_ASC,
@@ -163,6 +170,12 @@ object AppSettings {
      * See [com.music.bitchord.playback.smart.TransitionPlanner].
      */
     val smartFadeEnabled = MutableStateFlow(false)
+
+    /** The CPU budget used by Beat This! and vocal analysis for Automix. */
+    val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
+
+    /** Opt-in for the future on-device transition-ranking model. */
+    val automixAiEnabled = MutableStateFlow(false)
     val skipSilence = MutableStateFlow(false)
 
     /**
@@ -212,6 +225,9 @@ object AppSettings {
 
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
+
+    /** Optional Android 13+ replacement for regular frosted surfaces. */
+    val liquidGlassBeta = MutableStateFlow(false)
 
     /** Blurs unfocused lyric lines, keeping the active line sharp. */
     val lyricsBlur = MutableStateFlow(true)
@@ -478,6 +494,12 @@ object AppSettings {
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        automixPerformanceMode.value = runCatching {
+            AutomixPerformanceMode.valueOf(
+                prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
+            )
+        }.getOrDefault(AutomixPerformanceMode.BALANCED)
+        automixAiEnabled.value = prefs.getBoolean(KEY_AUTOMIX_AI_ENABLED, false)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
@@ -497,6 +519,7 @@ object AppSettings {
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         convertVideoToAudio.value = prefs.getBoolean(KEY_CONVERT_VIDEO_TO_AUDIO, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
+        liquidGlassBeta.value = prefs.getBoolean(KEY_LIQUID_GLASS_BETA, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
         if (highPerformanceMode.value) {
             reduceAnimation.value = false
@@ -681,6 +704,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
+    fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
+        automixPerformanceMode.value = value
+        prefs.edit().putString(KEY_AUTOMIX_PERFORMANCE_MODE, value.name).apply()
+    }
+
+    fun setAutomixAiEnabled(value: Boolean) {
+        automixAiEnabled.value = value
+        prefs.edit().putBoolean(KEY_AUTOMIX_AI_ENABLED, value).apply()
+    }
+
     fun setSkipSilence(value: Boolean) {
         skipSilence.value = value
         prefs.edit().putBoolean(KEY_SKIP_SILENCE, value).apply()
@@ -745,6 +778,11 @@ object AppSettings {
         val editor = prefs.edit().putBoolean(KEY_REDUCE_BLUR, value)
         if (value) editor.putBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         editor.apply()
+    }
+
+    fun setLiquidGlassBeta(value: Boolean) {
+        liquidGlassBeta.value = value
+        prefs.edit().putBoolean(KEY_LIQUID_GLASS_BETA, value).apply()
     }
 
     fun setHighPerformanceMode(value: Boolean) {
@@ -1177,6 +1215,8 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
+    private const val KEY_AUTOMIX_AI_ENABLED = "automix_ai_enabled"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_SPEED = "playback_speed"
@@ -1193,6 +1233,7 @@ object AppSettings {
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_CONVERT_VIDEO_TO_AUDIO = "convert_video_to_audio"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
+    private const val KEY_LIQUID_GLASS_BETA = "liquid_glass_beta"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"

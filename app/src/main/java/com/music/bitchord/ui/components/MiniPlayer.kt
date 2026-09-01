@@ -44,6 +44,7 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import io.github.fletchmckee.liquid.liquid
 
 /**
  * The transport buttons' touch target. Material's default 48dp is what a bar
@@ -121,12 +122,14 @@ fun MiniPlayer(
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val liquidState = LocalLiquidGlassState.current
     val haptics = rememberHaptics()
     // percent rather than a dp figure, so the corner stays exactly half the
     // height if the row's contents ever change it — which is what keeps a pill
     // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
     // directly below it, so the two shapes are the same family.
     val shape = RoundedCornerShape(percent = 50)
+    val liquidTint = MaterialTheme.colorScheme.surface.copy(alpha = 0.16f)
     Box(
         modifier = modifier
             .padding(horizontal = PAGE_GUTTER)
@@ -134,6 +137,16 @@ fun MiniPlayer(
             .then(
                 if (reduceDynamicBlur) {
                     Modifier.background(MaterialTheme.colorScheme.surface)
+                } else if (liquidState != null) {
+                    Modifier.liquid(liquidState) {
+                        frost = 12.dp
+                        this.shape = shape
+                        refraction = 0.14f
+                        curve = 0.16f
+                        edge = 0.08f
+                        tint = liquidTint
+                        saturation = 1.12f
+                    }
                 } else {
                     Modifier.optimizedHazeEffect(
                         state = hazeState,

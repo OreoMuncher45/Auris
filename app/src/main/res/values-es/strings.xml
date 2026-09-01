@@ -185,6 +185,18 @@
     <string name="crossfade">Fundido cruzado</string>
     <string name="crossfade_subtitle">Mezcla una pista con la siguiente</string>
     <string name="automix">Mezcla automática [BETA]</string>
+    <string name="automix_performance">Rendimiento de mezcla automática</string>
+    <string name="automix_performance_subtitle">Define cuánta CPU puede usar el análisis en segundo plano</string>
+    <string name="automix_performance_warning">El rendimiento alto analiza más rápido, pero puede consumir más batería y calentar el teléfono.</string>
+    <string name="automix_mode_efficient">Eficiente</string>
+    <string name="automix_mode_efficient_subtitle">1 hilo · menor calor y consumo · el análisis puede tardar más</string>
+    <string name="automix_mode_balanced">Equilibrado</string>
+    <string name="automix_mode_balanced_subtitle">2 hilos · equilibrio recomendado entre velocidad, calor y batería</string>
+    <string name="automix_mode_performance">Rendimiento</string>
+    <string name="automix_mode_performance_subtitle">4 hilos · análisis más rápido · mayor calor y consumo</string>
+    <string name="automix_ai">IA de mezcla automática [BETA]</string>
+    <string name="automix_ai_disabled_subtitle">Para música electrónica. Activa el ranking de transiciones en el dispositivo.</string>
+    <string name="automix_ai_enabled_subtitle">Para música electrónica cuando haya un modelo disponible. La mezcla automática normal protege otros géneros y mezclas de baja confianza.</string>
     <string name="skip_silence">Omitir silencios</string>
     <string name="skip_silence_subtitle">Recorta pausas de más de un segundo</string>
     <string name="equalizer">Ecualizador</string>
@@ -196,6 +208,9 @@
     <string name="reduce_animation_subtitle">Detiene el degradado del reproductor principal</string>
     <string name="reduce_dynamic_blur">Reducir desenfoque dinámico</string>
     <string name="reduce_dynamic_blur_subtitle">Cambia el cristal esmerilado por fondos sólidos</string>
+    <string name="liquid_glass_beta">Liquid Glass [BETA]</string>
+    <string name="liquid_glass_beta_subtitle">Solo Android 13+. Reemplaza el desenfoque normal en superficies compatibles; puede usar más GPU y calentar el dispositivo.</string>
+    <string name="liquid_glass_beta_unavailable">Requiere Android 13 o posterior</string>
     <string name="full_screen_cover_art">Portada a pantalla completa</string>
     <string name="animated_cover_art">Portada animada</string>
     <string name="synced_lyrics">Letras sincronizadas</string>
@@ -648,4 +663,21 @@
         <item>La letra está tomando forma</item>
         <item>La letra está casi lista</item>
     </string-array>
+    <string name="switch_account">Cambiar cuenta</string>
+    <string name="accounts">Cuentas</string>
+    <string name="profiles">Perfiles</string>
+    <string name="personal">Personal</string>
+    <string name="brand_account">Cuenta de marca</string>
+    <string name="add_account">Agregar cuenta</string>
+    <string name="manage_accounts">Administrar cuentas</string>
+    <string name="current_account">Cuenta actual</string>
+    <string name="current_profile">Perfil actual</string>
+    <string name="selected_account">Cuenta seleccionada</string>
+    <string name="listen_as">Escuchar como</string>
+    <string name="default_youtube_profile">Perfil predeterminado de YouTube Music</string>
+    <string name="account_profiles_help">Una cuenta de Google puede tener perfiles Personal y de marca. Cada uno tiene su propia biblioteca, Me gusta e historial.</string>
+    <string name="choose_profile">Elegir un perfil</string>
+    <string name="use_this_profile">Usar este perfil</string>
+    <string name="switch_profile_hint">Cambia con el avatar y luego usa este perfil.</string>
+    <string name="profile_unavailable">Aún no hay un perfil con sesión iniciada en esta página.</string>
 </resources>
