@@ -1178,6 +1178,16 @@ class PlaybackService : MediaSessionService() {
             reason = Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
             alreadyAudible = true,
         )
+
+        // A crossfade starts the incoming item on the player that was idle, so
+        // it never delivers onMediaItemTransition to playbackListener. Keep
+        // AutoPlay's refill on the same track-change path as the ordinary
+        // player transition: otherwise the initial suggestions are consumed
+        // one by one and a long background session eventually runs dry.
+        autoplayLoadJob?.cancel()
+        autoplayLoadJob = null
+        autoplaySeed = null
+        loadAutoplayForCurrentTrack()
     }
 
     /**
