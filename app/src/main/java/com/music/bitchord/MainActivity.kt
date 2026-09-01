@@ -47,6 +47,7 @@ import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
@@ -181,6 +182,7 @@ import com.music.bitchord.ui.replay.rememberReplayState
 import com.music.bitchord.ui.theme.BitChordTheme
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.ui.theme.SystemBarIcons
+import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
@@ -203,6 +205,7 @@ class MainActivity : AppCompatActivity() {
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
             val liquidGlassBeta by AppSettings.liquidGlassBeta.collectAsStateWithLifecycle()
             val liquidState = rememberLiquidState()
+            val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             val composeView = LocalView.current
             LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
@@ -218,6 +221,7 @@ class MainActivity : AppCompatActivity() {
                     LocalLiquidGlassState provides liquidState.takeIf {
                         liquidGlassBeta && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                     },
+                    LocalOverscrollFactory provides iosOverscrollFactory,
                 ) {
                 // The window's width, measured rather than asked for.
                 //
