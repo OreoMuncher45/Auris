@@ -11,6 +11,7 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -28,21 +29,18 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /** Suspend API over Innertube. Every call returns a Result so the UI can show a real error. */
 object YtMusicRepository {
 
     private const val TAG = "BitChord"
+    private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
 
     /**
-     * The personalised feed, led by what was actually just played and padded
-     * out with new releases.
-     *
-     * FEmusic_home alone is thin when signed out (three shelves), so extra
-     * rows are pulled from FEmusic_new_releases, which carries genuinely
-     * different content. Charts (Daily/Weekly, Trending) live under Explore
-     * in the real app — see [explore] — not here. Titles are de-duped in
-     * case the home feed already surfaced the same shelf.
+     * The core personalised feed. It stays deliberately independent from the
+     * optional shelves below: callers can paint this response immediately,
+     * rather than making the Play page wait for every supplementary endpoint.
      *
      * FEmusic_home's own continuation token comes back, for [moreHome] —
      * signed in, it keeps paging into mood mixes and more personalised
@@ -50,17 +48,23 @@ object YtMusicRepository {
      * it's empty and there's nothing more to fetch.
      */
     suspend fun home(): Result<HomeFeed> = call("home") {
-        coroutineScope {
-            val recent = async { runCatching { recentlyPlayed() }.getOrNull() }
-            val homeRaw = async { Innertube.browse("FEmusic_home") }
-            val newReleases = async { runCatching { shelvesOf("FEmusic_new_releases") }.getOrDefault(emptyList()) }
-            val home = homeRaw.await()
-            val shelves = listOfNotNull(recent.await()) +
-                InnertubeParser.parseHome(home) +
-                newReleases.await()
-            HomeFeed(shelves, InnertubeParser.continuationToken(home))
-        }
+        val home = Innertube.browse("FEmusic_home")
+        HomeFeed(InnertubeParser.parseHome(home), InnertubeParser.continuationToken(home))
     }
+
+    /** Recently played is rendered independently, at the top of the Play page. */
+    suspend fun homeRecentlyPlayed(): Result<HomeShelf?> = call("home:recent") { recentlyPlayed() }
+
+    /** Extra Play shelves are independently fetchable so each can appear as soon as it arrives. */
+    suspend fun homeSupplement(browseId: String): Result<List<HomeShelf>> = call("home:$browseId") {
+        shelvesOf(browseId)
+    }
+
+    val HOME_SUPPLEMENT_BROWSE_IDS = listOf(
+        "FEmusic_new_releases",
+        "FEmusic_explore",
+        "FEmusic_charts",
+    )
 
     /**
      * More Home shelves past [home]'s first page, following FEmusic_home's
@@ -138,20 +142,31 @@ object YtMusicRepository {
     private suspend fun shelvesOf(browseId: String): List<HomeShelf> =
         InnertubeParser.parseHome(Innertube.browse(browseId))
 
-    /**
-     * Explore: moods & genres from FEmusic_explore, plus the Daily/Weekly/
-     * Trending charts, which YouTube Music serves from a separate browse id
-     * and surfaces under Explore rather than Home.
-     */
-    suspend fun explore(): Result<List<HomeShelf>> = call("explore") {
-        coroutineScope {
-            val feeds = listOf("FEmusic_explore", "FEmusic_charts")
-                .map { id -> async { runCatching { shelvesOf(id) }.getOrDefault(emptyList()) } }
-                .awaitAll()
-            val seen = mutableSetOf<String>()
-            feeds.flatten().filter { seen.add(it.title.lowercase(Locale.ROOT)) }
-        }
+    /** The server-defined mood and genre categories used by Explore. */
+    suspend fun moodAndGenres(): Result<List<MoodGenreSection>> = call("moods-and-genres") {
+        InnertubeParser.parseMoodAndGenres(Innertube.browse("FEmusic_moods_and_genres"))
     }
+
+    /**
+     * The playlist shelves behind one mood/genre category. This result also
+     * supplies its tile artwork, so caching it avoids a second request when a
+     * user taps a category whose cover has already appeared.
+     */
+    suspend fun moodGenreShelves(browseId: String, params: String?): Result<List<HomeShelf>> {
+        val key = "$browseId:${params.orEmpty()}"
+        moodGenreShelfCache[key]?.let { return Result.success(it) }
+        return call("mood-genre:$browseId") {
+            InnertubeParser.parseHome(Innertube.browse(browseId, params))
+        }.also { result -> result.getOrNull()?.let { moodGenreShelfCache.putIfAbsent(key, it) } }
+    }
+
+    /** A category card borrows the first real cover from the playlists it opens. */
+    suspend fun moodGenreArtwork(browseId: String, params: String?): Result<String?> =
+        moodGenreShelves(browseId, params).map { shelves ->
+            shelves.asSequence().flatMap { it.items.asSequence() }
+                .mapNotNull(ShelfItem::thumbnailUrl)
+                .firstOrNull()
+        }
 
     /** One page of a search response, with the token for its next page if present. */
     data class SearchPage(

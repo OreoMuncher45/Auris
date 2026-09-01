@@ -8,6 +8,8 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.MoodGenre
+import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
@@ -160,6 +162,33 @@ object InnertubeParser {
         return sections.mapNotNull { section ->
             section.o("musicCarouselShelfRenderer")?.let(::carouselShelf)
                 ?: section.o("musicShelfRenderer")?.let(::plainShelf)
+        }
+    }
+
+    /**
+     * The Moods & genres browse page is a set of navigation-button grids, not
+     * a normal carousel. Keep the browse params on every button: they select
+     * the playlist shelves that belong to that exact mood or genre.
+     */
+    fun parseMoodAndGenres(response: JsonObject): List<MoodGenreSection> {
+        val sections = response.o("contents")
+            .o("singleColumnBrowseResultsRenderer").a("tabs")?.firstOrNull()
+            .o("tabRenderer").o("content").o("sectionListRenderer").a("contents")
+            .orEmpty()
+        return sections.mapNotNull { section ->
+            val grid = section.o("gridRenderer") ?: return@mapNotNull null
+            val title = grid.o("header").o("gridHeaderRenderer").o("title").runs()
+            val items = grid.a("items").orEmpty().mapNotNull { item ->
+                val button = item.o("musicNavigationButtonRenderer") ?: return@mapNotNull null
+                val endpoint = button.o("clickCommand").o("browseEndpoint")
+                    ?: button.o("navigationEndpoint").o("browseEndpoint")
+                    ?: return@mapNotNull null
+                val browseId = endpoint.s("browseId") ?: return@mapNotNull null
+                val label = button.o("buttonText").runs().takeIf { it.isNotBlank() }
+                    ?: return@mapNotNull null
+                MoodGenre(label, browseId, endpoint.s("params"))
+            }
+            if (title.isBlank() || items.isEmpty()) null else MoodGenreSection(title, items)
         }
     }
 
@@ -655,11 +684,16 @@ object InnertubeParser {
         } ?: return null
         val title = header.o("title").runs()
         if (title.isBlank()) return null
-        // Same two header shapes as pageCredit: the current one straplines the
-        // kind of release above the title, the older one packs it into the
-        // subtitle. Either is a fair second line, so take whichever is there.
-        val subtitle = header.o("straplineTextOne").runs()
-            .ifBlank { header.o("subtitle").runs() }
+        // Current headers split the artist and release details across these two
+        // lines: the strapline has the artist, while the subtitle holds
+        // "Album • 2024". Keep both; taking only the first silently loses the
+        // release year on album pages. Older headers put everything in one of
+        // the two lines, which is covered as well.
+        val subtitle = HEADER_CREDIT_LINES
+            .map { header.o(it).runs() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" • ")
         return BrowseHeader(
             title = title,
             subtitle = subtitle,

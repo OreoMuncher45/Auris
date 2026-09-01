@@ -43,6 +43,10 @@
         <item quantity="one">%1$d song</item>
         <item quantity="other">%1$d songs</item>
     </plurals>
+    <plurals name="track_count_plural">
+        <item quantity="one">%1$d track</item>
+        <item quantity="other">%1$d tracks</item>
+    </plurals>
     <plurals name="artist_count">
         <item quantity="one">%1$d artist</item>
         <item quantity="other">%1$d artists</item>

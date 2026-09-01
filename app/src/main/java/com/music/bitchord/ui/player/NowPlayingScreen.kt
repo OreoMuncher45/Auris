@@ -605,6 +605,18 @@ fun NowPlayingScreen(
     var lyricsOpen by remember { mutableStateOf(false) }
     LaunchedEffect(song.videoId) { lyricsOpen = false }
 
+    // Lyrics are meant to be read continuously, so prevent the device's
+    // normal screen timeout only while this panel is visible. Keeping this on
+    // the player view also releases the request as soon as the panel or player
+    // leaves composition.
+    val playerView = LocalView.current
+    DisposableEffect(playerView, lyricsOpen) {
+        if (lyricsOpen) playerView.keepScreenOn = true
+        onDispose {
+            if (lyricsOpen) playerView.keepScreenOn = false
+        }
+    }
+
     // Back out of the lyrics panel to the player, and only from the player
     // itself out to the mini player.
     //

@@ -218,6 +218,21 @@ data class HomeFeed(
     val continuation: String?,
 )
 
+/** One server-defined group of the buttons shown on Explore. */
+data class MoodGenreSection(
+    val title: String,
+    val items: List<MoodGenre>,
+)
+
+/** A mood or genre button and the exact browse request that it represents. */
+data class MoodGenre(
+    val title: String,
+    val browseId: String,
+    val params: String?,
+    /** First real cover from the category's playlist shelves, loaded in the background. */
+    val thumbnailUrl: String? = null,
+)
+
 /**
  * The signed-in library, as YouTube Music splits it: the auto-generated Liked
  * Music playlist, the tracks explicitly added to the library, and a shelf per

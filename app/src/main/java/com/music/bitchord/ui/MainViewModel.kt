@@ -32,6 +32,8 @@ import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.MoodGenre
+import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -60,6 +62,8 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
@@ -92,8 +96,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _homeLoadingMore = MutableStateFlow(false)
     val homeLoadingMore: StateFlow<Boolean> = _homeLoadingMore.asStateFlow()
 
-    private val _explore = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
-    val explore: StateFlow<UiState<List<HomeShelf>>> = _explore.asStateFlow()
+    private val _homeRecentlyPlayedLoading = MutableStateFlow(false)
+    val homeRecentlyPlayedLoading: StateFlow<Boolean> = _homeRecentlyPlayedLoading.asStateFlow()
+    private val homeLoadGeneration = AtomicLong(0L)
+
+    private val _explore = MutableStateFlow<UiState<List<MoodGenreSection>>>(UiState.Loading)
+    val explore: StateFlow<UiState<List<MoodGenreSection>>> = _explore.asStateFlow()
+
+    private val _selectedMoodGenre = MutableStateFlow<MoodGenre?>(null)
+    val selectedMoodGenre: StateFlow<MoodGenre?> = _selectedMoodGenre.asStateFlow()
+
+    private val _moodGenreShelves = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
+    val moodGenreShelves: StateFlow<UiState<List<HomeShelf>>> = _moodGenreShelves.asStateFlow()
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
@@ -1057,7 +1071,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _refreshing.value = _refreshing.value + feed
         viewModelScope.launch {
             when (feed) {
-                Feed.HOME -> fetchHome(identity)
+                Feed.HOME -> refreshHome(identity)
                 Feed.EXPLORE -> fetchExplore()
                 Feed.LIBRARY -> fetchLibrary(identity)
             }
@@ -1071,13 +1085,68 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun fetchExplore() {
-        _explore.value = YtMusicRepository.explore().fold(
-            onSuccess = { shelves ->
-                if (shelves.isEmpty()) UiState.Error(text(R.string.nothing_to_explore))
-                else UiState.Success(shelves)
+        val state = YtMusicRepository.moodAndGenres().fold(
+            onSuccess = { sections ->
+                if (sections.isEmpty()) {
+                    UiState.Error(text(R.string.nothing_to_explore))
+                } else {
+                    UiState.Success(sections)
+                }
             },
             onFailure = { UiState.Error(it.friendly()) },
         )
+        _explore.value = state
+        (state as? UiState.Success)?.data?.let(::loadMoodGenreArtwork)
+    }
+
+    /**
+     * Category buttons do not carry thumbnails themselves. Resolve a small
+     * number at a time from the shelves they open, so the grid gains real art
+     * without saturating the browse client or delaying the category list.
+     */
+    private fun loadMoodGenreArtwork(sections: List<MoodGenreSection>) {
+        viewModelScope.launch {
+            val limiter = Semaphore(4)
+            coroutineScope {
+                sections.flatMap(MoodGenreSection::items).forEach { item ->
+                    launch {
+                        val artwork = limiter.withPermit {
+                            YtMusicRepository.moodGenreArtwork(item.browseId, item.params).getOrNull()
+                        } ?: return@launch
+                        val current = (_explore.value as? UiState.Success)?.data ?: return@launch
+                        _explore.value = UiState.Success(current.map { section ->
+                            section.copy(items = section.items.map { currentItem ->
+                                if (currentItem.browseId == item.browseId && currentItem.params == item.params) {
+                                    currentItem.copy(thumbnailUrl = artwork)
+                                } else {
+                                    currentItem
+                                }
+                            })
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    fun openMoodGenre(item: MoodGenre) {
+        _selectedMoodGenre.value = item
+        _moodGenreShelves.value = UiState.Loading
+        viewModelScope.launch {
+            _moodGenreShelves.value = YtMusicRepository.moodGenreShelves(item.browseId, item.params).fold(
+                onSuccess = { shelves ->
+                    if (shelves.isEmpty()) UiState.Error(text(R.string.nothing_to_explore))
+                    else UiState.Success(shelves)
+                },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+        }
+    }
+
+    fun closeMoodGenre(): Boolean {
+        if (_selectedMoodGenre.value == null) return false
+        _selectedMoodGenre.value = null
+        return true
     }
 
     /** Tapping a tab should leave any pushed page behind. */
@@ -1087,25 +1156,82 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadHome() {
         val identity = listenerKey()
+        val generation = homeLoadGeneration.incrementAndGet()
         _home.value = UiState.Loading
-        viewModelScope.launch { fetchHome(identity) }
-    }
-
-    private suspend fun fetchHome(identity: String?) {
-        val result = YtMusicRepository.home()
-        if (identity != listenerKey()) return
         homeContinuation = null
         homeSeenTitles.clear()
-        val next = result.fold(
-            onSuccess = { feed ->
-                homeContinuation = feed.continuation
-                val shelves = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-                if (shelves.isEmpty()) UiState.Error(text(R.string.no_youtube_music_results))
-                else UiState.Success(shelves)
-            },
-            onFailure = { UiState.Error(it.friendly()) },
-        )
-        _home.value = next
+        _homeLoadingMore.value = false
+        _homeRecentlyPlayedLoading.value = _signedIn.value
+        viewModelScope.launch {
+            launch {
+                YtMusicRepository.home()
+                    .onSuccess { feed ->
+                        if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                        homeContinuation = feed.continuation
+                        publishHomeShelves(feed.shelves)
+                    }
+                    .onFailure { failure ->
+                        if (isCurrentHomeLoad(identity, generation) && _home.value !is UiState.Success) {
+                            _home.value = UiState.Error(failure.friendly())
+                        }
+                    }
+            }
+            if (_signedIn.value) {
+                launch {
+                    YtMusicRepository.homeRecentlyPlayed()
+                        .onSuccess { shelf ->
+                            if (isCurrentHomeLoad(identity, generation)) {
+                                _homeRecentlyPlayedLoading.value = false
+                                shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+                            }
+                        }
+                        .onFailure {
+                            if (isCurrentHomeLoad(identity, generation)) _homeRecentlyPlayedLoading.value = false
+                        }
+                }
+            }
+            YtMusicRepository.HOME_SUPPLEMENT_BROWSE_IDS.forEach { browseId ->
+                launch {
+                    YtMusicRepository.homeSupplement(browseId).onSuccess { shelves ->
+                        if (isCurrentHomeLoad(identity, generation)) publishHomeShelves(shelves)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun isCurrentHomeLoad(identity: String?, generation: Long) =
+        identity == listenerKey() && generation == homeLoadGeneration.get()
+
+    private fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
+        val existing = (_home.value as? UiState.Success)?.data.orEmpty()
+        if (prepend) {
+            // YouTube's core home can also contain a stale "Recently played"
+            // shelf. The dedicated history endpoint wins and replaces it.
+            val replacing = shelves.map { it.title.lowercase(Locale.ROOT) }.toSet()
+            homeSeenTitles.addAll(replacing)
+            _home.value = UiState.Success(shelves + existing.filterNot {
+                it.title.lowercase(Locale.ROOT) in replacing
+            })
+            return
+        }
+        val added = shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+        if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+    }
+
+    /** Refreshes the core feed without blanking the current Play page first. */
+    private suspend fun refreshHome(identity: String?) = coroutineScope {
+        val recent = if (_signedIn.value) async { YtMusicRepository.homeRecentlyPlayed() } else null
+        YtMusicRepository.home().onSuccess { feed ->
+            if (identity != listenerKey()) return@onSuccess
+            homeContinuation = feed.continuation
+            homeSeenTitles.clear()
+            val shelves = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+            if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
+        }
+        recent?.await()?.onSuccess { shelf ->
+            if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+        }
     }
 
     /**
@@ -1677,7 +1803,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             // be swapped for the header's wording underneath them.
                             page.header?.let { header ->
                                 if (title.isBlank()) name = header.title
-                                if (subtitle.isBlank()) credit = header.subtitle
+                                // Album cards often only carry the artist, while
+                                // the page header also carries the release year.
+                                // Prefer that richer line so the year appears
+                                // directly below the artist on the album page.
+                                if (resolved == BrowseType.ALBUM && header.subtitle.isNotBlank()) {
+                                    credit = header.subtitle
+                                } else if (subtitle.isBlank()) {
+                                    credit = header.subtitle
+                                }
                                 if (thumbnailUrl == null) artwork = header.thumbnailUrl
                             }
                             description = page.description

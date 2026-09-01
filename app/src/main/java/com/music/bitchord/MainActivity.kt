@@ -165,10 +165,12 @@ import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.dockedPlayerAvailable
 import com.music.bitchord.ui.player.dockedPlayerWidth
 import com.music.bitchord.ui.screens.DetailScreen
+import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
+import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.ui.replay.ReplayScreen
 import com.music.bitchord.ui.replay.cards
@@ -404,6 +406,7 @@ private fun BitChordApp(
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
+    val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
 
     // The top bar's icon is the quiet, always-there nudge; this is the
     // once-per-launch popup version of the same news. `updateDialogShown`
@@ -429,6 +432,8 @@ private fun BitChordApp(
     val query by viewModel.query.collectAsStateWithLifecycle()
     val results by viewModel.results.collectAsStateWithLifecycle()
     val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+    val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
+    val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
     val libraryState by viewModel.library.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
@@ -544,13 +549,14 @@ private fun BitChordApp(
 
     val homeListState = rememberLazyListState()
     val exploreListState = rememberLazyListState()
+    val moodGenreListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
     val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
-        TAB_EXPLORE -> exploreListState
+        TAB_EXPLORE -> if (selectedMoodGenre == null) exploreListState else moodGenreListState
         TAB_LIBRARY -> libraryListState
         else -> searchListState
     }
@@ -1347,6 +1353,9 @@ private fun BitChordApp(
             enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources &&
                 !showReplay,
         ) { viewModel.closeDetail() }
+        BackHandler(enabled = selectedMoodGenre != null && detail == null && !showSettings && !showReplay) {
+            viewModel.closeMoodGenre()
+        }
         BackHandler(enabled = showDiscord) {
             showDiscord = false
         }
@@ -1368,7 +1377,7 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling &&
-                !showSources && !showReplay && selectedTab != TAB_HOME,
+                !showSources && !showReplay && selectedMoodGenre == null && selectedTab != TAB_HOME,
         ) {
             selectedTab = TAB_HOME
         }
@@ -1751,35 +1760,38 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             onLoadMore = viewModel::loadMoreHome,
                             loadingMore = homeLoadingMore,
+                            recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
-                        TAB_EXPLORE -> HomeScreen(
+                        TAB_EXPLORE -> selectedMoodGenre?.let { category ->
+                            MoodGenrePlaylistsScreen(
+                                title = category.title,
+                                state = moodGenreShelves,
+                                listState = moodGenreListState,
+                                onItemClick = { item ->
+                                    when {
+                                        item.videoId != null -> playRadio(
+                                            Song(
+                                                videoId = item.videoId,
+                                                title = item.title,
+                                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                                                thumbnailUrl = item.thumbnailUrl,
+                                            ),
+                                        )
+                                        item.browseId != null -> viewModel.openDetail(
+                                            browseId = item.browseId,
+                                            title = item.title,
+                                            subtitle = item.subtitle,
+                                            thumbnailUrl = item.thumbnailUrl,
+                                        )
+                                    }
+                                },
+                                onRetry = { viewModel.openMoodGenre(category) },
+                                contentPadding = listPadding,
+                            )
+                        } ?: ExploreScreen(
                             state = exploreState,
                             listState = exploreListState,
-                            title = stringResource(R.string.explore),
-                            onItemClick = { item ->
-                                when {
-                                    item.videoId != null -> playRadio(
-                                        Song(
-                                            videoId = item.videoId,
-                                            title = item.title,
-                                            // The card's own subtitle is billed
-                                            // as "Song • Chelsea Wolfe"; only
-                                            // the credit belongs in the field
-                                            // the player, mini player and
-                                            // everything downstream read.
-                                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        ),
-                                    )
-                                    item.browseId != null -> viewModel.openDetail(
-                                        browseId = item.browseId,
-                                        title = item.title,
-                                        subtitle = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                    )
-                                }
-                            },
-                            onItemLongPress = onBrowseLongPress,
+                            onCategoryClick = viewModel::openMoodGenre,
                             onRetry = viewModel::loadExplore,
                             refreshing = MainViewModel.Feed.EXPLORE in refreshing,
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
@@ -1900,6 +1912,7 @@ private fun BitChordApp(
                         showSettings -> stringResource(R.string.settings)
                         showReplay -> stringResource(R.string.replay)
                         detail != null -> detail.title
+                        selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
                         else -> tabs[selectedTab].let {
                             if (it.label == "Play") stringResource(R.string.listen_now) else it.label
                         }
@@ -1908,7 +1921,7 @@ private fun BitChordApp(
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
                         showSettings || showAccountScrobbling || showSources || showDiscord || showHistory ||
-                            (libraryShowAll != null && detail == null) -> true
+                            (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
                         showReplay -> replayScrolled
@@ -1926,6 +1939,7 @@ private fun BitChordApp(
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
+                        selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
                         else -> null
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
@@ -2038,6 +2052,7 @@ private fun BitChordApp(
                                 searchFocusTrigger = 0
                             }
                             viewModel.clearDetail()
+                            viewModel.closeMoodGenre()
                             showSettings = false
                             showAccountScrobbling = false
                             showReplay = false

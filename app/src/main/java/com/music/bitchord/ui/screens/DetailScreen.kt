@@ -138,6 +138,9 @@ private const val SEARCH_ITEM_INDEX = 1
 /** The inset the header text and the action pills share. */
 private val HEADER_GUTTER = PAGE_GUTTER + 14.dp
 
+/** Extra breathing room for the editorial copy on album and artist pages. */
+private val ABOUT_GUTTER = PAGE_GUTTER + 12.dp
+
 /**
  * How far past the foot of the artwork the title block is allowed to hang.
  *
@@ -1255,7 +1258,7 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
             style = MaterialTheme.typography.titleMedium,
             color = palette.onBackground,
             modifier = Modifier.padding(
-                start = PAGE_GUTTER, end = PAGE_GUTTER, top = 2.dp, bottom = 6.dp,
+                start = ABOUT_GUTTER, end = ABOUT_GUTTER, top = 2.dp, bottom = 6.dp,
             ),
         )
         Text(
@@ -1269,7 +1272,7 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize()
-                .padding(horizontal = PAGE_GUTTER)
+                .padding(horizontal = ABOUT_GUTTER)
                 .let { m -> if (clipped || expanded) m.clickable { expanded = !expanded } else m },
         )
         if (clipped || expanded) {
@@ -1278,7 +1281,7 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
                 style = MaterialTheme.typography.labelLarge,
                 color = palette.accent,
                 modifier = Modifier
-                    .padding(horizontal = PAGE_GUTTER, vertical = 4.dp)
+                    .padding(horizontal = ABOUT_GUTTER, vertical = 4.dp)
                     .clickable { expanded = !expanded },
             )
         }
@@ -1489,7 +1492,7 @@ private fun DetailPage.headerLines(trackCount: Int): Pair<String, String> {
         kind ?: type.localizedLabel(),
         year,
         trackCount.takeIf { it > 0 }?.let {
-            pluralStringResource(R.plurals.song_count_plural, it, it)
+            pluralStringResource(R.plurals.track_count_plural, it, it)
         },
     ).joinToString(" • ").uppercase(Locale.getDefault())
     return credit to meta

@@ -64,6 +64,7 @@ import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SignInBanner
 import com.music.bitchord.ui.components.feedMoreSkeleton
 import com.music.bitchord.ui.components.feedSkeleton
+import com.music.bitchord.ui.components.recentlyPlayedSkeleton
 import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.player.MeshGradientBackground
@@ -93,6 +94,7 @@ fun HomeScreen(
     // Explore doesn't page — only Home has a continuation worth following.
     onLoadMore: (() -> Unit)? = null,
     loadingMore: Boolean = false,
+    recentlyPlayedLoading: Boolean = false,
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -124,6 +126,7 @@ fun HomeScreen(
                     MessageState(state.message, actionLabel = stringResource(R.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
+                    if (recentlyPlayedLoading) recentlyPlayedSkeleton()
                     itemsIndexedShelves(state.data, onItemClick, onItemLongPress)
                     if (loadingMore) feedMoreSkeleton()
                 }
