@@ -75,6 +75,13 @@ object NerdStats {
                 else -> claimed?.isLossless == true
             }
 
+        /** Dolby Atmos decoded as E-AC-3 JOC; deliberately distinct from lossless. */
+        val isDolbyAtmos: Boolean
+            get() = when {
+                mimeType != null -> isDolbyAtmosMime(mimeType)
+                else -> claimed?.isDolbyAtmos == true
+            }
+
         /**
          * Whether this is better than CD quality — the line Tidal, Lossless and
          * Apple Music all draw it at: past 16-bit or past 48kHz, not merely
@@ -125,6 +132,9 @@ object NerdStats {
      */
     fun isLosslessMime(mimeType: String?): Boolean =
         mimeType != null && LOSSLESS_CODEC_SUFFIXES.any { mimeType.endsWith(it) }
+
+    fun isDolbyAtmosMime(mimeType: String?): Boolean =
+        mimeType != null && (mimeType.endsWith("eac3-joc") || mimeType.endsWith("eac3"))
 
     /**
      * The bitrate a lossy stream has to reach to be worth calling out.

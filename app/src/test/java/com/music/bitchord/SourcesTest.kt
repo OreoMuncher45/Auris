@@ -84,6 +84,15 @@ class SourcesTest {
         assertEquals("Unknown format", StreamFormat().summary)
     }
 
+    @Test
+    fun `Dolby Atmos is a distinct premium codec`() {
+        val atmos = StreamFormat(codec = "eac3-joc")
+        assertTrue(atmos.isDolbyAtmos)
+        assertEquals(false, atmos.isLossless)
+        assertEquals("Dolby Atmos", atmos.summary)
+        assertTrue(SourceResolver.worthSwapping(atmos, StreamFormat(codec = "aac", kbps = 332)))
+    }
+
     /**
      * The badge tiers. "Hi-Quality" exists to separate a module's 320kbps
      * stream from YouTube's 160kbps Opus, which the screen otherwise renders

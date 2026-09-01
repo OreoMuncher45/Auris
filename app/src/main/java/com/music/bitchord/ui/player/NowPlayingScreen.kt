@@ -125,10 +125,12 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -3893,6 +3895,12 @@ private fun LosslessOrStats(
             animated = true,
             modifier = modifier,
         )
+        nerdStats?.isDolbyAtmos == true -> LosslessLabel(
+            text = "Dolby Atmos",
+            animated = true,
+            iconPainter = painterResource(R.drawable.ic_dolby_atmos),
+            modifier = modifier,
+        )
         // Lossy, but the good end of lossy — a module's 320kbps tier, which
         // for a great many tracks is the best copy that exists anywhere the
         // app can reach. See [NerdStats.Snapshot.isHiQuality].
@@ -3905,20 +3913,36 @@ private fun LosslessOrStats(
     }
 }
 
-/** A headphone glyph ahead of the quality tag — "Upgrading Quality", "Hi-Quality", "Lossless". */
+/** A quality glyph ahead of the status label. */
 @Composable
-private fun LosslessLabel(text: String, animated: Boolean, modifier: Modifier = Modifier) {
+private fun LosslessLabel(
+    text: String,
+    animated: Boolean,
+    modifier: Modifier = Modifier,
+    icon: ImageVector = Icons.Rounded.Headphones,
+    iconPainter: Painter? = null,
+) {
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = Icons.Rounded.Headphones,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = if (animated) 0.7f else 0.45f),
-            modifier = Modifier.size(13.dp),
-        )
+        val tint = Color.White.copy(alpha = if (animated) 0.7f else 0.45f)
+        if (iconPainter != null) {
+            Icon(
+                painter = iconPainter,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(width = 15.dp, height = 11.dp),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(13.dp),
+            )
+        }
         Spacer(Modifier.width(4.dp))
         if (animated) {
             ShimmerText(text = text)

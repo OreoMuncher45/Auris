@@ -603,7 +603,7 @@ object SourceResolver {
      * in the audio for nothing. 160 to 320 clears it; 128 to 192 does not.
      */
     internal fun worthSwapping(candidate: StreamFormat, playing: StreamFormat?): Boolean {
-        if (candidate.isLossless == true) return true
+        if (candidate.isLossless == true || candidate.isDolbyAtmos) return true
         val gain = (candidate.kbps ?: return false) - (playing?.kbps ?: return false)
         return gain >= UPGRADE_MIN_GAIN_KBPS
     }
@@ -884,7 +884,7 @@ object SourceResolver {
             // a track already playing can check it — see [SourceStream.durationSec].
             val stream = opened.copy(durationSec = TrackMatcher.secondsOf(match.durationText))
             val served = stream.format
-            if (!wantsLossless || served.isLossless == true || served.statesNothingLossy) {
+            if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
                 TrackLog.d(
                     TAG,
                     "${source.displayName} matched '${match.title}' by '${match.artist}' " +
@@ -927,6 +927,7 @@ object SourceResolver {
     internal fun isBetter(candidate: StreamFormat, current: StreamFormat?): Boolean {
         if (current == null) return true
         if (candidate.isLossless != current.isLossless) return candidate.isLossless == true
+        if (candidate.isDolbyAtmos != current.isDolbyAtmos) return candidate.isDolbyAtmos
         return (candidate.kbps ?: 0) > (current.kbps ?: 0)
     }
 

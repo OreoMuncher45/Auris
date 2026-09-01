@@ -287,6 +287,11 @@ class ModuleSource(
         mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
             ?.takeIf { it.isNotEmpty() }
             ?.let { return it }
+        val qualityText = quality.orEmpty().uppercase(Locale.ROOT)
+        // Tidal's MAX endpoint identifies its Dolby Atmos HLS rendition as
+        // EAC3_JOC. Older module responses expose only "Dolby Atmos", so
+        // preserve its real codec instead of reducing the stream to unknown.
+        if ("ATMOS" in qualityText || "EAC3_JOC" in qualityText || "EC-3" in qualityText) return "eac3-joc"
         if (qualityTier(quality.orEmpty()) == LOSSLESS) return "flac"
         return url.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)
             .takeIf { it in AUDIO_EXTENSIONS }
