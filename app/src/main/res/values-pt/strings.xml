@@ -134,8 +134,6 @@
     <string name="widget_preview_artist">Artista</string>
     <string name="download_quality">Qualidade de download</string>
     <string name="download_wifi_only">Baixar apenas por Wi-Fi</string>
-    <string name="video_audio_conversion">Não converter músicas em vídeo para versão em áudio</string>
-    <string name="video_audio_conversion_subtitle">Reproduz o vídeo musical como ele é, em vez de substituí-lo pela versão em áudio do catálogo</string>
     <string name="animated_cover_cellular">Reproduzir capa animada com dados móveis</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Suas músicas, artistas, álbuns e gêneros mais ouvidos</string>

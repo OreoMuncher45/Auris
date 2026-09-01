@@ -710,11 +710,10 @@ object Downloads {
      * before its turn — and a preparation is not a download.
      */
     internal suspend fun prepare(context: Context, song: Song): Prepared = withContext(Dispatchers.IO) {
-        // A music-video entry is swapped for the catalogue track behind it,
-        // the same way queueing one is. It matters more here: the video's
-        // title is where "(Official Video)" lives, and that would be baked
-        // into a filename this app never gets to correct.
-        val track = runCatching { YtMusicRepository.resolveAudio(song) }.getOrDefault(song)
+        // Downloads preserve the exact item the listener picked. Catalogue
+        // matching is a manual playback action and must not silently change a
+        // download or its filename.
+        val track = song
         // Read once, here, for the whole of this track. Both routes below
         // and the re-resolve inside [Downloader.fetch] have to agree on
         // which rung they are fetching, and re-reading the setting per call

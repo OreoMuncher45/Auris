@@ -443,6 +443,7 @@ private fun BitChordApp(
     val lyricsChecked by viewModel.lyricsChecked.collectAsStateWithLifecycle()
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
+    val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
     // Local Music has no artwork to wash the bar in, so it renders with a
@@ -515,6 +516,13 @@ private fun BitChordApp(
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
+    // A conversion is deliberately scoped to the current listening session.
+    // Keeping the complete original row here lets Revert restore the exact
+    // video upload, including its title and playlist identity, rather than
+    // trying to reconstruct it from the catalogue match.
+    var convertedFromVideo by remember { mutableStateOf<Song?>(null) }
+    var convertedAudioId by remember { mutableStateOf<String?>(null) }
+    var switchingAudioVersion by remember { mutableStateOf(false) }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off applies to
@@ -619,35 +627,16 @@ private fun BitChordApp(
 
     val play: (List<Song>, Int) -> Unit = { songs, index ->
         scope.launch {
-            val selected = songs[index]
-            val starting = YtMusicRepository.resolveAudio(selected).copy(
-                setVideoId = selected.setVideoId,
-            )
-            val queued = songs.toMutableList().also { it[index] = starting }
-            controller?.playSongs(queued, index)
+            controller?.playSongs(songs, index)
             // Nothing to raise where the player is already open beside the page.
             if (!playerDocked) showNowPlaying = true
-            // Starting playback only waits on the track about to play; the
-            // rest of a long album/playlist resolves in the background and
-            // is patched into the queue well before it's reached.
-            queued.forEachIndexed { i, song ->
-                if (i == index || !song.isVideo) return@forEachIndexed
-                launch {
-                    val resolved = YtMusicRepository.resolveAudio(song).copy(
-                        setVideoId = song.setVideoId,
-                    )
-                    if (resolved.videoId == song.videoId) return@launch
-                    // Found by id rather than by the index it went in at:
-                    // shuffling and queue edits both move tracks around while
-                    // this is in flight, and a song that has since been removed
-                    // must not have something else overwritten in its place.
-                    val c = controller ?: return@launch
-                    val at = (0 until c.mediaItemCount)
-                        .firstOrNull { c.getMediaItemAt(it).mediaId == song.videoId }
-                        ?: return@launch
-                    c.replaceMediaItem(at, resolved.toMediaItem())
-                }
-            }
+        }
+    }
+    LaunchedEffect(player.song?.videoId) {
+        if (player.song?.videoId != convertedAudioId) {
+            convertedFromVideo = null
+            convertedAudioId = null
+            switchingAudioVersion = false
         }
     }
 
@@ -660,26 +649,23 @@ private fun BitChordApp(
      */
     val playRadio: (Song) -> Unit = { song ->
         scope.launch {
-            val resolved = YtMusicRepository.resolveAudio(song)
-            controller?.playSongs(listOf(resolved), 0)
+            controller?.playSongs(listOf(song), 0)
             if (!playerDocked) showNowPlaying = true
         }
     }
     val addToQueue: (Song) -> Unit = { song ->
         scope.launch {
-            val resolved = YtMusicRepository.resolveAudio(song)
             // The end of what the user queued, not the end of the queue: a song
             // asked for by name outranks whatever AutoPlay lined up behind it.
-            controller?.let { it.addMediaItem(it.autoplaySectionStart(), resolved.toMediaItem()) }
+            controller?.let { it.addMediaItem(it.autoplaySectionStart(), song.toMediaItem()) }
         }
     }
     val playNext: (Song) -> Unit = { song ->
         scope.launch {
-            val resolved = YtMusicRepository.resolveAudio(song)
             controller?.let {
                 it.addMediaItem(
                     (it.currentMediaItemIndex + 1).coerceAtMost(it.mediaItemCount),
-                    resolved.toMediaItem(),
+                    song.toMediaItem(),
                 )
             }
         }
@@ -784,27 +770,6 @@ private fun BitChordApp(
                         songs.size,
                     )
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                    // Video uploads are swapped for their catalogue audio
-                    // release behind the queue rather than in front of it, for
-                    // the same reason [play] does it: a hundred rows' worth of
-                    // lookups is a wait, and none of them is the track playing
-                    // now. Found by id rather than by index — the queue can be
-                    // edited while these are in flight.
-                    songs.forEach { song ->
-                        if (!song.isVideo) return@forEach
-                        launch {
-                            val resolved = YtMusicRepository.resolveAudio(song)
-                            if (resolved.videoId == song.videoId) return@launch
-                            // The session can go away while a lookup is out —
-                            // the activity is recreated, the service is stopped —
-                            // and a released controller has no queue to patch.
-                            if (!c.isConnected) return@launch
-                            val index = (0 until c.mediaItemCount)
-                                .firstOrNull { c.getMediaItemAt(it).mediaId == song.videoId }
-                                ?: return@launch
-                            c.replaceMediaItem(index, resolved.toMediaItem())
-                        }
-                    }
                 }
             }
         }
@@ -1195,6 +1160,49 @@ private fun BitChordApp(
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
             durationMs = player.durationMs,
+            isAudioVersion = convertedAudioId == song.videoId,
+            audioVersionSwitching = switchingAudioVersion,
+            onToggleAudioVersion = audioVersion@{
+                val c = controller ?: return@audioVersion
+                val index = c.currentMediaItemIndex
+                if (index !in 0 until c.mediaItemCount) return@audioVersion
+                val original = convertedFromVideo
+                if (original != null && convertedAudioId == song.videoId) {
+                    val position = c.currentPosition
+                    val wasPlaying = c.isPlaying
+                    c.replaceMediaItem(index, original.toMediaItem())
+                    c.seekTo(index, position)
+                    if (wasPlaying) c.play()
+                    convertedFromVideo = null
+                    convertedAudioId = null
+                    return@audioVersion
+                }
+                if (!song.isVideo || switchingAudioVersion) return@audioVersion
+                scope.launch {
+                    switchingAudioVersion = true
+                    TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
+                    val audio = runCatching { YtMusicRepository.resolveAudio(song) }.getOrNull()
+                    switchingAudioVersion = false
+                    // A match can be absent or the listener may have skipped
+                    // while it was being found. Neither should change a queue.
+                    if (audio == null || audio.videoId == song.videoId) {
+                        TrackLog.w("Player", "audio switch found no distinct official song", song.videoId)
+                        return@launch
+                    }
+                    if (c.currentMediaItemIndex != index || c.currentMediaItem?.mediaId != song.videoId) {
+                        TrackLog.d("Player", "audio switch discarded; listener changed track", song.videoId)
+                        return@launch
+                    }
+                    val position = c.currentPosition
+                    val wasPlaying = c.isPlaying
+                    convertedFromVideo = song
+                    convertedAudioId = audio.videoId
+                    TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
+                    c.replaceMediaItem(index, audio.copy(isVideoOrigin = true).toMediaItem())
+                    c.seekTo(index, position)
+                    if (wasPlaying) c.play()
+                }
+            },
             onPlayPause = {
                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
             },
@@ -1784,6 +1792,8 @@ private fun BitChordApp(
                             filter = filter,
                             onFilterChange = viewModel::onFilterChange,
                             results = results,
+                            loadingMore = searchLoadingMore,
+                            onLoadMore = viewModel::loadMoreSearchResults,
                             listState = searchListState,
                             focusTrigger = searchFocusTrigger,
                             // Search hits are alternatives to each other, not a running

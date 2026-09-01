@@ -192,7 +192,6 @@ fun SettingsScreen(
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
-    val convertVideoToAudio by AppSettings.convertVideoToAudio.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -492,23 +491,6 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setShowNerdStats(!nerdStats) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.SmartDisplay,
-                title = stringResource(R.string.video_audio_conversion),
-                subtitle = stringResource(R.string.video_audio_conversion_subtitle),
-                trailing = {
-                    Switch(
-                        checked = !convertVideoToAudio,
-                        onCheckedChange = { AppSettings.setConvertVideoToAudio(!it) },
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setConvertVideoToAudio(!convertVideoToAudio) },
             )
         }
 

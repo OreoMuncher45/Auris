@@ -87,6 +87,7 @@ import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -170,6 +171,7 @@ import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -189,6 +191,10 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlinx.coroutines.launch
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.materials.HazeMaterials
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -468,6 +474,10 @@ fun NowPlayingScreen(
     isLoading: Boolean,
     positionMs: Long,
     durationMs: Long,
+    /** True only while this current item is the manual catalogue-audio match. */
+    isAudioVersion: Boolean,
+    /** A catalogue lookup is in progress for this video's manual conversion. */
+    audioVersionSwitching: Boolean,
     queue: List<Song>,
     queueIndex: Int,
     hasPrevious: Boolean,
@@ -494,6 +504,7 @@ fun NowPlayingScreen(
      * freshest duration is.
      */
     onSeekFraction: (Float) -> Unit,
+    onToggleAudioVersion: () -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit,
     onToggleAutoplay: () -> Unit,
@@ -524,6 +535,10 @@ fun NowPlayingScreen(
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = rememberHaptics()
+    // Kept local to the player: a modal player is not in the page's Haze
+    // source tree, so it needs its own source for the same frosted material as
+    // the bottom navigation pill.
+    val playerHaze = remember { HazeState() }
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -913,7 +928,10 @@ fun NowPlayingScreen(
         // every skip, then rests. Position ticks recompose this screen twice a
         // second and must not drag a full-screen blur along with them, which is
         // why the palette is passed as one immutable value.
-        MeshGradientBackground(palette = meshColors, trackKey = song.videoId)
+        MeshGradientBackground(
+            palette = meshColors,
+            trackKey = song.videoId,
+        )
 
         // The artwork, edge to edge and running up behind the status bar,
         // dissolving into the backdrop where the sleeve's bottom edge would
@@ -959,6 +977,10 @@ fun NowPlayingScreen(
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
                         .height(heroHeight)
+                        // Haze must observe the drawable layer itself. A
+                        // source on the surrounding layout only captured its
+                        // mesh backdrop, leaving the cover sharp in the pill.
+                        .hazeSource(playerHaze)
                         .graphicsLayer {
                             // Hands its opacity to the clip as the clip takes
                             // over, and takes it straight back if there is no
@@ -1001,7 +1023,8 @@ fun NowPlayingScreen(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .fillMaxWidth()
-                            .height(heroHeight),
+                            .height(heroHeight)
+                            .hazeSource(playerHaze),
                     )
                 }
             }
@@ -1382,6 +1405,9 @@ fun NowPlayingScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            // The compact sleeve is the source while full
+                            // bleed artwork is off, including its Canvas.
+                            .hazeSource(playerHaze)
                             .graphicsLayer { alpha = if (artLoaded) 1f - heroVisible else 1f }
                             // A drop shadow grounds a photo; on the flat
                             // placeholder tile it has nothing to sit behind, so
@@ -1493,11 +1519,15 @@ fun NowPlayingScreen(
                                     // agree, so the line reads the same way every
                                     // time and the eye can find the half it wants
                                     // without re-parsing the sentence.
-                                    text = stringResource(
-                                        R.string.automix_analysis_status,
-                                        smartAnalysis.current.localizedLabel(),
-                                        smartAnalysis.next.localizedLabel(),
-                                    ),
+                                    text = if (song.isVideoOrigin) {
+                                        stringResource(R.string.automix_not_supported_video)
+                                    } else {
+                                        stringResource(
+                                            R.string.automix_analysis_status,
+                                            smartAnalysis.current.localizedLabel(),
+                                            smartAnalysis.next.localizedLabel(),
+                                        )
+                                    },
                                     style = nerdStyle,
                                     // Dimmer than the measured line above it: that
                                     // one describes the audio, this one describes
@@ -1510,6 +1540,22 @@ fun NowPlayingScreen(
                             }
                         }
                     }
+                }
+
+                // Video uploads begin as their own audio, immediately. This
+                // frosted, pill-shaped control is the one explicit opt-in to a
+                // catalogue match; after a successful swap it becomes Revert
+                // so a bad match is one tap away from the original upload.
+                if ((song.isVideo || isAudioVersion) && !lyricsOpen && p < 0.5f) {
+                    VideoAudioVersionButton(
+                        audioVersion = isAudioVersion,
+                        loading = audioVersionSwitching,
+                        onClick = onToggleAudioVersion,
+                        hazeState = playerHaze,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = artTop - 20.dp),
+                    )
                 }
 
                 // Sits in the gap under the sleeve, clear of its rounded
@@ -2896,6 +2942,99 @@ private fun LyricsLoadingLine(trackKey: Any, modifier: Modifier = Modifier) {
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.padding(vertical = 4.dp),
     )
+}
+
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun VideoAudioVersionButton(
+    audioVersion: Boolean,
+    loading: Boolean,
+    onClick: () -> Unit,
+    hazeState: HazeState,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberHaptics()
+    val shape = RoundedCornerShape(percent = 50)
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .clip(shape)
+            .optimizedHazeEffect(
+                state = hazeState,
+                // The opaque surface used by the nav bar is too dark over a
+                // player cover. A faint material tint keeps the same glass
+                // blur while letting the artwork's colour show through.
+                style = HazeMaterials.regular(MaterialTheme.colorScheme.surface.copy(alpha = 0.16f)),
+            )
+            .background(Color.White.copy(alpha = 0.04f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(
+            modifier = Modifier.padding(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            VideoAudioTab(
+                icon = Icons.Rounded.Videocam,
+                contentDescription = stringResource(R.string.revert_to_original),
+                selected = !audioVersion,
+                enabled = audioVersion && !loading,
+                onClick = {
+                    haptics.play(Haptic.Tap)
+                    onClick()
+                },
+            )
+            VideoAudioTab(
+                icon = BitChordIcons.MusicNote,
+                contentDescription = stringResource(R.string.convert_to_audio),
+                selected = audioVersion,
+                enabled = !audioVersion && !loading,
+                onClick = {
+                    haptics.play(Haptic.Tap)
+                    onClick()
+                },
+                loading = loading,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VideoAudioTab(
+    icon: ImageVector,
+    contentDescription: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    loading: Boolean = false,
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = if (selected) 0.20f else 0f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(17.dp),
+                color = Color.White,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White.copy(alpha = if (selected) 1f else 0.58f),
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
 }
 
 /**

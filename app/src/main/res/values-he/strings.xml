@@ -134,8 +134,6 @@
     <string name="widget_preview_artist">אמן</string>
     <string name="download_quality">איכות הורדה</string>
     <string name="download_wifi_only">הורדה ב-Wi-Fi בלבד</string>
-    <string name="video_audio_conversion">הפסקת המרת שירי וידאו לגרסת אודיו</string>
-    <string name="video_audio_conversion_subtitle">מנגן קליפ מוזיקלי כפי שהוא במקום להחליף אותו בגרסת האודיו הרשמית מהקטלוג</string>
     <string name="animated_cover_cellular">הפעלת עטיפה מונפשת ברשת הסלולרית</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">השירים, האמנים, האלבומים והז\'אנרים המובילים שלך</string>

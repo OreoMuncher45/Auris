@@ -15,6 +15,12 @@ data class Song(
     /** A music-video upload rather than the catalogue track. */
     val isVideo: Boolean = false,
     /**
+     * True for a video upload and for its manually selected catalogue match.
+     * The latter remains video-origin so playback policies such as AutoMix do
+     * not mistake a converted video for a normal music track.
+     */
+    val isVideoOrigin: Boolean = isVideo,
+    /**
      * This track's identity *within one playlist*, which is not its [videoId]:
      * the same song added twice is two entries with two set-video-ids, and
      * removing one of them is only expressible in those terms. Present only on
@@ -144,7 +150,10 @@ sealed interface SearchResult {
 }
 
 enum class SearchFilter(val label: String, val params: String?) {
+    /** YouTube Music's mixed search page: songs, artists, albums and playlists. */
+    ALL("All", null),
     SONGS("Songs", "EgWKAQIIAWoKEAkQChAFEAMQBA=="),
+    VIDEOS("Videos", "EgWKAQIQAWoKEAkQChAFEAMQBA=="),
     ALBUMS("Albums", "EgWKAQIYAWoKEAkQChAFEAMQBA=="),
     ARTISTS("Artists", "EgWKAQIgAWoKEAkQChAFEAMQBA=="),
     PLAYLISTS("Playlists", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),

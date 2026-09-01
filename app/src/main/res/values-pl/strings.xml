@@ -134,8 +134,6 @@
     <string name="widget_preview_artist">Artysta</string>
     <string name="download_quality">Jakość pobierania</string>
     <string name="download_wifi_only">Pobieraj tylko przez Wi-Fi</string>
-    <string name="video_audio_conversion">Zrezygnuj z konwertowania utworów wideo do wersji audio</string>
-    <string name="video_audio_conversion_subtitle">Odtwarza przesłany utwór wideo w oryginalnej wersji zamiast zastępować go oficjalnym wydaniem audio</string>
     <string name="animated_cover_cellular">Odtwarzaj animowaną okładkę w sieci komórkowej</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Twoje top utwory, artyści, albumy i gatunki</string>

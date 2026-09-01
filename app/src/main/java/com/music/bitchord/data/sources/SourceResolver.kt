@@ -205,7 +205,10 @@ object SourceResolver {
      * gets its hearing.
      */
     suspend fun substituteForYouTube(target: TrackMatcher.Target): SourceStream? {
-        if (target.title.isBlank()) return null
+        // Video rows always use YouTube's own stream unless the listener
+        // explicitly converts the current item in the player. A module match
+        // is another recording and can be a wrong song altogether.
+        if (target.title.isBlank() || target.isVideo) return null
         val active = SourceRegistry.active()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val request = requestForNow()
@@ -249,7 +252,7 @@ object SourceResolver {
      * been pinned, so the ordinary resolve at playback time is untouched.
      */
     suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
-        if (target.title.isBlank()) return null
+        if (target.title.isBlank() || target.isVideo) return null
         val active = SourceRegistry.active()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val quick = rankedAbove(youtube.configId, active).filter { it.kind.worthPrefetching }
@@ -311,7 +314,7 @@ object SourceResolver {
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
     ): SourceStream? {
-        if (target.title.isBlank() || target.durationSec == null) return null
+        if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
         val active = SourceRegistry.active()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null

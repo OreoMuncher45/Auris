@@ -109,6 +109,42 @@ object TrackMatcher {
     fun best(candidates: List<Song>, target: Target): Song? = ranked(candidates, target).firstOrNull()
 
     /**
+     * The catalogue counterpart for a music-video upload selected explicitly
+     * by the listener.
+     *
+     * A video and the song it promotes can legitimately differ by well over a
+     * minute: the video includes an intro, an outro and sometimes dialogue.
+     * The ordinary source matcher must reject that gap because it is choosing
+     * a stream without anyone watching it. The player audio switch is a
+     * different contract: it asks YouTube Music's *Songs* shelf for the
+     * official release of a known video. Here an exact recording title,
+     * identical version markers and a shared artist are enough to establish
+     * that relationship; duration only ranks equivalent releases and never
+     * vetoes one.
+     *
+     * This remains deliberately stricter than a search engine's first row.
+     * A cover, remix or karaoke version still cannot cross the switch just
+     * because it happens to share a title.
+     */
+    fun bestOfficialAudioForVideo(candidates: List<Song>, target: Target): Song? {
+        val wanted = parseTitle(target.title, target.artist)
+        if (wanted.core.isEmpty()) return null
+        return candidates
+            .mapNotNull { candidate ->
+                val got = parseTitle(candidate.title, candidate.artist)
+                if (wanted.core != got.core || wanted.versions != got.versions) return@mapNotNull null
+                val artist = artistScore(target.artist, candidate.artist) ?: return@mapNotNull null
+                val duration = target.durationSec?.let { expected ->
+                    secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) } ?: -120
+                } ?: 0
+                candidate to (artist * 1_000 + duration)
+            }
+            .sortedByDescending { it.second }
+            .firstOrNull()
+            ?.first
+    }
+
+    /**
      * Every candidate that really is [target], most confident first.
      *
      * The whole list rather than the winner, because identity is not the only

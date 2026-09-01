@@ -195,7 +195,7 @@ object QualityUpgrade {
         // lookup that was still running got cancelled outright the moment
         // YouTube won the race, so a 320kbps source never finished and never
         // played. [SourceResolver.upgradeFor] applies the real quality bar.
-        if (target.title.isBlank() ||
+        if (target.title.isBlank() || target.isVideo ||
             mediaId in refused ||
             !SourceResolver.canSubstituteForYouTube()
         ) {
@@ -266,7 +266,9 @@ object QualityUpgrade {
      * entry and the settings; nothing here touches the network.
      */
     fun couldStillUpgrade(mediaId: String, uri: Uri?): Boolean {
-        if (uri == null || uri.getQueryParameter("v") == null) return false
+        if (uri == null || uri.getQueryParameter("v") == null ||
+            uri.getQueryParameter("m") == "1"
+        ) return false
         // Already upgraded: this *is* the better copy.
         if (uri.getQueryParameter(MARKER) != null) return false
         if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false

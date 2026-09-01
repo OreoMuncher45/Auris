@@ -153,31 +153,43 @@ object YtMusicRepository {
         }
     }
 
+    /** One page of a search response, with the token for its next page if present. */
+    data class SearchPage(
+        val rows: List<SearchResult>,
+        val continuation: String?,
+    )
+
     /**
-     * Search results across every page YouTube exposes for the chosen filter.
-     *
-     * The first response normally carries only about two dozen rows plus a
-     * continuation token. Returning it as the whole answer made filters such as
-     * Playlists stop around 20–25 rows even when the account had much more to
-     * show. Follow the same bounded paging contract as browse feeds: dedupe by
-     * the row's real identity, stop at [MAX_PAGES], and keep what was already
-     * collected if a later page fails.
+     * Fetches only the first search page. Publishing it immediately keeps the
+     * search responsive; the UI asks [searchContinuation] for later pages as
+     * the listener reaches the end of the list.
+     */
+    suspend fun searchPage(query: String, filter: SearchFilter): Result<SearchPage> =
+        call("search:${filter.name}") {
+            InnertubeParser.parseSearchPage(
+                Innertube.search(query, filter.params),
+                includeVideos = filter == SearchFilter.VIDEOS,
+            ).let { page ->
+                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+            }
+        }
+
+    /** Fetches the next page of a search only when the result list needs it. */
+    suspend fun searchContinuation(token: String, filter: SearchFilter): Result<SearchPage> = call("search:continuation") {
+        InnertubeParser.parseSearchPage(
+            Innertube.searchContinuation(token),
+            includeVideos = filter == SearchFilter.VIDEOS,
+        ).let { page ->
+            SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+        }
+    }
+
+    /**
+     * Compatibility helper for callers that need candidates but not a scrolling
+     * result screen. Those callers need the first, most relevant page only.
      */
     suspend fun search(query: String, filter: SearchFilter): Result<List<SearchResult>> =
-        call("search:${filter.name}") {
-            val out = LinkedHashMap<String, SearchResult>()
-            var page = InnertubeParser.parseSearchPage(Innertube.search(query, filter.params))
-            var count = 1
-            while (true) {
-                page.rows.forEach { row -> out.putIfAbsent(row.identityKey(), row) }
-                val token = page.continuation ?: break
-                if (count++ >= MAX_PAGES) break
-                page = runCatching {
-                    InnertubeParser.parseSearchPage(Innertube.searchContinuation(token))
-                }.getOrNull() ?: break
-            }
-            out.values.toList()
-        }
+        searchPage(query, filter).map { it.rows }
 
     private fun SearchResult.identityKey(): String = when (this) {
         is SearchResult.Track -> "v:${song.videoId}"
@@ -213,17 +225,15 @@ object YtMusicRepository {
      *
      * Returns [song] unchanged when it isn't a video, or when nothing better
      * turns up — playing the video's own audio track beats guessing at a
-     * substitute, and [song] is what a queue restore or offline retry falls
-     * back to as well. Also unchanged when
-     * [AppSettings.convertVideoToAudio][com.music.bitchord.data.settings.AppSettings.convertVideoToAudio]
-     * is off — the listener has asked to keep video uploads as themselves.
+     * substitute. This is deliberately an explicit action from the player,
+     * never part of normal queueing or playback.
      *
      * [search] already drops video rows from its results (see
      * [InnertubeParser.parseSearch]), so every candidate here is audio-only
      * without a second check.
      */
     suspend fun resolveAudio(song: Song): Song {
-        if (!song.isVideo || !AppSettings.convertVideoToAudio.value) return song
+        if (!song.isVideo) return song
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
             val candidates = search(query, SearchFilter.SONGS)
@@ -231,8 +241,19 @@ object YtMusicRepository {
                 ?.filterIsInstance<SearchResult.Track>()
                 ?.map { it.song }
                 .orEmpty()
-            TrackMatcher.best(candidates, target)?.let { return it }
+            TrackMatcher.best(candidates, target)?.let { match ->
+                Log.d(TAG, "audio switch: '${song.title}' -> '${match.title}' ($query)")
+                return match
+            }
+            // Music-video timing is visual timing, not the audio release's
+            // timing. The manual switch may therefore use the exact official
+            // song/artist match even when the video has a long intro or outro.
+            TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { match ->
+                Log.d(TAG, "audio switch: accepted video/runtime drift '${song.title}' -> '${match.title}' ($query)")
+                return match
+            }
         }
+        Log.w(TAG, "audio switch: no official song match for '${song.title}' by '${song.artist}'")
         return song
     }
 

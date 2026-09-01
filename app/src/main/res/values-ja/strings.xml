@@ -129,8 +129,6 @@
     <string name="widget_preview_artist">アーティスト</string>
     <string name="download_quality">ダウンロード品質</string>
     <string name="download_wifi_only">Wi-Fi接続時のみダウンロード</string>
-    <string name="video_audio_conversion">動画の曲をオーディオ版に変換しない</string>
-    <string name="video_audio_conversion_subtitle">カタログのオーディオ版に差し替えず、ミュージックビデオをそのまま再生します</string>
     <string name="animated_cover_cellular">モバイルデータでアニメーションカバーを再生</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">よく聴いた曲、アーティスト、アルバム、ジャンル</string>

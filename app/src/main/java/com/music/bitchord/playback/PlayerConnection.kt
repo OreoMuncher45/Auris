@@ -193,6 +193,8 @@ fun MediaItem.toSong() = Song(
     isExplicit = mediaMetadata.extras?.takeIf { it.containsKey(EXTRA_EXPLICIT) }
         ?.getBoolean(EXTRA_EXPLICIT),
     isVideo = mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
+    isVideoOrigin = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
+        mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
     fromAutoplay = this.fromAutoplay,
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
@@ -244,6 +246,12 @@ private const val EXTRA_LOCAL_PATH = "bitchord.localPath"
 private const val EXTRA_DURATION = "bitchord.durationText"
 private const val EXTRA_EXPLICIT = "bitchord.explicit"
 private const val EXTRA_IS_VIDEO = "bitchord.isVideo"
+private const val EXTRA_VIDEO_ORIGIN = "bitchord.isVideoOrigin"
+
+/** Whether this item was selected from a music-video row, even after conversion. */
+val MediaItem.isVideoOrigin: Boolean
+    get() = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
+        mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true
 
 /**
  * Where AutoPlay's section of the queue begins, and so where a track queued by
@@ -271,12 +279,8 @@ fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
 /**
  * Custom scheme; PlaybackService resolves the real stream URL at play time.
  *
- * A video-tagged [Song] is expected to already have been swapped for its
- * catalogue audio release by [com.music.bitchord.data.YtMusicRepository.resolveAudio]
- * before this is called — the queue, history and the notification should
- * never see the video upload's id or title, only whatever the audio match
- * resolved to (or the video's own audio, as the deliberate fallback when no
- * match was found).
+ * A video-tagged [Song] plays using the video's own audio by default. The
+ * player can explicitly replace just the current item with a catalogue match.
  */
 /**
  * MP4-family containers (m4a/aac/amr/wma/...) store their header or trailing
@@ -313,6 +317,9 @@ private fun Song.matchQuery(): String = buildString {
     TrackMatcher.secondsOf(durationText)?.let { append("&d=").append(it) }
     albumName?.takeIf { it.isNotBlank() }?.let { append("&l=").append(Uri.encode(it)) }
     isExplicit?.let { append("&e=").append(if (it) "1" else "0") }
+    // `m` controls source routing, not player policy. A converted catalogue
+    // track keeps [isVideoOrigin] for AutoMix, but is intentionally audio here
+    // so the normal source-quality upgrade path can improve it.
     if (isVideo) append("&m=1")
 }
 
@@ -407,7 +414,7 @@ fun Song.toMediaItem(): MediaItem {
             .apply {
                 if (fromAutoplay || offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
-                    isExplicit != null || isVideo
+                    isExplicit != null || isVideo || isVideoOrigin
                 ) {
                     setExtras(
                         bundleOf(
@@ -420,6 +427,7 @@ fun Song.toMediaItem(): MediaItem {
                             EXTRA_SET_VIDEO_ID to setVideoId,
                             EXTRA_EXPLICIT to isExplicit,
                             EXTRA_IS_VIDEO to isVideo,
+                            EXTRA_VIDEO_ORIGIN to isVideoOrigin,
                         ),
                     )
                 }

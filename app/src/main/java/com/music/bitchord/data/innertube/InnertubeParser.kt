@@ -44,7 +44,7 @@ object InnertubeParser {
      */
     fun parseSearch(response: JsonObject): List<SearchResult> = parseSearchPage(response).rows
 
-    fun parseSearchPage(response: JsonObject): SearchPage {
+    fun parseSearchPage(response: JsonObject, includeVideos: Boolean = false): SearchPage {
         // The "All" tab spreads results across several shelf types (card shelf
         // for the top result, then one shelf per category), and the shapes
         // differ per filter. Walking for the row renderer itself is far more
@@ -64,7 +64,9 @@ object InnertubeParser {
                 }
             }
             parseResponsiveListItem(renderer)?.let { song ->
-                if (song.isVideo) return@mapNotNull null
+                // The mixed All page stays music-only; the dedicated Videos
+                // filter is the one place music-video uploads belong.
+                if (song.isVideo != includeVideos) return@mapNotNull null
                 if (seen.add("v:${song.videoId}")) SearchResult.Track(song) else null
             }
         }

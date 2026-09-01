@@ -513,6 +513,14 @@ class CrossfadeController(
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
+        // Even a manual catalogue match is still video-origin. AutoMix's
+        // analysis and cueing are deliberately never applied to either side
+        // of a transition involving a video row.
+        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) {
+            AppSettings.smartTransitionWindow.value = null
+            AppSettings.smartMixInProgress.value = false
+            return
+        }
         val nextDuration = nextItemDurationMs(nextIndex, nextItem)
 
         requestAnalysisAround(player, duration)
@@ -649,6 +657,7 @@ class CrossfadeController(
         val nextIndex = player.nextMediaItemIndex
         if (nextIndex == C.INDEX_UNSET) return
         val nextItem = player.getMediaItemAt(nextIndex)
+        if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return
         requestAnalysis(currentItem, duration)
         requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem))
     }

@@ -576,6 +576,30 @@ class SourcesTest {
         assertFalse(TrackMatcher.hasConflictingAlbums(listOf(wantedAudio), target))
     }
 
+    @Test
+    fun `manual video audio switch accepts the official song despite a long visual intro`() {
+        val target = TrackMatcher.Target(
+            "Big Dawgs",
+            "Hanumankind, Kalmi",
+            // A visual short film can be much longer than its song release.
+            durationSec = 391,
+            isVideo = true,
+        )
+        val officialAudio = song("Big Dawgs", "Hanumankind, Kalmi", "3:11")
+            .copy(videoId = "official-audio")
+        val sameTitleCover = song("Big Dawgs", "Unrelated Cover Artist", "6:31")
+            .copy(videoId = "cover")
+
+        // The ordinary source matcher is right to refuse a multi-minute gap;
+        // the explicit video-to-audio action is allowed to use YTM's official
+        // song row after title, version and artist all agree.
+        assertNull(TrackMatcher.best(listOf(officialAudio, sameTitleCover), target))
+        assertEquals(
+            officialAudio,
+            TrackMatcher.bestOfficialAudioForVideo(listOf(sameTitleCover, officialAudio), target),
+        )
+    }
+
     /**
      * A declared tier is a reason to prefer one copy of a recording over
      * another. It is not a reason to play a different recording — the DJ edit
