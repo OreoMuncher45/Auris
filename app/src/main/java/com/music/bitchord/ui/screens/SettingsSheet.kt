@@ -185,6 +185,7 @@ fun SettingsScreen(
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
+    val showLyricsLogs by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -511,23 +512,6 @@ fun SettingsScreen(
                 title = stringResource(R.string.equalizer),
                 subtitle = stringResource(R.string.equalizer_subtitle),
                 onClick = { openEqualizer(context, sessionId) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = stringResource(R.string.show_nerd_stats),
-                subtitle = stringResource(R.string.show_nerd_stats_subtitle),
-                trailing = {
-                    Switch(
-                        checked = nerdStats,
-                        onCheckedChange = AppSettings::setShowNerdStats,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setShowNerdStats(!nerdStats) },
             )
         }
 
@@ -983,6 +967,42 @@ fun SettingsScreen(
                 title = stringResource(R.string.app_language),
                 subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
                 onClick = onAppLanguage,
+            )
+        }
+
+        SettingsGroup(header = "Advanced Options") {
+            SettingsRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = stringResource(R.string.show_nerd_stats),
+                subtitle = stringResource(R.string.show_nerd_stats_subtitle),
+                trailing = {
+                    Switch(
+                        checked = nerdStats,
+                        onCheckedChange = AppSettings::setShowNerdStats,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setShowNerdStats(!nerdStats) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.History,
+                title = "Lyrics Debug Logs",
+                subtitle = "Show live API queries and scraper activity in the lyrics panel",
+                trailing = {
+                    Switch(
+                        checked = showLyricsLogs,
+                        onCheckedChange = AppSettings::setShowLyricsLogs,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setShowLyricsLogs(!showLyricsLogs) },
             )
         }
 
