@@ -515,20 +515,15 @@ object QualityUpgrade {
      *             (no second look, no search, nothing)
      * ```
      *
-     * The restored track plays the lossy copy for a reason that is correct on
-     * its own: the rendition marker lives on the item URI, [LastPlayed] does not
-     * store it, and the base cache entry still holds YouTube's fully-fetched
-     * Opus — so the bytes come straight off disk with no resolve at all. What is
+     * Selecting the same track in the next service can still play the lossy
+     * copy straight from the base cache, with no resolve at all. What is
      * supposed to happen next is [adoptUnresolved], which exists for precisely
      * that track and says so. It never ran: [couldStillUpgrade] found the id in
      * [asked], put there by last session's *successful* upgrade, and refused.
-     * And because [asked] never expires, skipping away and back could not clear
-     * it either.
      *
      * So the sets that are meant to outlive a queue movement are given the one
-     * boundary they were missing. Called before the queue is restored, which
-     * makes a warm restart behave like a cold one — see
-     * [PlaybackService.onCreate].
+     * boundary they were missing. Clearing them when a new service starts makes
+     * a warm restart behave like a cold one — see [PlaybackService.onCreate].
      *
      * [StreamChoice] is deliberately *not* reset alongside this. It records
      * which source is filling each on-disk cache entry, those entries outlive

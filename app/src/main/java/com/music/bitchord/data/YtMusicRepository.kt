@@ -98,16 +98,7 @@ object YtMusicRepository {
             emptyList()
         }
 
-        val localSongs = com.music.bitchord.playback.LastPlayed.load()?.songs?.map {
-            com.music.bitchord.data.model.Song(
-                videoId = it.videoId,
-                title = it.title,
-                artist = it.artist,
-                thumbnailUrl = it.thumbnailUrl,
-            )
-        } ?: emptyList()
-
-        val allSongs = (localSongs + ytSongs).distinctBy { it.videoId }.take(RECENT_LIMIT)
+        val allSongs = ytSongs.distinctBy { it.videoId }.take(RECENT_LIMIT)
         if (allSongs.isEmpty()) return null
         return HomeShelf(
             title = RECENT_TITLE,
@@ -146,18 +137,13 @@ object YtMusicRepository {
      */
     suspend fun history(): Result<List<Song>> = call("history") { fetchHistory() }
 
-    /**
-     * Account listening history or local playback queue, for the Recents feed.
-     */
+    /** Account listening history for the Recents feed. */
     suspend fun recents(): Result<List<Song>> = call("recents") {
         if (Innertube.cookie != null) {
             val history = runCatching { fetchHistory() }.getOrDefault(emptyList())
             if (history.isNotEmpty()) return@call history
         }
-        val localSongs = com.music.bitchord.playback.LastPlayed.load()?.songs?.map {
-            Song(videoId = it.videoId, title = it.title, artist = it.artist, thumbnailUrl = it.thumbnailUrl)
-        } ?: emptyList()
-        localSongs
+        emptyList()
     }
 
     /**

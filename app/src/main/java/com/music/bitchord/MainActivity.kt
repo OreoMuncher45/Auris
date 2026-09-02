@@ -846,11 +846,9 @@ private fun BitChordApp(
                     viewModel.searchFor(request.query)
                 }
             }
-            // "Play music", nothing named. The queue from last time is already
-            // restored by the time the controller connects (see LastPlayed), so
-            // this is the resume it sounds like. On a fresh install there is
-            // nothing to resume and the app has just opened on Home, which is
-            // as much as the request can honestly be given.
+            // "Play music", nothing named. Resume the live queue when the
+            // playback service still has one; after process death there is no
+            // persisted queue to recover, so the app simply opens on Home.
             LinkRequest.Resume -> if (session.mediaItemCount > 0) session.play()
         }
         MusicLink.handled()

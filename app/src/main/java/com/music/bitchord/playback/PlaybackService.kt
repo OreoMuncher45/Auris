@@ -432,7 +432,6 @@ class PlaybackService : MediaLibraryService() {
             // the last thing that happens before the process goes idle.
             if (isPlaying) prefetchAround(exoPlayer) else AudioCache.cancel()
             if (isPlaying) lookForBetterCopy(exoPlayer)
-            saveQueue()
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
             // already flipped that — but this is where hasNext/hasPrevious and
             // the artwork are known to be settled.
@@ -1059,14 +1058,11 @@ class PlaybackService : MediaLibraryService() {
         observeScrobbling()
         observeDiscord()
         watchSleepTimer()
-        // Before the listener below is attached, so loading the queue doesn't
-        // read as a track change and set the read-ahead going.
-        restoreLastQueue(exoPlayer)
-        // …but the widgets do want to know: a service woken by a widget's own
-        // play button has just recovered the track they should be showing, and
-        // nothing else in this class will mention it until playback starts.
-        publishWidgetState()
-
+        // A fresh service now always starts with an empty live queue. Clear the
+        // widget snapshot with it so its controls never advertise a persisted
+        // track that no longer has a queue behind it.
+        MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)
+        MediaWidget.refresh(this)
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
         lastRepeatMode = exoPlayer.repeatMode
@@ -1455,6 +1451,26 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+
+        // Keep a real, bounded history in the player rather than merely hiding
+        // old rows in Compose. MediaController mirrors the playlist across the
+        // session boundary, persistence snapshots it, and crossfade duplicates
+        // it onto the standby player, so letting completed entries accumulate
+        // made every one of those paths progressively more expensive.
+        val expiredHistory = queueHistoryTrimCount(exoPlayer.currentMediaItemIndex)
+        if (expiredHistory > 0) {
+            if (exoPlayer.repeatMode == Player.REPEAT_MODE_ALL) {
+                // Repeat-all still means the whole queue. Rotate history that
+                // has fallen out of the visible 25-song window to the end
+                // instead of deleting it; it becomes upcoming again in the
+                // same order and the loop can continue indefinitely.
+                repeat(expiredHistory) {
+                    exoPlayer.moveMediaItem(0, exoPlayer.mediaItemCount - 1)
+                }
+            } else {
+                exoPlayer.removeMediaItems(0, expiredHistory)
+            }
+        }
         // A *different* track is a clean slate for [recoverFrom], and so is the
         // same track becoming current for any reason other than that method's
         // own retry. The distinction is the whole of the reported loading loop.
@@ -1559,7 +1575,6 @@ class PlaybackService : MediaLibraryService() {
         // the sampler in [reportProgress].
         upgradeJob?.cancel()
         lookForBetterCopy(exoPlayer)
-        saveQueue()
         // Covers crossfades too: a blended advance never reaches
         // onMediaItemTransition, and [adoptPlayer] calls this handler by hand.
         publishWidgetState()
@@ -1577,29 +1592,6 @@ class PlaybackService : MediaLibraryService() {
         // has actually settled on this track, so the same-format case
         // the old call was here to cover is still covered.
         NerdStats.current.value = null
-    }
-
-    /**
-     * Loads the queue from the last session so the app opens on the track it
-     * was left on, rather than with nothing in the mini player.
-     *
-     * Deliberately no `prepare()`. Preparing would resolve the stream — a
-     * NewPipe extraction over the network — on every cold start, for a track
-     * that may never be played, and would post a media notification for a
-     * session nobody has touched yet (Media3 shows one as soon as the player
-     * leaves IDLE with a non-empty queue). Left idle, restoring costs nothing:
-     * [MediaSession] routes every play request through
-     * `Util.handlePlayButtonAction`, which prepares an idle player first, so
-     * the mini player, the notification and Bluetooth all resume from here
-     * without knowing the queue was cold.
-     */
-    private fun restoreLastQueue(player: ExoPlayer) {
-        val last = LastPlayed.load() ?: return
-        player.setMediaItems(
-            last.songs.map { it.toMediaItem() },
-            last.index,
-            last.positionMs,
-        )
     }
 
     /** The background hunt for a better copy of whatever is playing. */
@@ -1836,9 +1828,9 @@ class PlaybackService : MediaLibraryService() {
      * manager, a cleaner, a wiped SD card — leaving [Downloads]' record pointing
      * at nothing. [Song.toMediaItem] checks that record before it builds an
      * item, but only at build time: an item already sitting in the timeline was
-     * built when the file was still there, and a queue restored by [LastPlayed]
-     * carries the same stale uri back across a restart. This is the other end of
-     * that, and the only one that can see the file is gone rather than guess.
+     * built when the file was still there can retain that stale URI while it
+     * waits in the live queue. This is the other end of that, and the only one
+     * that can see the file is gone rather than guess.
      *
      * The record goes first, then the item is rebuilt from its own metadata with
      * the local uri stripped, which sends [Song.toMediaItem] down its streaming
@@ -2964,17 +2956,6 @@ class PlaybackService : MediaLibraryService() {
         else -> null
     }
 
-    /** Snapshot the queue so the next launch can open where this one stopped. */
-    private fun saveQueue() {
-        val player = player ?: return
-        if (player.mediaItemCount == 0) return
-        LastPlayed.save(
-            songs = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).toSong() },
-            index = player.currentMediaItemIndex,
-            positionMs = player.currentPosition,
-        )
-    }
-
     /**
      * Tell the home-screen widgets what is playing.
      *
@@ -3060,9 +3041,6 @@ class PlaybackService : MediaLibraryService() {
                     player.currentMediaItem?.toSong()?.let {
                         ListeningRecorder.onSample(it, player.duration)
                     }
-                    // Same cadence for the resume point: the process can be
-                    // killed at any moment without another callback arriving.
-                    saveQueue()
                     // The renderer can settle on its format a moment after the
                     // track change, which no callback of ours follows up on.
                     publishNerdStats()
@@ -3684,8 +3662,6 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
-        // Last chance to record the resume point, while the player still exists.
-        saveQueue()
         // And to leave the widgets showing a play button. Nothing else reports a
         // swipe-away, so a widget left on the home screen would sit there with a
         // pause glyph on a service that no longer exists.
@@ -3897,6 +3873,22 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 base
             }
+        }
+
+        override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            crossfade.onSkipRequested()
+            val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
+            if (skipped == null) {
+                wrappedPlayer.seekTo(mediaItemIndex, positionMs)
+                return
+            }
+
+            // A direct choice of a later queue row bypasses every item between
+            // here and there. Remove those unplayed rows before seeking so they
+            // do not masquerade as listening history. The selected item's new
+            // index is the first removed slot.
+            wrappedPlayer.removeMediaItems(skipped.first, skipped.last + 1)
+            wrappedPlayer.seekTo(skipped.first, positionMs)
         }
 
         override fun seekToPreviousMediaItem() {
@@ -4238,20 +4230,7 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
 
-            // 2. Load from LastPlayed snapshot
-            val last = LastPlayed.load()
-            if (last != null && last.songs.isNotEmpty()) {
-                val items = last.songs.map { it.toMediaItem() }
-                val startIndex = last.index.coerceIn(0, items.size - 1)
-                val startPositionMs = last.positionMs
-                return@future MediaSession.MediaItemsWithStartPosition(
-                    ImmutableList.copyOf(items),
-                    startIndex,
-                    startPositionMs,
-                )
-            }
-
-            // 3. Fallback to local downloaded songs (offline-ready)
+            // 2. Fallback to local downloaded songs (offline-ready)
             val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
             if (downloaded.isNotEmpty()) {
                 val items = downloaded.map { it.toMediaItem() }
@@ -4262,7 +4241,7 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
 
-            // 4. Fallback to device local music
+            // 3. Fallback to device local music
             val localSongs = LocalMediaRepository.getLocalMusic(this@PlaybackService)
             if (localSongs.isNotEmpty()) {
                 val items = localSongs.map { it.toMediaItem() }

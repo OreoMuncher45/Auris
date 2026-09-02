@@ -14,7 +14,6 @@ import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.playback.AudioCache
-import com.music.bitchord.playback.LastPlayed
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
@@ -57,12 +56,8 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this)
-        // Before LastPlayed: a restored queue can contain source-backed tracks,
-        // and turning one of those back into a playable item needs the registry
-        // that knows which source it belongs to.
         SourceRegistry.init(this)
         SearchHistory.init(this)
-        LastPlayed.init(this)
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
