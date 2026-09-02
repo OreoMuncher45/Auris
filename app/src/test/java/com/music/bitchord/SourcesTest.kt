@@ -1023,6 +1023,28 @@ class SourcesTest {
         assertFalse("the patient lookup cancelled the later source", slowLossless.cancelled)
     }
 
+    @Test
+    fun `upgrade refuses same title and runtime from a different artist`() = runBlocking {
+        val wrongMexico = FakeSource(
+            displayName = "Ricky's Addon",
+            answerAfterMs = 0,
+            format = StreamFormat("flac"),
+            candidates = listOf(song("Mexico", "CAKE", "3:26")),
+        )
+        val target = TrackMatcher.Target("Mexico", "Karan Aujla", durationSec = 207)
+
+        assertNull(
+            SourceResolver.bestAcross(
+                listOf(wrongMexico),
+                target,
+                StreamRequest.Lossless,
+                waitForAll = true,
+                strictLength = true,
+                requireSharedArtist = true,
+            ),
+        )
+    }
+
     /**
      * A refused answer is not an answer. When the only quick source is one whose
      * stream fails the predicate, the race has to keep running rather than

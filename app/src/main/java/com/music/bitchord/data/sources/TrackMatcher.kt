@@ -94,6 +94,14 @@ object TrackMatcher {
     internal fun primaryArtist(artist: String): String =
         artist.lowercase(Locale.ROOT).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
 
+    /** Whether both credits name at least one of the same artists. */
+    internal fun sharesArtist(wanted: String, got: String): Boolean {
+        val want = artistNames(wanted)
+        val have = artistNames(got)
+        return want.isNotEmpty() && have.isNotEmpty() &&
+            want.any { w -> have.any { h -> sameArtist(w, h) } }
+    }
+
     // ── Judging ─────────────────────────────────────────────────────────────
 
     /**
@@ -441,7 +449,7 @@ object TrackMatcher {
         val want = artistNames(wanted)
         val have = artistNames(got)
         if (want.isEmpty() || have.isEmpty()) return 0
-        val shared = want.any { w -> have.any { h -> sameArtist(w, h) } }
+        val shared = sharesArtist(wanted, got)
         if (!shared) return null
         return if (want == have) ARTIST_EXACT else ARTIST_SHARED
     }

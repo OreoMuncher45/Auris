@@ -352,6 +352,7 @@ object SourceResolver {
             request,
             waitForAll = true,
             strictLength = true,
+            requireSharedArtist = true,
         ) { candidate, stream ->
             worthSwapping(stream.format, playing).also { worth ->
                 // Named rather than skipped silently. This is the one refusal
@@ -715,11 +716,21 @@ object SourceResolver {
         request: StreamRequest,
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
+        requireSharedArtist: Boolean = false,
         accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
     ): Pair<MusicSource, SourceStream>? = coroutineScope {
         val running: MutableList<Deferred<Pair<MusicSource, SourceStream?>>> = sources
             .map { source ->
-                async { source to matchAndStream(source, target, request, waitForAll, strictLength) }
+                async {
+                    source to matchAndStream(
+                        source,
+                        target,
+                        request,
+                        waitForAll,
+                        strictLength,
+                        requireSharedArtist,
+                    )
+                }
             }
             .toMutableList()
         var best: Pair<MusicSource, SourceStream>? = null
@@ -780,12 +791,16 @@ object SourceResolver {
         request: StreamRequest,
         waitForAll: Boolean = false,
         strictLength: Boolean = false,
+        requireSharedArtist: Boolean = false,
     ): SourceStream? {
         for (query in TrackMatcher.queries(target)) {
             val candidates = attempt(source) {
                 source.search(query, limit = MATCH_CANDIDATES, waitForAll = waitForAll)
             } ?: return null
             var matches = TrackMatcher.ranked(candidates, target)
+            if (requireSharedArtist) {
+                matches = matches.filter { TrackMatcher.sharesArtist(target.artist, it.artist) }
+            }
             // JioSaavn can return different audio under the same title and
             // artist on different releases. With no album on the requested
             // track there is no honest way to choose between those rows;
