@@ -35,6 +35,12 @@ data class Song(
      */
     val fromAutoplay: Boolean = false,
     /**
+     * The seed title of an explicitly started radio queue. Every item in that
+     * queue carries the same value, so the player can keep naming the station
+     * across skips and queue edits without holding UI-only session state.
+     */
+    val radioName: String? = null,
+    /**
      * Explicit content or file URI for local device tracks or downloaded audio.
      */
     val localUri: String? = null,

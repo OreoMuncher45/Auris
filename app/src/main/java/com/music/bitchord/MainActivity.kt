@@ -127,8 +127,13 @@ import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.autoplaySectionStart
+import com.music.bitchord.playback.beginRadioQueue
+import com.music.bitchord.playback.commitRadioQueue
+import com.music.bitchord.playback.fromAutoplay
+import com.music.bitchord.playback.loadAutoplayTracks
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
+import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toDirectYouTubeMediaItem
 import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.download.DownloadSession
@@ -191,6 +196,9 @@ import io.github.fletchmckee.liquid.liquefiable
 import io.github.fletchmckee.liquid.rememberLiquidState
 import kotlinx.coroutines.launch
 import java.util.Locale
+
+/** A full first screen of a native YouTube Music radio before AutoPlay tops it up. */
+private const val INITIAL_RADIO_TRACKS = 24
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -403,6 +411,12 @@ private fun BitChordApp(
     // Incremented each time the search tab is re-tapped while already selected,
     // which SearchScreen uses as a signal to focus the input field.
     var searchFocusTrigger by remember { mutableIntStateOf(0) }
+    // Invalidates an in-flight radio lookup when a later play request wins.
+    var playRequestGeneration by remember { mutableIntStateOf(0) }
+    // Starting radio from the item already playing must not replace that media
+    // item just to add UI metadata. This temporary label covers that seed; all
+    // following radio items carry radioName in their MediaItem extras.
+    var activeRadioSeed by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     // The player fills the screen with dark artwork whichever theme is on, so
     // it keeps light glyphs; every other surface follows the theme. Replay's
@@ -638,6 +652,8 @@ private fun BitChordApp(
     val scope = rememberCoroutineScope()
 
     val play: (List<Song>, Int) -> Unit = { songs, index ->
+        playRequestGeneration++
+        activeRadioSeed = null
         scope.launch {
             controller?.playSongs(songs, index)
             // Nothing to raise where the player is already open beside the page.
@@ -645,6 +661,7 @@ private fun BitChordApp(
         }
     }
     LaunchedEffect(player.song?.videoId) {
+        if (activeRadioSeed?.first != player.song?.videoId) activeRadioSeed = null
         if (player.song?.videoId != convertedAudioId) {
             convertedFromVideo = null
             convertedAudioId = null
@@ -660,24 +677,107 @@ private fun BitChordApp(
      * where the surrounding list *is* the thing the user asked for.
      */
     val playRadio: (Song) -> Unit = { song ->
+        playRequestGeneration++
+        activeRadioSeed = null
         scope.launch {
             controller?.playSongs(listOf(song), 0)
             if (!playerDocked) showNowPlaying = true
+        }
+    }
+
+    /**
+     * Starts the explicit station offered by every song overflow menu.
+     *
+     * The related tracks come from YouTube Music's own RDAMVM watch queue.
+     * Loading happens before the player is touched so a failed request cannot
+     * destroy the queue already playing. Once ready, the whole old queue is
+     * replaced in one Media3 operation.
+     */
+    val startRadio: (Song) -> Unit = { song ->
+        val originalController = controller
+        if (originalController != null) {
+            val request = ++playRequestGeneration
+            // Ignore AutoPlay's tail: it may legitimately grow while the
+            // request is in flight and does not mean the listener chose a
+            // different queue. A new album/song queue does.
+            val originalManualQueue = (0 until originalController.mediaItemCount)
+                .map { originalController.getMediaItemAt(it) }
+                .filterNot { it.fromAutoplay }
+                .map { it.mediaId }
+            scope.launch {
+                val seed = song.copy(radioName = song.title)
+                val related = loadAutoplayTracks(
+                    existing = listOf(seed),
+                    seedSong = seed,
+                    limit = INITIAL_RADIO_TRACKS,
+                ).getOrElse {
+                    if (request == playRequestGeneration) {
+                        Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                if (related.isEmpty()) {
+                    if (request == playRequestGeneration) {
+                        Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val activeController = controller
+                val activeManualQueue = (0 until activeController.mediaItemCount)
+                    .map { activeController.getMediaItemAt(it) }
+                    .filterNot { it.fromAutoplay }
+                    .map { it.mediaId }
+                if (request != playRequestGeneration || activeManualQueue != originalManualQueue) {
+                    return@launch
+                }
+                // Cancel any armed crossfade/AutoPlay work and erase the old
+                // cold-start snapshot before the visible queue is replaced.
+                activeController.beginRadioQueue()
+                val currentIndex = activeController.currentMediaItemIndex
+                val currentItem = activeController.currentMediaItem
+                if (currentIndex >= 0 && currentItem?.mediaId == song.videoId) {
+                    // Keep the current MediaItem itself untouched. Replacing it,
+                    // even with the same song, reparses the source at position
+                    // zero and audibly stops/restarts the track.
+                    if (currentIndex + 1 < activeController.mediaItemCount) {
+                        activeController.removeMediaItems(currentIndex + 1, activeController.mediaItemCount)
+                    }
+                    if (currentIndex > 0) activeController.removeMediaItems(0, currentIndex)
+                    activeController.addMediaItems(1, related.map { it.toMediaItem() })
+                    activeRadioSeed = song.videoId to song.title
+                } else {
+                    activeRadioSeed = null
+                    activeController.playSongs(listOf(seed) + related, 0)
+                }
+                // Make this station — never the queue from before it — what a
+                // fresh process restores, even if it is killed immediately.
+                activeController.commitRadioQueue()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.radio_started, song.title),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                if (!playerDocked) showNowPlaying = true
+            }
         }
     }
     val addToQueue: (Song) -> Unit = { song ->
         scope.launch {
             // The end of what the user queued, not the end of the queue: a song
             // asked for by name outranks whatever AutoPlay lined up behind it.
-            controller?.let { it.addMediaItem(it.autoplaySectionStart(), song.toMediaItem()) }
+            controller?.let {
+                val queued = song.copy(radioName = it.currentMediaItem?.toSong()?.radioName)
+                it.addMediaItem(it.autoplaySectionStart(), queued.toMediaItem())
+            }
         }
     }
     val playNext: (Song) -> Unit = { song ->
         scope.launch {
             controller?.let {
+                val queued = song.copy(radioName = it.currentMediaItem?.toSong()?.radioName)
                 it.addMediaItem(
                     (it.currentMediaItemIndex + 1).coerceAtMost(it.mediaItemCount),
-                    song.toMediaItem(),
+                    queued.toMediaItem(),
                 )
             }
         }
@@ -775,7 +875,8 @@ private fun BitChordApp(
                     } else {
                         c.autoplaySectionStart()
                     }
-                    c.addMediaItems(at, songs.map { it.toMediaItem() })
+                    val radioName = c.currentMediaItem?.toSong()?.radioName
+                    c.addMediaItems(at, songs.map { it.copy(radioName = radioName).toMediaItem() })
                     val message = context.resources.getQuantityString(
                         if (next) R.plurals.songs_will_play_next else R.plurals.songs_added_to_queue,
                         songs.size,
@@ -846,9 +947,9 @@ private fun BitChordApp(
                     viewModel.searchFor(request.query)
                 }
             }
-            // "Play music", nothing named. Resume the live queue when the
-            // playback service still has one; after process death there is no
-            // persisted queue to recover, so the app simply opens on Home.
+            // "Play music", nothing named. The playback service restores its
+            // bounded queue before the controller connects, so this resumes
+            // both a live session and one recovered after process death.
             LinkRequest.Resume -> if (session.mediaItemCount > 0) session.play()
         }
         MusicLink.handled()
@@ -1163,8 +1264,12 @@ private fun BitChordApp(
     // the pane a tablet keeps beside it. [docked] is the only difference
     // between the two, and only ever one of them is in the tree.
     val nowPlaying: @Composable (Song, Boolean) -> Unit = { song, docked ->
+        val displayedSong = activeRadioSeed
+            ?.takeIf { (videoId, _) -> song.radioName == null && videoId == song.videoId }
+            ?.let { (_, name) -> song.copy(radioName = name) }
+            ?: song
         NowPlayingScreen(
-            song = song,
+            song = displayedSong,
             windowWidth = windowWidth,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
@@ -2208,6 +2313,7 @@ private fun BitChordApp(
                     likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
                     onPlayNext = { playNext(song); songActions = null },
                     onAddToQueue = { addToQueue(song); songActions = null },
+                    onStartRadio = { startRadio(song); songActions = null },
                     // Stays open: the row it replaces itself with is the
                     // progress, and closing the sheet would hide the only
                     // answer to "did that work?".

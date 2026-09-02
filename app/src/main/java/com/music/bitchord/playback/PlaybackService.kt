@@ -126,6 +126,10 @@ const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
 /** Session command used by the media notification's Shuffle button. */
 const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 
+/** Session commands bracketing an explicit radio queue replacement. */
+const val ACTION_BEGIN_RADIO_QUEUE = "com.music.bitchord.action.BEGIN_RADIO_QUEUE"
+const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QUEUE"
+
 /**
  * Background playback via Media3. A [MediaLibraryService] gives us the media
  * notification, lockscreen/Bluetooth controls, and Android Auto surface for
@@ -348,10 +352,15 @@ class PlaybackService : MediaLibraryService() {
     private val favoriteCommand = SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY)
     private val autoplayCommand = SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY)
     private val shuffleCommand = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
+    private val beginRadioQueueCommand = SessionCommand(ACTION_BEGIN_RADIO_QUEUE, Bundle.EMPTY)
+    private val commitRadioQueueCommand = SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY)
 
     private var favoriteActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
     private var autoplaySeed: String? = null
+
+    /** Index in the live queue represented by entry zero of the persisted window. */
+    private var persistedQueueStart = 0
 
     /**
      * What AutoPlay had queued when repeat-all was switched on, held so
@@ -432,6 +441,7 @@ class PlaybackService : MediaLibraryService() {
             // the last thing that happens before the process goes idle.
             if (isPlaying) prefetchAround(exoPlayer) else AudioCache.cancel()
             if (isPlaying) lookForBetterCopy(exoPlayer)
+            savePlaybackState(exoPlayer)
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
             // already flipped that — but this is where hasNext/hasPrevious and
             // the artwork are known to be settled.
@@ -629,6 +639,7 @@ class PlaybackService : MediaLibraryService() {
             val exoPlayer = player ?: return
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                saveQueueSnapshot(exoPlayer)
                 mediaSession?.setCustomLayout(notificationButtons())
             }
         }
@@ -1058,11 +1069,12 @@ class PlaybackService : MediaLibraryService() {
         observeScrobbling()
         observeDiscord()
         watchSleepTimer()
-        // A fresh service now always starts with an empty live queue. Clear the
-        // widget snapshot with it so its controls never advertise a persisted
-        // track that no longer has a queue behind it.
-        MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)
-        MediaWidget.refresh(this)
+        if (restoreLastQueue(exoPlayer)) {
+            publishWidgetState()
+        } else {
+            MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)
+            MediaWidget.refresh(this)
+        }
         // History pings fire once a track is actually audible — both when
         // playback starts and when the queue moves on while already playing.
         lastRepeatMode = exoPlayer.repeatMode
@@ -1565,6 +1577,7 @@ class PlaybackService : MediaLibraryService() {
             SleepTimer.cancel()
         }
         if (exoPlayer.isPlaying) registerCurrentPlay()
+        savePlaybackState(exoPlayer)
         prefetchAround(exoPlayer)
         // The second look belongs to the track it was started for; the
         // queue moving on ends it, whatever it had found — and starts
@@ -2934,6 +2947,69 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
+    /** Serialize only the bounded window needed for a future cold-start resume. */
+    private fun saveQueueSnapshot(player: ExoPlayer) {
+        if (player.mediaItemCount == 0) {
+            persistedQueueStart = 0
+            LastPlayed.clear()
+            return
+        }
+        val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
+        if (range.isEmpty()) return
+        persistedQueueStart = range.first
+        LastPlayed.saveQueue(
+            songs = range.map { player.getMediaItemAt(it).toSong() },
+            index = player.currentMediaItemIndex - range.first,
+        )
+        savePlaybackState(player)
+    }
+
+    /** Make the newly installed radio queue the durable cold-start boundary. */
+    private fun saveQueueSnapshotImmediately(player: ExoPlayer) {
+        if (player.mediaItemCount == 0) {
+            persistedQueueStart = 0
+            LastPlayed.clearImmediately()
+            return
+        }
+        val range = LastPlayed.window(player.mediaItemCount, player.currentMediaItemIndex)
+        persistedQueueStart = range.first
+        LastPlayed.saveQueueImmediately(
+            songs = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).toSong() },
+            index = player.currentMediaItemIndex,
+            positionMs = player.currentPosition,
+        )
+    }
+
+    /** Drop every service-side reference that could resurrect the former queue. */
+    private fun beginRadioQueue() {
+        crossfade?.onSkipRequested()
+        autoplayLoadJob?.cancel()
+        autoplayLoadJob = null
+        autoplaySeed = null
+        repeatAllStash = emptyList()
+        repeatAllStashSeed = null
+        sessionSongHistory.clear()
+        persistedQueueStart = 0
+        LastPlayed.clearImmediately()
+    }
+
+    /** Persist index and position without touching or serializing queue contents. */
+    private fun savePlaybackState(player: ExoPlayer) {
+        if (player.mediaItemCount == 0) return
+        LastPlayed.savePlaybackState(
+            index = player.currentMediaItemIndex - persistedQueueStart,
+            positionMs = player.currentPosition,
+        )
+    }
+
+    /** Restore the bounded queue without preparing or resolving a stream. */
+    private fun restoreLastQueue(player: ExoPlayer): Boolean {
+        val last = LastPlayed.load() ?: return false
+        persistedQueueStart = 0
+        player.setMediaItems(last.songs.map { it.toMediaItem() }, last.index, last.positionMs)
+        return true
+    }
+
     /**
      * PCM sample depth the renderer settled on, in bits.
      *
@@ -3041,6 +3117,9 @@ class PlaybackService : MediaLibraryService() {
                     player.currentMediaItem?.toSong()?.let {
                         ListeningRecorder.onSample(it, player.duration)
                     }
+                    // Only two primitive preference values. Queue JSON is
+                    // written from onTimelineChanged, never from this loop.
+                    savePlaybackState(player)
                     // The renderer can settle on its format a moment after the
                     // track change, which no callback of ours follows up on.
                     publishNerdStats()
@@ -3662,6 +3741,7 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
+        player?.let(::savePlaybackState)
         // And to leave the widgets showing a play button. Nothing else reports a
         // swipe-away, so a widget left on the home screen would sit there with a
         // pause glyph on a service that no longer exists.
@@ -3921,6 +4001,8 @@ class PlaybackService : MediaLibraryService() {
                 .add(favoriteCommand)
                 .add(autoplayCommand)
                 .add(shuffleCommand)
+                .add(beginRadioQueueCommand)
+                .add(commitRadioQueueCommand)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
@@ -3937,6 +4019,8 @@ class PlaybackService : MediaLibraryService() {
             when (customCommand.customAction) {
                 ACTION_TOGGLE_AUTOPLAY -> toggleAutoplayFromNotification()
                 ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromNotification()
+                ACTION_BEGIN_RADIO_QUEUE -> beginRadioQueue()
+                ACTION_COMMIT_RADIO_QUEUE -> player?.let(::saveQueueSnapshotImmediately)
                 ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.mediaId?.let {
                     toggleFavoriteFromNotification(it)
                 }

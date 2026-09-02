@@ -353,6 +353,9 @@
     <string name="downloads_finished">Downloads · finished</string>
     <string name="downloading_progress">Downloading · %1$d%%</string>
     <string name="starting">Starting</string>
+    <string name="start_radio">Start radio</string>
+    <string name="playing_radio">Playing %1$s Radio</string>
+    <string name="radio_started">%1$s radio started</string>
     <string name="saved_to_bitchord_folder">Saved to Music/BitChord</string>
     <string name="nothing_downloading">Nothing downloading</string>
     <string name="nothing_to_explore">Nothing to explore right now</string>

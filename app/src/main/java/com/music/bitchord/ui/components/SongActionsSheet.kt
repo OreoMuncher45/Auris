@@ -35,6 +35,7 @@ import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.PlaylistRemove
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
@@ -114,6 +115,7 @@ fun SongActionsSheet(
     likeStatus: LikeStatus,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onStartRadio: () -> Unit,
     onDownload: () -> Unit,
     onToggleLike: () -> Unit,
     onToggleDislike: () -> Unit,
@@ -198,6 +200,12 @@ fun SongActionsSheet(
         }
 
         DownloadRow(song, palette, isOffline, onDownload)
+        ActionRow(
+            icon = Icons.Rounded.Radio,
+            label = stringResource(R.string.start_radio),
+            accent = palette.accent,
+            onClick = onStartRadio,
+        )
         ActionRow(
             icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
             label = stringResource(R.string.play_next),

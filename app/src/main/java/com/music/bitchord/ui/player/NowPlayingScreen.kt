@@ -157,9 +157,12 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -1130,11 +1133,26 @@ fun NowPlayingScreen(
                 if (!docked) {
                     Box(
                         Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(y = 8.dp)
                             .width(38.dp)
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp))
                             .background(Color.White.copy(alpha = 0.32f)),
                     )
+                    song.radioName?.let { radioName ->
+                        Text(
+                            text = stringResource(R.string.playing_radio, radioName),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.78f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
+                        )
+                    }
                 }
             }
 

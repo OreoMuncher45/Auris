@@ -24,9 +24,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * restricted, and a `MediaController` binds. Same handshake the app itself uses,
  * from [rememberMediaController][com.music.bitchord.playback.rememberMediaController].
  *
- * With no persisted queue, transport commands only have something to control
- * while the service's live queue still exists. Binding remains useful because
- * it reaches that service without relying on a background service start.
+ * Binding also creates [PlaybackService] when needed; its bounded persisted
+ * queue is restored before the controller connects, so widget playback works
+ * after process death without serializing the full live queue on progress ticks.
  */
 class MediaWidgetActions : BroadcastReceiver() {
 
@@ -69,7 +69,7 @@ class MediaWidgetActions : BroadcastReceiver() {
     }
 
     private fun MediaController.execute(action: String) {
-        // The snapshot can outlive the process, but the queue deliberately does not.
+        // No live or restored queue means the buttons have nothing to control.
         if (mediaItemCount == 0) return
         when (action) {
             ACTION_TOGGLE -> if (playWhenReady) {

@@ -2,6 +2,7 @@ package com.music.bitchord.data
 
 import com.music.bitchord.data.sources.StreamFormat
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -160,11 +161,20 @@ object NerdStats {
     val racingLossless = MutableStateFlow<Set<String>>(emptySet())
 
     fun onLosslessRaceStart(videoId: String) {
-        racingLossless.value += videoId
+        // Upgrade lookups also run for read-ahead items, so two loader threads
+        // can arrive here together. Assigning `value += videoId` is a
+        // read/modify/write sequence: both threads can read the same old set and
+        // the last assignment then erases the other track's marker. That left
+        // the audible track upgrading in the background while Now Playing fell
+        // through to its plain "High quality" label. StateFlow.update retries
+        // the transform atomically when another writer wins that race.
+        racingLossless.update { it + videoId }
     }
 
     fun onLosslessRaceEnd(videoId: String) {
-        racingLossless.value -= videoId
+        // Atomic for the same reason as start: completing one read-ahead lookup
+        // must not discard a concurrently-started lookup for another track.
+        racingLossless.update { it - videoId }
     }
 
     /**

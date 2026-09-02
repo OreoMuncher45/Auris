@@ -42,5 +42,7 @@ suspend fun loadAutoplayTracks(
     val extra = QueueBuilder.extend(existing, related, limit)
     if (extra.isEmpty()) return Result.success(emptyList())
 
-    return Result.success(extra.map { it.copy(fromAutoplay = true) })
+    return Result.success(extra.map {
+        it.copy(fromAutoplay = true, radioName = seedSong.radioName)
+    })
 }

@@ -30,6 +30,7 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.guava.await
 import java.io.File
 import java.util.Locale
 
@@ -114,6 +115,22 @@ fun MediaController.toggleAutoplay() {
         SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY),
         Bundle.EMPTY,
     )
+}
+
+/** Clears the previous queue's service and restart state before starting radio. */
+suspend fun MediaController.beginRadioQueue() {
+    sendCustomCommand(
+        SessionCommand(ACTION_BEGIN_RADIO_QUEUE, Bundle.EMPTY),
+        Bundle.EMPTY,
+    ).await()
+}
+
+/** Flushes the current radio queue to disk before reporting that it started. */
+suspend fun MediaController.commitRadioQueue() {
+    sendCustomCommand(
+        SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY),
+        Bundle.EMPTY,
+    ).await()
 }
 
 /** Mirrors the controller into Compose state, polling position while playing. */
@@ -221,6 +238,7 @@ fun MediaItem.toSong() = Song(
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
     fromAutoplay = this.fromAutoplay,
+    radioName = mediaMetadata.extras?.getString(EXTRA_RADIO_NAME),
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
 )
@@ -235,6 +253,9 @@ val MediaItem.fromAutoplay: Boolean
  * the player, and the UI only ever sees it back through a MediaController.
  */
 private const val EXTRA_FROM_AUTOPLAY = "bitchord.fromAutoplay"
+
+/** @see Song.radioName */
+private const val EXTRA_RADIO_NAME = "bitchord.radioName"
 
 /**
  * The artist and album pages this track hangs under, when they are known.
@@ -439,11 +460,12 @@ fun Song.toMediaItem(): MediaItem {
             .apply {
                 if (fromAutoplay || offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
-                    isExplicit != null || isVideo || isVideoOrigin
+                    isExplicit != null || isVideo || isVideoOrigin || radioName != null
                 ) {
                     setExtras(
                         bundleOf(
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
+                            EXTRA_RADIO_NAME to radioName,
                             EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
                             EXTRA_DURATION to durationText,

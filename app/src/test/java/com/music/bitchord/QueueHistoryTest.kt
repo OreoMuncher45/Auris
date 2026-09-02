@@ -1,6 +1,7 @@
 package com.music.bitchord
 
 import com.music.bitchord.playback.MAX_QUEUE_HISTORY
+import com.music.bitchord.playback.LastPlayed
 import com.music.bitchord.playback.queueHistoryTrimCount
 import com.music.bitchord.playback.queueStartingAt
 import com.music.bitchord.playback.skippedByQueueJump
@@ -31,6 +32,22 @@ class QueueHistoryTest {
     @Test
     fun `starting in the middle does not turn earlier unplayed rows into history`() {
         assertEquals(listOf("c", "d"), queueStartingAt(listOf("a", "b", "c", "d"), 2))
+    }
+
+    @Test
+    fun `persisted queue window is bounded independently of live queue size`() {
+        val window = LastPlayed.window(size = 10_000, index = 5_000)
+
+        assertEquals(4_975, window.first)
+        assertEquals(76, window.count())
+    }
+
+    @Test
+    fun `persisted queue never restores more than twenty five history rows`() {
+        val window = LastPlayed.window(size = 10_000, index = 9_999)
+
+        assertEquals(9_974, window.first)
+        assertEquals(26, window.count())
     }
 
 }
