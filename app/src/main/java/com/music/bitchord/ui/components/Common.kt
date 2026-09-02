@@ -7,6 +7,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -275,6 +276,8 @@ fun SongRow(
     isPlaying: Boolean = false,
     /** Accent supplied by artwork-tinted pages. */
     activeTint: Color = MaterialTheme.colorScheme.primary,
+    /** True while a Downloads row belongs to the current multi-selection. */
+    selected: Boolean = false,
 ) {
     val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
@@ -308,6 +311,7 @@ fun SongRow(
             isCurrent = isCurrent,
             isPlaying = isPlaying,
             activeTint = activeTint,
+            selected = selected,
         )
         return
     }
@@ -352,6 +356,7 @@ fun SongRow(
             isCurrent = isCurrent,
             isPlaying = isPlaying,
             activeTint = activeTint,
+            selected = selected,
         )
     }
 }
@@ -416,19 +421,20 @@ private fun SongRowContent(
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
     activeTint: Color = MaterialTheme.colorScheme.primary,
+    selected: Boolean = false,
 ) {
     val titleColor by animateColorAsState(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
         label = "song row title",
     )
     val activeBackground by animateColorAsState(
-        targetValue = if (isCurrent) activeTint.copy(alpha = 0.10f) else Color.Transparent,
+        targetValue = if (isCurrent || selected) activeTint.copy(alpha = 0.14f) else Color.Transparent,
         label = "song row background",
     )
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .background(activeBackground, RoundedCornerShape(10.dp))
+            .background(activeBackground)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -472,7 +478,10 @@ private fun SongRowContent(
             )
             Spacer(Modifier.height(2.dp))
             Text(
-                text = song.artist,
+                text = listOfNotNull(
+                    song.artist.takeIf { it.isNotBlank() },
+                    song.downloadFormat,
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.bodyMedium,
                 color = subtitleColor,
                 maxLines = 1,
@@ -481,6 +490,15 @@ private fun SongRowContent(
         }
         if (downloadedTint != null) {
             DownloadedBadge(song.videoId, downloadedTint)
+        }
+        if (selected) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                Icons.Rounded.CheckCircle,
+                contentDescription = stringResource(R.string.selected),
+                tint = activeTint,
+                modifier = Modifier.size(20.dp),
+            )
         }
         if (isCurrent && trackNumber == null) {
             Spacer(Modifier.width(8.dp))

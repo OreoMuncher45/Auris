@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
@@ -32,6 +33,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -124,8 +126,8 @@ class PlaybackService : MediaSessionService() {
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val outputDeviceCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = applyOutputRoute()
-        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = applyOutputRoute()
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
     }
 
     /**
@@ -143,6 +145,8 @@ class PlaybackService : MediaSessionService() {
     private var spare: ExoPlayer? = null
 
     private var crossfade: CrossfadeController? = null
+    private var configuredFloatOutput = false
+    private var outputReconfigureJob: Job? = null
 
     /**
      * One audio-processor set per player, because both carry per-sink state — a
@@ -599,6 +603,11 @@ class PlaybackService : MediaSessionService() {
             initializedTimestampMs: Long,
             initializationDurationMs: Long,
         ) {
+            TrackLog.i(
+                "AUDIO_OUT",
+                "decoder=$decoderName initialized in ${initializationDurationMs}ms",
+                about = eventTime.mediaId(),
+            )
             val cutAt = swapCutAt ?: return
             TrackLog.d(
                 "BitChord",
@@ -607,6 +616,22 @@ class PlaybackService : MediaSessionService() {
                 about = eventTime.mediaId(),
             )
         }
+
+        override fun onAudioTrackInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            audioTrackConfig: AudioSink.AudioTrackConfig,
+        ) {
+            AudioOutputStatus.publishAudioTrack(
+                encoding = audioTrackConfig.encoding,
+                sampleRateHz = audioTrackConfig.sampleRate,
+            )
+            TrackLog.i(
+                "AUDIO_OUT",
+                "AudioTrack ${audioTrackConfig.sampleRate}Hz encoding=${audioTrackConfig.encoding}",
+                about = eventTime.mediaId(),
+            )
+        }
+
     }
 
     /**
@@ -904,6 +929,7 @@ class PlaybackService : MediaSessionService() {
         mediaSourceFactory = DefaultMediaSourceFactory(AudioCache.playbackFactory(defaultDataSourceFactory))
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
 
+        configuredFloatOutput = shouldEnableFloatOutput()
         val exoPlayer = buildPlayer(transitionFilterA, ownsSession = true)
         val sparePlayer = buildPlayer(transitionFilterB, ownsSession = false)
         player = exoPlayer
@@ -945,7 +971,19 @@ class PlaybackService : MediaSessionService() {
 
         reportProgress()
 
-        val controller = CrossfadeController(
+        val controller = createCrossfadeController()
+        crossfade = controller
+        controller.start()
+
+        mediaSession = MediaSession.Builder(this, SessionPlayer(exoPlayer, controller))
+            .setId(SESSION_ID)
+            .setSessionActivity(sessionActivity())
+            .setCallback(sessionCallback)
+            .build()
+        mediaSession?.setCustomLayout(notificationButtons())
+    }
+
+    private fun createCrossfadeController() = CrossfadeController(
             scope,
             active = { requireNotNull(player) },
             standby = { requireNotNull(spare) },
@@ -970,16 +1008,6 @@ class PlaybackService : MediaSessionService() {
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
         )
-        crossfade = controller
-        controller.start()
-
-        mediaSession = MediaSession.Builder(this, SessionPlayer(exoPlayer, controller))
-            .setId(SESSION_ID)
-            .setSessionActivity(sessionActivity())
-            .setCallback(sessionCallback)
-            .build()
-        mediaSession?.setCustomLayout(notificationButtons())
-    }
 
     /**
      * The one custom layout advertised to all Media3 control surfaces.
@@ -3021,10 +3049,33 @@ class PlaybackService : MediaSessionService() {
      */
     private fun silenceSkippingRenderers(transition: TransitionFilterProcessor) = object : DefaultRenderersFactory(this) {
         init {
-            // This changes Media3's real sink configuration. With FLOAT_32, high-resolution
-            // PCM is converted to PCM_FLOAT and AudioTrack is opened in its 32-bit float mode;
-            // with PCM_16, Media3 inserts its integer 16-bit converter instead.
-            setEnableAudioFloatOutput(AppSettings.outputPcmMode.value == OutputPcmMode.FLOAT_32)
+            // Do not force PCM_FLOAT onto an OEM speaker mixer merely because
+            // the preference asks for it. The selected USB route must advertise
+            // the format; otherwise Media3 uses its stable PCM16 path.
+            setEnableAudioFloatOutput(configuredFloatOutput)
+            if (configuredFloatOutput) {
+                // c2.sec.flac.decoder produces one extra 232.2ms timestamp
+                // advance per decoded buffer when Media3 requests float PCM.
+                // Keep the real PCM_FLOAT sink, but decode FLAC through the
+                // platform software codec on affected Samsung devices.
+                setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                    val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
+                        MediaCodecSelector.PREFER_SOFTWARE
+                    } else {
+                        MediaCodecSelector.DEFAULT
+                    }
+                    val candidates = selector.getDecoderInfos(
+                        mimeType,
+                        requiresSecureDecoder,
+                        requiresTunnelingDecoder,
+                    )
+                    if (mimeType == MimeTypes.AUDIO_FLAC) {
+                        candidates.filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
+                    } else {
+                        candidates
+                    }
+                }
+            }
         }
 
         override fun buildAudioSink(
@@ -3072,14 +3123,104 @@ class PlaybackService : MediaSessionService() {
      */
     private fun applyOutputRoute() {
         val manager = audioManager ?: return
-        val usb = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { device ->
+        val usb = preferredUsbDevice()
+        val preferred = usb.takeIf { AppSettings.preferUsbDac.value }
+        eachPlayer { it.setPreferredAudioDevice(preferred) }
+        AudioOutputStatus.publish(
+            manager = manager,
+            requestedPcmMode = AppSettings.outputPcmMode.value,
+            preferred = preferred,
+            floatEnabled = shouldEnableFloatOutput(),
+        )
+    }
+
+    private fun requestOutputReconfiguration() {
+        outputReconfigureJob?.cancel()
+        outputReconfigureJob = scope.launch {
+            // Replacing two renderers during a blend would cut one half of it.
+            // Wait for the short transition to settle, then swap the engine.
+            while (crossfade?.isTransitioning() == true) delay(50)
+            val requestedFloat = shouldEnableFloatOutput()
+            if (requestedFloat == configuredFloatOutput) {
+                applyOutputRoute()
+            } else {
+                rebuildPlayersForOutput(requestedFloat)
+            }
+        }
+    }
+
+    /**
+     * Rebuilds Media3's immutable AudioSink configuration without restarting
+     * the app or service. Queue, item, position and play state are transferred
+     * to the replacement player; the old AudioTrack is released only after the
+     * MediaSession points at the new one.
+     */
+    private fun rebuildPlayersForOutput(enableFloat: Boolean) {
+        val oldActive = player ?: return
+        val oldSpare = spare ?: return
+        val items = List(oldActive.mediaItemCount) { oldActive.getMediaItemAt(it) }
+        val index = oldActive.currentMediaItemIndex.takeIf { it != C.INDEX_UNSET } ?: 0
+        val position = oldActive.currentPosition.coerceAtLeast(0L)
+        val playWhenReady = oldActive.playWhenReady
+        val repeatMode = oldActive.repeatMode
+        val shuffleMode = oldActive.shuffleModeEnabled
+
+        oldActive.playWhenReady = false
+        crossfade?.release()
+        oldActive.removeListener(playbackListener)
+        oldActive.removeAnalyticsListener(formatListener)
+
+        configuredFloatOutput = enableFloat
+        activeFilter = transitionFilterA
+        spareFilter = transitionFilterB
+        val newActive = buildPlayer(transitionFilterA, ownsSession = true)
+        val newSpare = buildPlayer(transitionFilterB, ownsSession = false)
+        player = newActive
+        spare = newSpare
+        newSpare.audioSessionId = newActive.audioSessionId
+        AppSettings.audioSessionId.value = newActive.audioSessionId
+        applySettings(newActive)
+        applySettings(newSpare)
+        newActive.repeatMode = repeatMode
+        newActive.shuffleModeEnabled = shuffleMode
+        if (items.isNotEmpty()) {
+            newActive.setMediaItems(items, index.coerceIn(items.indices), position)
+        }
+        newActive.addListener(playbackListener)
+        newActive.addAnalyticsListener(formatListener)
+
+        val newCrossfade = createCrossfadeController()
+        crossfade = newCrossfade
+        newCrossfade.start()
+        mediaSession?.player = SessionPlayer(newActive, newCrossfade)
+        applyOutputRoute()
+        if (items.isNotEmpty()) newActive.prepare()
+        newActive.playWhenReady = playWhenReady
+
+        oldActive.release()
+        oldSpare.release()
+        TrackLog.i(
+            "AUDIO_OUT",
+            "live output switch: ${if (enableFloat) "PCM_FLOAT" else "PCM_16BIT"}",
+            about = newActive.currentMediaItem?.mediaId,
+        )
+    }
+
+    private fun preferredUsbDevice(): AudioDeviceInfo? = audioManager
+        ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        ?.firstOrNull { device ->
             device.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
                 device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
                 device.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
-        val preferred = usb.takeIf { AppSettings.preferUsbDac.value }
-        eachPlayer { it.setPreferredAudioDevice(preferred) }
-        AudioOutputStatus.publish(manager, AppSettings.outputPcmMode.value, preferred)
+
+    private fun shouldEnableFloatOutput(): Boolean {
+        val usb = preferredUsbDevice()
+        return AudioOutputPolicy.shouldUseFloatOutput(
+            requestedMode = AppSettings.outputPcmMode.value,
+            isPreferredUsbRoute = AppSettings.preferUsbDac.value && usb != null,
+            advertisesPcmFloat = usb?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true,
+        )
     }
 
     /** Runs [body] against both players, in whichever roles they currently hold. */
@@ -3093,7 +3234,10 @@ class PlaybackService : MediaSessionService() {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }
         scope.launch {
-            AppSettings.preferUsbDac.collect { applyOutputRoute() }
+            AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
+            AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
             // Not applied to a player mid-transition: [CrossfadeController]

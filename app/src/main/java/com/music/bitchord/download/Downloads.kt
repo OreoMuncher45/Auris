@@ -13,6 +13,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
+import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
@@ -505,7 +506,7 @@ object Downloads {
      * still know it is already on the device. A stale id costs nothing: the
      * verification in [savedUri] prunes whichever one stops resolving.
      */
-    private fun remember(asked: Song, fetched: Song, uri: Uri) {
+    private fun remember(asked: Song, fetched: Song, uri: Uri, downloadFormat: String? = null) {
         val ids = setOf(asked.videoId, fetched.videoId)
         // HLS packages cannot carry MP4 tags. Point the app's own metadata at
         // the cover saved beside their playlist so Downloads remains fully
@@ -528,6 +529,7 @@ object Downloads {
             durationText = asked.durationText,
             albumName = album,
             uri = uri.toString(),
+            downloadFormat = downloadFormat,
         )
         val metaFetched = SavedSongMetadata(
             videoId = fetched.videoId,
@@ -537,6 +539,7 @@ object Downloads {
             durationText = fetched.durationText,
             albumName = album,
             uri = uri.toString(),
+            downloadFormat = downloadFormat,
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -592,6 +595,7 @@ object Downloads {
                             durationText = meta.durationText,
                             albumName = meta.albumName,
                             localUri = meta.uri,
+                            downloadFormat = meta.downloadFormat,
                         )
                     )
                 }
@@ -807,7 +811,9 @@ object Downloads {
                 // cancellation, and that contract is load-bearing here: this is a
                 // plain child of the scope, so a failure inside it would cancel the
                 // download it was only meant to decorate.
-                if (route.taggable && MediaTagger.carriesTags(route.extension)) {
+                // HLS has no tag container, but its private offline package has
+                // sidecars for exactly the same lyrics and full-resolution cover.
+                if (route.taggable && (route.offlineHls != null || MediaTagger.carriesTags(route.extension))) {
                     lyrics = async { LyricsTag.forTrack(track) }
                     artwork = async { MediaTagger.artworkFor(track) }
                 }
@@ -836,7 +842,7 @@ object Downloads {
                         lyrics = lyrics?.await(),
                         artwork = artwork?.await(),
                     )
-                    remember(song, track, savedUri)
+                    remember(song, track, savedUri, route.downloadFormat)
                     DownloadSession.done(id)
                     clear(id)
                     Log.d(TAG, "saved offline HLS package for $name")
@@ -859,7 +865,7 @@ object Downloads {
                 MediaTagger.embed(context, destination.tagUri, track, route.extension, words, cover)
                 val savedUri = destination.commit()
                 pending = null
-                remember(song, track, savedUri)
+                remember(song, track, savedUri, route.downloadFormat)
                 DownloadSession.done(id)
                 clear(id)
                 Log.d(TAG, "saved $name")
@@ -893,6 +899,8 @@ object Downloads {
         val mimeType: String,
         /** For the log line, so a download's provenance is on the record. */
         val describe: String,
+        /** Short premium-rendition badge shown only in BitChord's Downloads list. */
+        val downloadFormat: String? = null,
         val taggable: Boolean = true,
         val offlineHls: Hls? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
@@ -923,6 +931,7 @@ object Downloads {
                 extension = if (hls) "m3u8" else storable.extension,
                 mimeType = if (hls) "application/vnd.apple.mpegurl" else storable.mimeType,
                 describe = stream.format.summary,
+                downloadFormat = stream.format.downloadBadge(),
                 taggable = true,
                 offlineHls = Hls(stream.url, stream.headers).takeIf { hls },
                 write = { sink, onProgress ->
@@ -1084,7 +1093,15 @@ internal data class SavedSongMetadata(
      */
     val albumName: String? = null,
     val uri: String,
+    val downloadFormat: String? = null,
 )
+
+/** Labels intentionally only distinguish premium formats, not ordinary AAC/Opus downloads. */
+private fun StreamFormat.downloadBadge(): String? = when {
+    isDolbyAtmos -> "DOLBY"
+    codec.equals("flac", ignoreCase = true) || codec.equals("x-flac", ignoreCase = true) -> "FLAC"
+    else -> null
+}
 
 /**
  * What a batch download was asked for as a whole.

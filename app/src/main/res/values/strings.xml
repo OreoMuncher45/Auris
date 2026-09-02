@@ -91,6 +91,7 @@
     <string name="scrobbling">Scrobbling</string>
     <string name="now_playing">Now playing</string>
     <string name="selected">Selected</string>
+    <string name="select_all">Select all</string>
     <string name="password">Password</string>
     <string name="username">Username</string>
     <string name="login_failed">Login failed</string>

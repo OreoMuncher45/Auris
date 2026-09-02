@@ -9,8 +9,10 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +44,10 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
@@ -55,7 +60,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
@@ -74,6 +81,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -155,6 +163,10 @@ fun LocalMusicScreen(
      */
     collections: List<DownloadedCollection> = emptyList(),
     isDownloads: Boolean = false,
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
+    /** Deletes the Downloads rows selected through this screen's long-press mode. */
+    onDeleteDownloads: ((List<Song>) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // Which top-level tab is selected.
@@ -175,6 +187,29 @@ fun LocalMusicScreen(
         AppSettings.localMusicViewType.collectAsStateWithLifecycle()
     }
     val sortedSongs = remember(songs, sortOrder) { songs.sortedForLibrary(sortOrder) }
+    var selectedDownloadIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Kept separately from the tracks selected for deletion: different albums
+    // can share tracks, so inferring an album's selection from those track ids
+    // made one held playlist appear to select unrelated albums.
+    var selectedAlbumKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    val selectingDownloads = isDownloads && selectedDownloadIds.isNotEmpty()
+
+    fun toggleDownloadSelection(song: Song) {
+        selectedDownloadIds = selectedDownloadIds.let { selected ->
+            if (song.videoId in selected) selected - song.videoId else selected + song.videoId
+        }
+    }
+
+    fun toggleAlbumSelection(entry: AlbumEntry) {
+        val albumIds = entry.songs.mapTo(linkedSetOf()) { it.videoId }
+        if (entry.key in selectedAlbumKeys) {
+            selectedAlbumKeys = selectedAlbumKeys - entry.key
+            selectedDownloadIds = selectedDownloadIds - albumIds
+        } else {
+            selectedAlbumKeys = selectedAlbumKeys + entry.key
+            selectedDownloadIds = selectedDownloadIds + albumIds
+        }
+    }
 
     // When non-null, we are showing a drill-down list for that artist or album.
     var drillDownLabel by remember { mutableStateOf<String?>(null) }
@@ -192,7 +227,11 @@ fun LocalMusicScreen(
         drillDownArt = null
     }
 
-    BackHandler(enabled = inDrillDown) { leaveDrillDown() }
+    BackHandler(enabled = selectingDownloads) {
+        selectedDownloadIds = emptySet()
+        selectedAlbumKeys = emptySet()
+    }
+    BackHandler(enabled = inDrillDown && !selectingDownloads) { leaveDrillDown() }
 
     // The tab row is fixed above the scrolling content, so its own top
     // padding has to clear the frosted top bar / status bar that the
@@ -208,7 +247,29 @@ fun LocalMusicScreen(
         // ── Search ───────────────────────────────────────────────────────────
         // Above the tabs rather than inside each one, since a query typed on
         // Songs is just as reasonable to carry over to Artists or Albums.
-        LocalSearchField(
+        if (selectingDownloads) {
+            DownloadSelectionBar(
+                count = selectedDownloadIds.size,
+                allSelected = sortedSongs.isNotEmpty() && selectedDownloadIds.containsAll(sortedSongs.map { it.videoId }),
+                onSelectAll = { selectedDownloadIds = sortedSongs.mapTo(linkedSetOf()) { it.videoId } },
+                onDelete = {
+                    val chosen = songs.filter { it.videoId in selectedDownloadIds }
+                    selectedDownloadIds = emptySet()
+                    selectedAlbumKeys = emptySet()
+                    onDeleteDownloads?.invoke(chosen)
+                },
+                onCancel = {
+                    selectedDownloadIds = emptySet()
+                    selectedAlbumKeys = emptySet()
+                },
+                modifier = Modifier.padding(
+                    top = barHeight + TopBarContentGap,
+                    start = PAGE_GUTTER,
+                    end = PAGE_GUTTER,
+                    bottom = 4.dp,
+                ),
+            )
+        } else LocalSearchField(
             query = searchQuery,
             onQueryChange = { searchQuery = it },
             sortOrder = sortOrder,
@@ -311,8 +372,17 @@ fun LocalMusicScreen(
                         artworkUrl = drillDownArt,
                         songs = drillDownSongs,
                         viewType = viewType,
-                        onSongClick = onSongClick,
-                        onSongLongPress = onSongLongPress,
+                        selectedIds = selectedDownloadIds,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        onSongClick = { tracks, index ->
+                            val song = tracks[index]
+                            if (selectingDownloads) toggleDownloadSelection(song) else onSongClick(tracks, index)
+                        },
+                        onSongLongPress = { song ->
+                            if (isDownloads) selectedDownloadIds = selectedDownloadIds + song.videoId
+                            else onSongLongPress(song)
+                        },
                         onSongSwipe = onSongSwipe,
                         onShuffle = onShuffle,
                         onMore = onCollectionLongPress?.let { more ->
@@ -331,8 +401,20 @@ fun LocalMusicScreen(
                     SongsTab(
                         songs = filteredSongs,
                         viewType = viewType,
-                        onSongClick = onSongClick,
-                        onSongLongPress = onSongLongPress,
+                        selectedIds = selectedDownloadIds,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        onSongClick = { tracks, index ->
+                            val song = tracks[index]
+                            if (selectingDownloads) toggleDownloadSelection(song) else onSongClick(tracks, index)
+                        },
+                        onSongLongPress = { song ->
+                            if (isDownloads) {
+                                selectedDownloadIds = selectedDownloadIds + song.videoId
+                                selectedTab = LOCAL_TAB_SONGS
+                                leaveDrillDown()
+                            } else onSongLongPress(song)
+                        },
                         onSongSwipe = onSongSwipe,
                         contentPadding = bodyContentPadding,
                     )
@@ -370,12 +452,22 @@ fun LocalMusicScreen(
                     AlbumsTab(
                         albums = albums,
                         viewType = viewType,
+                        selectedKeys = selectedAlbumKeys,
                         onAlbumClick = { entry ->
-                            drillDownLabel = entry.title
-                            drillDownSongs = entry.songs
-                            drillDownArt = entry.thumbnailUrl
+                            if (selectingDownloads) {
+                                toggleAlbumSelection(entry)
+                            } else {
+                                drillDownLabel = entry.title
+                                drillDownSongs = entry.songs
+                                drillDownArt = entry.thumbnailUrl
+                            }
                         },
-                        onAlbumLongPress = onCollectionLongPress,
+                        onAlbumLongPress = { entry ->
+                            if (isDownloads) {
+                                selectedDownloadIds = selectedDownloadIds + entry.songs.map { it.videoId }
+                                selectedAlbumKeys = selectedAlbumKeys + entry.key
+                            } else onCollectionLongPress?.invoke(entry.title, entry.songs)
+                        },
                         contentPadding = bodyContentPadding,
                     )
                 }
@@ -390,6 +482,9 @@ fun LocalMusicScreen(
 private fun SongsTab(
     songs: List<Song>,
     viewType: LibraryViewType,
+    selectedIds: Set<String> = emptySet(),
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
@@ -420,6 +515,8 @@ private fun SongsTab(
             itemsIndexed(songs) { index, song ->
                 SongGridCard(
                     song = song,
+                    selected = song.videoId in selectedIds,
+                    isCurrent = song.isCurrentLocal(currentSong),
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                 )
@@ -441,6 +538,9 @@ private fun SongsTab(
             itemsIndexed(songs) { index, song ->
                 SongRow(
                     song = song,
+                    selected = song.videoId in selectedIds,
+                    isCurrent = song.isCurrentLocal(currentSong),
+                    isPlaying = song.isCurrentLocal(currentSong) && isPlaying,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                     onSwipeToQueue = { onSongSwipe(song) },
@@ -461,6 +561,8 @@ private fun SongsTab(
 @Composable
 private fun SongGridCard(
     song: Song,
+    selected: Boolean = false,
+    isCurrent: Boolean = false,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -468,6 +570,7 @@ private fun SongGridCard(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(4.dp),
     ) {
@@ -493,6 +596,14 @@ private fun SongGridCard(
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (isCurrent) {
+                Icon(
+                    Icons.Rounded.GraphicEq,
+                    contentDescription = stringResource(R.string.now_playing),
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp),
                 )
             }
         }
@@ -803,8 +914,9 @@ private fun albumEntries(
 private fun AlbumsTab(
     albums: List<AlbumEntry>,
     viewType: LibraryViewType,
+    selectedKeys: Set<String> = emptySet(),
     onAlbumClick: (AlbumEntry) -> Unit,
-    onAlbumLongPress: ((String, List<Song>) -> Unit)?,
+    onAlbumLongPress: ((AlbumEntry) -> Unit)?,
     contentPadding: PaddingValues,
 ) {
     if (viewType == LibraryViewType.GRID) {
@@ -839,8 +951,9 @@ private fun AlbumsTab(
             items(albums, key = { it.key }) { entry ->
                 AlbumGridCard(
                     entry = entry,
+                    selected = entry.key in selectedKeys,
                     onClick = { onAlbumClick(entry) },
-                    onLongPress = onAlbumLongPress?.let { { it(entry.title, entry.songs) } },
+                    onLongPress = onAlbumLongPress?.let { { it(entry) } },
                 )
             }
         }
@@ -867,8 +980,9 @@ private fun AlbumsTab(
             items(albums, key = { it.key }) { entry ->
                 AlbumRow(
                     entry = entry,
+                    selected = entry.key in selectedKeys,
                     onClick = { onAlbumClick(entry) },
-                    onLongPress = onAlbumLongPress?.let { { it(entry.title, entry.songs) } },
+                    onLongPress = onAlbumLongPress?.let { { it(entry) } },
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
@@ -884,6 +998,7 @@ private fun AlbumsTab(
 @Composable
 private fun AlbumGridCard(
     entry: AlbumEntry,
+    selected: Boolean = false,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -891,6 +1006,7 @@ private fun AlbumGridCard(
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(4.dp),
     ) {
@@ -955,12 +1071,14 @@ private fun AlbumGridCard(
 @Composable
 private fun AlbumRow(
     entry: AlbumEntry,
+    selected: Boolean = false,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent, RoundedCornerShape(10.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1005,9 +1123,9 @@ private fun AlbumRow(
             )
         }
         Icon(
-            imageVector = Icons.Rounded.PlayArrow,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            imageVector = if (selected) Icons.Rounded.CheckCircle else Icons.Rounded.PlayArrow,
+            contentDescription = if (selected) stringResource(R.string.selected) else null,
+            tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(20.dp),
         )
     }
@@ -1058,62 +1176,72 @@ private fun CollectionArtwork(url: String?, playlist: Boolean, size: Dp) {
 private fun DrillDownHeader(
     label: String,
     artworkUrl: String?,
+    songs: List<Song>,
     onBack: () -> Unit,
     onMore: (() -> Unit)?,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 6.dp, end = PAGE_GUTTER, top = 6.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .padding(start = 6.dp, end = PAGE_GUTTER, top = 6.dp, bottom = 12.dp),
     ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.ArrowBack, stringResource(R.string.back), tint = MaterialTheme.colorScheme.onBackground)
+            }
+            Spacer(Modifier.weight(1f))
+            onMore?.let { more ->
+                Box(
+                    modifier = Modifier.size(44.dp).clip(CircleShape).clickable(onClick = more),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.MoreHoriz, stringResource(R.string.more), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
         Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onBack),
+            modifier = Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp).size(188.dp)
+                .clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.secondaryContainer),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Rounded.ArrowBack,
-                contentDescription = stringResource(R.string.back),
-                tint = MaterialTheme.colorScheme.onBackground,
+                imageVector = if (artworkUrl == null) Icons.Rounded.Person else Icons.Rounded.Album,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(64.dp),
             )
-        }
-        Spacer(Modifier.width(4.dp))
-        // Only where there is a real cover to show. An artist grouping
-        // has none, and a square of placeholder glyph next to the name
-        // would be decoration standing in for information.
-        if (artworkUrl != null) {
-            CollectionArtwork(url = artworkUrl, playlist = false, size = 40.dp)
-            Spacer(Modifier.width(10.dp))
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        // The same menu holding the row in the grid behind this opens.
-        // Reachable from here too because this is where someone ends up
-        // who wanted the whole album and tapped instead of held.
-        onMore?.let { more ->
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = more),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.MoreHoriz,
-                    contentDescription = stringResource(R.string.more),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            artworkUrl?.let { artwork ->
+                AsyncImage(
+                    model = artwork.artworkAt(CARD_ART_PX),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
                 )
             }
         }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.headlineMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = PAGE_GUTTER),
+        )
+        Text(
+            text = buildString {
+                if (artworkUrl == null) append("Artist").append(" · ")
+                append(pluralStringResource(R.plurals.track_count_plural, songs.size, songs.size))
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -1126,57 +1254,48 @@ private fun DrillDownActionRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Play button
+        Box(
+            modifier = Modifier
+                .size(50.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
+                .clickable { if (songs.isNotEmpty()) onShuffle(songs) },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                BitChordIcons.Shuffle,
+                contentDescription = stringResource(R.string.shuffle),
+                tint = if (isSystemInDarkTheme()) Color.White else Color.Black,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         Row(
             modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-                .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.primary)
+                .height(50.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                .border(0.5.dp, Color.White.copy(alpha = 0.10f), CircleShape)
                 .clickable { if (songs.isNotEmpty()) onSongClick(songs, 0) }
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 32.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
             Icon(
-                Icons.Rounded.PlayArrow,
+                BitChordIcons.Play,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
+                tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 text = stringResource(R.string.play),
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onPrimary,
-            )
-        }
-        // Shuffle button
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .height(44.dp)
-                .clip(RoundedCornerShape(50))
-                .background(MaterialTheme.colorScheme.secondaryContainer)
-                .clickable { if (songs.isNotEmpty()) onShuffle(songs) }
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Icon(
-                Icons.Rounded.Shuffle,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = stringResource(R.string.shuffle),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                color = MaterialTheme.colorScheme.onSurface,
             )
         }
     }
@@ -1190,6 +1309,9 @@ private fun DrillDownSongList(
     artworkUrl: String?,
     songs: List<Song>,
     viewType: LibraryViewType,
+    selectedIds: Set<String> = emptySet(),
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
@@ -1217,6 +1339,7 @@ private fun DrillDownSongList(
                 DrillDownHeader(
                     label = label,
                     artworkUrl = artworkUrl,
+                    songs = songs,
                     onBack = onBack,
                     onMore = onMore,
                 )
@@ -1231,6 +1354,8 @@ private fun DrillDownSongList(
             itemsIndexed(songs) { index, song ->
                 SongGridCard(
                     song = song,
+                    selected = song.videoId in selectedIds,
+                    isCurrent = song.isCurrentLocal(currentSong),
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                 )
@@ -1247,6 +1372,7 @@ private fun DrillDownSongList(
                 DrillDownHeader(
                     label = label,
                     artworkUrl = artworkUrl,
+                    songs = songs,
                     onBack = onBack,
                     onMore = onMore,
                 )
@@ -1261,6 +1387,10 @@ private fun DrillDownSongList(
             itemsIndexed(songs) { index, song ->
                 SongRow(
                     song = song,
+                    selected = song.videoId in selectedIds,
+                    isCurrent = song.isCurrentLocal(currentSong),
+                    isPlaying = song.isCurrentLocal(currentSong) && isPlaying,
+                    trackNumber = index + 1,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                     onSwipeToQueue = { onSongSwipe(song) },
@@ -1438,6 +1568,59 @@ private fun LocalMusicSort.localizedLabel(): String = when (this) {
     LocalMusicSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
     LocalMusicSort.DATE_ADDED -> stringResource(R.string.sort_date_added)
     LocalMusicSort.DATE_MODIFIED -> stringResource(R.string.sort_date_modified)
+}
+
+/** Local/downloaded rows have a stable URI; ordinary catalogue rows fall back to video id. */
+private fun Song.isCurrentLocal(current: Song?): Boolean {
+    current ?: return false
+    if (localUri != null && current.localUri != null) return localUri == current.localUri
+    return videoId == current.videoId
+}
+
+/** The Downloads-only replacement for the usual search and sort controls. */
+@Composable
+private fun DownloadSelectionBar(
+    count: Int,
+    allSelected: Boolean,
+    onSelectAll: () -> Unit,
+    onDelete: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
+            .padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onSelectAll, enabled = !allSelected) {
+            Icon(
+                Icons.Rounded.Check,
+                contentDescription = stringResource(R.string.select_all),
+                tint = if (isSystemInDarkTheme()) Color.White else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Text(
+            text = "$count ${stringResource(R.string.selected)}",
+            style = MaterialTheme.typography.titleSmall,
+            color = if (isSystemInDarkTheme()) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onDelete, enabled = count > 0) {
+            Icon(
+                Icons.Rounded.Delete,
+                contentDescription = null,
+                tint = Color(0xFFFF453A),
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(stringResource(R.string.delete), color = Color(0xFFFF453A))
+        }
+        TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+    }
 }
 
 @Composable

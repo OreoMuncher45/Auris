@@ -1624,6 +1624,13 @@ private fun BitChordApp(
                             songs = localSongs,
                             collections = downloadCollections,
                             isDownloads = page.browseId == "local:downloads",
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
+                            onDeleteDownloads = { selected ->
+                                scope.launch {
+                                    selected.forEach { song -> Downloads.delete(context, song.videoId) }
+                                }
+                            },
                             onSongClick = play,
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,

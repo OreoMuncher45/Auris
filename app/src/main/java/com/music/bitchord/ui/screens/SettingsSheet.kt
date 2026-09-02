@@ -406,21 +406,16 @@ fun SettingsScreen(
                     append(outputStatus.sink)
                     append(" · ")
                     append(outputStatus.deviceName)
-                    outputStatus.sampleRatesHz.firstOrNull()?.let { append(" · ${it / 1000} kHz") }
+                    (outputStatus.actualSampleRateHz ?: outputStatus.sampleRatesHz.firstOrNull())
+                        ?.let { append(" · ${it / 1000.0} kHz") }
                     append(" · ")
-                    append(outputStatus.requestedPcmMode.label)
+                    append(AudioOutputStatus.encodingLabel(outputStatus))
                 },
             )
             SegmentedControl(
                 options = OutputPcmMode.entries.map(OutputPcmMode::label),
                 selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
                 onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
-                modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
-            )
-            Text(
-                text = "A manual restart may be required after changing this.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
             )
             RowDivider()

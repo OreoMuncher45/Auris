@@ -13,8 +13,9 @@ it is lossy and normally 16-bit PCM after decode.
 ## AudioTrack 16-bit mode
 
 1. In **Settings → Playback → Output precision**, choose **16-bit PCM**.
-2. Fully stop BitChord from Android Settings, then open it and play the test
-   file. This rebuilds Media3's audio sink with the new setting.
+2. Change the option while audio is playing. Confirm playback resumes at the
+   same queue item and position without restarting the app, then play the test
+   file from the beginning.
 3. Confirm sound, seeking, pause/resume, background playback, and a complete
    track play without underruns.
 4. Capture `adb logcat` while playing and retain the `DECODE` line plus the
@@ -22,18 +23,24 @@ it is lossy and normally 16-bit PCM after decode.
 
 ## AudioTrack 32-bit-float mode
 
-1. Connect a wired output or a USB DAC that advertises high-resolution PCM.
-   Bluetooth is not a valid verification route because Android re-encodes it.
-2. Choose **32-bit float**, fully stop BitChord, then start it again.
+1. Connect a USB DAC that explicitly advertises PCM-float support and enable
+   **Prefer USB DAC**. Bluetooth and the built-in speaker are intentionally
+   not valid float routes.
+2. Choose **32-bit float** while audio is playing. Confirm the same queue item
+   and position survive the live sink replacement.
 3. Play the same known 24-bit test file. The setting makes Media3 configure
    `DefaultAudioSink` with float output; it is not a source-quality label.
 4. Verify normal playback, seek, crossfade, volume changes, headphone unplug,
    and a 30-minute continuous run. Watch for `AudioTrack` initialization or
    underrun errors in logcat.
+   On affected Samsung devices, `AUDIO_OUT` must name a non-SEC FLAC decoder
+   (normally `c2.android.flac.decoder`) for a float session.
 5. Verify the DAC's own status page/indicator reports the expected sample rate.
    Its bit-depth display must be interpreted as its negotiated input format;
    Android/OEM mixers may still resample a stream, so it is the authoritative
    final-hop reading.
+6. Repeat without the DAC. The single output line must say **16-bit fallback**,
+   and the same lossless FLAC must remain clean through an in-track upgrade.
 
 ## USB routing
 

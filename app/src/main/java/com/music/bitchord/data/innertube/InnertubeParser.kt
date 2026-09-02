@@ -51,19 +51,28 @@ object InnertubeParser {
         // for the top result, then one shelf per category). Its promoted top
         // result lives on the card itself, not in a responsive row, so read it
         // first before walking the ordinary result rows.
-        val topResults = if (includeVideos) emptyList() else {
+        val topResults: List<SearchResult> = if (includeVideos) emptyList() else {
             collectRenderers(response, "musicCardShelfRenderer")
-                .mapNotNull(::parseCardShelfSong)
+                .mapNotNull { card ->
+                    parseCardShelfSong(card)?.let(SearchResult::TopTrack)
+                        ?: parseCardShelfBrowse(card)?.let(SearchResult::Browse)
+                }
         }
         val rows = collectRenderers(response, "musicResponsiveListItemRenderer")
 
         val seen = HashSet<String>()
         val parsed = buildList {
-            topResults.forEach { song ->
-                // The mixed All page stays music-only; music-video uploads
-                // belong exclusively to the dedicated Videos tab.
-                if (!song.isVideo && seen.add("v:${song.videoId}")) {
-                    add(SearchResult.TopTrack(song))
+            topResults.forEach { result ->
+                when (result) {
+                    is SearchResult.TopTrack -> {
+                        // The mixed All page stays music-only; music-video uploads
+                        // belong exclusively to the dedicated Videos tab.
+                        if (!result.song.isVideo && seen.add("v:${result.song.videoId}")) add(result)
+                    }
+                    is SearchResult.Browse -> {
+                        if (seen.add("b:${result.item.browseId}")) add(result)
+                    }
+                    is SearchResult.Track -> Unit
                 }
             }
             rows.forEach { renderer ->
@@ -609,6 +618,32 @@ object InnertubeParser {
             albumName = credits.albumName,
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
+        )
+    }
+
+    /** Artist, album and playlist cards use the same promoted-search container as a song. */
+    private fun parseCardShelfBrowse(renderer: JsonObject): BrowseItem? {
+        val endpoint = renderer.o("onTap").o("browseEndpoint") ?: return null
+        val browseId = endpoint.s("browseId") ?: return null
+        val pageType = endpoint.o("browseEndpointContextSupportedConfigs")
+            .o("browseEndpointContextMusicConfig").s("pageType").orEmpty()
+        val title = renderer.o("title").runs()
+        if (title.isBlank()) return null
+        val subtitle = renderer.o("subtitle").runs()
+        if (VIDEO_WORD.containsMatchIn(title) || VIDEO_WORD.containsMatchIn(subtitle)) return null
+
+        return BrowseItem(
+            browseId = browseId,
+            title = title,
+            subtitle = subtitle,
+            thumbnailUrl = renderer.o("thumbnail").o("musicThumbnailRenderer")
+                .o("thumbnail").a("thumbnails").best(),
+            type = when {
+                "ALBUM" in pageType -> BrowseType.ALBUM
+                "ARTIST" in pageType -> BrowseType.ARTIST
+                "PLAYLIST" in pageType -> BrowseType.PLAYLIST
+                else -> BrowseType.OTHER
+            },
         )
     }
 

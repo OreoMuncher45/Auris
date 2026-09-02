@@ -535,20 +535,24 @@ object SourceResolver {
                 waitForAll = true,
                 strictLength = strictLength,
             ) ?: continue
-            if (stream.format.isLossless == true) {
+            // Dolby Atmos is not bit-exact PCM, but it is the native premium
+            // rendition that playback already prefers.  Keep it on the same
+            // first-class download path instead of throwing it away and
+            // falling back to YouTube solely because it has no bitrate tag.
+            if (stream.format.isLossless == true || stream.format.isDolbyAtmos) {
                 TrackLog.d(
                     TAG,
                     "download: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
                 )
                 // Nothing is waiting on it any more, and leaving it running
                 // would hold this whole call open on a source whose answer has
-                // just been beaten by a bit-exact one.
+                // just been beaten by the requested premium rendition.
                 elsewhereBest.cancel()
                 return@coroutineScope stream
             }
             TrackLog.d(
                 TAG,
-                "${source.displayName} offered ${stream.format.summary} to download; not bit-exact",
+                "${source.displayName} offered ${stream.format.summary} to download; not lossless or Dolby",
             )
             if (isBetter(stream.format, best?.second?.format)) best = source to stream
         }
