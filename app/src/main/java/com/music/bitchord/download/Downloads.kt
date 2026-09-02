@@ -30,8 +30,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import java.io.File
 import java.io.OutputStream
+import java.io.File
 import java.util.Locale
 
 /** Where a track is between "not on this device" and "on it". */
@@ -507,6 +507,13 @@ object Downloads {
      */
     private fun remember(asked: Song, fetched: Song, uri: Uri) {
         val ids = setOf(asked.videoId, fetched.videoId)
+        // HLS packages cannot carry MP4 tags. Point the app's own metadata at
+        // the cover saved beside their playlist so Downloads remains fully
+        // offline even though another player cannot open that package.
+        val savedArtwork = uri.takeIf { it.scheme == "file" && it.lastPathSegment == "playlist.m3u8" }
+            ?.path?.let(::File)?.parentFile
+            ?.listFiles()?.firstOrNull { it.nameWithoutExtension == "cover" }
+            ?.let(Uri::fromFile)?.toString()
         // Either row may be the one that knew the release: a music video is
         // swapped for the catalogue track before this, and it is the catalogue
         // row that usually carries the album — but a search hit tapped directly
@@ -517,7 +524,7 @@ object Downloads {
             videoId = asked.videoId,
             title = asked.title,
             artist = asked.artist,
-            thumbnailUrl = asked.thumbnailUrl,
+            thumbnailUrl = savedArtwork ?: asked.thumbnailUrl,
             durationText = asked.durationText,
             albumName = album,
             uri = uri.toString(),
@@ -526,7 +533,7 @@ object Downloads {
             videoId = fetched.videoId,
             title = fetched.title,
             artist = fetched.artist,
-            thumbnailUrl = fetched.thumbnailUrl,
+            thumbnailUrl = savedArtwork ?: fetched.thumbnailUrl,
             durationText = fetched.durationText,
             albumName = album,
             uri = uri.toString(),
@@ -784,6 +791,7 @@ object Downloads {
 
         var pending: DownloadStore.Pending? = null
         var lyrics: Deferred<LyricsTag.Embeddable?>? = null
+        var artwork: Deferred<MediaTagger.Artwork?>? = null
         try {
             coroutineScope {
                 // Started before the transfer rather than after it, so four lyric
@@ -799,8 +807,9 @@ object Downloads {
                 // cancellation, and that contract is load-bearing here: this is a
                 // plain child of the scope, so a failure inside it would cancel the
                 // download it was only meant to decorate.
-                if (MediaTagger.carriesTags(route.extension)) {
+                if (route.taggable && MediaTagger.carriesTags(route.extension)) {
                     lyrics = async { LyricsTag.forTrack(track) }
+                    artwork = async { MediaTagger.artworkFor(track) }
                 }
 
                 val name = DownloadStore.fileNameFor(track, route.extension)
@@ -810,6 +819,27 @@ object Downloads {
                     remember(song, track, alreadyThere)
                     DownloadSession.done(id)
                     clear(id)
+                    return@coroutineScope
+                }
+
+                if (route.offlineHls != null) {
+                    val savedUri = OfflineHls.save(
+                        context = context,
+                        id = id,
+                        url = route.offlineHls.url,
+                        headers = route.offlineHls.headers,
+                        onProgress = { written, total ->
+                            val fraction = written.toFloat() / total
+                            _active.update { it + (id to DownloadState.Running(fraction)) }
+                            DownloadSession.running(id, fraction)
+                        },
+                        lyrics = lyrics?.await(),
+                        artwork = artwork?.await(),
+                    )
+                    remember(song, track, savedUri)
+                    DownloadSession.done(id)
+                    clear(id)
+                    Log.d(TAG, "saved offline HLS package for $name")
                     return@coroutineScope
                 }
 
@@ -823,9 +853,12 @@ object Downloads {
                     }
                 }
                 val words = lyrics?.await()
+                val cover = artwork?.await()
+                // Publish only after metadata is part of the file. This keeps
+                // concurrent album workers from exposing untagged tracks.
+                MediaTagger.embed(context, destination.tagUri, track, route.extension, words, cover)
                 val savedUri = destination.commit()
                 pending = null
-                MediaTagger.embed(context, savedUri, track, route.extension, words)
                 remember(song, track, savedUri)
                 DownloadSession.done(id)
                 clear(id)
@@ -841,6 +874,7 @@ object Downloads {
             // so an unwaited job would hold the whole queue up for the length of
             // a lyrics search per already-downloaded track.
             lyrics?.cancel()
+            artwork?.cancel()
         }
     }
 
@@ -859,8 +893,12 @@ object Downloads {
         val mimeType: String,
         /** For the log line, so a download's provenance is on the record. */
         val describe: String,
+        val taggable: Boolean = true,
+        val offlineHls: Hls? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
     )
+
+    internal class Hls(val url: String, val headers: Map<String, String>)
 
     /**
      * Where this download's bytes are coming from.
@@ -876,10 +914,17 @@ object Downloads {
      */
     private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
         fromSources(track, quality)?.let { (stream, storable) ->
+            val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
+            // An HLS package is only useful inside BitChord. When the user
+            // explicitly exports files for another player, decline it here and
+            // let the ordinary portable-file fallback resolve instead.
+            if (hls && AppSettings.exportDownloads.value) return@let
             return Route(
-                extension = storable.extension,
-                mimeType = storable.mimeType,
+                extension = if (hls) "m3u8" else storable.extension,
+                mimeType = if (hls) "application/vnd.apple.mpegurl" else storable.mimeType,
                 describe = stream.format.summary,
+                taggable = true,
+                offlineHls = Hls(stream.url, stream.headers).takeIf { hls },
                 write = { sink, onProgress ->
                     Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
                 },

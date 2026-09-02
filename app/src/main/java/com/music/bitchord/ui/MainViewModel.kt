@@ -122,6 +122,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _searchLoadingMore = MutableStateFlow(false)
     val searchLoadingMore: StateFlow<Boolean> = _searchLoadingMore.asStateFlow()
 
+    /** Increments once per first-page request so the UI can reset its list. */
+    private val _searchScrollReset = MutableStateFlow(0)
+    val searchScrollReset: StateFlow<Int> = _searchScrollReset.asStateFlow()
+
     /**
      * What the search page offers while a query is being typed, led by the
      * query itself.
@@ -1426,6 +1430,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val id = newestRequestId.incrementAndGet()
+        _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
         searchRequests.tryEmit(SearchRequest(query, _filter.value, id))
@@ -1765,8 +1770,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 browseId == "local:downloads" -> {
                     val context = getApplication<Application>()
-                    val songs = LocalMediaRepository.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
+                    val songs = Downloads.getDownloadedSongs(context)
+                    if (songs.isEmpty()) UiState.Error("No downloaded tracks")
                     else UiState.Success(songs)
                 }
                 browseId == "local:all" -> {
@@ -1791,7 +1796,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             if (page.songs.isEmpty()) {
                                 UiState.Error(text(R.string.no_tracks_here))
                             } else {
-                                UiState.Success(page.songs.withArtwork(thumbnailUrl))
+                                UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
                             }
                         },
                         onFailure = { UiState.Error(it.friendly()) },
@@ -1826,9 +1831,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 UiState.Error(text(R.string.no_tracks_here))
                             } else {
                                 more = page.continuation
-                                suggested = page.suggested.withArtwork(thumbnailUrl)
+                                suggested = page.suggested.withArtwork(thumbnailUrl ?: artwork)
                                 library = page.library
-                                UiState.Success(page.songs.withArtwork(thumbnailUrl))
+                                UiState.Success(page.songs.withArtwork(thumbnailUrl ?: artwork))
                             }
                         },
                         onFailure = { UiState.Error(it.friendly()) },
@@ -1856,7 +1861,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             // Only once the first page is on screen: [fillIn] appends to it,
             // and has nothing to append to before this.
-            more?.let { fillIn(browseId, it, thumbnailUrl) }
+            more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork) }
         }
     }
 
@@ -1870,8 +1875,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     else UiState.Success(songs)
                 }
                 browseId == "local:downloads" -> {
-                    val songs = LocalMediaRepository.getDownloadedSongs(context)
-                    if (songs.isEmpty()) UiState.Error("No downloaded tracks in Music/BitChord")
+                    val songs = Downloads.getDownloadedSongs(context)
+                    if (songs.isEmpty()) UiState.Error("No downloaded tracks")
                     else UiState.Success(songs)
                 }
                 browseId == "local:all" -> {
@@ -2018,8 +2023,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
                 browseId == "local:downloads" -> runCatching {
-                    LocalMediaRepository.getDownloadedSongs(context)
-                        .ifEmpty { error("No downloaded tracks in Music/BitChord") }
+                    Downloads.getDownloadedSongs(context)
+                        .ifEmpty { error("No downloaded tracks") }
                 }
                 browseId == "local:all" -> runCatching {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {

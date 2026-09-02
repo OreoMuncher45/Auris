@@ -693,6 +693,28 @@ class PlaybackService : MediaSessionService() {
             }
             val videoId = dataSpec.uri.getQueryParameter("v")
                 ?: return@Factory dataSpec
+            // An explicit rollback is not a preference for a different
+            // candidate: it means this exact YouTube rendition, immediately.
+            // Answer it before StreamChoice, the module race and a pending
+            // upgrade can put another source back under the listener.
+            if (dataSpec.uri.getQueryParameter(DIRECT_YOUTUBE_PARAMETER) == "1") {
+                QualityUpgrade.forget(videoId)
+                StreamChoice.forget(videoId)
+                NerdStats.clearDeclared(videoId)
+                val streamUrl = try {
+                    runBlocking(about) {
+                        withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    throw java.io.IOException("Direct YouTube resolution timed out for $videoId", e)
+                }
+                val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
+                TrackLog.d("BitChord", "serving original YouTube version for $videoId", about = videoId)
+                return@Factory dataSpec.buildUpon()
+                    .setUri(Uri.parse(streamUrl))
+                    .setHttpRequestHeaders(headers)
+                    .build()
+            }
             // Automix owns a base-cache Opus rendition. It must bypass the
             // playback race winner (JioSaavn, a module, or a lossless upgrade)
             // and resolve directly to YouTube for this analysis-only request.
@@ -775,6 +797,29 @@ class PlaybackService : MediaSessionService() {
                 // claim some other path made would be worse than saying nothing.
                 if (serving.format != StreamFormat()) {
                     NerdStats.onSourceStream(videoId, serving.format)
+                }
+                // Read-ahead can pin JioSaavn's quick 320kbps answer before
+                // this track becomes current.  It is the right answer for an
+                // immediate start, but it is not the final quality verdict:
+                // returning here used to bypass [resolveWithModulePriority],
+                // the only path which calls [QualityUpgrade.settledForLess].
+                // Consequently a warmed track displayed its high-quality
+                // source but never kept the upgrading state or asked the
+                // module for its lossless copy.
+                //
+                // Only substituted, non-lossless choices need this. A pinned
+                // YouTube URL has no source result to promote, and a lossless
+                // module result already satisfies the request.
+                if (StreamChoice.isSubstitute(videoId) &&
+                    serving.format.isLossless != true &&
+                    QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
+                ) {
+                    val pending = QualityUpgrade.settledForLess(
+                        mediaId = videoId,
+                        target = SourceResolver.targetIn(dataSpec.uri),
+                        playing = serving.format,
+                    )
+                    if (!pending) NerdStats.onLosslessRaceEnd(videoId)
                 }
                 return@Factory dataSpec.buildUpon()
                     .setUri(Uri.parse(serving.url))
@@ -2153,10 +2198,16 @@ class PlaybackService : MediaSessionService() {
             val previousFormat = NerdStats.declaredFormat(mediaId)
             swappingMediaId = mediaId
             swapCutAt = SystemClock.elapsedRealtime()
+            val upgradedMetadata = now.item.mediaMetadata.buildUpon()
+                .setExtras(Bundle(now.item.mediaMetadata.extras ?: Bundle()).apply {
+                    putBoolean(EXTRA_QUALITY_UPGRADED, true)
+                })
+                .build()
             player.replaceMediaItem(
                 player.currentMediaItemIndex,
                 now.item.buildUpon()
                     .setUri(upgradedUri)
+                    .setMediaMetadata(upgradedMetadata)
                     .withResolvedStreamType(stream.url)
                     .build(),
             )

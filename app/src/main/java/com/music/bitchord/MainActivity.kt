@@ -129,6 +129,7 @@ import com.music.bitchord.playback.QueueShuffle
 import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
+import com.music.bitchord.playback.toDirectYouTubeMediaItem
 import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
@@ -453,6 +454,7 @@ private fun BitChordApp(
     val searchHistory by viewModel.searchHistory.collectAsStateWithLifecycle()
     val searchSuggestions by viewModel.suggestions.collectAsStateWithLifecycle()
     val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
+    val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
     // Local Music has no artwork to wash the bar in, so it renders with a
@@ -1012,7 +1014,7 @@ private fun BitChordApp(
         // once, rather than leaving forty identical failed rows to be read.
         val blocked = songs.isNotEmpty() && !AppSettings.downloadsAllowedNow
         if (songs.isNotEmpty() && !blocked) {
-            val needsStorage = DownloadStore.needsLegacyPermission() &&
+            val needsStorage = AppSettings.exportDownloads.value && DownloadStore.needsLegacyPermission() &&
                 ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.WRITE_EXTERNAL_STORAGE,
@@ -1172,6 +1174,7 @@ private fun BitChordApp(
             durationMs = player.durationMs,
             isAudioVersion = convertedAudioId == song.videoId,
             audioVersionSwitching = switchingAudioVersion,
+            qualityUpgraded = player.isQualityUpgraded,
             onToggleAudioVersion = audioVersion@{
                 val c = controller ?: return@audioVersion
                 val index = c.currentMediaItemIndex
@@ -1813,6 +1816,7 @@ private fun BitChordApp(
                             loadingMore = searchLoadingMore,
                             onLoadMore = viewModel::loadMoreSearchResults,
                             listState = searchListState,
+                            scrollResetTrigger = searchScrollReset,
                             focusTrigger = searchFocusTrigger,
                             // Search hits are alternatives to each other, not a running
                             // order — play the one tapped and build a station from it.
@@ -2234,6 +2238,25 @@ private fun BitChordApp(
                     // whatever ids it's ever going to have.
                     resolvingLinks = fromPlayer && linksLoading,
                     showSleepTimer = fromPlayer,
+                    onRollbackToOriginal = if (fromPlayer && player.isQualityUpgraded &&
+                        controller?.currentMediaItem?.mediaId == song.videoId
+                    ) {
+                        rollback@{
+                            val c = controller ?: return@rollback
+                            val index = c.currentMediaItemIndex
+                            if (index !in 0 until c.mediaItemCount ||
+                                c.currentMediaItem?.mediaId != song.videoId
+                            ) return@rollback
+                            val position = c.currentPosition
+                            val wasPlaying = c.isPlaying
+                            c.replaceMediaItem(index, song.toDirectYouTubeMediaItem())
+                            c.seekTo(index, position)
+                            if (wasPlaying) c.play()
+                            songActions = null
+                        }
+                    } else {
+                        null
+                    },
                     // Hidden outright when there's no real YouTube id behind
                     // this row to build a link from — SongActionsSheet already
                     // drops it for a local file via `isOffline`, this catches

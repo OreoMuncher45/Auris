@@ -83,6 +83,8 @@ data class PlayerState(
      */
     val hasPrevious: Boolean = false,
     val hasNext: Boolean = false,
+    /** True while the current item is the replacement installed by a quality upgrade. */
+    val isQualityUpgraded: Boolean = false,
 )
 
 /** Binds to [PlaybackService] for the lifetime of the composition. */
@@ -139,6 +141,8 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
                 queueIndex = player.currentMediaItemIndex,
                 hasPrevious = player.hasPreviousMediaItem(),
                 hasNext = player.hasNextMediaItem(),
+                isQualityUpgraded = item?.mediaMetadata?.extras
+                    ?.getBoolean(EXTRA_QUALITY_UPGRADED) == true,
             )
         }
 
@@ -247,6 +251,9 @@ private const val EXTRA_DURATION = "bitchord.durationText"
 private const val EXTRA_EXPLICIT = "bitchord.explicit"
 private const val EXTRA_IS_VIDEO = "bitchord.isVideo"
 private const val EXTRA_VIDEO_ORIGIN = "bitchord.isVideoOrigin"
+
+/** Set only on the replacement item produced by [QualityUpgrade]. */
+const val EXTRA_QUALITY_UPGRADED = "bitchord.qualityUpgraded"
 
 /** Whether this item was selected from a music-video row, even after conversion. */
 val MediaItem.isVideoOrigin: Boolean
@@ -436,6 +443,20 @@ fun Song.toMediaItem(): MediaItem {
     )
     .build()
 }
+
+/**
+ * The current song reopened through YouTube alone, bypassing every substitute
+ * and quality-upgrade path.  The separate rendition tag is essential: the
+ * base cache key may currently contain JioSaavn or module bytes, and resuming
+ * that entry as though it were a YouTube WebM corrupts the stream.
+ */
+fun Song.toDirectYouTubeMediaItem(): MediaItem =
+    toMediaItem().buildUpon()
+        .setUri("bitchord://watch?v=$videoId${matchQuery()}&$DIRECT_YOUTUBE_PARAMETER=1&q=original")
+        .build()
+
+/** A playback URI carrying this is explicitly requested YouTube, never a substitute. */
+const val DIRECT_YOUTUBE_PARAMETER = "direct_youtube"
 
 /**
  * Which track a playback URI is for, as a media id — the inverse of the URI

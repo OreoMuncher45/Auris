@@ -242,7 +242,7 @@ class ModuleSource(
                 TrackLog.w(TAG, "${config.displayName}: getStreamUrl failed for $upstreamId — ${e.message}")
                 return@withContext null
             }
-            val url = streamResponse.streamUrl.ifBlank { null } ?: run {
+            val url = streamResponse.streamUrl?.ifBlank { null } ?: run {
                 TrackLog.w(TAG, "${config.displayName}: empty stream URL for $upstreamId")
                 return@withContext null
             }

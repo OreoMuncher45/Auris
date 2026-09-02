@@ -37,15 +37,15 @@ enum class AudioQuality(
  * the figure that decides it is what one track costs, and the rung worth
  * defaulting to is the top one rather than the cheap one.
  *
- * The rungs themselves differ too. On the YouTube path a download is
- * AAC-in-MP4 or nothing (see
+ * The rungs themselves differ too. On the YouTube fallback path a download is
+ * Opus-in-WebM (see
  * [StreamResolver.resolveForDownload][com.music.bitchord.data.innertube.StreamResolver.resolveForDownload]),
- * so there is no Opus here to describe the way [AudioQuality.HIGH] does. And
+ * while configured sources can supply their own AAC or lossless copy. And
  * [LOSSLESS] has no streaming counterpart at all: it is the only rung that lets
  * a configured source's bit-exact file end up as a file on disk.
  */
 enum class DownloadQuality(
-    /** Ceiling for the AAC ladder. [Int.MAX_VALUE] means "whichever rung is best". */
+    /** Ceiling for the YouTube Opus ladder. [Int.MAX_VALUE] means "whichever rung is best". */
     val maxKbps: Int,
     val label: String,
     val detail: String,
@@ -54,12 +54,12 @@ enum class DownloadQuality(
     /** Whether a source's bit-exact file is worth keeping, or a transcode will do. */
     val keepsLossless: Boolean,
 ) {
-    STANDARD(128, "Standard", "~128 kbps AAC · fits more on the device", "~4 MB", false),
-    HIGH(Int.MAX_VALUE, "High", "Best AAC on offer, usually ~256 kbps", "~8 MB", false),
+    STANDARD(128, "Standard", "~128 kbps Opus · fits more on the device", "~4 MB", false),
+    HIGH(Int.MAX_VALUE, "High", "Best audio on offer; source quality first", "~8 MB", false),
     LOSSLESS(
         Int.MAX_VALUE,
         "Lossless",
-        "Bit-exact if a source has it, best AAC if not",
+        "Bit-exact if a source has it, best Opus if not",
         "~35 MB",
         true,
     ),
@@ -147,6 +147,14 @@ object AppSettings {
      * second is recoverable by the person it happens to.
      */
     val wifiOnlyDownloads = MutableStateFlow(true)
+
+    /**
+     * Keep ordinary downloads in Music/BitChord where other music apps can see
+     * them. Off (the default) keeps downloads in this app's private storage.
+     * HLS downloads always stay private because they are a playlist package,
+     * not one portable audio file.
+     */
+    val exportDownloads = MutableStateFlow(false)
 
     /** Whether the active network charges for data. `null` while offline. */
     val meteredConnection = MutableStateFlow<Boolean?>(null)
@@ -486,6 +494,7 @@ object AppSettings {
         migrateDownloadQuality()
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
+        exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
         automixPerformanceMode.value = runCatching {
@@ -938,6 +947,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LASTFM_NOW_PLAYING, value).apply()
     }
 
+    fun setExportDownloads(value: Boolean) {
+        exportDownloads.value = value
+        prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
+    }
+
     fun setLastfmPrimaryArtistOnly(value: Boolean) {
         lastfmPrimaryArtistOnly.value = value
         prefs.edit().putBoolean(KEY_LASTFM_PRIMARY_ARTIST_ONLY, value).apply()
@@ -1218,6 +1232,7 @@ object AppSettings {
     private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
+    private const val KEY_EXPORT_DOWNLOADS = "export_downloads"
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"

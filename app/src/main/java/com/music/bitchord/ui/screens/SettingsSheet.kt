@@ -187,6 +187,7 @@ fun SettingsScreen(
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
+    val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val sourceConfigs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -383,6 +384,12 @@ fun SettingsScreen(
                 checked = wifiOnlyDownloads,
                 onCheckedChange = AppSettings::setWifiOnlyDownloads,
                 badge = stringResource(R.string.blocking).takeIf { wifiOnlyDownloads && metered == true },
+            )
+            SettingsSubRow(
+                title = "Export compatible downloads",
+                checked = exportDownloads,
+                onCheckedChange = AppSettings::setExportDownloads,
+                badge = "Music/BitChord".takeIf { exportDownloads },
             )
         }
 

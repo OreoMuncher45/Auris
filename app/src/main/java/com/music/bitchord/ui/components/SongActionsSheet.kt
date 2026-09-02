@@ -22,6 +22,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.BugReport
@@ -122,6 +123,8 @@ fun SongActionsSheet(
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
+    /** Available only for a player item currently replaced by a quality upgrade. */
+    onRollbackToOriginal: (() -> Unit)? = null,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -234,6 +237,14 @@ fun SongActionsSheet(
                 value = sleepTimerStatus(),
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
+        }
+        onRollbackToOriginal?.let {
+            ActionRow(
+                icon = Icons.AutoMirrored.Rounded.Undo,
+                label = stringResource(R.string.revert_to_original),
+                accent = palette.accent,
+                onClick = it,
+            )
         }
         if (!isOffline) {
             onShare?.let {

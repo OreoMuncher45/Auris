@@ -16,6 +16,7 @@ import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -75,6 +76,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Cast
@@ -210,6 +212,9 @@ private const val ART_PX = 1200
  * enough not to be noticed on a track that has no album to find.
  */
 private const val ALBUM_SETTLE_MS = 700L
+
+/** Long enough for the post-upgrade rollback cue to be noticed without lingering. */
+private const val REVERT_CUE_MS = 2_600L
 
 /**
  * How close the player's reported position has to get to a released scrub
@@ -478,6 +483,8 @@ fun NowPlayingScreen(
     isAudioVersion: Boolean,
     /** A catalogue lookup is in progress for this video's manual conversion. */
     audioVersionSwitching: Boolean,
+    /** The player has just swapped this item to a higher-quality source. */
+    qualityUpgraded: Boolean,
     queue: List<Song>,
     queueIndex: Int,
     hasPrevious: Boolean,
@@ -604,6 +611,19 @@ fun NowPlayingScreen(
     var queueOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
     LaunchedEffect(song.videoId) { lyricsOpen = false }
+    // A brief, non-modal confirmation that the three-dot menu now contains a
+    // way back to the original YouTube rendition. The control keeps its usual
+    // action — opening the menu — so the cue teaches rather than surprises.
+    var showRevertCue by remember(song.videoId) { mutableStateOf(false) }
+    LaunchedEffect(song.videoId, qualityUpgraded) {
+        if (!qualityUpgraded) {
+            showRevertCue = false
+            return@LaunchedEffect
+        }
+        showRevertCue = true
+        delay(REVERT_CUE_MS)
+        showRevertCue = false
+    }
 
     // Lyrics are meant to be read continuously, so prevent the device's
     // normal screen timeout only while this panel is visible. SideEffect keeps
@@ -1430,7 +1450,7 @@ fun NowPlayingScreen(
                             .background(Color.Black.copy(alpha = 0.18f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (!artLoaded) {
+                        if (!artLoaded && !canvasRendered) {
                             Icon(
                                 imageVector = BitChordIcons.MusicNote,
                                 contentDescription = null,
@@ -1463,7 +1483,15 @@ fun NowPlayingScreen(
                             // the square sleeve looks like a broken frame.
                             contentScale = ContentScale.Crop,
                             onState = { artLoaded = it is AsyncImagePainter.State.Success },
-                            modifier = Modifier.fillMaxSize(),
+                            // TextureView-backed canvas frames can arrive
+                            // before Coil has decoded the sleeve. Hide the
+                            // still layer for that short window: on some
+                            // devices Compose draws the image placeholder over
+                            // the Android view, leaving a blank square on top
+                            // of a perfectly healthy animated cover.
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer { alpha = if (!artLoaded && canvasRendered) 0f else 1f },
                         )
 
                         // Where the clip plays when it can't have the banner:
@@ -1658,7 +1686,7 @@ fun NowPlayingScreen(
                         Spacer(Modifier.width(8.dp))
                     }
                     CircleGlyph(
-                        icon = Icons.Rounded.MoreHoriz,
+                        icon = if (showRevertCue) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.MoreHoriz,
                         contentDescription = stringResource(R.string.more),
                         onClick = onOpenMenu,
                     )
@@ -3081,12 +3109,18 @@ private fun CircleGlyph(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White,
-            modifier = Modifier.size(19.dp),
-        )
+        Crossfade(
+            targetState = icon,
+            animationSpec = tween(durationMillis = 180),
+            label = "playerMenuGlyph",
+        ) { glyph ->
+            Icon(
+                imageVector = glyph,
+                contentDescription = contentDescription,
+                tint = Color.White,
+                modifier = Modifier.size(19.dp),
+            )
+        }
     }
 }
 
@@ -4086,7 +4120,7 @@ private fun LosslessLabel(
                 painter = iconPainter,
                 contentDescription = null,
                 tint = tint,
-                modifier = Modifier.size(width = 15.dp, height = 11.dp),
+                modifier = Modifier.size(width = 13.dp, height = 10.dp),
             )
         } else {
             Icon(

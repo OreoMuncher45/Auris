@@ -88,6 +88,7 @@ fun SearchScreen(
     loadingMore: Boolean,
     onLoadMore: () -> Unit,
     listState: LazyListState,
+    scrollResetTrigger: Int,
     focusTrigger: Int = 0,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
@@ -117,6 +118,12 @@ fun SearchScreen(
     // respond by focusing the field and opening the keyboard.
     LaunchedEffect(focusTrigger) {
         if (focusTrigger > 0) focusRequester.requestFocus()
+    }
+    // Search keeps one list state while its contents change. Reset it for each
+    // new request so choosing a recent search cannot inherit the history's
+    // previous scroll position (or a previous result page's position).
+    LaunchedEffect(scrollResetTrigger) {
+        if (scrollResetTrigger > 0) listState.scrollToItem(0)
     }
     // A non-empty suggestion list means the field is mid-edit — see
     // MainViewModel.suggestions. Nothing below it is worth showing while it is
@@ -305,6 +312,13 @@ private fun TopResultCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            IconButton(onClick = onLongPress, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    Icons.Rounded.MoreVert,
+                    contentDescription = stringResource(R.string.more),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -323,13 +337,6 @@ private fun TopResultCard(
                 Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 Text(stringResource(R.string.playlist_action))
-            }
-            IconButton(onClick = onLongPress, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
             }
         }
     }
