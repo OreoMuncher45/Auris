@@ -29,6 +29,19 @@ enum class AudioQuality(
 }
 
 /**
+ * PCM format requested from Media3's AudioTrack sink.
+ *
+ * FLOAT_32 is not a cosmetic "hi-res" switch: it makes Media3 convert
+ * high-resolution integer PCM to IEEE-754 float and configure AudioTrack for
+ * PCM_FLOAT. Android may still route/resample it according to the selected
+ * output device, which is why the player exposes the negotiated format.
+ */
+enum class OutputPcmMode(val label: String) {
+    PCM_16("16-bit PCM"),
+    FLOAT_32("32-bit float"),
+}
+
+/**
  * What to keep when a track is saved to the device.
  *
  * Deliberately not [AudioQuality]. That enum budgets a *stream*, and is priced
@@ -186,6 +199,12 @@ object AppSettings {
     /** Opt-in for the future on-device transition-ranking model. */
     val automixAiEnabled = MutableStateFlow(false)
     val skipSilence = MutableStateFlow(false)
+
+    /** Requested PCM representation at the Android AudioTrack boundary. */
+    val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
+
+    /** Prefer an attached USB audio output over the system's normal route. */
+    val preferUsbDac = MutableStateFlow(false)
 
     val playbackSpeed = MutableStateFlow(1.0f)
     val themeMode = MutableStateFlow(ThemeMode.DARK)
@@ -504,6 +523,13 @@ object AppSettings {
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
         automixAiEnabled.value = prefs.getBoolean(KEY_AUTOMIX_AI_ENABLED, false)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
+        outputPcmMode.value = runCatching {
+            OutputPcmMode.valueOf(
+                prefs.getString(KEY_OUTPUT_PCM_MODE, OutputPcmMode.PCM_16.name)
+                    ?: OutputPcmMode.PCM_16.name,
+            )
+        }.getOrDefault(OutputPcmMode.PCM_16)
+        preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
@@ -947,6 +973,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LASTFM_NOW_PLAYING, value).apply()
     }
 
+    fun setOutputPcmMode(value: OutputPcmMode) {
+        outputPcmMode.value = value
+        prefs.edit().putString(KEY_OUTPUT_PCM_MODE, value.name).apply()
+    }
+
+    fun setPreferUsbDac(value: Boolean) {
+        preferUsbDac.value = value
+        prefs.edit().putBoolean(KEY_PREFER_USB_DAC, value).apply()
+    }
+
     fun setExportDownloads(value: Boolean) {
         exportDownloads.value = value
         prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
@@ -1239,6 +1275,8 @@ object AppSettings {
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_AUTOMIX_AI_ENABLED = "automix_ai_enabled"
     private const val KEY_SKIP_SILENCE = "skip_silence"
+    private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
+    private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_SPEED = "playback_speed"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_AUTOPLAY = "autoplay"

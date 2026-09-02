@@ -122,6 +122,8 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.SourceKind
@@ -184,6 +186,9 @@ fun SettingsScreen(
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
+    val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
+    val preferUsbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
+    val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
@@ -394,6 +399,38 @@ fun SettingsScreen(
         }
 
         SettingsGroup(header = stringResource(R.string.playback)) {
+            SettingsRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = "Output precision",
+                subtitle = buildString {
+                    append(outputStatus.sink)
+                    append(" · ")
+                    append(outputStatus.deviceName)
+                    outputStatus.sampleRatesHz.firstOrNull()?.let { append(" · ${it / 1000} kHz") }
+                    append(" · ")
+                    append(outputStatus.requestedPcmMode.label)
+                },
+            )
+            SegmentedControl(
+                options = OutputPcmMode.entries.map(OutputPcmMode::label),
+                selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
+                onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
+                modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
+            )
+            Text(
+                text = "A manual restart may be required after changing this.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
+            )
+            RowDivider()
+            SettingsSubRow(
+                title = "Prefer USB DAC",
+                checked = preferUsbDac,
+                onCheckedChange = AppSettings::setPreferUsbDac,
+                badge = "Connected".takeIf { outputStatus.isUsb },
+            )
+            RowDivider()
             // Automix decides its own length from each pair of tracks —
             // tempo, key, structure — so it replaces the manual slider rather
             // than needing it set to anything first.

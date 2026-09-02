@@ -3,6 +3,9 @@ package com.music.bitchord.playback
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -60,6 +63,7 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.scrobbling.ListenBrainzManager
 import com.music.bitchord.data.scrobbling.ScrobbleManager
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -117,6 +121,12 @@ const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
+
+    private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private val outputDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = applyOutputRoute()
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = applyOutputRoute()
+    }
 
     /**
      * The player the session is on. Swaps with [spare] at every crossfade — see
@@ -903,6 +913,8 @@ class PlaybackService : MediaSessionService() {
         // to be audible. Without it a crossfade would audibly change EQ halfway
         // through, and again at every handoff.
         sparePlayer.audioSessionId = exoPlayer.audioSessionId
+        audioManager?.registerAudioDeviceCallback(outputDeviceCallback, null)
+        applyOutputRoute()
 
         AppSettings.audioSessionId.value = exoPlayer.audioSessionId
         applySettings(exoPlayer)
@@ -3008,6 +3020,13 @@ class PlaybackService : MediaSessionService() {
      * `skipSilenceEnabled` keeps driving it as before.
      */
     private fun silenceSkippingRenderers(transition: TransitionFilterProcessor) = object : DefaultRenderersFactory(this) {
+        init {
+            // This changes Media3's real sink configuration. With FLOAT_32, high-resolution
+            // PCM is converted to PCM_FLOAT and AudioTrack is opened in its 32-bit float mode;
+            // with PCM_16, Media3 inserts its integer 16-bit converter instead.
+            setEnableAudioFloatOutput(AppSettings.outputPcmMode.value == OutputPcmMode.FLOAT_32)
+        }
+
         override fun buildAudioSink(
             context: Context,
             enableFloatOutput: Boolean,
@@ -3046,6 +3065,23 @@ class PlaybackService : MediaSessionService() {
         player.repeatMode = AppSettings.repeatMode.value
     }
 
+    /**
+     * Applies the user's USB-DAC preference through the public Android routing
+     * API. This does not bypass the system USB driver: it intentionally lets
+     * Android negotiate only formats the connected DAC actually advertises.
+     */
+    private fun applyOutputRoute() {
+        val manager = audioManager ?: return
+        val usb = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).firstOrNull { device ->
+            device.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                device.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                device.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
+        }
+        val preferred = usb.takeIf { AppSettings.preferUsbDac.value }
+        eachPlayer { it.setPreferredAudioDevice(preferred) }
+        AudioOutputStatus.publish(manager, AppSettings.outputPcmMode.value, preferred)
+    }
+
     /** Runs [body] against both players, in whichever roles they currently hold. */
     private inline fun eachPlayer(body: (ExoPlayer) -> Unit) {
         player?.let(body)
@@ -3055,6 +3091,9 @@ class PlaybackService : MediaSessionService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
+        }
+        scope.launch {
+            AppSettings.preferUsbDac.collect { applyOutputRoute() }
         }
         scope.launch {
             // Not applied to a player mid-transition: [CrossfadeController]
@@ -3373,6 +3412,7 @@ class PlaybackService : MediaSessionService() {
 
 
     override fun onDestroy() {
+        audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         // Last chance to record the resume point, while the player still exists.
         saveQueue()
         // And to leave the widgets showing a play button. Nothing else reports a
