@@ -92,12 +92,26 @@ object YtMusicRepository {
      * Signed-in only; there is no history to read as a guest.
      */
     private suspend fun recentlyPlayed(): HomeShelf? {
-        if (Innertube.cookie == null) return null
-        val songs = fetchHistory().take(RECENT_LIMIT)
-        if (songs.isEmpty()) return null
+        val ytSongs = if (Innertube.cookie != null) {
+            runCatching { fetchHistory() }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+
+        val localSongs = com.music.bitchord.playback.LastPlayed.load()?.songs?.map {
+            com.music.bitchord.data.model.Song(
+                videoId = it.videoId,
+                title = it.title,
+                artist = it.artist,
+                thumbnailUrl = it.thumbnailUrl,
+            )
+        } ?: emptyList()
+
+        val allSongs = (localSongs + ytSongs).distinctBy { it.videoId }.take(RECENT_LIMIT)
+        if (allSongs.isEmpty()) return null
         return HomeShelf(
             title = RECENT_TITLE,
-            items = songs.map {
+            items = allSongs.map {
                 ShelfItem(
                     title = it.title,
                     subtitle = it.artist,
@@ -132,8 +146,90 @@ object YtMusicRepository {
      */
     suspend fun history(): Result<List<Song>> = call("history") { fetchHistory() }
 
+    /**
+     * Account listening history or local playback queue, for the Recents feed.
+     */
+    suspend fun recents(): Result<List<Song>> = call("recents") {
+        if (Innertube.cookie != null) {
+            val history = runCatching { fetchHistory() }.getOrDefault(emptyList())
+            if (history.isNotEmpty()) return@call history
+        }
+        val localSongs = com.music.bitchord.playback.LastPlayed.load()?.songs?.map {
+            Song(videoId = it.videoId, title = it.title, artist = it.artist, thumbnailUrl = it.thumbnailUrl)
+        } ?: emptyList()
+        localSongs
+    }
+
+    /**
+     * Recommended discovery tracks for Quick Picks, strictly excluding listening history and recents.
+     */
+    suspend fun quickPicks(excludeSongIds: Set<String> = emptySet()): Result<List<Song>> = call("quickPicks") {
+        val homeRaw = runCatching { Innertube.browse("FEmusic_home") }.getOrNull()
+        val shelves = if (homeRaw != null) InnertubeParser.parseHome(homeRaw) else emptyList()
+
+        // 1. Direct "Quick picks" or "Mix" or "Recommendations" shelf
+        val qpShelf = shelves.firstOrNull {
+            it.title.contains("quick", ignoreCase = true) ||
+                it.title.contains("pick", ignoreCase = true) ||
+                it.title.contains("mix", ignoreCase = true) ||
+                it.title.contains("recommend", ignoreCase = true)
+        }
+        val qpSongs = qpShelf?.items?.mapNotNull { item ->
+            item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
+                Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+            }
+        }.orEmpty()
+        if (qpSongs.isNotEmpty()) return@call qpSongs
+
+        // 2. All shelves on Home (excluding shelves mentioning recent/history, and skipping top shelf if multiple exist)
+        val candidateShelves = if (shelves.size > 1) {
+            shelves.drop(1).filterNot {
+                it.title.contains("recent", ignoreCase = true) ||
+                    it.title.contains("history", ignoreCase = true) ||
+                    it.title.contains("listen again", ignoreCase = true)
+            }
+        } else shelves
+
+        val homeShelfSongs = candidateShelves.flatMap { shelf ->
+            shelf.items.mapNotNull { item ->
+                item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
+                    Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                }
+            }
+        }.distinctBy { it.videoId }
+
+        if (homeShelfSongs.isNotEmpty()) return@call homeShelfSongs
+
+        // 3. Any shelf items on Home that have videoId
+        val allHomeTrackSongs = shelves.flatMap { shelf ->
+            shelf.items.mapNotNull { item ->
+                item.videoId?.let { vid ->
+                    Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                }
+            }
+        }.distinctBy { it.videoId }
+
+        val uniqueAllHome = allHomeTrackSongs.filterNot { it.videoId in excludeSongIds }
+        if (uniqueAllHome.isNotEmpty()) return@call uniqueAllHome
+
+        // 4. Explore / New releases
+        val explore = runCatching { shelvesOf("FEmusic_new_releases") }.getOrDefault(emptyList())
+        val exploreSongs = explore.flatMap { shelf ->
+            shelf.items.mapNotNull { item ->
+                item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
+                    Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                }
+            }
+        }.distinctBy { it.videoId }
+
+        if (exploreSongs.isNotEmpty()) return@call exploreSongs
+
+        // 5. Fallback if everything was filtered out
+        allHomeTrackSongs.ifEmpty { exploreSongs }
+    }
+
     private const val HISTORY = "FEmusic_history"
-    private const val RECENT_TITLE = "Recently played"
+    private const val RECENT_TITLE = "Recents"
 
     /** Enough to scroll through, short of turning the shelf into the history page. */
     private const val RECENT_LIMIT = 20
@@ -592,6 +688,13 @@ object YtMusicRepository {
      */
     suspend fun userPlaylists(): Result<List<UserPlaylist>> = call("playlists") {
         InnertubeParser.parseUserPlaylists(libraryItemsPaged(LIBRARY_PLAYLISTS))
+    }
+
+    /**
+     * All playlists in user library (including Liked Music and saved playlists).
+     */
+    suspend fun libraryPlaylists(): Result<List<ShelfItem>> = call("libraryPlaylists") {
+        InnertubeParser.parseLibraryItems(Innertube.browse(LIBRARY_PLAYLISTS))
     }
 
     /** Creates a playlist, optionally seeded with [videoIds]; returns its id. */

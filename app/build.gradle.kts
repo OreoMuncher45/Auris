@@ -61,13 +61,14 @@ android {
         // Last.fm credentials are supplied locally and never committed.
         buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "LASTFM_SECRET", "\"${lastfmSecret.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+    }
 
-        // Automix's DSP analyzer (native/analyzer). 64-bit only: minSdk 26
-        // already postdates the 64-bit requirement, so a 32-bit slice would
-        // double the native payload for devices that do not exist in the
-        // install base.
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
         }
     }
 
