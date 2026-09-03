@@ -192,9 +192,6 @@
     <string name="automix_mode_balanced_subtitle">2 hilos · equilibrio recomendado entre velocidad, calor y batería</string>
     <string name="automix_mode_performance">Rendimiento</string>
     <string name="automix_mode_performance_subtitle">4 hilos · análisis más rápido · mayor calor y consumo</string>
-    <string name="automix_ai">Inteligencia de mezcla [BETA]</string>
-    <string name="automix_ai_disabled_subtitle">Para música electrónica. Activa el ranking de transiciones en el dispositivo.</string>
-    <string name="automix_ai_enabled_subtitle">Para música electrónica cuando haya un modelo disponible. La mezcla automática normal protege otros géneros y mezclas de baja confianza.</string>
     <string name="skip_silence">Omitir silencios</string>
     <string name="skip_silence_subtitle">Recorta pausas de más de un segundo</string>
     <string name="equalizer">Ecualizador</string>

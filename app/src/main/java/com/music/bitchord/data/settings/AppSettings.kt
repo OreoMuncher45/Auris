@@ -207,9 +207,6 @@ object AppSettings {
 
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
-
-    /** Opt-in for the future on-device transition-ranking model. */
-    val automixAiEnabled = MutableStateFlow(false)
     val skipSilence = MutableStateFlow(false)
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
@@ -540,7 +537,6 @@ object AppSettings {
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
             )
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
-        automixAiEnabled.value = prefs.getBoolean(KEY_AUTOMIX_AI_ENABLED, false)
         skipSilence.value = prefs.getBoolean(KEY_SKIP_SILENCE, false)
         outputPcmMode.value = runCatching {
             OutputPcmMode.valueOf(
@@ -768,11 +764,6 @@ object AppSettings {
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
         automixPerformanceMode.value = value
         prefs.edit().putString(KEY_AUTOMIX_PERFORMANCE_MODE, value.name).apply()
-    }
-
-    fun setAutomixAiEnabled(value: Boolean) {
-        automixAiEnabled.value = value
-        prefs.edit().putBoolean(KEY_AUTOMIX_AI_ENABLED, value).apply()
     }
 
     fun setSkipSilence(value: Boolean) {
@@ -1298,7 +1289,6 @@ object AppSettings {
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
-    private const val KEY_AUTOMIX_AI_ENABLED = "automix_ai_enabled"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
