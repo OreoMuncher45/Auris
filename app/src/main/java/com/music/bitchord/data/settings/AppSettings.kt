@@ -12,7 +12,17 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
- * Stream bitrate ceiling. HIGH means "whatever the best available format is".
+ * Stream bitrate ceiling on the YouTube fallback path — MEDIUM, HIGH and
+ * LOSSLESS all mean "whatever the best available Opus format is" there; what
+ * actually tells them apart is which other sources are allowed to answer
+ * *before* YouTube gets asked. That part is
+ * [SourceRegistry.applyQualityPreset][com.music.bitchord.data.sources.SourceRegistry.applyQualityPreset]'s
+ * job, kept in step with whichever rung is picked here:
+ *
+ * - [LOSSLESS] — Ricky's Addon (the built-in module source) and JioSaavn both on.
+ * - [HIGH] — Ricky's Addon off, JioSaavn on.
+ * - [MEDIUM] and [LOW] — both off; YouTube's own Opus ladder is all there is,
+ *   capped at [maxKbps].
  *
  * [hourly] is what the ceiling costs in data over an hour of listening, which
  * is the only part of this a user actually cares about on a metered plan.
@@ -24,8 +34,9 @@ enum class AudioQuality(
     val hourly: String,
 ) {
     LOW(64, "Low", "~64 kbps · smallest download", "29 MB/hr"),
-    MEDIUM(128, "Medium", "~128 kbps · balanced", "58 MB/hr"),
-    HIGH(Int.MAX_VALUE, "High", "Best available · ~171 kbps Opus", "77 MB/hr"),
+    MEDIUM(Int.MAX_VALUE, "Medium", "Best available · ~171 kbps Opus", "77 MB/hr"),
+    HIGH(Int.MAX_VALUE, "High", "JioSaavn up to 320kbps, YouTube fallback", "144 MB/hr"),
+    LOSSLESS(Int.MAX_VALUE, "Lossless", "Ricky's Addon + JioSaavn, bit-exact where available", "300+ MB/hr"),
 }
 
 /**
@@ -119,11 +130,12 @@ object AppSettings {
 
     /**
      * Quality ceilings, one per kind of connection — the point of the split is
-     * that Wi-Fi can stay on High while mobile data is capped. Both default to
-     * High; the mobile plan is the user's to budget, not ours to assume.
+     * that Wi-Fi can stay on Lossless while mobile data is capped. Both
+     * default to Lossless; the mobile plan is the user's to budget, not ours
+     * to assume.
      */
-    val audioQualityWifi = MutableStateFlow(AudioQuality.HIGH)
-    val audioQualityCellular = MutableStateFlow(AudioQuality.HIGH)
+    val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
+    val audioQualityCellular = MutableStateFlow(AudioQuality.LOSSLESS)
 
     /**
      * What a saved file should be, answered on its own terms.
@@ -648,8 +660,8 @@ object AppSettings {
     }
 
     private fun readQuality(key: String): AudioQuality {
-        val stored = prefs.getString(key, null) ?: return AudioQuality.HIGH
-        return runCatching { AudioQuality.valueOf(stored) }.getOrDefault(AudioQuality.HIGH)
+        val stored = prefs.getString(key, null) ?: return AudioQuality.LOSSLESS
+        return runCatching { AudioQuality.valueOf(stored) }.getOrDefault(AudioQuality.LOSSLESS)
     }
 
     /**
