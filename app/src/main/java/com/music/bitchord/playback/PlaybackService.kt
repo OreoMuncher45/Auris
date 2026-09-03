@@ -296,6 +296,8 @@ class PlaybackService : MediaLibraryService() {
      * [spareFilter] are the *roles*, and they trade places at every handoff
      * along with the players. Everything downstream talks in roles.
      */
+    private val spatialAudioProcessorA = SpatialAudioProcessor()
+    private val spatialAudioProcessorB = SpatialAudioProcessor()
     private val transitionFilterA = TransitionFilterProcessor()
     private val transitionFilterB = TransitionFilterProcessor()
 
@@ -1050,8 +1052,8 @@ class PlaybackService : MediaLibraryService() {
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
 
         configuredFloatOutput = shouldEnableFloatOutput()
-        val exoPlayer = buildPlayer(transitionFilterA, ownsSession = true)
-        val sparePlayer = buildPlayer(transitionFilterB, ownsSession = false)
+        val exoPlayer = buildPlayer(spatialAudioProcessorA, transitionFilterA, ownsSession = true)
+        val sparePlayer = buildPlayer(spatialAudioProcessorB, transitionFilterB, ownsSession = false)
         player = exoPlayer
         spare = sparePlayer
         // Both sinks feed the same session id, so the system equalizer and any
@@ -1331,10 +1333,11 @@ class PlaybackService : MediaLibraryService() {
      * re-resolving a stream URL for audio that is already local.
      */
     private fun buildPlayer(
+        spatial: SpatialAudioProcessor,
         filter: TransitionFilterProcessor,
         ownsSession: Boolean,
     ): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(filter))
+        .setRenderersFactory(silenceSkippingRenderers(spatial, filter))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
@@ -2200,15 +2203,6 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.d("BitChord", "upgrade abandoned: only ${at.duration - at.position}ms of the track left")
             return
         }
-        // An Atmos catalogue result is an E-AC-3 JOC stream. Do not let a
-        // device that has no JOC decoder reach the audition or interrupt the
-        // listener's current stream. The audition below remains the final
-        // proof for a decoder that exists but cannot open this exact rendition.
-        if (stream.format.isDolbyAtmos && !canDecodeDolbyAtmos()) {
-            TrackLog.w("BitChord", "upgrade rejected: this device has no E-AC-3 JOC decoder")
-            QualityUpgrade.forget(mediaId)
-            return
-        }
 
         val upgradedUri = QualityUpgrade.upgradedUri(at.uri)
         // Whether the rendition entry already holds *this* stream's bytes,
@@ -2555,15 +2549,6 @@ class PlaybackService : MediaLibraryService() {
         TrackLog.d("BitChord", AudioCache.cachedSummary(Uri.parse(upgradedUri)))
         return warmedThrough
     }
-
-    /** A cheap, no-playback capability check for Dolby Atmos (E-AC-3 JOC). */
-    private fun canDecodeDolbyAtmos(): Boolean = runCatching {
-        MediaCodecUtil.getDecoderInfos(
-            MimeTypes.AUDIO_E_AC3_JOC,
-            /* requiresSecureDecoder = */ false,
-            /* requiresTunnelingDecoder = */ false,
-        ).isNotEmpty()
-    }.getOrDefault(false)
 
     /**
      * Tells Media3 the type of a stream found behind one of our virtual
@@ -3219,7 +3204,10 @@ class PlaybackService : MediaLibraryService() {
      * track. Everything else about the chain stays default, so
      * `skipSilenceEnabled` keeps driving it as before.
      */
-    private fun silenceSkippingRenderers(transition: TransitionFilterProcessor) = object : DefaultRenderersFactory(this) {
+    private fun silenceSkippingRenderers(
+        spatial: SpatialAudioProcessor,
+        transition: TransitionFilterProcessor,
+    ) = object : DefaultRenderersFactory(this) {
         init {
             // Do not force PCM_FLOAT onto an OEM speaker mixer merely because
             // the preference asks for it. The selected USB route must advertise
@@ -3259,7 +3247,10 @@ class PlaybackService : MediaLibraryService() {
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(
-                    arrayOf(transition),
+                    // Transition filtering last of the two: widening is a
+                    // property of the track, and a bass swap that ran before it
+                    // would have its own low end fed back in by the crossfeed.
+                    arrayOf(spatial, transition),
                     SilenceSkippingAudioProcessor(
                         MIN_SILENCE_US,
                         SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
@@ -3345,8 +3336,8 @@ class PlaybackService : MediaLibraryService() {
         configuredFloatOutput = enableFloat
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
-        val newActive = buildPlayer(transitionFilterA, ownsSession = true)
-        val newSpare = buildPlayer(transitionFilterB, ownsSession = false)
+        val newActive = buildPlayer(spatialAudioProcessorA, transitionFilterA, ownsSession = true)
+        val newSpare = buildPlayer(spatialAudioProcessorB, transitionFilterB, ownsSession = false)
         player = newActive
         spare = newSpare
         newSpare.audioSessionId = newActive.audioSessionId
@@ -3432,6 +3423,12 @@ class PlaybackService : MediaLibraryService() {
                 synced to sources
             }.distinctUntilChanged().collect {
                 loadLyricsForCurrentTrack()
+            }
+        }
+        scope.launch {
+            AppSettings.spatialAudio.collect {
+                spatialAudioProcessorA.enabled = it
+                spatialAudioProcessorB.enabled = it
             }
         }
     }

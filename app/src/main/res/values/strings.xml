@@ -145,6 +145,8 @@
     <string name="convert_to_audio">Convert to audio</string>
     <string name="converting_to_audio">Converting to audio…</string>
     <string name="revert_to_original">Revert to original</string>
+    <string name="spatial_audio">Spatial audio</string>
+    <string name="spatial_audio_subtitle">Widens stereo tracks for a more immersive feel</string>
     <string name="animated_cover_cellular">Play animated cover over cellular</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Your top songs, artists, albums and genres</string>
