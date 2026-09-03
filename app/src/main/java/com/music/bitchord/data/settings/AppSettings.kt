@@ -273,8 +273,8 @@ object AppSettings {
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
-    /** Optional Android 13+ replacement for regular frosted surfaces. */
-    val liquidGlassBeta = MutableStateFlow(false)
+    /** Real backdrop-sampled glass (blur, lens refraction) on the floating nav bar, Android 12+ only. */
+    val liquidGlass = MutableStateFlow(false)
 
     /** Blurs unfocused lyric lines, keeping the active line sharp. */
     val lyricsBlur = MutableStateFlow(true)
@@ -577,7 +577,7 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
-        liquidGlassBeta.value = prefs.getBoolean(KEY_LIQUID_GLASS_BETA, false)
+        liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
         if (highPerformanceMode.value) {
             reduceAnimation.value = false
@@ -843,9 +843,9 @@ object AppSettings {
         editor.apply()
     }
 
-    fun setLiquidGlassBeta(value: Boolean) {
-        liquidGlassBeta.value = value
-        prefs.edit().putBoolean(KEY_LIQUID_GLASS_BETA, value).apply()
+    fun setLiquidGlass(value: Boolean) {
+        liquidGlass.value = value
+        prefs.edit().putBoolean(KEY_LIQUID_GLASS, value).apply()
     }
 
     fun setHighPerformanceMode(value: Boolean) {
@@ -1271,6 +1271,7 @@ object AppSettings {
         KEY_LASTFM_API_KEY,
         KEY_LASTFM_SECRET,
         KEY_LISTENBRAINZ_TOKEN,
+        KEY_SPOTIFY_SPDC_TOKEN,
     )
 
     /**
@@ -1329,7 +1330,7 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
-    private const val KEY_LIQUID_GLASS_BETA = "liquid_glass_beta"
+    private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"

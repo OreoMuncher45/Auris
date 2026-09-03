@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.media.audiofx.AudioEffect
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
@@ -113,6 +112,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -177,8 +177,8 @@ fun SettingsScreen(
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val liquidGlassBeta by AppSettings.liquidGlassBeta.collectAsStateWithLifecycle()
-    val liquidGlassSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
+    val liquidGlassSupported = isGlassSupported()
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
@@ -576,19 +576,19 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
-                title = stringResource(R.string.liquid_glass_beta),
+                title = stringResource(R.string.liquid_glass),
                 subtitle = stringResource(
                     if (liquidGlassSupported) {
-                        R.string.liquid_glass_beta_subtitle
+                        R.string.liquid_glass_subtitle
                     } else {
-                        R.string.liquid_glass_beta_unavailable
+                        R.string.liquid_glass_unavailable
                     },
                 ),
                 enabled = liquidGlassSupported,
                 trailing = {
                     Switch(
-                        checked = liquidGlassBeta,
-                        onCheckedChange = AppSettings::setLiquidGlassBeta,
+                        checked = liquidGlass,
+                        onCheckedChange = AppSettings::setLiquidGlass,
                         enabled = liquidGlassSupported,
                         colors = SwitchDefaults.colors(
                             checkedTrackColor = MaterialTheme.colorScheme.primary,
@@ -596,7 +596,7 @@ fun SettingsScreen(
                         ),
                     )
                 },
-                onClick = { AppSettings.setLiquidGlassBeta(!liquidGlassBeta) },
+                onClick = { AppSettings.setLiquidGlass(!liquidGlass) },
             )
             RowDivider()
             // Left out where the player won't honour it: a window too wide for

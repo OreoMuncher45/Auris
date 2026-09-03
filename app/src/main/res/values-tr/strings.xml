@@ -217,9 +217,9 @@
     <string name="reduce_animation_subtitle">Ana oynatıcının gradyanını kaymak yerine dondurur</string>
     <string name="reduce_dynamic_blur">Dinamik bulanıklığı azalt</string>
     <string name="reduce_dynamic_blur_subtitle">Uygulama genelinde buzlu camı düz dolgularla değiştirir</string>
-    <string name="liquid_glass_beta">Liquid Glass [BETA]</string>
-    <string name="liquid_glass_beta_subtitle">Yalnızca Android 13+. Desteklenen yüzeylerde normal bulanıklığın yerini alır; daha fazla GPU kullanabilir ve cihazınızı ısıtabilir.</string>
-    <string name="liquid_glass_beta_unavailable">Android 13 veya daha yenisini gerektirir</string>
+    <string name="liquid_glass">Liquid Glass</string>
+    <string name="liquid_glass_subtitle">Yüzen gezinme çubuğunda gerçek kırılan cam. Yalnızca Android 12+; daha fazla GPU kullanır.</string>
+    <string name="liquid_glass_unavailable">Android 12 veya daha yenisini gerektirir</string>
     <string name="full_screen_cover_art">Tam ekran kapak resmi</string>
     <string name="animated_cover_art">Hareketli kapak resmi</string>
     <string name="synced_lyrics">Senkronize sözler</string>

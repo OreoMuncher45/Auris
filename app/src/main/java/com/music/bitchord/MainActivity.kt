@@ -41,6 +41,8 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -54,7 +56,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Sort
-import androidx.compose.material.icons.rounded.SystemUpdate
+import androidx.compose.material.icons.rounded.Upgrade
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -117,7 +119,6 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.ui.components.AccountProfileSelector
-import com.music.bitchord.ui.components.LocalLiquidGlassState
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
@@ -157,8 +158,16 @@ import com.music.bitchord.ui.components.BottomFadeScrim
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
+import com.music.bitchord.ui.components.GlassNavBar
+import com.music.bitchord.ui.components.floatingtabbar.rememberFloatingTabBarScrollConnection
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
+import com.music.bitchord.ui.components.LocalAppBackdrop
+import com.music.bitchord.ui.components.LocalLiquidGlassEnabled
+import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
+import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
+import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
+import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.TextValueAlert
@@ -198,8 +207,6 @@ import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
-import io.github.fletchmckee.liquid.liquefiable
-import io.github.fletchmckee.liquid.rememberLiquidState
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -218,8 +225,7 @@ class MainActivity : AppCompatActivity() {
         setContent {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
-            val liquidGlassBeta by AppSettings.liquidGlassBeta.collectAsStateWithLifecycle()
-            val liquidState = rememberLiquidState()
+            val liquidGlassEnabled by AppSettings.liquidGlass.collectAsStateWithLifecycle()
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             val composeView = LocalView.current
@@ -232,11 +238,27 @@ class MainActivity : AppCompatActivity() {
                 ThemeMode.DARK -> true
             }
             BitChordTheme(darkTheme = darkTheme) {
+                // The glass surfaces sample this layer, and a layer records only
+                // what is drawn into it — which, for BitChord, is a page that
+                // paints no background of its own. Everywhere a page is not
+                // showing artwork the recording is transparent, so the glass had
+                // nothing to blur there and you saw straight through it to the
+                // sharp page underneath: album art came through the bar blurred
+                // and text came through it untouched. The window's background is
+                // the floor the pages have always been drawn against, so it is
+                // laid down here too and the recording is opaque like the screen.
+                val windowBackground = MaterialTheme.colorScheme.background
+                val paintBackdrop: ContentDrawScope.() -> Unit = remember(windowBackground) {
+                    {
+                        drawRect(windowBackground)
+                        drawContent()
+                    }
+                }
+                val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
                 CompositionLocalProvider(
-                    LocalLiquidGlassState provides liquidState.takeIf {
-                        liquidGlassBeta && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-                    },
                     LocalOverscrollFactory provides iosOverscrollFactory,
+                    LocalLiquidGlassEnabled provides liquidGlassEnabled,
+                    LocalAppBackdrop provides appBackdrop,
                 ) {
                 // The window's width, measured rather than asked for.
                 //
@@ -250,7 +272,7 @@ class MainActivity : AppCompatActivity() {
                 // A measured constraint cannot be stale — it is the very width
                 // the split is about to be laid out in.
                 BoxWithConstraints(Modifier.fillMaxSize()) {
-                    BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth)
+                    BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth, appBackdrop = appBackdrop)
                 }
                 }
             }
@@ -298,11 +320,27 @@ private fun BitChordApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
+    appBackdrop: LayerBackdrop,
     viewModel: MainViewModel = viewModel(),
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
+    // Recording the backdrop layer costs a draw pass, so it only runs when the
+    // nav bar's glass surface actually has something to sample.
+    val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
+    // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
+    // now-playing-and-tabs component is a layout, not an effect, and dropping
+    // back to the two stacked bars would be answering a question about material
+    // with a different screen. What it drops is the sampling: the surfaces fill
+    // solid (see [Modifier.liquidGlass]) and the whole-page layer recording
+    // below goes with them, which is the part that costs a draw pass.
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val glassSamplesBackdrop = glassActive && !reduceDynamicBlur
+    // What folds [GlassNavBar] between its expanded and inline shapes. Held here
+    // rather than inside the bar because the page's scroll is what drives it,
+    // and the page is a sibling of the bar rather than a child.
+    val navBarScroll = rememberFloatingTabBarScrollConnection()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     // Whether there is room to keep the player open beside the page rather than
     // raising it over one. Read all over what follows, because most of what the
@@ -655,12 +693,25 @@ private fun BitChordApp(
         }
     }
 
-    val tabs = listOf(
-        BottomTab(stringResource(R.string.play), BitChordIcons.Play),
-        BottomTab(stringResource(R.string.explore), BitChordIcons.Explore),
-        BottomTab(stringResource(R.string.library), BitChordIcons.Library),
-        BottomTab(stringResource(R.string.search), BitChordIcons.Search),
-    )
+    // Held, not rebuilt. `listOf` hands back a new instance on every pass, and a
+    // List is not a type the compiler can call stable, so under strong skipping
+    // the bar this is handed to compares it by identity, never matches, and so
+    // can never skip. This composable re-runs on every frame of a scroll — it
+    // reads [scrolled] — which made the whole floating bar, both of its states
+    // and every glass surface on them recompose once per frame for the length of
+    // a fold. Keyed on the labels so a locale change still rebuilds it.
+    val playLabel = stringResource(R.string.play)
+    val exploreLabel = stringResource(R.string.explore)
+    val libraryLabel = stringResource(R.string.library)
+    val searchLabel = stringResource(R.string.search)
+    val tabs = remember(playLabel, exploreLabel, libraryLabel, searchLabel) {
+        listOf(
+            BottomTab(playLabel, BitChordIcons.Play),
+            BottomTab(exploreLabel, BitChordIcons.Explore),
+            BottomTab(libraryLabel, BitChordIcons.Library),
+            BottomTab(searchLabel, BitChordIcons.Search),
+        )
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -1578,7 +1629,28 @@ private fun BitChordApp(
                     },
                     modifier = Modifier
                         .hazeSource(hazeState)
-                        .then(LocalLiquidGlassState.current?.let { Modifier.liquefiable(it) } ?: Modifier),
+                        .then(
+                            if (glassActive) {
+                                Modifier
+                                    // Not under "reduce dynamic blur": nothing
+                                    // samples the layer then, and recording a
+                                    // whole page into one for no reader is the
+                                    // cost that setting exists to remove.
+                                    .then(
+                                        if (glassSamplesBackdrop) {
+                                            Modifier.layerBackdrop(appBackdrop)
+                                        } else {
+                                            Modifier
+                                        },
+                                    )
+                                    // Every page's scroll passes through here, so
+                                    // the glass bar collapses on all of them
+                                    // without each one having to know about it.
+                                    .nestedScroll(navBarScroll)
+                            } else {
+                                Modifier
+                            },
+                        ),
                     label = "content",
                 ) { key ->
                     // Every branch below reads `key` rather than the state that
@@ -2093,7 +2165,12 @@ private fun BitChordApp(
                             updateNotice?.let { update ->
                                 IconButton(onClick = { showUpdateDialog = true }) {
                                     Icon(
-                                        Icons.Rounded.SystemUpdate,
+                                        // An arrow rising out of a bar, not the
+                                        // little phone-with-an-arrow: at 24dp the
+                                        // handset outline is mush, and the glyph
+                                        // has to read as "newer version" rather
+                                        // than as "something about your device".
+                                        Icons.Rounded.Upgrade,
                                         contentDescription = stringResource(R.string.update_available, update.version),
                                         tint = MaterialTheme.colorScheme.primary,
                                     )
@@ -2215,7 +2292,51 @@ private fun BitChordApp(
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
 
-                Column(
+                // One tab handler, whichever bar is drawing it.
+                val onTabSelected: (Int) -> Unit = { index ->
+                    // Re-tapping the search tab while already on it focuses the
+                    // input field and opens the keyboard rather than resetting.
+                    if (index == TAB_SEARCH && selectedTab == TAB_SEARCH) {
+                        searchFocusTrigger++
+                    } else {
+                        if (index != TAB_SEARCH) {
+                            searchFocusTrigger = 0
+                        }
+                        viewModel.clearDetail()
+                        viewModel.closeMoodGenre()
+                        showSettings = false
+                        showAccountScrobbling = false
+                        showReplay = false
+                        showHistory = false
+                        libraryShowAll = null
+                        selectedTab = index
+                    }
+                }
+
+                if (glassActive) {
+                    // Liquid glass replaces the two stacked bars with the single
+                    // component they are stacked to imitate: the now playing
+                    // controls dock into the tab bar rather than riding above it,
+                    // and the pair folds together on scroll. See [GlassNavBar].
+                    GlassNavBar(
+                        tabs = tabs,
+                        selectedIndex = selectedTab,
+                        onTabSelected = onTabSelected,
+                        scrollConnection = navBarScroll,
+                        song = player.song?.takeUnless { playerDocked },
+                        isPlaying = player.isPlaying,
+                        isLoading = player.isLoading,
+                        onPlayPause = {
+                            controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                        },
+                        onNext = { controller?.seekToNextMediaItem() },
+                        onExpand = { showNowPlaying = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .widthIn(max = FLOATING_BAR_MAX_WIDTH)
+                            .fillMaxWidth(),
+                    )
+                } else Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         // Capped and centred rather than run to the page's edges
@@ -2250,25 +2371,7 @@ private fun BitChordApp(
                         tabs = tabs,
                         selectedIndex = selectedTab,
                         hazeState = hazeState,
-                        onTabSelected = { index ->
-                            // Re-tapping the search tab while already on it focuses the
-                            // input field and opens the keyboard rather than resetting.
-                            if (index == TAB_SEARCH && selectedTab == TAB_SEARCH) {
-                                searchFocusTrigger++
-                                return@FloatingBottomBar
-                            }
-                            if (index != TAB_SEARCH) {
-                                searchFocusTrigger = 0
-                            }
-                            viewModel.clearDetail()
-                            viewModel.closeMoodGenre()
-                            showSettings = false
-                            showAccountScrobbling = false
-                            showReplay = false
-                            showHistory = false
-                            libraryShowAll = null
-                            selectedTab = index
-                        },
+                        onTabSelected = onTabSelected,
                     )
                 }
             }

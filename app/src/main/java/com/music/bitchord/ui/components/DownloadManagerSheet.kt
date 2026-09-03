@@ -20,9 +20,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DownloadDone
-import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -122,7 +122,10 @@ fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             Icon(
                 imageVector = when {
                     failed -> Icons.Rounded.ErrorOutline
-                    session.busy -> Icons.Rounded.Downloading
+                    // A bare arrow inside the ring, not the tray-and-arrow: the
+                    // ring is already saying "downloading", and a second glyph
+                    // that says it too is detail nobody can resolve at 15dp.
+                    session.busy -> Icons.Rounded.ArrowDownward
                     else -> Icons.Rounded.DownloadDone
                 },
                 contentDescription = when {

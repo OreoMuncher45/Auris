@@ -46,7 +46,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
-import io.github.fletchmckee.liquid.liquid
 
 /** Shared compact selector for every visible YouTube account avatar. */
 @OptIn(ExperimentalHazeMaterialsApi::class)
@@ -65,11 +64,7 @@ fun AccountProfileSelector(
 ) {
     var managing by remember { mutableStateOf(false) }
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val liquidState = LocalLiquidGlassState.current
     val shape = MaterialTheme.shapes.extraLarge
-    // The sheet carries account names and handles: this deliberately keeps a
-    // much denser tint than a decorative pill so white text remains readable.
-    val liquidTint = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
     Column(
         modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
             .clickable(onClick = onDismiss),
@@ -86,16 +81,6 @@ fun AccountProfileSelector(
                 .then(
                     if (reduceDynamicBlur) {
                         Modifier.background(MaterialTheme.colorScheme.surface)
-                    } else if (liquidState != null) {
-                        Modifier.liquid(liquidState) {
-                            frost = 14.dp
-                            this.shape = shape
-                            refraction = 0.16f
-                            curve = 0.18f
-                            edge = 0.08f
-                            tint = liquidTint
-                            saturation = 1.1f
-                        }
                     } else {
                         Modifier.optimizedHazeEffect(
                             state = hazeState,
