@@ -2659,8 +2659,11 @@ private fun LyricsPanel(
             // of equally-weighted text.
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
-                    browsing -> 1f
                     isActive -> 1f
+                    browsing -> if (offset < 0)
+                        (0.55f - distance * 0.05f).coerceAtLeast(0.30f)
+                    else
+                        (0.45f - distance * 0.09f).coerceAtLeast(0.12f)
                     offset < 0 -> (0.55f - distance * 0.05f).coerceAtLeast(0.30f)
                     else -> (0.45f - distance * 0.09f).coerceAtLeast(0.12f)
                 },
@@ -2804,7 +2807,29 @@ private fun PanelVoice(
             glowAlpha = glowAlpha,
             glowRoom = room,
         )
+    } else if (line.isWordSynced) {
+        // Browsing: keep the sweep so sung lines stay fully lit and unsung
+        // ones stay dim, but skip the bloom — it is a playback flourish, not
+        // a browsing aid.  Non-active lines get the same dim tail as when we
+        // are not browsing; the active line stays at full brightness.
+        val tail by animateFloatAsState(
+            targetValue = if (isActive) UNSUNG_ALPHA else 1f,
+            label = "lyricTail",
+        )
+        SweptLyricLine(
+            line = line,
+            clock = clock,
+            style = style,
+            dimAlpha = tail,
+            modifier = modifier,
+            glowAlpha = 0f,
+            glowRoom = room,
+        )
     } else {
+        // Non word-synced: during playback the sweep is not available so we
+        // rely on graphicsLayer alpha (set by the parent) to dim inactive
+        // lines.  During browsing the same rule applies — do not default to
+        // full white.
         Text(
             text = line.text,
             style = style,
