@@ -108,6 +108,18 @@ enum class LocalMusicSort {
     DATE_MODIFIED,
 }
 
+/**
+ * Stable persisted ordering for a Library "Show all" grid — playlists or
+ * albums. A card there only ever carries a title, so unlike [LocalMusicSort]
+ * there is nothing date-based to offer.
+ */
+enum class LibrarySort {
+    /** Whatever order the shelf itself arrived in — YouTube Music's own. */
+    DEFAULT,
+    TITLE_ASC,
+    TITLE_DESC,
+}
+
 /** Display mode for music lists: compact rows or grid cards. */
 enum class LibraryViewType {
     LIST,
@@ -364,6 +376,7 @@ object AppSettings {
     val downloadedMusicSort = MutableStateFlow(LocalMusicSort.TITLE_ASC)
     val localMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
+    val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
 
     /** Empty means every MediaStore folder; otherwise this is a persisted SAF tree URI. */
     val localMusicFolderUri = MutableStateFlow("")
@@ -601,6 +614,9 @@ object AppSettings {
         downloadedMusicSort.value = readLocalMusicSort(KEY_DOWNLOADED_MUSIC_SORT)
         localMusicViewType.value = readLibraryViewType(KEY_LOCAL_MUSIC_VIEW_TYPE)
         downloadedMusicViewType.value = readLibraryViewType(KEY_DOWNLOADED_MUSIC_VIEW_TYPE)
+        librarySort.value = prefs.getString(KEY_LIBRARY_SORT, null)
+            ?.let { saved -> LibrarySort.entries.firstOrNull { it.name == saved } }
+            ?: LibrarySort.DEFAULT
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
@@ -1131,6 +1147,11 @@ object AppSettings {
         prefs.edit().putString(KEY_DOWNLOADED_MUSIC_SORT, value.name).apply()
     }
 
+    fun setLibrarySort(value: LibrarySort) {
+        librarySort.value = value
+        prefs.edit().putString(KEY_LIBRARY_SORT, value.name).apply()
+    }
+
     fun setLocalMusicViewType(value: LibraryViewType) {
         localMusicViewType.value = value
         prefs.edit().putString(KEY_LOCAL_MUSIC_VIEW_TYPE, value.name).apply()
@@ -1321,6 +1342,7 @@ object AppSettings {
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
     private const val KEY_DOWNLOADED_MUSIC_SORT = "downloaded_music_sort"
+    private const val KEY_LIBRARY_SORT = "library_sort"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"

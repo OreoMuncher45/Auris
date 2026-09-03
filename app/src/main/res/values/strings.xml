@@ -600,6 +600,9 @@
     <string name="sort_title_descending">Alphabetical (Z to A)</string>
     <string name="sort_date_added">Date added (newest first)</string>
     <string name="sort_date_modified">Date modified (newest first)</string>
+    <string name="sort_default">Default order</string>
+    <string name="sort_library">Sort</string>
+    <string name="sort_songs">Sort songs</string>
     <string name="use_all_audio_folders">Use all audio folders</string>
     <string name="use_all_audio_folders_subtitle">Remove the folder limit and scan music across the device</string>
     <string name="album">album</string>
