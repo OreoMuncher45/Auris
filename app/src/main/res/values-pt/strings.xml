@@ -165,6 +165,8 @@
     <string name="russian">Russo</string>
     <string name="chinese">Chinês (simplificado)</string>
     <string name="hebrew">Hebraico</string>
+    <string name="italian">Italiano</string>
+    <string name="turkish">Turco</string>
     <string name="show_all">Ver tudo</string>
     <string name="grid_view">Grade</string>
     <string name="list_view">Lista</string>
