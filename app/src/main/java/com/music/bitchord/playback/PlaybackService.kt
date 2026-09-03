@@ -301,6 +301,14 @@ class PlaybackService : MediaLibraryService() {
     private val transitionFilterA = TransitionFilterProcessor()
     private val transitionFilterB = TransitionFilterProcessor()
 
+    /**
+     * Whether the format currently arriving at the active player's decoder
+     * is Dolby Atmos (E-AC-3 JOC). Widening a JOC stream would fight the
+     * object-based mix Dolby already spatializes, so the effect is forced
+     * off for as long as this is true — see [applySpatialAudioEnabled].
+     */
+    private var activeTrackIsDolbyAtmos = false
+
     private var activeFilter: TransitionFilterProcessor = transitionFilterA
     private var spareFilter: TransitionFilterProcessor = transitionFilterB
 
@@ -673,6 +681,8 @@ class PlaybackService : MediaLibraryService() {
                 "$audioFormatFor <- ${format.sampleMimeType} $khz $kbps $depth ${format.channelCount}ch",
                 about = audioFormatFor,
             )
+            activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
+            applySpatialAudioEnabled()
             publishNerdStats()
         }
 
@@ -1466,6 +1476,16 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+
+        // A crossfade handoff never fires [formatListener] for the entering
+        // track — [CrossfadeController] starts its decoder during ARMING,
+        // while the listener is still on the outgoing player, and it isn't
+        // reattached until this handoff, by which point the format has
+        // already been reported once and won't be again. The claim from
+        // source resolution stands in until the decoder itself confirms or
+        // corrects it — see [formatListener]'s onAudioInputFormatChanged.
+        activeTrackIsDolbyAtmos = NerdStats.declaredFormat(mediaItem?.mediaId)?.isDolbyAtmos == true
+        applySpatialAudioEnabled()
 
         // Keep a real, bounded history in the player rather than merely hiding
         // old rows in Compose. MediaController mirrors the playlist across the
@@ -3426,11 +3446,21 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
-            AppSettings.spatialAudio.collect {
-                spatialAudioProcessorA.enabled = it
-                spatialAudioProcessorB.enabled = it
-            }
+            AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
         }
+    }
+
+    /**
+     * The effective spatial-audio state: the user's toggle, unless the
+     * active player's decoder is currently on a Dolby Atmos (E-AC-3 JOC)
+     * stream, in which case it's forced off. [activeTrackIsDolbyAtmos] only
+     * ever describes the active player — see [formatListener] — so both
+     * processors are kept in lockstep rather than tracking a role swap.
+     */
+    private fun applySpatialAudioEnabled() {
+        val enabled = AppSettings.spatialAudio.value && !activeTrackIsDolbyAtmos
+        spatialAudioProcessorA.enabled = enabled
+        spatialAudioProcessorB.enabled = enabled
     }
 
     private fun observeScrobbling() {
