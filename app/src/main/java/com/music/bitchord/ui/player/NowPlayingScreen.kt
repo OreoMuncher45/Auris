@@ -728,6 +728,23 @@ fun NowPlayingScreen(
         }
     }
 
+    // Back out of the queue to the player. Same problem as lyrics: the sheet's
+    // own dispatcher competes at PRIORITY_DEFAULT on API 33+, so we outrank it
+    // with an overlay-priority callback while the queue is open. Below 33 the
+    // BackHandler alone wins because it registers after the dialog's handler.
+    BackHandler(enabled = queueOpen) { queueOpen = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, queueOpen) {
+            val callback = if (queueOpen) {
+                OverlayBack.register(view) { queueOpen = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
     // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
     //
     // Plain state driven by an animation rather than [animateFloatAsState],
@@ -1166,11 +1183,11 @@ fun NowPlayingScreen(
                             // swiping the sleeve and tapping skip feel like one
                             // gesture with two spellings.
                             when {
-                                total <= -swipeThreshold && hasNext -> {
+                                total >= swipeThreshold && hasNext -> {
                                     haptics.play(Haptic.SkipNext)
                                     onNext()
                                 }
-                                total >= swipeThreshold && hasPrevious -> {
+                                total <= -swipeThreshold && hasPrevious -> {
                                     haptics.play(Haptic.SkipPrevious)
                                     onPrevious()
                                 }
@@ -1732,7 +1749,7 @@ fun NowPlayingScreen(
                 val swipeHintProgress = (abs(swipeSettle) / swipeThreshold)
                     .coerceIn(0f, 1f) * (1f - p)
                 if (swipeHintProgress > 0.01f) {
-                    val showNext = swipeSettle < 0f
+                    val showNext = swipeSettle > 0f
                     val enabled = if (showNext) hasNext else hasPrevious
                     Icon(
                         imageVector = if (showNext) Icons.Rounded.FastForward else Icons.Rounded.FastRewind,
