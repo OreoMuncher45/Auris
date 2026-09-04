@@ -2306,6 +2306,7 @@ private fun BitChordApp(
                         viewModel.closeMoodGenre()
                         showSettings = false
                         showAccountScrobbling = false
+                        showSources = false
                         showReplay = false
                         showHistory = false
                         libraryShowAll = null
