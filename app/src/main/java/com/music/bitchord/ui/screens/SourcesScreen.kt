@@ -148,9 +148,11 @@ fun SourcesScreen(
                     position = index + 1,
                     config = config,
                     health = health[config.id],
-                    // Only a source with a server to point at has anything to
-                    // edit — see [SourceKind.needsServer].
-                    onClick = if (config.kind.needsServer) ({ editing = config }) else null,
+                    // Only the custom module is editable here. The built-in
+                    // module's URL is baked in from a build secret — see
+                    // [BuildConfig.MODULE_INDEX_URL] via [SourceRegistry.init] —
+                    // and is never shown or renamed on screen.
+                    onClick = if (config.kind == SourceKind.CUSTOM_MODULE) ({ editing = config }) else null,
                     // YouTube gets no switch at all — see
                     // [SourceRegistry.setEnabled] for why one would be a lie.
                     onToggle = if (config.kind == SourceKind.YOUTUBE) {

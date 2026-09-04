@@ -30,6 +30,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -67,6 +68,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListState
@@ -120,6 +122,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -158,6 +161,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -272,11 +276,11 @@ private const val QUEUE_FLICK_VELOCITY = 450f
  *
  * It isn't the only place that does — the artwork and the credits under it pass
  * theirs on as well, which is what makes the whole top of the player closable
- * rather than just its topmost 44dp. See the dismiss band in `NowPlayingScreen`.
+ * rather than just its topmost 32dp. See the dismiss band in `NowPlayingScreen`.
  */
-private val DISMISS_STRIP_HEIGHT = 44.dp
+private val DISMISS_STRIP_HEIGHT = 32.dp
 /** The breathing room above the sleeve, needed twice: once to apply, once to measure past. */
-private val ART_BOX_TOP_PAD = 14.dp
+private val ART_BOX_TOP_PAD = 8.dp
 /**
  * Share of the motion-artwork banner's height given over to its dissolve.
  *
@@ -1151,10 +1155,14 @@ fun NowPlayingScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 if (!docked) {
+                    // Centred in the strip when it's the only thing there; nudged
+                    // up when the radio caption needs the room below it.
                     Box(
-                        Modifier
-                            .align(Alignment.TopCenter)
-                            .offset(y = 8.dp)
+                        (if (song.radioName != null) {
+                            Modifier.align(Alignment.TopCenter).offset(y = 6.dp)
+                        } else {
+                            Modifier.align(Alignment.Center)
+                        })
                             .width(38.dp)
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp))
@@ -1681,25 +1689,44 @@ fun NowPlayingScreen(
                         // Shrinks as the header collapses, so the queue's
                         // heading doesn't have to compete with it.
                         val titleSize = lerp(20.sp, 16.sp, p)
-                        ExplicitSongTitle(
-                            song = song,
+                        // Only the title's own overflow gates the artist's stagger
+                        // below — an artist line that's long on its own has no
+                        // reason to wait on a title that already fits.
+                        var titleOverflowing by remember { mutableStateOf(false) }
+                        // Only while these credits are the screen. Collapsed into
+                        // a header over the queue or the lyrics they are a label
+                        // on a list, and a label that crawls pulls the eye off
+                        // whatever is being read below it.
+                        val scrolls = p < 0.01f
+                        MarqueeText(
+                            text = song.title,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontSize = titleSize,
                             ),
                             color = Color.White,
+                            enabled = scrolls,
+                            leading = if (song.isExplicit == true) {
+                                { ExplicitBadge(color = Color.White) }
+                            } else {
+                                null
+                            },
+                            onOverflowChange = { titleOverflowing = it },
                             // Only the tracks YouTube hands us a browse id for
                             // lead anywhere; the rest stay plain text.
                             modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
                         )
-                        Text(
+                        MarqueeText(
                             text = song.artist,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.W500,
                                 fontSize = titleSize,
                             ),
                             color = Color.White.copy(alpha = 0.55f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            enabled = scrolls,
+                            // A title that's also scrolling gets to go first —
+                            // starting together reads as clutter, so the artist
+                            // waits a beat before it joins in.
+                            startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
                             modifier = Modifier.opensPage(song.artistId, onOpenArtist),
                         )
                     }
@@ -1738,7 +1765,7 @@ fun NowPlayingScreen(
                         LyricsLogConsole(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT + 10.dp)
+                                .padding(top = HEADER_HEIGHT)
                                 .graphicsLayer {
                                     alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
                                     translationY = (1f - p) * 26.dp.toPx()
@@ -1752,7 +1779,7 @@ fun NowPlayingScreen(
                             onSeekToLine = onSeek,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT + 10.dp)
+                                .padding(top = HEADER_HEIGHT)
                                 // Arrives once the sleeve has finished collapsing
                                 // into the header, the same beat the queue below
                                 // already waits for — fading lyrics in over a
@@ -1772,7 +1799,7 @@ fun NowPlayingScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(top = HEADER_HEIGHT + 10.dp)
+                            .padding(top = HEADER_HEIGHT)
                             .graphicsLayer {
                                 alpha = ((queueProgress - 0.45f) / 0.55f).coerceIn(0f, 1f)
                                 translationY = (1f - queueProgress) * 26.dp.toPx()
@@ -3363,6 +3390,147 @@ private fun Modifier.opensPage(browseId: String?, onOpen: (String) -> Unit): Mod
     } else {
         clip(RoundedCornerShape(6.dp)).clickable { onOpen(browseId) }
     }
+
+/** How fast the title/artist marquee crawls — unhurried, not a ticker. */
+private const val MARQUEE_DP_PER_SEC = 26f
+
+/** Clear air between the tail of the line and the copy chasing it round. */
+private val MARQUEE_GAP = 48.dp
+
+/** How long a line sits back at its start before the next pass — the "5 seconds" rest. */
+private const val MARQUEE_REST_MS = 5_000L
+
+/** Artist's head start is ceded to the title when both are scrolling, so they don't start as one block. */
+private const val MARQUEE_ARTIST_STAGGER_MS = 3_000L
+
+/**
+ * A single line of text that scrolls in place, only when it is too long for
+ * [modifier]'s width to show in full.
+ *
+ * Idle text never animates — the scroll only kicks in once measurement proves
+ * an ellipsis would otherwise be needed. When it does, the line is drawn twice
+ * with [MARQUEE_GAP] between the copies and the pair is crawled leftwards by
+ * exactly one copy-plus-gap: the trailing copy chases the leading one in from
+ * the right and lands precisely where it started, so the offset reset at the
+ * end of the pass falls under a copy already in position and cannot be seen.
+ * The line therefore only ever travels one way — right to left, round and back
+ * to its resting place — rather than bouncing back the way it came.
+ *
+ * A pass is: wait [startDelayMillis] (used to stagger the artist line behind
+ * the title), crawl one full loop, then rest [MARQUEE_REST_MS] at the start
+ * before going again. [onOverflowChange] reports whether this line is scrolling
+ * at all, so a sibling line can decide whether it needs to stagger behind it.
+ *
+ * With [enabled] false the line is a plain ellipsised one — no copies, no
+ * animation, nothing left running off screen.
+ */
+@Composable
+private fun MarqueeText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    startDelayMillis: Long = 0L,
+    leading: (@Composable () -> Unit)? = null,
+    onOverflowChange: (Boolean) -> Unit = {},
+) {
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (leading != null) {
+            leading()
+            Spacer(Modifier.width(6.dp))
+        }
+        if (!enabled) {
+            Text(
+                text = text,
+                style = style,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            return@Row
+        }
+        BoxWithConstraints(Modifier.weight(1f, fill = false).clipToBounds()) {
+            val maxWidthPx = constraints.maxWidth
+            val layout = remember(text, style, maxWidthPx) {
+                textMeasurer.measure(text = text, style = style, maxLines = 1, softWrap = false)
+            }
+            val overflowing = layout.size.width > maxWidthPx
+            LaunchedEffect(overflowing) { onOverflowChange(overflowing) }
+
+            // One whole copy plus the gap behind it: that is the distance at
+            // which the second copy is sitting exactly where the first was.
+            val travelPx = if (overflowing) {
+                layout.size.width + with(density) { MARQUEE_GAP.roundToPx() }
+            } else {
+                0
+            }
+
+            val offsetX = remember { Animatable(0f) }
+            LaunchedEffect(text, travelPx, startDelayMillis) {
+                offsetX.snapTo(0f)
+                if (travelPx <= 0) return@LaunchedEffect
+                val pxPerMs = with(density) { MARQUEE_DP_PER_SEC.dp.toPx() } / 1000f
+                val scrollMs = (travelPx / pxPerMs).roundToInt().coerceAtLeast(400)
+                delay(startDelayMillis)
+                while (true) {
+                    offsetX.animateTo(-travelPx.toFloat(), tween(scrollMs, easing = LinearEasing))
+                    // Invisible: the trailing copy has arrived at the leading
+                    // one's starting mark, so the line is already back where
+                    // this puts it.
+                    offsetX.snapTo(0f)
+                    delay(MARQUEE_REST_MS)
+                }
+            }
+
+            Row(
+                // Measured unbounded so the copies actually lay out at their
+                // full width, wider than the clipped box around them — bounded,
+                // the text is truncated during its own measurement and sliding
+                // it sideways just moves an already-cut string.
+                modifier = Modifier
+                    .wrapContentWidth(align = Alignment.Start, unbounded = true)
+                    .offset { IntOffset(offsetX.value.roundToInt(), 0) },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MarqueeLine(text = text, style = style, color = color)
+                if (overflowing) {
+                    Spacer(Modifier.width(MARQUEE_GAP))
+                    MarqueeLine(text = text, style = style, color = color)
+                }
+            }
+        }
+    }
+}
+
+/** One copy of a marquee's line, laid out at its full width rather than clipped. */
+@Composable
+private fun MarqueeLine(text: String, style: TextStyle, color: Color) {
+    Text(
+        text = text,
+        style = style,
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
+    )
+}
+
+/** The small "E" pill for explicit tracks, kept outside the scrolling text. */
+@Composable
+private fun ExplicitBadge(color: Color) {
+    Text(
+        text = "E",
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        modifier = Modifier
+            .border(1.dp, color.copy(alpha = 0.72f), RoundedCornerShape(2.dp))
+            .padding(horizontal = 3.dp),
+    )
+}
 
 /**
  * Measure a child wider than its slot by [gutter] on each side and place it back

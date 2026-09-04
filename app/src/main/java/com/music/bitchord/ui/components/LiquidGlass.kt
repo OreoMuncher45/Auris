@@ -89,6 +89,16 @@ fun glassContentColor(): Color =
     if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.Black else Color.White
 
 /**
+ * Selected-tab indicator colour for a glass surface: the inverse of
+ * [glassContentColor] rather than the same tint at lower alpha — white in
+ * light theme, black in dark theme, so the pill reads as a shaded scrim
+ * rather than as more of the same tint already on the glyph and label.
+ */
+@Composable
+fun glassIndicatorColor(): Color =
+    if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.White else Color.Black
+
+/**
  * Renders this composable as a liquid glass surface sampling [LocalAppBackdrop]:
  * vibrancy, blur and lens refraction, then a theme-adaptive surface tint (light
  * glass on light theme, dark on dark). Returns the receiver unchanged on devices

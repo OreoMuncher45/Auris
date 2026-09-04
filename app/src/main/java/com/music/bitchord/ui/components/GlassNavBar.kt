@@ -164,6 +164,7 @@ fun GlassNavBar(
         colors = FloatingTabBarDefaults.colors(
             backgroundColor = Color.Transparent,
             accessoryBackgroundColor = Color.Transparent,
+            indicatorColor = glassIndicatorColor().copy(alpha = 0.5f),
         ),
         // Flat, because the glass is not. Every surface here already draws its
         // own [Shadow.Default] as part of the backdrop pass, and the library's
@@ -322,8 +323,21 @@ private fun GlassNowPlaying(
             if (isInline) {
                 Text(
                     text = song.title,
-                    style = MaterialTheme.typography.labelMedium,
+                    // The same size the expanded row sets it in. Collapsing the
+                    // bar drops the artist line and the skip button, not the
+                    // title's weight in the row — a title that shrank as well
+                    // would read as a different component rather than the same
+                    // one folded up, and the shared element carrying it between
+                    // the two states has one less thing to interpolate.
+                    //
+                    // It costs nothing in height: the row is stretched to the
+                    // tab pill's 45dp either way, and titleMedium's line box
+                    // still clears the 32dp artwork beside it.
+                    style = MaterialTheme.typography.titleMedium,
                     color = contentColor,
+                    // The inline row shares its width with the tab pill and the
+                    // Search circle, so most titles will not fit at this size.
+                    // Cut with an ellipsis rather than wrapped or scaled.
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),

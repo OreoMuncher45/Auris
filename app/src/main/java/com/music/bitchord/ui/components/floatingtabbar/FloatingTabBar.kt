@@ -40,10 +40,12 @@ import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -737,6 +739,12 @@ private fun SharedTransitionScope.ExpandedTabs(
             .animateContentSize()
     ) {
         scope.tabs.forEach { tab ->
+            val isSelected = tab.key == selectedTabKey
+            val indicatorColor by animateColorAsState(
+                targetValue = if (isSelected) colors.indicatorColor else Color.Transparent,
+                animationSpec = tween(200),
+                label = "tabIndicator"
+            )
             Tab(
                 icon = {
                     Box(
@@ -774,6 +782,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                     .weight(1f)
                     .skipToLookaheadSize()
                     .clip(shapes.tabShape)
+                    .background(indicatorColor, shapes.tabShape)
                     .clickable(
                         onClick = tab.onClick,
                         indication = tab.indication?.invoke(),
@@ -1007,6 +1016,7 @@ private data class FloatingTabBarTab(
 data class FloatingTabBarColors(
     val backgroundColor: Color,
     val accessoryBackgroundColor: Color,
+    val indicatorColor: Color,
 )
 
 /**
@@ -1050,14 +1060,17 @@ object FloatingTabBarDefaults {
      *
      * @param backgroundColor the color used for the tab bar background
      * @param accessoryBackgroundColor the color used for the accessory background
+     * @param indicatorColor the color used behind the selected tab in expanded state
      */
     @Composable
     fun colors(
         backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
         accessoryBackgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        indicatorColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
     ): FloatingTabBarColors = FloatingTabBarColors(
         backgroundColor = backgroundColor,
         accessoryBackgroundColor = accessoryBackgroundColor,
+        indicatorColor = indicatorColor,
     )
 
     /**
