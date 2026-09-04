@@ -534,6 +534,14 @@ object AudioCache {
         val substitutable = SourceResolver.canSubstituteForYouTube()
         job = videoIds.firstOrNull()?.let { next ->
             val target = upcoming.firstOrNull { it.mediaId == next }?.target
+            // A track the listener reverted plays from its own `#original`
+            // rendition — see [OriginalVersion] — while read-ahead builds its
+            // spec from an id alone and so writes under the plain key. Every
+            // byte of that would land in an entry playback is never going to
+            // read, and pinning a substitute for it would pin a source it is
+            // never going to use. The URL half below is still worth having: a
+            // reverted track resolves through YouTube, which is what it warms.
+            val pinnedToYouTube = OriginalVersion.isPinned(next)
             scope.launch {
                 // With substitution on, the *bytes* half above used to be
                 // switched off outright, and the paragraph explaining why is
@@ -554,7 +562,7 @@ object AudioCache {
                 // leaves nothing pinned, and this falls through to the same
                 // URL-only warm-up it did before — YouTube resolves the track at
                 // playback time as usual.
-                val warmed = if (substitutable && target != null) {
+                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
                     runCatching { SourceResolver.prefetchSubstitute(target) }
                         .onFailure { TrackLog.d(TAG, "warm-up substitute failed for $next: ${it.message}", about = next) }
                         .getOrNull()
@@ -565,7 +573,7 @@ object AudioCache {
                 // Safe to fill for the same reason in both cases: either nothing
                 // outranks YouTube and read-ahead is the only writer, or a
                 // source has been pinned and every writer now resolves to it.
-                val cacheBytes = !substitutable || warmed != null
+                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)

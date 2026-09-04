@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.PlayCircle
@@ -70,6 +69,9 @@ fun SourcesScreen(
      * Asks the activity to put the custom-module alert up. Raised rather than
      * shown here so its scrim covers the tab bar and the mini player, the same
      * way every other alert in the app is hosted — see [DiscordDialogHost].
+     *
+     * Unused for now: the row that called it is temporarily hidden, see the
+     * source list below. Kept so bringing it back is a one-line change.
      */
     onEditCustomModule: () -> Unit,
     modifier: Modifier = Modifier,
@@ -87,7 +89,6 @@ fun SourcesScreen(
     // Only still singled out because it is the one kind that can be *added* —
     // every other use of it below now goes through the list as a whole.
     val module = configs.firstOrNull { it.kind == SourceKind.MODULE }
-    val custom = configs.firstOrNull { it.kind == SourceKind.CUSTOM_MODULE }
 
     // Every source that has a server to reach is probed, not just the built-in
     // module, so a custom index gets the same reachability line — which is the
@@ -141,7 +142,14 @@ fun SourcesScreen(
             // worked out by hand. Every source is listed, numbered, probed and
             // toggled on identical terms; a kind added later appears here
             // without this block having to learn about it.
-            val ordered = configs.sortedBy { it.kind.ordinal }
+            // TEMPORARY: the custom module is hidden from this screen — only the
+            // three built-in sources are listed. An already-configured custom
+            // module is left alone in the registry and still resolves; this
+            // hides the row and the add/replace entry, nothing more. Drop the
+            // `filterNot` and restore the add row below to bring it back.
+            val ordered = configs
+                .filterNot { it.kind == SourceKind.CUSTOM_MODULE }
+                .sortedBy { it.kind.ordinal }
             ordered.forEachIndexed { index, config ->
                 if (index > 0) RowDivider()
                 SourceRow(
@@ -162,14 +170,6 @@ fun SourcesScreen(
                     },
                 )
             }
-            if (ordered.isNotEmpty()) RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Add,
-                title = if (custom == null) stringResource(R.string.add_custom_module)
-                else stringResource(R.string.replace_custom_module),
-                subtitle = custom?.baseUrl ?: SourceKind.CUSTOM_MODULE.detail,
-                onClick = onEditCustomModule,
-            )
         }
 
         Spacer(Modifier.height(32.dp))

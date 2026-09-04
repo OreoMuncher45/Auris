@@ -32,8 +32,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -143,19 +144,21 @@ fun HomeScreen(
     }
 
     if (onLoadMore != null && state is UiState.Success) {
-        // Fires again each time the tail end of the list comes back into
-        // view — appending shelves doesn't reset it, only leaving the
-        // bottom and scrolling back down does, which is exactly when
-        // another page is worth asking for.
-        val nearEnd by remember {
-            derivedStateOf {
+        val loadMore by rememberUpdatedState(onLoadMore)
+        // Re-checked on every layout change, rather than on the rising edge of
+        // "the tail is in view". A page that appends only a shelf or two leaves
+        // the list still near its end, so an edge-triggered effect would never
+        // fire a second time: the feed dead-ended at the bottom with no
+        // skeleton and no request in flight to explain it. Restarting on
+        // [loadingMore] re-checks the moment a page settles, so the next one is
+        // asked for while the tail is still on screen to show it loading.
+        LaunchedEffect(listState, loadingMore) {
+            snapshotFlow {
                 val layout = listState.layoutInfo
-                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf false
-                layout.totalItemsCount > 0 && last >= layout.totalItemsCount - 3
+                (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
+            }.collect { (lastVisible, total) ->
+                if (!loadingMore && total > 0 && lastVisible >= total - 3) loadMore()
             }
-        }
-        LaunchedEffect(nearEnd) {
-            if (nearEnd) onLoadMore()
         }
     }
 }

@@ -129,6 +129,7 @@ import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
+import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
 import com.music.bitchord.playback.QueueShuffle
@@ -142,6 +143,7 @@ import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toDirectYouTubeMediaItem
 import com.music.bitchord.playback.toggleAutoplay
+import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
 import com.music.bitchord.download.DownloadTarget
@@ -532,6 +534,9 @@ private fun BitChordApp(
     var songSort by remember(detail?.browseId) { mutableStateOf(SongSort.DEFAULT) }
     var songSortMenuOpen by remember { mutableStateOf(false) }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
+    // Which tracks are being held on YouTube's own upload, so the player's menu
+    // offers the way back out of a revert rather than the revert again.
+    val pinnedToOriginal by OriginalVersion.pinned.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val playlistsLoading by viewModel.playlistsLoading.collectAsStateWithLifecycle()
 
@@ -1924,6 +1929,14 @@ private fun BitChordApp(
                             } else {
                                 null
                             },
+                            // Same rule for the artist page's subscribe circle:
+                            // a channel subscription is the account's, so a
+                            // guest is never shown the button.
+                            onToggleSubscription = if (signedIn) {
+                                { viewModel.toggleSubscription(page.browseId) }
+                            } else {
+                                null
+                            },
                             songSort = songSort,
                             contentPadding = listPadding,
                         )
@@ -2542,11 +2555,35 @@ private fun BitChordApp(
                             if (index !in 0 until c.mediaItemCount ||
                                 c.currentMediaItem?.mediaId != song.videoId
                             ) return@rollback
+                            // Written down before the item is replaced, so
+                            // every entry built for this song from here on is
+                            // built as this one — see [OriginalVersion]. Without
+                            // it the revert lasted exactly as long as this queue
+                            // entry did, and the next play put the listener back
+                            // on the copy they had just rejected.
+                            OriginalVersion.pin(song.videoId)
                             val position = c.currentPosition
                             val wasPlaying = c.isPlaying
                             c.replaceMediaItem(index, song.toDirectYouTubeMediaItem())
                             c.seekTo(index, position)
                             if (wasPlaying) c.play()
+                            songActions = null
+                        }
+                    } else {
+                        null
+                    },
+                    // The way back, and the only one: a pinned track is held
+                    // off the automatic search on purpose, so nothing but this
+                    // will ever offer it a better copy again.
+                    onUpgradeQuality = if (fromPlayer && song.videoId in pinnedToOriginal &&
+                        // A track playing off a file the listener saved is not
+                        // playing a stream anything could upgrade — the pin on
+                        // it is only waiting for the day it is streamed again.
+                        song.localUri == null &&
+                        controller?.currentMediaItem?.mediaId == song.videoId
+                    ) {
+                        {
+                            controller.upgradeQuality()
                             songActions = null
                         }
                     } else {

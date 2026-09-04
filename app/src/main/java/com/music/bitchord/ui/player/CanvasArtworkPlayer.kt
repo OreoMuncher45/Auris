@@ -52,6 +52,7 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlin.math.roundToInt
 import java.util.Locale
 
 /**
@@ -88,15 +89,31 @@ fun CanvasArtworkPlayer(
     onFrameCaptured: (Bitmap) -> Unit = {},
     /**
      * Keep calling [onFrameCaptured] every so many milliseconds instead of
-     * only once — for a caller re-tinting its backdrop off a
-     * [CanvasSource.SPOTIFY][com.music.bitchord.data.canvas.CanvasSource.SPOTIFY]
-     * clip, which is worth following as it plays rather than settling on
-     * whatever colours its opening frame happened to have. Null everywhere
-     * else: re-reading a texture off the GPU costs a frame stall, and for the
-     * other three sources there is nothing about a clip's own colour that its
-     * first frame doesn't already say.
+     * only once — for a caller re-tinting its backdrop off a playing clip,
+     * which is worth following as it plays rather than settling on whatever
+     * colours its opening frame happened to have. That holds for every
+     * source, not just
+     * [CanvasSource.SPOTIFY][com.music.bitchord.data.canvas.CanvasSource.SPOTIFY]:
+     * a clip is a clip, and one that pans or cuts changes colour under its own
+     * still sleeve exactly the same way regardless of who published it. Null
+     * when a caller has nothing worth re-tinting off a moving colour at all —
+     * re-reading a texture off the GPU costs a frame stall, so this stays
+     * opt-in rather than always-on.
      */
     refreshFrameEveryMs: Long? = null,
+    /**
+     * The longest edge of the bitmap [onFrameCaptured] is handed.
+     *
+     * This is the whole cost of following a clip. `getBitmap()` with no
+     * arguments hands back a copy at the view's own size — full-bleed, so most
+     * of a phone screen, five or six megabytes read back off the GPU and
+     * allocated afresh on every call. Nobody wants that resolution: the one
+     * caller there is averages the frame down to a handful of colours. Asking
+     * for a small copy instead makes the readback scale during the blit, which
+     * is what turns a refresh from something worth doing every few seconds into
+     * something affordable several times a second.
+     */
+    frameCapturePx: Int = FRAME_CAPTURE_PX,
     /**
      * How much of whatever is behind the clip it is currently hiding: 0 while
      * nothing is drawn, ramping to 1 as the first frame fades in, and back down
@@ -246,7 +263,7 @@ fun CanvasArtworkPlayer(
         // can still catch the previous, empty buffer.
         withFrameMillis { }
         val view = textureView ?: return@LaunchedEffect
-        runCatching { view.getBitmap() }.getOrNull()?.let(onFrameCaptured)
+        view.captureAt(frameCapturePx)?.let(onFrameCaptured)
     }
 
     // The opt-in follow-up to the capture above, for a caller that asked for
@@ -254,13 +271,13 @@ fun CanvasArtworkPlayer(
     // folded into the one above: that one is keyed on [rendered] so it fires
     // again on every fade-in, and this one only needs to start once a fade-in
     // has actually happened and then keep going for as long as it holds.
-    LaunchedEffect(rendered, refreshFrameEveryMs) {
+    LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx) {
         val interval = refreshFrameEveryMs ?: return@LaunchedEffect
         if (!rendered) return@LaunchedEffect
         while (isActive) {
             delay(interval)
             val view = textureView ?: continue
-            runCatching { view.getBitmap() }.getOrNull()?.let(onFrameCaptured)
+            view.captureAt(frameCapturePx)?.let(onFrameCaptured)
         }
     }
 
@@ -363,6 +380,41 @@ fun CanvasArtworkPlayer(
         modifier = modifier.onSizeChanged { bounds = it },
     )
 }
+
+/**
+ * A frame off the clip, no bigger than [maxPx] on its longest edge — see
+ * [CanvasArtworkPlayer]'s `frameCapturePx`.
+ *
+ * The aspect is kept rather than squared off. Nothing downstream draws this,
+ * but everything downstream *averages* it, and squashing one axis would quietly
+ * reweight which part of the frame each average is mostly made of.
+ *
+ * Null whenever the view has no frame to give — it is laid out but not yet
+ * measured, or its surface has gone. A caller that gets null should keep what
+ * it already had; the next tick will have one.
+ */
+private fun TextureView.captureAt(maxPx: Int): Bitmap? {
+    val viewWidth = width
+    val viewHeight = height
+    if (viewWidth <= 0 || viewHeight <= 0) return null
+    val scale = maxPx.toFloat() / maxOf(viewWidth, viewHeight)
+    return runCatching {
+        if (scale >= 1f) {
+            getBitmap()
+        } else {
+            getBitmap(
+                (viewWidth * scale).roundToInt().coerceAtLeast(1),
+                (viewHeight * scale).roundToInt().coerceAtLeast(1),
+            )
+        }
+    }.getOrNull()
+}
+
+/**
+ * Big enough that averaging it is stable, small enough that reading it back off
+ * the GPU is not an event. Every consumer reduces this to a handful of colours.
+ */
+private const val FRAME_CAPTURE_PX = 128
 
 /**
  * A TextureView stretches its content to whatever bounds it was given, which

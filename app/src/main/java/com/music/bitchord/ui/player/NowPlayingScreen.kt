@@ -9,6 +9,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
 import android.window.OnBackInvokedCallback
@@ -190,7 +191,6 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
-import com.music.bitchord.data.canvas.CanvasSource
 import com.music.bitchord.data.lyrics.Genius
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -290,6 +290,17 @@ private val ART_BOX_TOP_PAD = 8.dp
  */
 private const val HERO_FADE_FRACTION = 0.42f
 
+/**
+ * How often the backdrop re-reads the colours of a playing Canvas clip.
+ *
+ * Every three seconds, with `MESH_FADE_MS` easing each read into the last so
+ * the backdrop arrives at its new colour rather than cutting to it. The read is
+ * the expensive half — a texture readback off the GPU — and this is the number
+ * that decides how many of them there are; the fade is the cheap half and is
+ * over well inside the gap, which leaves the backdrop still for most of it.
+ */
+private const val MESH_REFRESH_MS = 3_000L
+
 /** The player's side margin. Scrollable panels reach back across it. */
 private val PLAYER_GUTTER = 30.dp
 /**
@@ -352,6 +363,24 @@ private val CONTROL_GAP_SPREAD_MAX = 48.dp
  * that is all it is, a cache of a measurement, not state anything observes.
  */
 private var lastControlSpread: Dp = 0.dp
+
+/**
+ * How long the shuffle glyph ignores further taps after one lands.
+ *
+ * Toggling shuffle rewrites the live queue one [Player.moveMediaItem] at a time,
+ * and every move runs the timeline listeners — the queue panel, the snapshot
+ * save, the notification. A held-down finger can post those faster than a frame
+ * takes to draw, and the whole player stutters. One tap is all a toggle can
+ * usefully mean anyway, so the rest are dropped rather than queued behind it.
+ */
+private const val SHUFFLE_TAP_WINDOW_MS = 400L
+/**
+ * The same gate for AutoPlay, held longer because its work is heavier: the
+ * toggle crosses to the playback service, tears down the in-flight suggestion
+ * load, and then either strips AutoPlay's tracks out of the queue or goes back
+ * to the network for a fresh set of them.
+ */
+private const val AUTOPLAY_TAP_WINDOW_MS = 700L
 
 /**
  * Whether the player is ever narrow enough in this window to run artwork edge to
@@ -589,11 +618,18 @@ fun NowPlayingScreen(
     val stillCovered by remember(song.videoId) {
         derivedStateOf { canvasCover.floatValue > 0.999f }
     }
-    val meshColors = rememberArtworkColors(song.thumbnailUrl, canvasFrame)
-    // Spotify's own Canvas, specifically — see CanvasArtworkPlayer's
-    // refreshFrameEveryMs for why this is scoped to that one source rather
-    // than asked of every clip.
-    val meshRefreshMs = if (canvas?.source == CanvasSource.SPOTIFY) 3_000L else null
+    // The backdrop's colours, taken off the artwork's own arrangement rather
+    // than quantised out of it — see [ArtworkMesh].
+    val artMesh = rememberArtworkMesh(song.thumbnailUrl, canvasFrame, ART_PX)
+    // Asked of every clip, Spotify's Canvas and every other source alike — see
+    // CanvasArtworkPlayer's refreshFrameEveryMs. A clip's own colours move as
+    // it plays regardless of who published it, and the backdrop should follow.
+    //
+    // Often enough that the backdrop moves with the clip rather than catching up
+    // with it every few seconds. What keeps that affordable is the size of each
+    // read, not the number of them: the frame comes back at `frameCapturePx`
+    // rather than full-bleed, and is averaged on a stride off the main thread.
+    val meshRefreshMs = MESH_REFRESH_MS
     LaunchedEffect(song.videoId, song.albumName, canvasAllowedNow) {
         if (!canvasAllowedNow) {
             canvas = null
@@ -980,13 +1016,20 @@ fun NowPlayingScreen(
     var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // Keyed on the track: the backdrop drifts when the player opens and on
-        // every skip, then rests. Position ticks recompose this screen twice a
+        // Anchored to the sleeve's bottom edge, so the screen carries on in the
+        // colours the artwork ended in rather than in a quantiser's idea of what
+        // the artwork was about. Position ticks recompose this screen twice a
         // second and must not drag a full-screen blur along with them, which is
-        // why the palette is passed as one immutable value.
-        MeshGradientBackground(
-            palette = meshColors,
-            trackKey = song.videoId,
+        // why the mesh is passed as one immutable value.
+        //
+        // The seam is the *expanded* banner's bottom edge and is left there as
+        // the player collapses, rather than following the sleeve down: it is
+        // the anchor for a blurred layer, and moving it would re-blur the whole
+        // screen on every frame of the drag. Above it the mesh holds one colour,
+        // so a seam left behind a collapsed sleeve shows nothing at all.
+        ArtworkMeshBackdrop(
+            mesh = artMesh,
+            seam = if (heroMode) heroHeight else 0.dp,
         )
 
         // The artwork, edge to edge and running up behind the status bar,
@@ -1411,12 +1454,38 @@ fun NowPlayingScreen(
                 // can simply be added back up rather than measured.
                 val bannerBottom = statusBarTop + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt + ART_TITLE_GAP / 2
+                // Held where it was while the lyrics are up.
+                //
+                // [groupTop] centres the block in this box's *real* height, and
+                // the lyrics panel changes that height without changing anything
+                // the block is made of: the spacers [controlSpread] feeds leave
+                // the tree, so the box comes back that much taller and the block
+                // is centred that much lower. [roomy] cancels it everywhere it
+                // is read, but the centring is not read from [roomy] — nor could
+                // it be, since [roomy] is deliberately the height the box *would*
+                // have, and the block has to sit in the one it has.
+                //
+                // Nothing on screen normally notices. Once a panel is up the
+                // sleeve is collapsed, so [artTop] and [titleTop] have both been
+                // lerped to zero and [groupTop] is left feeding exactly one
+                // thing: this. Which is the backdrop's anchor — so the whole mesh
+                // slid down by half the spread as the panel opened, up to 24dp.
+                // The queue never showed it because it leaves the controls, and
+                // so this box's height, exactly where they were.
+                //
+                // Frozen rather than corrected because the value is not in
+                // question — it is the same either side of the panel, and the
+                // sleeve it describes is not on screen to be re-measured while
+                // one is up. The first pass is exempt: a player composed with a
+                // panel already open has no earlier answer to hold on to.
+                //
                 // Guarded, like the spread above: this runs on every pass, and a
                 // state write from inside a layout is a recomposition asked for
                 // from inside a layout. Writing the same answer back costs a
                 // comparison here and a whole frame if it is left to the snapshot
                 // to notice.
-                if (bannerBottom != heroHeight) {
+                val bannerSettled = !lyricsOpen || heroHeight == 0.dp
+                if (bannerSettled && bannerBottom != heroHeight) {
                     SideEffect { heroHeight = bannerBottom }
                 }
 
@@ -1530,14 +1599,22 @@ fun NowPlayingScreen(
                             contentScale = ContentScale.Crop,
                             onState = { artLoaded = it is AsyncImagePainter.State.Success },
                             // TextureView-backed canvas frames can arrive
-                            // before Coil has decoded the sleeve. Hide the
-                            // still layer for that short window: on some
-                            // devices Compose draws the image placeholder over
-                            // the Android view, leaving a blank square on top
-                            // of a perfectly healthy animated cover.
+                            // before Coil has decoded the sleeve. Alpha alone
+                            // doesn't hide this layer for that window: a
+                            // TextureView composites through its own hardware
+                            // layer, and on some devices that layer wins the
+                            // stacking order against a sibling Compose layer
+                            // even when that layer's alpha is zero — so the
+                            // still image's empty placeholder still shows
+                            // through, above a perfectly healthy animated
+                            // cover. Skipping the draw call outright leaves
+                            // nothing there to composite, in the wrong order
+                            // or otherwise; the request stays mounted so
+                            // loading still finishes in the background and
+                            // [artLoaded] still flips the moment it does.
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { alpha = if (!artLoaded && canvasRendered) 0f else 1f },
+                                .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
                         )
 
                         // Where the clip plays when it can't have the banner:
@@ -2176,6 +2253,7 @@ fun NowPlayingScreen(
                     onClick = onToggleShuffle,
                     highlighted = shuffleEnabled,
                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
                 )
                 BottomGlyph(
                     icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
@@ -2204,6 +2282,7 @@ fun NowPlayingScreen(
                     onClick = onToggleAutoplay,
                     highlighted = autoplayEnabled,
                     haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                    tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
                 )
                 BottomGlyph(
                     icon = Icons.AutoMirrored.Rounded.QueueMusic,
@@ -3323,8 +3402,20 @@ private fun BottomGlyph(
     highlighted: Boolean = false,
     haptic: Haptic = Haptic.Tap,
     label: String? = null,
+    /**
+     * Shortest gap between taps that both reach [onClick]. A tap inside the
+     * window of the last one is dropped whole — haptic included, so a swallowed
+     * tap doesn't buzz as though something happened. The default lets every tap
+     * through: only the glyphs whose work is too heavy to repeat at finger speed
+     * ask for a window.
+     */
+    tapWindowMs: Long = 0L,
 ) {
     val haptics = rememberHaptics()
+    // Read only from the click handler, never during composition, so writing it
+    // costs no recomposition. Starts a full window in the past so the first tap
+    // is never the one that gets swallowed.
+    val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
     Box(
         modifier = Modifier
             .size(44.dp)
@@ -3336,8 +3427,12 @@ private fun BottomGlyph(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
             ) {
-                haptics.play(haptic)
-                onClick()
+                val now = SystemClock.uptimeMillis()
+                if (now - lastTap.longValue >= tapWindowMs) {
+                    lastTap.longValue = now
+                    haptics.play(haptic)
+                    onClick()
+                }
             }
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,

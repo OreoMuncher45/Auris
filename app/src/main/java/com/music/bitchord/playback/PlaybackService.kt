@@ -130,6 +130,9 @@ const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 const val ACTION_BEGIN_RADIO_QUEUE = "com.music.bitchord.action.BEGIN_RADIO_QUEUE"
 const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QUEUE"
 
+/** Session command behind the player menu's "Upgrade quality". */
+const val ACTION_UPGRADE_QUALITY = "com.music.bitchord.action.UPGRADE_QUALITY"
+
 /**
  * Background playback via Media3. A [MediaLibraryService] gives us the media
  * notification, lockscreen/Bluetooth controls, and Android Auto surface for
@@ -364,6 +367,7 @@ class PlaybackService : MediaLibraryService() {
     private val shuffleCommand = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
     private val beginRadioQueueCommand = SessionCommand(ACTION_BEGIN_RADIO_QUEUE, Bundle.EMPTY)
     private val commitRadioQueueCommand = SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY)
+    private val upgradeQualityCommand = SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY)
 
     private var favoriteActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
@@ -2102,6 +2106,82 @@ class PlaybackService : MediaLibraryService() {
                 // put the badge out as surely as a completed one.
                 NerdStats.onLosslessRaceEnd(mediaId)
             }
+        }
+    }
+
+    /**
+     * Goes looking for a better copy of the playing track because the listener
+     * asked for one — the player menu's "Upgrade quality".
+     *
+     * The way back from a revert, and the only thing that clears one: a track
+     * pinned to YouTube's own upload is pinned against the automatic path
+     * precisely so a search cannot quietly undo what the listener chose, so the
+     * request to search again has to come from the same place the revert did.
+     * See [OriginalVersion].
+     *
+     * Three things are in the way of simply starting the hunt, and all three
+     * are undone here rather than in the menu that asks:
+     *
+     *  - **The item is the wrong item.** A reverted entry carries
+     *    `direct_youtube=1`, which the resolving data source answers before it
+     *    reaches any substitution or upgrade — so the search could run, find a
+     *    lossless copy, and still be handed YouTube's Opus. It is rebuilt as
+     *    the ordinary entry it would have been queued as.
+     *  - **The verdicts.** [QualityUpgrade] records a track as asked-and-
+     *    answered, and that record is what stops the same search running twice
+     *    a minute. Here it is a "no" being overruled.
+     *  - **The bytes already on disk.** See below.
+     *
+     * A track that is *not* reverted keeps its item and just gets the search,
+     * which is what makes this safe to offer more widely than the revert it was
+     * written for.
+     */
+    private fun upgradeQualityNow() {
+        val player = player ?: return
+        val item = player.currentMediaItem ?: return
+        val index = player.currentMediaItemIndex
+        if (index !in 0 until player.mediaItemCount) return
+        val mediaId = item.mediaId
+        // First, because [Song.toMediaItem] reads it: with the pin still in
+        // place the "ordinary" item rebuilt below comes back as another copy of
+        // the reverted one.
+        OriginalVersion.unpin(mediaId)
+        QualityUpgrade.allowAgain(mediaId)
+        val replacement = item.toSong().toMediaItem()
+        val reopened = replacement.localConfiguration?.uri
+        TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
+        if (reopened == null || reopened == item.localConfiguration?.uri) {
+            // Nothing about the item has to change — this track is already
+            // playing the ordinary way, and the search is all that was missing.
+            // No break in the audio for it, either.
+            lookForBetterCopy(player)
+            return
+        }
+        scope.launch {
+            // The entry this item is about to reopen was last filled by
+            // whatever served the track before it was reverted, and nothing
+            // here can say which source that was: [StreamChoice]'s record of it
+            // went when the revert did, and a fresh resolve is free to pick a
+            // different source and stream it into the middle of what is already
+            // on disk. That is the corruption [AudioCache]'s key factory exists
+            // to prevent, and the only way to be certain of it here is to start
+            // the entry empty. It costs a re-download of a track the listener
+            // has just asked to have re-fetched anyway.
+            withContext(Dispatchers.IO) { AudioCache.discardRendition(reopened) }
+            val live = this@PlaybackService.player ?: return@launch
+            // The discard is a disk operation and the queue is free to move
+            // during it. Swapping an item into an index that now holds a
+            // different track would replace the wrong song.
+            if (live.currentMediaItemIndex != index ||
+                live.currentMediaItem?.mediaId != mediaId
+            ) {
+                return@launch
+            }
+            val position = live.currentPosition
+            val wasPlaying = live.isPlaying
+            live.replaceMediaItem(index, replacement)
+            live.seekTo(index, position)
+            if (wasPlaying) live.play()
         }
     }
 
@@ -4028,6 +4108,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(shuffleCommand)
                 .add(beginRadioQueueCommand)
                 .add(commitRadioQueueCommand)
+                .add(upgradeQualityCommand)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
@@ -4046,6 +4127,7 @@ class PlaybackService : MediaLibraryService() {
                 ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromNotification()
                 ACTION_BEGIN_RADIO_QUEUE -> beginRadioQueue()
                 ACTION_COMMIT_RADIO_QUEUE -> player?.let(::saveQueueSnapshotImmediately)
+                ACTION_UPGRADE_QUALITY -> upgradeQualityNow()
                 ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.mediaId?.let {
                     toggleFavoriteFromNotification(it)
                 }

@@ -14,11 +14,13 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
+import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UserPlaylist
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import java.util.Locale
 
@@ -323,7 +325,42 @@ object InnertubeParser {
             description = parseDescription(response),
             subscriberCountText = subscriberCount(header),
             monthlyListenerCount = monthlyListeners(header),
+            subscription = subscription(header),
         )
+    }
+
+    /**
+     * The header's subscribe button, as state rather than as a label — see
+     * [SubscriptionState].
+     *
+     * Same two shapes [subscriberCount] has to cope with, and read in the same
+     * order. The channel id is taken off the button rather than off the browse
+     * id the page was fetched with: they are usually the same `UC…`, but a page
+     * reached through one of YouTube's aliases is the case where they aren't,
+     * and the button is the side that knows what it would act on.
+     */
+    private fun subscription(header: JsonElement?): SubscriptionState? {
+        val immersive = header.o("musicImmersiveHeaderRenderer") ?: return null
+        // Both shapes are tried rather than the first one found being trusted:
+        // the newer button is sometimes only the count, and a page that ships
+        // both is one where the state is on the other one.
+        return listOfNotNull(
+            immersive.o("subscriptionButton2").o("subscribeButtonRenderer"),
+            immersive.o("subscriptionButton").o("subscribeButtonRenderer"),
+        ).firstNotNullOfOrNull { button ->
+            // Absent on a signed-out response, where the button is only ever an
+            // invitation to sign in and toggling it would be a write with
+            // nothing behind it.
+            val subscribed = (button["subscribed"] as? JsonPrimitive)?.booleanOrNull
+                ?: return@firstNotNullOfOrNull null
+            val channelId = button.s("channelId")
+                ?: button.a("serviceEndpoints")?.firstNotNullOfOrNull { endpoint ->
+                    (endpoint.o("subscribeEndpoint").a("channelIds")?.firstOrNull()
+                        as? JsonPrimitive)?.contentOrNull
+                }
+                ?: return@firstNotNullOfOrNull null
+            SubscriptionState(channelId = channelId, subscribed = subscribed)
+        }
     }
 
     /**

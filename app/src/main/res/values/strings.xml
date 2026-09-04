@@ -35,6 +35,8 @@
     <string name="add_to_playlist">Add to playlist</string>
     <string name="add_to_library">Add to library</string>
     <string name="remove_from_library">Remove from library</string>
+    <string name="subscribe">Subscribe</string>
+    <string name="unsubscribe">Unsubscribe</string>
     <string name="download_all">Download all</string>
     <string name="top_songs">Top songs</string>
     <string name="suggested">Suggested</string>
@@ -145,6 +147,7 @@
     <string name="convert_to_audio">Convert to audio</string>
     <string name="converting_to_audio">Converting to audio…</string>
     <string name="revert_to_original">Revert to original</string>
+    <string name="upgrade_quality">Upgrade quality</string>
     <string name="spatial_audio">Spatial audio</string>
     <string name="spatial_audio_subtitle">Widens stereo tracks for a more immersive feel</string>
     <string name="animated_cover_cellular">Play animated cover over cellular</string>

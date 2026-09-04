@@ -972,6 +972,30 @@ object Innertube {
     }
 
     /**
+     * Subscribes to an artist's channel, or unsubscribes from it.
+     *
+     * Not one of the `like/…` endpoints: a subscription is a YouTube-wide
+     * relationship rather than a Music one, and it is addressed by channel id —
+     * the `UC…` the artist page is served under. See
+     * [com.music.bitchord.data.model.SubscriptionState].
+     *
+     * As in [rate], the body is read rather than the status line: Innertube
+     * answers a refused write with HTTP 200 and an `error` object.
+     */
+    suspend fun setSubscribed(channelId: String, subscribed: Boolean) {
+        requireSession()
+        val endpoint = if (subscribed) "subscription/subscribe" else "subscription/unsubscribe"
+        val response = postMusic(endpoint) {
+            putJsonArray("channelIds") { add(channelId) }
+        }
+        response["error"]?.let { error ->
+            val message = error.jsonObject["message"]?.jsonPrimitive?.contentOrNull
+            error("YouTube Music refused the change: ${message ?: error}")
+        }
+        Log.d(TAG, "$endpoint $channelId -> ${findString(response, "text") ?: "no confirmation"}")
+    }
+
+    /**
      * Adds or removes a track from the library, using a token minted by
      * YouTube for exactly that transition — see [com.music.bitchord.data.model.SongMenu].
      * There is no video-id form of this call; the token *is* the request.

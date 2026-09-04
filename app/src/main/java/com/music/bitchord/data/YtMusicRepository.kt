@@ -668,6 +668,14 @@ object YtMusicRepository {
         call("library:$playlistId") { Innertube.ratePlaylist(playlistId, saved) }
 
     /**
+     * Subscribes to an artist's channel, or unsubscribes. [channelId] is the one
+     * the page's own subscribe button named — see
+     * [com.music.bitchord.data.model.SubscriptionState].
+     */
+    suspend fun setSubscribed(channelId: String, subscribed: Boolean): Result<Unit> =
+        call("subscription:$channelId") { Innertube.setSubscribed(channelId, subscribed) }
+
+    /**
      * The playlists a track can be added to. Paged because accounts with long
      * playlist collections otherwise lose everything past YouTube's first
      * library-feed response.

@@ -492,6 +492,29 @@ object QualityUpgrade {
     }
 
     /**
+     * Re-opens the upgrade question for [mediaId] because the listener asked
+     * it — the player menu's "Upgrade quality", see
+     * [PlaybackService.upgradeQualityNow][com.music.bitchord.playback.PlaybackService].
+     *
+     * Every set this clears holds a *no*: asked and answered, or broke on its
+     * last swap, or was reverted out of. Each of those is the right answer for
+     * the automatic path, which has no way to know anything has changed and
+     * would otherwise never look at this track again for the rest of the
+     * session. None of them survives being contradicted by the listener.
+     *
+     * [forget] is called for the rest of it — a lookup still in flight, a
+     * stream parked for a swap that is no longer going to happen against this
+     * item — because what follows this is a rebuilt queue entry, and anything
+     * held against the old one describes bytes and a URI that are about to stop
+     * being the ones playing.
+     */
+    fun allowAgain(mediaId: String) {
+        forget(mediaId)
+        asked -= mediaId
+        refused -= mediaId
+    }
+
+    /**
      * Abandons the second look for every track at once, because the player all
      * of it was about is gone.
      *
