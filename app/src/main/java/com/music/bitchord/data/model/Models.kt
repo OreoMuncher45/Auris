@@ -140,6 +140,19 @@ const val HEADER_ART_PX = 720
  */
 const val NOTIFICATION_ART_PX = 544
 
+/**
+ * Artwork for the full player — the sleeve and the full-bleed banner both, and
+ * the largest rung on the ladder.
+ *
+ * Named here rather than left as a private constant in the player because the
+ * home-screen widget picks its own size off this ladder, and a size only one
+ * surface asks for is a cache entry only that surface fills. A large widget and
+ * an open player were fetching the same cover twice at two sizes, and either
+ * fetch could fail on its own — so the two could disagree about whether the
+ * track had artwork at all.
+ */
+const val PLAYER_ART_PX = 1200
+
 enum class BrowseType { ALBUM, ARTIST, PLAYLIST, OTHER }
 
 /** A non-track search result: album, artist or playlist. */

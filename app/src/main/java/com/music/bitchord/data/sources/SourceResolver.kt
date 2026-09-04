@@ -143,7 +143,7 @@ object SourceResolver {
     ): SourceStream? {
         val request = requestForNow()
         val pinned = SourceRegistry.instance(configId)
-        val active = SourceRegistry.active()
+        val active = SourceRegistry.activeForPlayback()
 
         // The upgrade path: with lossless asked for and the pinned source
         // unable to serve it, anything ranked above it that can is worth
@@ -209,7 +209,7 @@ object SourceResolver {
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.active()
+        val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val request = requestForNow()
         val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request)
@@ -253,7 +253,7 @@ object SourceResolver {
      */
     suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.active()
+        val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         val quick = rankedAbove(youtube.configId, active).filter { it.kind.worthPrefetching }
         if (quick.isEmpty()) return null
@@ -316,7 +316,7 @@ object SourceResolver {
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
-        val active = SourceRegistry.active()
+        val active = SourceRegistry.activeForPlayback()
         val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
         // Every source gets asked, whether or not it can serve lossless, and
         // they are asked at once.
@@ -467,6 +467,12 @@ object SourceResolver {
             // answer to it. YouTube's ladder is the only one that can be capped.
             is StreamRequest.Capped -> return@coroutineScope null
         }
+        // [SourceRegistry.active] rather than the playback list: a download is
+        // not budgeted by the connection's streaming ceiling. What it keeps is
+        // [DownloadQuality]'s answer and what it may spend is
+        // [AppSettings.wifiOnlyDownloads]'s, and a mobile-data rung of Medium
+        // has no business deciding that a file saved over Wi-Fi later is a
+        // YouTube one.
         val active = SourceRegistry.active()
         // YouTube can be switched off, and a download still goes to it when
         // nothing here answers — the download path never consults this list. So
@@ -644,7 +650,7 @@ object SourceResolver {
      * a YouTube id before anyone has asked a source for it.
      */
     fun canSubstituteForYouTube(): Boolean =
-        SourceRegistry.active().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
+        SourceRegistry.activeForPlayback().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
 
     /**
      * The sources ranked above [configId], in order.

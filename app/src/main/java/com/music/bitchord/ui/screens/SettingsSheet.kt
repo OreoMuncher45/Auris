@@ -1048,12 +1048,19 @@ fun SettingsScreen(
                     QualityTarget.WIFI -> wifiQuality
                     QualityTarget.CELLULAR -> cellularQuality
                 },
+                // Writes the one ceiling that was being edited and nothing
+                // else. There used to be a `SourceRegistry.applyQualityPreset`
+                // call here that flipped the module and JioSaavn switches to
+                // match — which meant budgeting *mobile data* switched those
+                // sources off while sitting on Wi-Fi, and coming back to Wi-Fi
+                // never switched them on again. Which sources a rung consults
+                // is now read per stream off the connection in force; see
+                // [AudioQuality.permits].
                 onSelect = { quality ->
                     when (target) {
                         QualityTarget.WIFI -> AppSettings.setAudioQualityWifi(quality)
                         QualityTarget.CELLULAR -> AppSettings.setAudioQualityCellular(quality)
                     }
-                    SourceRegistry.applyQualityPreset(quality)
                     picking = null
                 },
             )

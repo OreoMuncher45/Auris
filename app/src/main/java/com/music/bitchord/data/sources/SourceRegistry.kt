@@ -6,6 +6,7 @@ import android.net.Uri
 import android.util.Log
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -163,12 +164,35 @@ object SourceRegistry {
         }
     }
 
-    /** The enabled sources, module first and YouTube last, however they're stored. */
+    /**
+     * The enabled sources, module first and YouTube last, however they're stored.
+     *
+     * The user's standing choice and nothing else. A stream is budgeted on top
+     * of this by [activeForPlayback]; a download is not budgeted here at all —
+     * see [SourceResolver.forDownload].
+     */
     fun active(): List<MusicSource> =
         configs.value
             .filter { it.enabled && it.isComplete }
             .sortedBy { it.kind.ordinal }
             .mapNotNull { instances[it.id] }
+
+    /**
+     * [active], minus the sources the ceiling on the connection in hand does
+     * not pay for — see [AudioQuality.permits].
+     *
+     * Every path that starts or plans a *stream* asks this rather than
+     * [active], so the Wi-Fi and mobile-data rungs stay two independent
+     * answers to "what does this minute cost" and switching networks switches
+     * between them. Downloads deliberately keep asking [active]: what a saved
+     * file is worth is [DownloadQuality][com.music.bitchord.data.settings.DownloadQuality]'s
+     * question, and when it may be fetched is
+     * [AppSettings.wifiOnlyDownloads][com.music.bitchord.data.settings.AppSettings.wifiOnlyDownloads]'s.
+     */
+    fun activeForPlayback(): List<MusicSource> {
+        val ceiling = AppSettings.effectiveAudioQuality
+        return active().filter { ceiling.permits(it.kind) }
+    }
 
     fun instance(configId: String): MusicSource? = instances[configId]
 
@@ -201,42 +225,6 @@ object SourceRegistry {
     fun setEnabled(configId: String, enabled: Boolean) {
         if (!enabled && config(configId)?.kind == SourceKind.YOUTUBE) return
         publish(configs.value.map { if (it.id == configId) it.copy(enabled = enabled) else it })
-    }
-
-    /** Toggle the MODULE source ("Ricky's Addon") on or off by its config id. */
-    fun setModuleEnabled(enabled: Boolean) {
-        val module = configs.value.firstOrNull { it.kind == SourceKind.MODULE } ?: return
-        setEnabled(module.id, enabled)
-    }
-
-    /** Toggle the JioSaavn source on or off by its config id. */
-    fun setJioSaavnEnabled(enabled: Boolean) {
-        val jioSaavn = configs.value.firstOrNull { it.kind == SourceKind.JIOSAAVN } ?: return
-        setEnabled(jioSaavn.id, enabled)
-    }
-
-    /**
-     * Puts the module and JioSaavn switches where the chosen [AudioQuality]
-     * rung says they belong — see the rung-by-rung breakdown on
-     * [AudioQuality] itself. Called wherever the user picks a rung on the
-     * Settings screen, so the Sources screen always reads back whichever
-     * quality is currently in force rather than a stale manual toggle.
-     */
-    fun applyQualityPreset(quality: AudioQuality) {
-        when (quality) {
-            AudioQuality.LOSSLESS -> {
-                setModuleEnabled(true)
-                setJioSaavnEnabled(true)
-            }
-            AudioQuality.HIGH -> {
-                setModuleEnabled(false)
-                setJioSaavnEnabled(true)
-            }
-            AudioQuality.MEDIUM, AudioQuality.LOW -> {
-                setModuleEnabled(false)
-                setJioSaavnEnabled(false)
-            }
-        }
     }
 
     /** The user's own module index, if they have set one. */

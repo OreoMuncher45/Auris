@@ -521,6 +521,40 @@ fun Song.toDirectYouTubeMediaItem(): MediaItem =
 private fun Song.directYouTubeUri(): String =
     "bitchord://watch?v=$videoId${matchQuery()}&$DIRECT_YOUTUBE_PARAMETER=1&q=original"
 
+/**
+ * Whether there is a YouTube upload behind this song to go back *to* — the
+ * question "Revert to original" only means something for.
+ *
+ * Offered for any track that has one rather than only for a track a quality
+ * upgrade has visibly swapped, because the swap is not the only way to end up
+ * on a copy that is wrong. A source ranked above YouTube gets first refusal on
+ * every track — see [SourceResolver.substituteForYouTube] — so a song can be
+ * playing JioSaavn's or a module's idea of it from its very first second, with
+ * nothing on screen having changed and nothing to undo. Those are precisely the
+ * ones worth doubting: the match is made on title, artist and runtime, and a
+ * live version, a remaster or a different mix agreeing on all three is a
+ * catalogue's ordinary business. The listener is the only one who can hear that
+ * it is the wrong recording, and until this was always available they had no
+ * way to say so.
+ *
+ * The three exclusions are all "there is no such upload", not "reverting would
+ * be unwise":
+ *
+ *  - a track queued from a module's own catalogue has no YouTube id at all,
+ *    only a source-and-track key that would build a nonsense URI;
+ *  - a file on the device is identified by its own `content://` or `file://`
+ *    URI, for the same reason;
+ *  - a music video *is* the YouTube upload, so there is nowhere for it to go.
+ *    Its catalogue match is a separate control with its own way back — see
+ *    `VideoAudioVersionButton`.
+ */
+fun Song.hasYouTubeOriginal(): Boolean =
+    videoId.isNotBlank() &&
+        !videoId.startsWith("content://") &&
+        !videoId.startsWith("file://") &&
+        !isVideo &&
+        SourceRegistry.parseTrackKey(videoId) == null
+
 /** A playback URI carrying this is explicitly requested YouTube, never a substitute. */
 const val DIRECT_YOUTUBE_PARAMETER = "direct_youtube"
 

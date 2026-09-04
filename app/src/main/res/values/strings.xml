@@ -126,6 +126,7 @@
     <string name="play_next">Play next</string>
     <string name="queue">Queue</string>
     <string name="source_setup_required">Tap to finish setting up</string>
+    <string name="source_skipped_by_quality">Not used on %1$s · quality is set to %2$s</string>
     <string name="source_unreachable">Can’t reach it right now · %1$s</string>
     <string name="checking">Checking…</string>
     <string name="failed">Failed</string>

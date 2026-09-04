@@ -114,20 +114,72 @@ class SourcesTest {
         assertFalse(flac.isHiQuality)
     }
 
-    /** With no measured bitrate, what the source said it was sending will do. */
+    /**
+     * A tier is earned by the stream, never by the offer. A module that
+     * advertises LOSSLESS and then serves a 128kbps SoundCloud transcode is
+     * the ordinary case, so nothing in [claimed] promotes a badge on its own.
+     */
     @Test
-    fun `falls back to the declared bitrate for the quality tier`() {
-        val claimed = NerdStats.Snapshot(
+    fun `the declared format never earns a quality tier by itself`() {
+        val claimedHiQuality = NerdStats.Snapshot(
             mimeType = "audio/mp4a-latm",
             bitrateKbps = null,
             sampleRateHz = 44_100,
             channels = 2,
             claimed = StreamFormat(codec = "aac", kbps = 320),
         )
-        assertTrue(claimed.isHiQuality)
+        assertFalse(claimedHiQuality.isHiQuality)
+
+        val claimedLossless = NerdStats.Snapshot(
+            mimeType = "audio/opus",
+            bitrateKbps = 128,
+            sampleRateHz = 48_000,
+            channels = 2,
+            claimed = StreamFormat(codec = "flac", sampleRateHz = 96_000, bitDepth = 24),
+        )
+        assertFalse(claimedLossless.isLossless)
+        assertFalse(claimedLossless.isHiRes)
 
         val silent = NerdStats.Snapshot(mimeType = "audio/mp4a-latm", bitrateKbps = null, sampleRateHz = null, channels = null)
         assertFalse(silent.isHiQuality)
+    }
+
+    /**
+     * Hi-Res is drawn off the measured depth and rate, which for a FLAC in MP4
+     * only exist because the stream's own STREAMINFO was read — the container
+     * states the rate as zero. See `PlaybackService.measure`.
+     */
+    @Test
+    fun `hi-res is decided on measured depth and rate`() {
+        val cd = NerdStats.Snapshot(
+            mimeType = "audio/flac",
+            bitrateKbps = 1411,
+            sampleRateHz = 44_100,
+            channels = 2,
+            bitDepth = 16,
+        )
+        assertTrue(cd.isLossless)
+        assertFalse(cd.isHiRes)
+
+        val hiRes = NerdStats.Snapshot(
+            mimeType = "audio/flac",
+            bitrateKbps = 4608,
+            sampleRateHz = 96_000,
+            channels = 2,
+            bitDepth = 24,
+        )
+        assertTrue(hiRes.isHiRes)
+
+        // Nothing measured yet: no badge, however loud the claim.
+        val unmeasured = NerdStats.Snapshot(
+            mimeType = null,
+            bitrateKbps = null,
+            sampleRateHz = null,
+            channels = null,
+            claimed = StreamFormat(codec = "flac", sampleRateHz = 192_000, bitDepth = 24),
+        )
+        assertFalse(unmeasured.isLossless)
+        assertFalse(unmeasured.isHiRes)
     }
 
     // ---- Cross-source matching ---------------------------------------------

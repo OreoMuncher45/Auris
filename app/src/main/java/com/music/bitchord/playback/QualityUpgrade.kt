@@ -54,6 +54,9 @@ object QualityUpgrade {
     const val MARKER = "q"
     private const val UPGRADED = "hifi"
 
+    /** What a revert tags its rendition with — see [Song.toDirectYouTubeMediaItem]. */
+    private const val ORIGINAL = "original"
+
     /**
      * A track playing on less than was asked for.
      *
@@ -269,8 +272,11 @@ object QualityUpgrade {
         if (uri == null || uri.getQueryParameter("v") == null ||
             uri.getQueryParameter("m") == "1"
         ) return false
-        // Already upgraded: this *is* the better copy.
-        if (uri.getQueryParameter(MARKER) != null) return false
+        // Already upgraded: this *is* the better copy. Except when the listener
+        // has asked by hand, where the marker is on a *reverted* item and
+        // saying "this is the copy that was chosen" is the very thing being
+        // overruled — see [askByHand].
+        if (mediaId !in handAsked && uri.getQueryParameter(MARKER) != null) return false
         if (mediaId in asked || mediaId in refused || pending.containsKey(mediaId)) return false
         // Same widening as [settledForLess]: a track playing off the cache is
         // worth a second look whenever anything outranks YouTube, not only
@@ -488,28 +494,49 @@ object QualityUpgrade {
         forced.remove(mediaId)
         shelved.remove(mediaId)
         auditioning -= mediaId
+        // A request made by hand is about the track the listener was listening
+        // to. Once the queue has moved off it there is nothing left to honour,
+        // and an exemption that outlived its moment would let the next visit to
+        // the track re-run a search that has already been answered.
+        handAsked -= mediaId
         NerdStats.onLosslessRaceEnd(mediaId)
     }
+
+    /**
+     * Tracks the listener has asked to upgrade themselves.
+     *
+     * The one exemption from [couldStillUpgrade]'s marker rule, and it needs to
+     * be an exemption rather than a rewritten item. A reverted track is playing
+     * its `q=original` rendition; the ordinary way to make it a candidate again
+     * would be to put the unmarked item back, and that costs a break in the
+     * audio *before* anything better has even been looked for — the listener
+     * hears the same YouTube copy stop and restart, and then stop again when
+     * the upgrade actually lands. Two cuts, one of which bought nothing.
+     *
+     * Left in place, the marked item is upgraded exactly like any other: the
+     * search runs under the music, the audition proves the replacement, and
+     * [upgradedUri] takes the `direct_youtube` out of the URI it builds so the
+     * one cut the listener does hear is the one that changes the audio.
+     */
+    private val handAsked = java.util.Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
     /**
      * Re-opens the upgrade question for [mediaId] because the listener asked
      * it — the player menu's "Upgrade quality", see
      * [PlaybackService.upgradeQualityNow][com.music.bitchord.playback.PlaybackService].
      *
-     * Every set this clears holds a *no*: asked and answered, or broke on its
-     * last swap, or was reverted out of. Each of those is the right answer for
-     * the automatic path, which has no way to know anything has changed and
-     * would otherwise never look at this track again for the rest of the
-     * session. None of them survives being contradicted by the listener.
+     * Both sets this clears hold a *no*: asked and answered, or broke on its
+     * last swap. Each is the right answer for the automatic path, which has no
+     * way to know anything has changed and would otherwise never look at this
+     * track again for the rest of the session. Neither survives being
+     * contradicted by the listener.
      *
-     * [forget] is called for the rest of it — a lookup still in flight, a
-     * stream parked for a swap that is no longer going to happen against this
-     * item — because what follows this is a rebuilt queue entry, and anything
-     * held against the old one describes bytes and a URI that are about to stop
-     * being the ones playing.
+     * Nothing else is disturbed: a lookup already in flight for this track is
+     * the answer being waited for, not a stale one, and the item it was started
+     * against is the item still playing.
      */
-    fun allowAgain(mediaId: String) {
-        forget(mediaId)
+    fun askByHand(mediaId: String) {
+        handAsked += mediaId
         asked -= mediaId
         refused -= mediaId
     }
@@ -603,6 +630,12 @@ object QualityUpgrade {
         val previous = uri.substringAfter(markerStart, missingDelimiterValue = "")
             .substringBefore('&')
             .ifBlank { null }
+            // The rendition a revert installed is not a generation of upgrade
+            // to count from — it is the thing being upgraded away from. Read as
+            // one, the first swap after a revert came out as `hifi-2`, which
+            // [PlaybackService.swapPointFor] refuses outright, so the lossless
+            // pass that normally follows a lossy improvement could never run.
+            ?.takeUnless { it == ORIGINAL }
         val previousGeneration = previous
             ?.removePrefix("$UPGRADED-")
             ?.toIntOrNull()
@@ -612,7 +645,15 @@ object QualityUpgrade {
         // parameter. Replacing rather than duplicating it matters: Android
         // returns the first duplicate, which would send the second stream back
         // into the first upgrade's cache entry.
-        return uri.substringBefore(markerStart) + "$markerStart$tag"
+        return uri.substringBefore(markerStart)
+            // The one parameter that has to be dropped rather than carried
+            // over. A reverted item says "this exact YouTube rendition,
+            // immediately", and the resolving data source honours that before
+            // it ever looks for a forced stream — so an upgrade built on top of
+            // one would cut the audio and be handed back the very copy it was
+            // replacing. It is gone from the item because the listener asked
+            // for it to be; see [askByHand].
+            .replace("&$DIRECT_YOUTUBE_PARAMETER=1", "") + "$markerStart$tag"
     }
 
     /**

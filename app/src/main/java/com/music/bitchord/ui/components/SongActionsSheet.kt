@@ -130,7 +130,13 @@ fun SongActionsSheet(
     modifier: Modifier = Modifier,
     onRemoveFromPlaylist: (() -> Unit)? = null,
     showSleepTimer: Boolean = false,
-    /** Available only for a player item currently replaced by a quality upgrade. */
+    /**
+     * Sends the playing track back to YouTube's own upload, and keeps it there.
+     * Offered for any player item that has one behind it — a substituted copy
+     * can be the wrong recording from the first second, not only after a
+     * visible upgrade. See
+     * [com.music.bitchord.playback.hasYouTubeOriginal].
+     */
     onRollbackToOriginal: (() -> Unit)? = null,
     /**
      * The way back from a revert: available only for a player item the listener
@@ -175,9 +181,10 @@ fun SongActionsSheet(
         SheetTrackHeader(song, subtitleColor = palette.onBackgroundVariant)
         HorizontalDivider(thickness = 0.5.dp, color = palette.divider)
 
-        // Leads the list whenever it's available: it answers the one
-        // question a quality-upgraded track raises above all the others
-        // here, so it shouldn't be buried under rows that apply every time.
+        // Leads the list whenever it's available: which recording is playing
+        // is the one question that has to be answered before any of the rows
+        // below mean anything — there is no point rating, queueing or
+        // downloading the wrong version of a song.
         //
         // The two are never both present — one is offered for a track playing
         // a substituted copy, the other for a track held on YouTube's own —

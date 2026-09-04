@@ -1656,13 +1656,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      *
      * Only the Songs filter fans out: albums, artists and playlists are
      * browse-shaped, and [MusicSource] deliberately answers for tracks only.
+     *
+     * Asked of the playback list rather than every enabled source, so a result
+     * offered here is one this connection's ceiling would actually let play —
+     * a row that can only be tapped into a YouTube stream is a lie about where
+     * the track is coming from.
      */
     private suspend fun sourceResults(
         query: String,
         filter: SearchFilter,
     ): Pair<List<SearchResult>, List<SearchResult>> = coroutineScope {
         if (filter != SearchFilter.SONGS) return@coroutineScope emptyList<SearchResult>() to emptyList()
-        val active = SourceRegistry.active()
+        val active = SourceRegistry.activeForPlayback()
         val youtubeRank = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
             .let { if (it < 0) active.size else it }
 

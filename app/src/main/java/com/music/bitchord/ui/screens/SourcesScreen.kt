@@ -104,8 +104,16 @@ fun SourcesScreen(
         }
     }
 
+    // The ceiling in force *right now*, which is the only one this screen can
+    // speak for: the rows below are switches the user set once, and whether a
+    // given source is reached also depends on which connection is up. Reading
+    // it here rather than baking it into the switches is deliberate — the
+    // preset write that used to do that is what made a mobile-data rung follow
+    // the user onto Wi-Fi. See [AudioQuality.permits].
+    val ceiling = if (metered == true) cellularQuality else wifiQuality
+
     /** Whether the ceiling in force right now would cap a lossless stream anyway. */
-    val cappedByQuality = (if (metered == true) cellularQuality else wifiQuality) != AudioQuality.LOSSLESS
+    val cappedByQuality = ceiling != AudioQuality.LOSSLESS
     // Asked of the kinds themselves rather than of the module specifically, so
     // a source added later answers this on its own terms instead of being
     // invisible to it.
@@ -156,6 +164,13 @@ fun SourcesScreen(
                     position = index + 1,
                     config = config,
                     health = health[config.id],
+                    // Switched on, but not reached on this connection. Said on
+                    // the row rather than by moving the switch, so the switch
+                    // keeps meaning "I want this source" and the connection
+                    // keeps meaning "…and here is what it costs today".
+                    skippedByQuality = config.enabled && !ceiling.permits(config.kind),
+                    onMetered = metered == true,
+                    ceiling = ceiling,
                     // Only the custom module is editable here. The built-in
                     // module's URL is baked in from a build secret — see
                     // [BuildConfig.MODULE_INDEX_URL] via [SourceRegistry.init] —
@@ -216,7 +231,16 @@ private fun SourceRow(
     onClick: (() -> Unit)?,
     /** Null for a source that cannot be switched off, which gets a label instead. */
     onToggle: ((Boolean) -> Unit)?,
+    /** On, but skipped by the ceiling the current connection is set to. */
+    skippedByQuality: Boolean = false,
+    /** Which of the two ceilings [ceiling] is, so the row can name it. */
+    onMetered: Boolean = false,
+    ceiling: AudioQuality = AudioQuality.LOSSLESS,
 ) {
+    // Dimmed for the same reason an off source is: it is not in the walk. The
+    // switch stays where the user left it, so the row reads "on, but not
+    // today" rather than "off".
+    val dimmed = !config.enabled || skippedByQuality
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -231,7 +255,7 @@ private fun SourceRow(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .width(18.dp)
-                .alpha(if (config.enabled) 1f else 0.4f),
+                .alpha(if (dimmed) 0.4f else 1f),
         )
         Spacer(Modifier.width(6.dp))
         Icon(
@@ -245,13 +269,13 @@ private fun SourceRow(
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier
                 .size(ICON_SIZE)
-                .alpha(if (config.enabled) 1f else 0.4f),
+                .alpha(if (dimmed) 0.4f else 1f),
         )
         Spacer(Modifier.width(ICON_GAP))
         Column(
             Modifier
                 .weight(1f)
-                .alpha(if (config.enabled) 1f else 0.4f),
+                .alpha(if (dimmed) 0.4f else 1f),
         ) {
             Text(
                 text = config.displayName,
@@ -261,14 +285,27 @@ private fun SourceRow(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = config.statusLine(health),
+                // The ceiling outranks the health line: a source that isn't
+                // going to be asked at all is not usefully described by
+                // whether its server answered a probe.
+                text = if (skippedByQuality) {
+                    stringResource(
+                        R.string.source_skipped_by_quality,
+                        stringResource(if (onMetered) R.string.mobile_data else R.string.wifi),
+                        ceiling.localizedLabel(),
+                    )
+                } else {
+                    config.statusLine(health)
+                },
                 style = MaterialTheme.typography.bodyMedium,
-                color = when (health) {
-                    // Only a rejection is coloured. A server that is merely
-                    // down will be up again without anyone doing anything,
-                    // and painting that red trains people to ignore the
-                    // colour by the time it means something.
-                    is SourceHealth.Rejected -> MaterialTheme.colorScheme.error
+                color = when {
+                    // Only a rejection is coloured, and only when it is what
+                    // the line actually says. A server that is merely down
+                    // will be up again without anyone doing anything, and
+                    // painting that red trains people to ignore the colour by
+                    // the time it means something.
+                    skippedByQuality -> MaterialTheme.colorScheme.onSurfaceVariant
+                    health is SourceHealth.Rejected -> MaterialTheme.colorScheme.error
                     else -> MaterialTheme.colorScheme.onSurfaceVariant
                 },
                 maxLines = 2,
@@ -293,6 +330,16 @@ private fun SourceRow(
         }
     }
 }
+
+@Composable
+private fun AudioQuality.localizedLabel(): String = stringResource(
+    when (this) {
+        AudioQuality.LOW -> R.string.low
+        AudioQuality.MEDIUM -> R.string.medium
+        AudioQuality.HIGH -> R.string.high
+        AudioQuality.LOSSLESS -> R.string.lossless
+    },
+)
 
 /** The second line of a row: what this source is, or what is wrong with it. */
 @Composable

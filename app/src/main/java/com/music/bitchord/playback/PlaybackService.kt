@@ -327,6 +327,32 @@ class PlaybackService : MediaLibraryService() {
     /** When the current track was chosen, for the time-to-first-audio log. */
     private var trackSelectedAt: Long? = null
 
+    /**
+     * The last track that actually made a sound, which is how [recoverFrom]
+     * tells "this never started" from "this died in the middle".
+     *
+     * Deliberately a mediaId rather than a flag that gets cleared on every
+     * transition. A retry *is* a seek, so a transition fires for it — the same
+     * trap [recoveries] fell into — and a flag cleared there would make a track
+     * that failed twenty seconds in look like a track that never began, which is
+     * precisely the case that must not be skipped past. Holding the id instead
+     * means the queue moving to a different track invalidates it for free, and
+     * nothing has to be cleared anywhere.
+     *
+     * The one thing it is deliberately wrong about: a track played earlier in
+     * the session and returned to — by repeat-one, by the previous button —
+     * still counts as audible, so a later failure to start it is only retried
+     * and not skipped. That errs towards leaving the listener where they are,
+     * which is the safe direction for a queue.
+     */
+    private var audibleMediaId: String? = null
+
+    /**
+     * How many tracks in a row have been skipped for a plain playback error,
+     * reset the moment anything actually plays — see [MAX_CONSECUTIVE_SKIPS].
+     */
+    private var consecutiveErrorSkips = 0
+
     private var scrobbleManager: ScrobbleManager? = null
     private var listenBrainzSong: Song? = null
 
@@ -449,6 +475,11 @@ class PlaybackService : MediaLibraryService() {
                     )
                     trackSelectedAt = null
                 }
+                // Sound is out of the speaker, so whatever happens to this track
+                // from here is a failure mid-song. Also the one thing that can
+                // say the queue is not simply unplayable end to end.
+                audibleMediaId = exoPlayer.currentMediaItem?.mediaId
+                consecutiveErrorSkips = 0
             }
             if (isPlaying) registerCurrentPlay()
             // Nothing to read ahead for while paused, and a pause is often
@@ -675,14 +706,16 @@ class PlaybackService : MediaLibraryService() {
             // the app's caching/upgrade logic in between, so it's the one
             // line that can prove a "hi-res" session never quietly slid
             // onto a lower-rate stream mid-track. `adb logcat -s DECODE:I`.
-            val khz = format.sampleRate.takeIf { it != Format.NO_VALUE }
+            val measured = format.measure()
+            val khz = measured.sampleRateHz
                 ?.let { "%.1fkHz".format(Locale.ROOT, it / 1000.0) } ?: "?kHz"
-            val kbps = format.bitrate.takeIf { it != Format.NO_VALUE }
+            val kbps = format.bitrate.takeIf { it > 0 }
                 ?.let { "${it / 1000}kbps" } ?: "bitrate n/a"
-            val depth = bitDepthOf(format.pcmEncoding)?.let { "${it}-bit" } ?: "?-bit"
+            val depth = measured.bitDepth?.let { "${it}-bit" } ?: "?-bit"
+            val channels = measured.channels?.let { "${it}ch" } ?: "?ch"
             TrackLog.i(
                 "DECODE",
-                "$audioFormatFor <- ${format.sampleMimeType} $khz $kbps $depth ${format.channelCount}ch",
+                "$audioFormatFor <- ${format.sampleMimeType} $khz $kbps $depth $channels",
                 about = audioFormatFor,
             )
             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
@@ -1544,6 +1577,12 @@ class PlaybackService : MediaLibraryService() {
                 "TIMING first audio: 0ms, the crossfade covered it",
                 about = mediaItem?.mediaId,
             )
+            // The other way a track becomes audible. `onIsPlayingChanged` never
+            // fires across a crossfade handoff — the incoming track has been
+            // sounding since before it was current — so without this a blended
+            // advance would leave every track looking like it never started.
+            audibleMediaId = mediaItem?.mediaId
+            consecutiveErrorSkips = 0
         }
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].
@@ -1775,6 +1814,12 @@ class PlaybackService : MediaLibraryService() {
         // were exactly that, at roughly seventeen youtubei requests each.
         val verdict = permanentReason(error)
         val givingUp = verdict != null || attempts > MAX_RECOVERIES
+        // A track that has never made a sound has *failed to start*, whatever
+        // the error was, and the queue should move past it once the attempts are
+        // spent — see [skipReason]. Read here rather than after the delay below,
+        // because the seek-and-prepare of an unrelated recovery could move the
+        // player on in between.
+        val neverStarted = audibleMediaId != mediaId
         if (verdict != null) {
             TrackLog.w("BitChord", "$mediaId cannot be played: $verdict", about = mediaId)
         } else if (givingUp) {
@@ -1838,11 +1883,10 @@ class PlaybackService : MediaLibraryService() {
                 // showing the song, the play button kept doing nothing, and from
                 // the outside that is indistinguishable from a hung app — which
                 // is what the report describes and what "it was stuck on my
-                // phone too" means. Moving on is the only honest answer, and it
-                // is only safe to do for a verdict: a track that merely ran out
-                // of attempts may still be playable when the listener presses
-                // play, and skipping past it would silently eat it.
-                if (verdict != null) withContext(Dispatchers.Main) { skipPastUnplayable(mediaId, verdict) }
+                // phone too" means. Moving on is the only honest answer.
+                skipReason(verdict, error, neverStarted, attempts)?.let { reason ->
+                    withContext(Dispatchers.Main) { skipPastUnplayable(mediaId, reason) }
+                }
                 return@launch
             }
             withContext(Dispatchers.Main) {
@@ -1922,13 +1966,71 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * Why a track that has run out of attempts should be left behind, or null
+     * to park on it as the queue used to.
+     *
+     * Two things get past here.
+     *
+     * A [verdict] always does, unconditionally and exactly as it did before this
+     * function existed: the resolver has established the track cannot be served
+     * by anyone, and a playlist with a run of age-gated or region-locked tracks
+     * in it should walk straight through them.
+     *
+     * Everything else gets past only when the track never made a sound. The
+     * error itself is not consulted — a 403, a dead socket, a codec that will
+     * not initialise and a cache entry that will not open are all, from the
+     * listener's side, the same event: they pressed play and nothing happened.
+     * Waiting for a *classification* of that is what left the queue parked on
+     * tracks whose only sin was an error nobody had taught the service to name.
+     * What is consulted is [neverStarted], because the one failure that must not
+     * move the queue is the one in the middle of a song someone is listening to:
+     * the attempts are spent, the recovery has already put them back where they
+     * were twice, and jumping to the next track at that point would take the
+     * song away rather than rescue it.
+     *
+     * [MAX_CONSECUTIVE_SKIPS] is the floor under the rest. Nothing here can tell
+     * a broken track from a broken network, and offline every track in the queue
+     * fails identically — so without a limit a dropped connection would quietly
+     * walk to the end of the queue, spending a full attempt budget per track,
+     * and hand back a queue the listener no longer recognises. Stopping instead
+     * leaves the error on the player, which is what puts a message on screen,
+     * and leaves the queue where it was. The count only resets when something
+     * actually plays, so a working track anywhere in a bad patch restores the
+     * full allowance. Verdicts are exempt: they are a statement about one track
+     * rather than a guess, and their skipping is behaviour that already works.
+     */
+    private fun skipReason(
+        verdict: String?,
+        error: PlaybackException,
+        neverStarted: Boolean,
+        attempts: Int,
+    ): String? {
+        if (verdict != null) return verdict
+        if (!neverStarted) return null
+        if (consecutiveErrorSkips >= MAX_CONSECUTIVE_SKIPS) {
+            TrackLog.w(
+                "BitChord",
+                "$MAX_CONSECUTIVE_SKIPS tracks in a row failed to start; " +
+                    "this is the queue or the connection, not the track — stopping here",
+            )
+            return null
+        }
+        consecutiveErrorSkips++
+        return "failed to start after $attempts attempts (${error.errorCodeName})"
+    }
+
+    /**
      * Leave a track the resolver has ruled out and carry on down the queue.
      *
      * The item is left in place rather than removed: the listener queued it, and
      * the reason it cannot be played is usually temporary in a way this service
-     * cannot see the end of — signing in clears an age gate, and travelling
-     * clears a region block. Removing it would quietly rewrite a queue on the
-     * strength of a ten-minute verdict.
+     * cannot see the end of — signing in clears an age gate, travelling clears a
+     * region block, and a stream that 403s now resolves again in an hour.
+     * Removing it would quietly rewrite a queue on the strength of a ten-minute
+     * verdict.
+     *
+     * Whether a failure has earned this at all is [skipReason]'s decision, not
+     * this method's; by here the answer is yes.
      *
      * With nothing after it there is nowhere to go, and stopping is then the
      * correct end state rather than a failure to recover: the error stays on the
@@ -2119,70 +2221,31 @@ class PlaybackService : MediaLibraryService() {
      * request to search again has to come from the same place the revert did.
      * See [OriginalVersion].
      *
-     * Three things are in the way of simply starting the hunt, and all three
-     * are undone here rather than in the menu that asks:
+     * Nothing is replaced here, and that is the whole of the design. The
+     * obvious version of this rebuilt the reverted item as the ordinary,
+     * substitutable entry it would have been queued as, and let the automatic
+     * path take it from there. It worked, and it cost two breaks in the audio
+     * where the feature only justifies one: the rebuild stopped the track and
+     * started it again on the very same YouTube stream, seconds before the
+     * upgrade landed and stopped it a second time. The first of those bought
+     * nothing — nothing better had even been found yet.
      *
-     *  - **The item is the wrong item.** A reverted entry carries
-     *    `direct_youtube=1`, which the resolving data source answers before it
-     *    reaches any substitution or upgrade — so the search could run, find a
-     *    lossless copy, and still be handed YouTube's Opus. It is rebuilt as
-     *    the ordinary entry it would have been queued as.
-     *  - **The verdicts.** [QualityUpgrade] records a track as asked-and-
-     *    answered, and that record is what stops the same search running twice
-     *    a minute. Here it is a "no" being overruled.
-     *  - **The bytes already on disk.** See below.
-     *
-     * A track that is *not* reverted keeps its item and just gets the search,
-     * which is what makes this safe to offer more widely than the revert it was
-     * written for.
+     * So the item is left exactly as it is and the search runs under it. The
+     * two things standing in the way of that are handled where they live:
+     * [QualityUpgrade.askByHand] exempts a reverted item's rendition marker
+     * from the rule that would otherwise read it as "already upgraded", and
+     * [QualityUpgrade.upgradedUri] drops `direct_youtube` from the URI it
+     * builds, so the swap — when there is something worth swapping to — is
+     * served the copy that was found rather than the one being replaced. The
+     * listener hears one cut, for the change they asked for.
      */
     private fun upgradeQualityNow() {
         val player = player ?: return
-        val item = player.currentMediaItem ?: return
-        val index = player.currentMediaItemIndex
-        if (index !in 0 until player.mediaItemCount) return
-        val mediaId = item.mediaId
-        // First, because [Song.toMediaItem] reads it: with the pin still in
-        // place the "ordinary" item rebuilt below comes back as another copy of
-        // the reverted one.
+        val mediaId = player.currentMediaItem?.mediaId ?: return
         OriginalVersion.unpin(mediaId)
-        QualityUpgrade.allowAgain(mediaId)
-        val replacement = item.toSong().toMediaItem()
-        val reopened = replacement.localConfiguration?.uri
+        QualityUpgrade.askByHand(mediaId)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
-        if (reopened == null || reopened == item.localConfiguration?.uri) {
-            // Nothing about the item has to change — this track is already
-            // playing the ordinary way, and the search is all that was missing.
-            // No break in the audio for it, either.
-            lookForBetterCopy(player)
-            return
-        }
-        scope.launch {
-            // The entry this item is about to reopen was last filled by
-            // whatever served the track before it was reverted, and nothing
-            // here can say which source that was: [StreamChoice]'s record of it
-            // went when the revert did, and a fresh resolve is free to pick a
-            // different source and stream it into the middle of what is already
-            // on disk. That is the corruption [AudioCache]'s key factory exists
-            // to prevent, and the only way to be certain of it here is to start
-            // the entry empty. It costs a re-download of a track the listener
-            // has just asked to have re-fetched anyway.
-            withContext(Dispatchers.IO) { AudioCache.discardRendition(reopened) }
-            val live = this@PlaybackService.player ?: return@launch
-            // The discard is a disk operation and the queue is free to move
-            // during it. Swapping an item into an index that now holds a
-            // different track would replace the wrong song.
-            if (live.currentMediaItemIndex != index ||
-                live.currentMediaItem?.mediaId != mediaId
-            ) {
-                return@launch
-            }
-            val position = live.currentPosition
-            val wasPlaying = live.isPlaying
-            live.replaceMediaItem(index, replacement)
-            live.seekTo(index, position)
-            if (wasPlaying) live.play()
-        }
+        lookForBetterCopy(player)
     }
 
     /**
@@ -2512,6 +2575,21 @@ class PlaybackService : MediaLibraryService() {
         // prevent the requested lossless copy from replacing it. Two marked
         // URIs get distinct cache entries through [QualityUpgrade.upgradedUri].
         if (uri.contains("${QualityUpgrade.MARKER}=hifi-")) return null
+        // A track the listener is holding on YouTube's own upload is not a
+        // candidate for anything, whatever was already in flight for it. The
+        // revert can land in the middle of a hunt — that is when the "Upgrading
+        // quality" badge makes it most tempting to press — and the search
+        // behind it neither knows nor can be told.
+        //
+        // The pin is the test rather than the item's `direct_youtube`, because
+        // those two come apart in exactly the case this must not block: an
+        // upgrade asked for by hand leaves the reverted item in place and
+        // unpins the track, and swapping against that item is the whole point.
+        // See [OriginalVersion] and [QualityUpgrade.askByHand].
+        if (OriginalVersion.isPinned(mediaId)) {
+            TrackLog.d("BitChord", "no swap for $mediaId: it is held on the original", about = mediaId)
+            return null
+        }
         return SwapPoint(item, uri, player.currentPosition, player.duration)
     }
 
@@ -3004,29 +3082,148 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Publishes what the decoder is really being fed, for "stats for nerds".
+     * Depth, rate and channel count for one stream, taken from the stream.
      *
-     * Bitrate is the awkward one: YouTube's WebM and MP4 containers carry no
-     * bitrate field, so [Format.bitrate] arrives as `NO_VALUE` and the honest
-     * figure is whatever named this stream instead. The source's own figure
-     * comes ahead of YouTube's because a track can have both: one resolved
-     * through YouTube and then upgraded to a module stream mid-song has a
-     * stale 160 sitting in [NerdStats.pickedBitrateKbps] describing audio that
-     * stopped playing several seconds ago. Anything still unknown is left null
-     * for the UI to omit — better a shorter line than a made-up number.
+     * Kept as a value rather than read field-by-field off [Format] because
+     * for some containers the fields are not all in the same place — see
+     * [measure].
+     */
+    private class Measured(
+        val sampleRateHz: Int?,
+        val channels: Int?,
+        val bitDepth: Int?,
+    ) {
+        /**
+         * What the samples cost per second once decoded, in kbps.
+         *
+         * `16-bit · 44.1 kHz · stereo` is 1411, `24-bit · 96 kHz · stereo` is
+         * 4608 — the figures Tidal, Lossless and Apple Music all put next to a
+         * lossless track, and the only bitrate that means anything for one.
+         * A FLAC's *compressed* rate is a property of how compressible that
+         * particular recording was, so two copies of the same master at the
+         * same quality report different numbers and the comparison the reader
+         * is trying to make doesn't survive it.
+         *
+         * Null unless all three are known: two thirds of this product is not
+         * a bitrate.
+         */
+        val pcmBitrateKbps: Int?
+            get() {
+                val depth = bitDepth ?: return null
+                val rate = sampleRateHz ?: return null
+                val ch = channels ?: return null
+                return (depth.toLong() * rate * ch / 1000).toInt().takeIf { it > 0 }
+            }
+    }
+
+    /**
+     * What the renderer was handed, with the gaps its container left filled in
+     * from the stream's own header.
+     *
+     * A container is free not to state any of this, and one in use here
+     * doesn't: Tidal's FLAC arrives inside MP4, whose audio sample entry
+     * carries the sample rate as a 16.16 fixed-point field and is written
+     * zero, the escape the FLAC-in-ISOBMFF spec allows precisely because the
+     * real figure lives in the `dfLa` box below it. Media3 passes that box
+     * through as initialization data without folding it back into the
+     * `Format`, so `sampleRate` reached the stats line as 0 and `pcmEncoding`
+     * as unset — `audio/flac 0.0kHz ?-bit`, on a track that is plain
+     * 16-bit/44.1kHz and displayed as such everywhere else.
+     *
+     * Every figure here still comes from the bytes being decoded. This is not
+     * a fallback to what a source claimed; it is the same stream read at the
+     * one layer that always states it, because a FLAC frame cannot be decoded
+     * without it.
+     */
+    private fun Format.measure(): Measured {
+        val streamInfo = flacStreamInfo()
+        return Measured(
+            sampleRateHz = sampleRate.takeIf { it > 0 } ?: streamInfo?.sampleRateHz,
+            channels = channelCount.takeIf { it > 0 } ?: streamInfo?.channels,
+            // The renderer's PCM encoding first: it is the one that would show
+            // a 24-bit master being truncated on the way to the sink, which is
+            // the whole reason the figure is on screen. STREAMINFO describes
+            // the file, so it can only answer what the file holds.
+            bitDepth = bitDepthOf(pcmEncoding) ?: streamInfo?.bitDepth,
+        )
+    }
+
+    /** Sample rate, channel count and bit depth as a FLAC STREAMINFO block states them. */
+    private class FlacStreamInfo(val sampleRateHz: Int, val channels: Int, val bitDepth: Int)
+
+    /**
+     * The STREAMINFO block carried in this format's initialization data, for a
+     * FLAC stream that has one.
+     *
+     * The offset is found rather than assumed. Media3 hands the block over
+     * with a `fLaC` marker in front of it from both the MP4 and the raw path,
+     * but that is its business and not something worth depending on, so all
+     * three shapes — marker, bare block header, bare body — are recognised by
+     * looking for the header itself: a metadata block type of 0 (STREAMINFO)
+     * followed by a 24-bit length of 34.
+     */
+    private fun Format.flacStreamInfo(): FlacStreamInfo? {
+        if (sampleMimeType != MimeTypes.AUDIO_FLAC) return null
+        val data = initializationData.firstOrNull() ?: return null
+        fun byteAt(i: Int) = data[i].toInt() and 0xFF
+        fun headerAt(i: Int) = data.size > i + 3 &&
+            (byteAt(i) and 0x7F) == 0 &&
+            byteAt(i + 1) == 0 && byteAt(i + 2) == 0 && byteAt(i + 3) == STREAM_INFO_BYTES
+        val body = when {
+            data.size >= 4 && String(data, 0, 4, Charsets.US_ASCII) == "fLaC" ->
+                if (headerAt(4)) 8 else 4
+            headerAt(0) -> 4
+            else -> 0
+        }
+        if (data.size < body + STREAM_INFO_BYTES) return null
+        fun at(i: Int) = byteAt(body + i)
+        // STREAMINFO opens with two 16-bit block sizes and two 24-bit frame
+        // sizes — ten bytes — and then packs, without alignment, a 20-bit
+        // sample rate, a 3-bit channel count and a 5-bit sample depth, the
+        // last two both stored one less than they mean.
+        val sampleRate = (at(10) shl 12) or (at(11) shl 4) or (at(12) shr 4)
+        val channels = ((at(12) shr 1) and 0x07) + 1
+        val bitDepth = (((at(12) and 0x01) shl 4) or (at(13) shr 4)) + 1
+        return FlacStreamInfo(sampleRate, channels, bitDepth).takeIf { sampleRate > 0 }
+    }
+
+    /**
+     * Publishes what the decoder is really being fed, for "stats for nerds"
+     * and for the quality badge above it.
+     *
+     * Everything the badge is decided on is measured off the stream in hand —
+     * see [Measured] and [NerdStats.Snapshot.isLossless]. What a source said
+     * it was about to send is carried alongside as [NerdStats.Snapshot.claimed]
+     * and used for nothing but the mismatch note, because a claim is the one
+     * thing that stays true after the stream it described has stopped playing.
+     *
+     * Bitrate is the awkward one. A lossless stream gets the rate its samples
+     * decode to, which is a product of three figures already measured and is
+     * the number a listener can compare between tracks. A lossy one gets the
+     * container's, when the container states it — YouTube's WebM and MP4 do
+     * not, so [Format.bitrate] arrives as `NO_VALUE` and the honest figure is
+     * whatever named this stream instead. The source's own figure comes ahead
+     * of YouTube's because a track can have both: one resolved through YouTube
+     * and then upgraded to a module stream mid-song has a stale 160 sitting in
+     * [NerdStats.pickedBitrateKbps] describing audio that stopped playing
+     * several seconds ago. Anything still unknown is left null for the UI to
+     * omit — better a shorter line than a made-up number.
      */
     private fun publishNerdStats() {
         val player = player ?: return
         val format = player.audioFormat
         val mediaId = player.currentMediaItem?.mediaId
+        val measured = format?.measure()
         NerdStats.current.value = NerdStats.Snapshot(
             mimeType = format?.sampleMimeType,
-            bitrateKbps = format?.bitrate?.takeIf { it != Format.NO_VALUE }?.div(1000)
+            bitrateKbps = measured?.pcmBitrateKbps
+                ?.takeIf { NerdStats.isLosslessMime(format?.sampleMimeType) }
+                ?: format?.bitrate?.takeIf { it > 0 }?.div(1000)
                 ?: NerdStats.declaredFormat(mediaId)?.kbps
                 ?: NerdStats.pickedBitrateKbps(mediaId),
-            sampleRateHz = format?.sampleRate?.takeIf { it != Format.NO_VALUE },
-            channels = format?.channelCount?.takeIf { it != Format.NO_VALUE },
-            bitDepth = format?.pcmEncoding?.let(::bitDepthOf),
+            sampleRateHz = measured?.sampleRateHz,
+            channels = measured?.channels,
+            bitDepth = measured?.bitDepth,
             claimed = NerdStats.declaredFormat(mediaId),
         )
     }
@@ -4804,6 +5001,9 @@ class PlaybackService : MediaLibraryService() {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
+        /** Length of a FLAC STREAMINFO block, which the format fixes at 34 bytes. */
+        const val STREAM_INFO_BYTES = 34
+
         const val CHANNEL_ID = "bitchord_playback"
         const val SESSION_ID = "BitChordPlayback"
         const val ACTION_TOGGLE_FAVORITE = "com.music.bitchord.action.TOGGLE_FAVORITE"
@@ -5030,6 +5230,14 @@ class PlaybackService : MediaLibraryService() {
 
         /** How many times one track is picked up off the floor — see [recoverFrom]. */
         const val MAX_RECOVERIES = 2
+
+        /**
+         * How many tracks in a row may be skipped for a plain playback error
+         * before the queue is left alone — see [skipReason]. Sized to walk a
+         * short run of broken tracks without walking an entire queue that is
+         * only failing because there is no connection behind it.
+         */
+        const val MAX_CONSECUTIVE_SKIPS = 4
 
         /**
          * How far into an exception's causes a resolver verdict is looked for.

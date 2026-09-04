@@ -39,6 +39,7 @@ import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -110,11 +111,27 @@ fun rememberArtworkMesh(
             .size(MESH_PX)
             .allowHardware(false) // the sleeve has to be read back pixel by pixel
             .build()
-        val result = SingletonImageLoader.get(context).execute(request)
-        val bitmap = (result as? SuccessResult)?.image?.toBitmap() ?: return@LaunchedEffect
-        val found = withContext(Dispatchers.Default) { meshOf(bitmap, imageUrl.hashCode()) } ?: return@LaunchedEffect
-        meshCache[imageUrl] = found
-        mesh = found
+        // Tried more than once, because this effect is keyed on the artwork and
+        // nothing else: a read that fails is not retried by Coil and cannot be
+        // re-triggered from here, so one dropped connection used to leave the
+        // backdrop flat — no colour behind the player at all — until the track
+        // changed. The cover on top of it has the same guard for the same
+        // reason; see [NowPlayingScreen]'s artAttempt.
+        repeat(MESH_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(MESH_RETRY_DELAY_MS)
+            val result = SingletonImageLoader.get(context).execute(request)
+            val bitmap = (result as? SuccessResult)?.image?.toBitmap()
+            if (bitmap != null) {
+                val found = withContext(Dispatchers.Default) { meshOf(bitmap, imageUrl.hashCode()) }
+                if (found != null) {
+                    meshCache[imageUrl] = found
+                    mesh = found
+                }
+                // A cover that decoded but had no mesh in it — see [meshOf] —
+                // is an answer, not a failure. Asking again gets the same one.
+                return@LaunchedEffect
+            }
+        }
     }
 
     LaunchedEffect(canvasFrame) {
@@ -322,6 +339,21 @@ private const val MESH_CACHE_ENTRIES = 64
  * and no column comes out weighted differently from its neighbour.
  */
 private const val MESH_PX = 120
+
+/**
+ * How many goes the backdrop's read gets before it is given up on, and how long
+ * it waits between them.
+ *
+ * Matched to the cover's own retry in [NowPlayingScreen] rather than chosen
+ * separately: the two read the same URL out of the same cache, so a run of
+ * attempts that gave up at a different point from the cover's would be a way for
+ * the backdrop and the artwork on top of it to disagree about whether this track
+ * has a picture.
+ */
+private const val MESH_ATTEMPTS = 4
+
+/** @see MESH_ATTEMPTS */
+private const val MESH_RETRY_DELAY_MS = 1_500L
 
 /**
  * How many cells across the mesh is.

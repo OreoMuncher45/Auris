@@ -198,6 +198,7 @@ import com.music.bitchord.ui.components.LyricsLogConsole
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
@@ -213,8 +214,26 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Collapsed-header geometry, shared by the layout and its animation. */
-/** Comfortably over the sleeve's drawn size on a phone, without wasting bytes. */
-private const val ART_PX = 1200
+/**
+ * Comfortably over the sleeve's drawn size on a phone, without wasting bytes.
+ *
+ * A rung on the app-wide ladder rather than a number of the player's own, so a
+ * large home-screen widget asks for the same copy — see [PLAYER_ART_PX].
+ */
+private const val ART_PX = PLAYER_ART_PX
+
+/**
+ * How many further goes a cover that failed to load gets.
+ *
+ * Small on purpose. This is here for the connection that drops for a moment or
+ * the request that loses a race with the app coming back to the foreground, not
+ * for a track whose artwork has genuinely gone: past a few tries the answer is
+ * not going to change, and the placeholder tile is the honest thing to draw.
+ */
+private const val ART_RETRIES = 3
+
+/** How long to leave it before trying a failed cover again. */
+private const val ART_RETRY_DELAY_MS = 1_500L
 
 /**
  * How long a canvas lookup waits for the track's album name before giving up
@@ -934,7 +953,63 @@ fun NowPlayingScreen(
     // full-bleed at once. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true and the two
     // layers go on trading places as they should.
-    var artLoaded by remember(song.artworkAt(ART_PX)) { mutableStateOf(false) }
+    val artUrl = song.artworkAt(ART_PX)
+    var artLoaded by remember(artUrl) { mutableStateOf(false) }
+    /**
+     * Which go at this cover we are on, and the reason there is more than one.
+     *
+     * Coil does not retry: a request that fails is over, and the state it leaves
+     * behind is the state this screen keeps until the model changes — which,
+     * keyed on the cover, means until the next track. One dropped connection at
+     * the wrong moment and the player showed its placeholder tile for a song it
+     * would have drawn perfectly a second later, with the widget and the
+     * notification both showing the cover from cache the whole time.
+     *
+     * Bounded and spaced, because the usual reason a cover fails is that there
+     * is no network at all, and a retry per recomposition — which is what an
+     * unremembered request effectively gave — is a spin, not a recovery.
+     */
+    var artAttempt by remember(artUrl) { mutableIntStateOf(0) }
+    /**
+     * The one request for this cover, built once.
+     *
+     * Both the sleeve and the full-bleed banner draw from it, which is what
+     * their own comments claim ("one ask, one decode, one bitmap for both") and
+     * what building it inline at each of them quietly failed to deliver: Coil
+     * compares models to decide whether to start a new load, and two separately
+     * built requests are never equal — `ImageRequest` has no `equals`, and
+     * neither does the size resolver `.size()` hands it. So each was its own
+     * load, and worse, *every recomposition* was another one. The player
+     * recomposes at least twice a second off the position tick, and each pass
+     * pushed the painter back through Loading before it settled on Success
+     * again, which is exactly the [artLoaded] this screen hangs the banner, the
+     * sleeve's alpha, its shadow and its placeholder icon on.
+     *
+     * Remembered on the cover and the attempt, so it changes when the picture
+     * changes and when a retry is deliberately asked for, and at no other time.
+     */
+    val artRequest = remember(artUrl, artAttempt) {
+        ImageRequest.Builder(context)
+            .data(artUrl)
+            .size(ART_PX)
+            // What makes a retry a new request as far as Coil's model comparison
+            // is concerned. Only from the second go onwards, so the ordinary
+            // request stays byte-identical to the one the mesh and the palette
+            // make of the same cover and goes on sharing their memory-cache
+            // entry. The disk key is unaffected either way.
+            .apply { if (artAttempt > 0) memoryCacheKeyExtra("attempt", artAttempt.toString()) }
+            .build()
+    }
+    var artFailed by remember(artUrl) { mutableStateOf(false) }
+    LaunchedEffect(artUrl, artFailed) {
+        // A track with no artwork at all fails immediately and would fail
+        // identically three more times: there is no request to make, so there is
+        // nothing a second go could do differently.
+        if (artUrl == null || !artFailed || artAttempt >= ART_RETRIES) return@LaunchedEffect
+        delay(ART_RETRY_DELAY_MS)
+        artFailed = false
+        artAttempt++
+    }
     // Sticky, unlike [artLoaded]: the banner is the shape of the player rather
     // than a property of the track in it. Waiting on each new cover would
     // collapse the banner into a card and blow it back out on every skip —
@@ -1083,10 +1158,11 @@ fun NowPlayingScreen(
                     // cross-fade into each other, and asking twice at two sizes
                     // would decode the same art twice and let the banner fade in
                     // before its own copy had arrived.
-                    model = ImageRequest.Builder(context)
-                        .data(song.artworkAt(ART_PX))
-                        .size(ART_PX)
-                        .build(),
+                    //
+                    // Literally the same request object as the sleeve's, not an
+                    // identical one — see [artRequest] for why that distinction
+                    // is the whole of it.
+                    model = artRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -1606,15 +1682,20 @@ fun NowPlayingScreen(
                             // banner makes, and the banner is taller than the
                             // sleeve is wide. One ask, one decode, one bitmap for
                             // both — and nothing to upscale when the two swap.
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(song.artworkAt(ART_PX))
-                                .size(ART_PX)
-                                .build(),
+                            model = artRequest,
                             contentDescription = null,
                             // Video thumbnails are 16:9; letterboxing them inside
                             // the square sleeve looks like a broken frame.
                             contentScale = ContentScale.Crop,
-                            onState = { artLoaded = it is AsyncImagePainter.State.Success },
+                            onState = {
+                                artLoaded = it is AsyncImagePainter.State.Success
+                                // Only the failure is latched, and only upwards:
+                                // the retry that clears it is [artFailed]'s own
+                                // effect, and clearing it from a Loading state
+                                // here would cancel that effect's wait every time
+                                // the painter passed back through Loading.
+                                if (it is AsyncImagePainter.State.Error) artFailed = true
+                            },
                             // TextureView-backed canvas frames can arrive
                             // before Coil has decoded the sleeve. Alpha alone
                             // doesn't hide this layer for that window: a
@@ -4413,10 +4494,11 @@ private fun formatTime(ms: Long): String {
 
 /**
  * The gap between the two timestamps under the seek bar: just the "Lossless"
- * badge when one applies, and nothing otherwise. The measured stats line
- * that used to fall back to lives inside the sleeve now (see the bottom-centre
- * overlay on the artwork Box above), so there is no tap here to swap it in —
- * the badge is a claim, the sleeve is where the evidence is.
+ * badge when one applies, and nothing otherwise. The stats line that used to
+ * fall back to lives inside the sleeve now (see the bottom-centre overlay on
+ * the artwork Box above), so there is no tap here to swap it in — the two say
+ * the same thing at different resolutions, both read off the stream being
+ * decoded rather than off what a source offered to send.
  */
 @Composable
 private fun LosslessOrStats(
@@ -4461,10 +4543,11 @@ private fun LosslessOrStats(
             //
             // Decided on [NerdStats.Snapshot.isHiQuality] rather than on which
             // source won, for the reason that property already gives: a
-            // 320kbps stream is a 320kbps stream wherever it came from. It
-            // reads the claimed rate when nothing is measured yet, so a
-            // JioSaavn stream qualifies from its first frame; YouTube's Opus
-            // sits under the threshold and keeps the plain label it had.
+            // 320kbps stream is a 320kbps stream wherever it came from. It is
+            // read off the stream rather than off what the module offered, so
+            // a JioSaavn AAC qualifies once its container has stated its rate;
+            // YouTube's Opus sits under the threshold and keeps the plain
+            // label it had.
             text = if (nerdStats?.isHiQuality == true) {
                 stringResource(R.string.high_quality_upgrading)
             } else {
@@ -4595,14 +4678,17 @@ private fun ShimmerText(text: String) {
 }
 
 /**
- * "FLAC · 24-bit · 96.0 kHz · Stereo" — whichever of those the player has
- * actually reported. A figure it hasn't is dropped rather than filled in, so a
- * short line means little was known, never that something was invented.
+ * "FLAC · 24-bit · 96.0 kHz · 4608 kbps · Stereo" — whichever of those the
+ * player has actually reported. A figure it hasn't is dropped rather than
+ * filled in, so a short line means little was known, never that something was
+ * invented.
  *
- * Bitrate is omitted once the stream is known to be lossless: the number is
- * real but says nothing useful about the quality, and reading "1411 kbps" next
- * to "FLAC" invites the comparison with a lossy figure that the two do not
- * support.
+ * Bitrate is stated for a lossless stream too, and is the rate its samples
+ * decode to — 1411 for 16-bit/44.1kHz, 4608 for 24-bit/96kHz. It is the same
+ * figure Tidal, Lossless and Apple Music print next to a lossless track, and the
+ * one a listener can carry from track to track; a FLAC's compressed rate
+ * cannot, because it says more about how compressible that recording was than
+ * about the copy being played.
  *
  * A stream that arrived worse than its source promised gets that stated
  * outright rather than left to be spotted — see [NerdStats.Snapshot.downgraded].
@@ -4611,8 +4697,8 @@ private fun NerdStats.Snapshot.describe(context: android.content.Context): Strin
     val parts = buildList {
         codecLabel(mimeType)?.let(::add)
         bitDepth?.let { add(context.getString(R.string.bit_depth, it)) }
-        if (!isLossless) bitrateKbps?.let { add("$it kbps") }
         sampleRateHz?.let { add("%.1f kHz".format(Locale.ROOT, it / 1000f)) }
+        bitrateKbps?.let { add("$it kbps") }
         channels?.let {
             add(
                 when (it) {

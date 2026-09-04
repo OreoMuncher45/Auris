@@ -137,6 +137,7 @@ import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.beginRadioQueue
 import com.music.bitchord.playback.commitRadioQueue
 import com.music.bitchord.playback.fromAutoplay
+import com.music.bitchord.playback.hasYouTubeOriginal
 import com.music.bitchord.playback.loadAutoplayTracks
 import com.music.bitchord.playback.playSongs
 import com.music.bitchord.playback.toMediaItem
@@ -2546,7 +2547,20 @@ private fun BitChordApp(
                     // whatever ids it's ever going to have.
                     resolvingLinks = fromPlayer && linksLoading,
                     showSleepTimer = fromPlayer,
-                    onRollbackToOriginal = if (fromPlayer && player.isQualityUpgraded &&
+                    // Offered for every playing track with a YouTube upload
+                    // behind it, not only for one an upgrade visibly swapped:
+                    // a source ranked above YouTube can be playing its own
+                    // idea of the song from the first second, and a wrong
+                    // match sounds like a wrong match whether or not anything
+                    // announced itself. See [Song.hasYouTubeOriginal].
+                    onRollbackToOriginal = if (fromPlayer &&
+                        song.hasYouTubeOriginal() &&
+                        // Nothing to revert *from*: the listener is hearing a
+                        // file they saved, not a stream anything chose.
+                        song.localUri == null &&
+                        // Already there, and the menu says so with the row
+                        // below instead.
+                        song.videoId !in pinnedToOriginal &&
                         controller?.currentMediaItem?.mediaId == song.videoId
                     ) {
                         rollback@{
