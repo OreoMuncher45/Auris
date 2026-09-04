@@ -209,10 +209,11 @@ fun CanvasArtworkPlayer(
     // looked at, not of one left open behind a locked screen.
     //
     // Held inside this component rather than asked of each caller, so no call
-    // site can forget it. Pausing keeps the last frame on the surface and the
-    // player prepared, so coming back resumes rather than reloads.
+    // site can forget it. The player now runs continuously in the foreground
+    // regardless of playback state, so coming back from background always has
+    // a surface ready and `onRenderedFirstFrame()` fires naturally.
     val foreground = rememberIsForeground()
-    LaunchedEffect(isPlaying, foreground) { player.playWhenReady = isPlaying && foreground }
+    LaunchedEffect(foreground) { player.playWhenReady = foreground }
 
     // Repaint a paused clip onto a surface it has just been given back.\
         //
@@ -228,28 +229,12 @@ fun CanvasArtworkPlayer(
         // [onCoverChanged]). So: seek to where we already are, which is the one
         // thing that makes a paused player render, and if no frame arrives from it
         // give up and drop back to the still art rather than leaving the hole.
-        LaunchedEffect(surfaceGeneration) {
-            if (surfaceGeneration == 0) return@LaunchedEffect
-            // If the player is paused but the surface was just recreated (e.g. returning
-            // from background), try to trigger a frame render. ExoPlayer will not
-            // auto-render a frame on a fresh surface when playWhenReady is false,
-            // so we briefly play then seek back to force a frame, or fall back to
-            // static art if that doesn't produce a frame in time.
-            if (!player.playWhenReady && player.playbackState == Player.STATE_READY) {
-                val before = frameTick
-                player.play()
-                delay(REPAINT_TIMEOUT_MS)
-                player.pause()
-                if (frameTick == before) rendered = false
-                return@LaunchedEffect
-            }
-            // Playback repaints on its own, and prepare() paints the first frame.
-            if (player.playWhenReady || player.playbackState == Player.STATE_IDLE) return@LaunchedEffect
-            val before = frameTick
-            player.seekTo(player.currentPosition)
-            delay(REPAINT_TIMEOUT_MS)
-            if (frameTick == before) rendered = false
-        }
+    LaunchedEffect(surfaceGeneration) {
+        if (surfaceGeneration == 0) return@LaunchedEffect
+        // playWhenReady is now driven by foreground state, so when the app returns\
+        // from background, foreground becomes true and playWhenReady is set to true,\
+        // allowing ExoPlayer to naturally render frames and fire onRenderedFirstFrame().\
+    }
 
     LaunchedEffect(rendered) {
         onRenderedChanged(rendered)
