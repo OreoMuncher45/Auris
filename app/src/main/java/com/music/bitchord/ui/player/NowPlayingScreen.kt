@@ -668,6 +668,23 @@ fun NowPlayingScreen(
         }
     }
 
+    // Back out of the queue to the player. Same problem as lyrics: the sheet's
+    // own dispatcher competes at PRIORITY_DEFAULT on API 33+, so we outrank it
+    // with an overlay-priority callback while the queue is open. Below 33 the
+    // BackHandler alone wins because it registers after the dialog's handler.
+    BackHandler(enabled = queueOpen) { queueOpen = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, queueOpen) {
+            val callback = if (queueOpen) {
+                OverlayBack.register(view) { queueOpen = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
     // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
     //
     // Plain state driven by an animation rather than [animateFloatAsState],
