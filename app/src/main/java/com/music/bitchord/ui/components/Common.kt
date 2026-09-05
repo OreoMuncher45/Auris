@@ -186,8 +186,14 @@ fun heroCardWidth(available: Dp): Dp = minOf(available * HERO_CARD_FRACTION, HER
 /** How many cards sit across a library grid row, and how wide each lands. */
 data class LibraryGridSpec(val columns: Int, val cardWidth: Dp)
 
-/** The narrowest a library grid card is let get before another column gives way. */
-private val LIBRARY_GRID_MIN_CARD_WIDTH = 84.dp
+/**
+ * The narrowest a library grid card is let get before another column gives way.
+ *
+ * Deliberately the same 140.dp minimum the Local Music and Downloads grids pass
+ * to `GridCells.Adaptive`, so a cover on a "Show all" page is the same size as
+ * the same cover on those pages rather than noticeably smaller.
+ */
+private val LIBRARY_GRID_MIN_CARD_WIDTH = 140.dp
 
 /** Gap between cards in a library grid, in both directions. */
 val LIBRARY_GRID_SPACING = 12.dp
@@ -202,8 +208,11 @@ private const val LIBRARY_GRID_MAX_COLUMNS = 5
  * [available] dp of row — see `LibraryGridPage`.
  *
  * Columns follow from [LIBRARY_GRID_MIN_CARD_WIDTH] — as many as fit — rather
- * than from a fixed count, so a phone settles on 3 or 4 and a tablet fills out
- * to the 5-column ceiling. Every width here is already in dp, which is what
+ * than from a fixed count, so a phone settles on 2 and a tablet fills out
+ * towards the 5-column ceiling. This is the same arithmetic `GridCells.Adaptive`
+ * runs, at the same minimum, gutter and spacing the Local Music and Downloads
+ * grids use, which is what keeps a card here the size of a card there. Every
+ * width is already in dp, which is what
  * makes this "based on device width and dpi" rather than a raw pixel count: a
  * dp reads the same physical size on a 420ppi phone as on a 160ppi tablet, so
  * the column count tracks how much room there actually is rather than how
