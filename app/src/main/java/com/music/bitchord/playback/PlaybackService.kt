@@ -94,6 +94,7 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
 import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -859,17 +860,7 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
-        // No user agent on the factory: the right one depends on which client
-        // minted the URL, so it is set per request below. Setting it here as
-        // well would not override that — OkHttpDataSource *appends* the
-        // factory's agent after the request's, and the fetch would go out
-        // carrying two contradictory User-Agent headers.
-        val resolvingFactory = ResolvingDataSource.Factory(
-            // Innermost, so it chunks the real googlevideo URL the resolver
-            // below has already substituted in — see [ChunkedDataSource] for
-            // why an open-ended read of one is worth avoiding.
-            ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
-        ) { dataSpec ->
+        val streamResolver = ResolvingDataSource.Resolver { dataSpec ->
             // Which track everything below is for, said once, because none of
             // it would otherwise know: this runs on ExoPlayer's loader thread
             // with a DataSpec and nothing else, and the work it starts — the
@@ -889,13 +880,13 @@ class PlaybackService : MediaLibraryService() {
                     withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) }
                 } ?: throw java.io.IOException("No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}")
                 NerdStats.onSourceStream(dataSpec.uri.getQueryParameter("t"), stream.format)
-                return@Factory dataSpec.buildUpon()
+                return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(stream.url))
                     .setHttpRequestHeaders(stream.headers)
                     .build()
             }
             val videoId = dataSpec.uri.getQueryParameter("v")
-                ?: return@Factory dataSpec
+                ?: return@Resolver dataSpec
             // An explicit rollback is not a preference for a different
             // candidate: it means this exact YouTube rendition, immediately.
             // Answer it before StreamChoice, the module race and a pending
@@ -913,7 +904,7 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
                 TrackLog.d("BitChord", "serving original YouTube version for $videoId", about = videoId)
-                return@Factory dataSpec.buildUpon()
+                return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
                     .setHttpRequestHeaders(headers)
                     .build()
@@ -933,7 +924,7 @@ class PlaybackService : MediaLibraryService() {
                     throw java.io.IOException("Automix Opus resolution timed out for $videoId", e)
                 }
                 val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
-                return@Factory dataSpec.buildUpon()
+                return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
                     .setHttpRequestHeaders(headers)
                     .build()
@@ -962,7 +953,7 @@ class PlaybackService : MediaLibraryService() {
                         "at ${dataSpec.position} (${upgraded.format.summary})",
                     about = videoId,
                 )
-                return@Factory dataSpec.buildUpon()
+                return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(upgraded.url))
                     .setHttpRequestHeaders(upgraded.headers)
                     .build()
@@ -1024,7 +1015,7 @@ class PlaybackService : MediaLibraryService() {
                     )
                     if (!pending) NerdStats.onLosslessRaceEnd(videoId)
                 }
-                return@Factory dataSpec.buildUpon()
+                return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(serving.url))
                     .setHttpRequestHeaders(serving.headers)
                     .build()
@@ -1053,7 +1044,7 @@ class PlaybackService : MediaLibraryService() {
                 // above under a half-filled cache entry, and the entry would
                 // then be finished by a different file.
                 StreamChoice.remember(videoId, SourceStream(streamUrl, headers = headers), substituted = false)
-                return@Factory dataSpec.buildUpon()
+                return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
                     .setHttpRequestHeaders(headers)
                     .build()
@@ -1089,6 +1080,29 @@ class PlaybackService : MediaLibraryService() {
                         .setHttpRequestHeaders(headers)
                         .build()
                 }
+            }
+        }
+
+        // No user agent on the factory: the right one depends on which client
+        // minted the URL, so it is set per request below. Setting it here as
+        // well would not override that — OkHttpDataSource *appends* the
+        // factory's agent after the request's, and the fetch would go out
+        // carrying two contradictory User-Agent headers.
+        val resolvingFactory = ResolvingDataSource.Factory(
+            // Innermost, so it chunks the real googlevideo URL the resolver
+            // above has already substituted in — see [ChunkedDataSource] for
+            // why an open-ended read of one is worth avoiding.
+            ChunkedDataSource.Factory(OkHttpDataSource.Factory(Http.client), STREAM_CHUNK_BYTES),
+        ) { dataSpec ->
+            // Wrapped rather than folded into the resolver above so the record
+            // is made in one place for every branch of it, and made from what
+            // the resolver *returned* rather than from what each branch meant
+            // to return. Nothing above this line knows what is really on the
+            // end of a `bitchord://` URI and nothing below it knows which
+            // track's bytes it is fetching; this is the seam where both are in
+            // hand. See [StreamContainer].
+            streamResolver.resolveDataSpec(dataSpec).also { resolved ->
+                mediaIdIn(dataSpec.uri)?.let { StreamContainer.served(it, resolved.uri.toString()) }
             }
         }
         // Read-ahead resolves streams through the same chain the player does.
@@ -1786,6 +1800,16 @@ class PlaybackService : MediaLibraryService() {
         ) {
             return
         }
+        // A manifest read as audio is not a broken stream, and everything below
+        // this line would treat it as one. Ahead of the verdict and the attempt
+        // budget for the same reason as the local-file case above: this is not
+        // an attempt spent on the same stream, it is the same stream opened
+        // correctly for the first time.
+        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
+            replayAsManifest(player, item, uri, position)
+        ) {
+            return
+        }
         // Giving up on the *retry*, not on everything below it.
         //
         // A track that has exhausted its attempts is not finished with.
@@ -1962,6 +1986,79 @@ class PlaybackService : MediaLibraryService() {
         player.replaceMediaItem(player.currentMediaItemIndex, restreamed)
         player.seekTo(player.currentMediaItemIndex, position)
         player.prepare()
+        return true
+    }
+
+    /**
+     * Reopens a track whose stream turned out to be a manifest, with the type
+     * declared this time.
+     *
+     * The net under everything else in this file that tries not to reach a
+     * manifest through a progressive source — [StreamContainer] has the full
+     * account of why one cannot be played that way and how it happens anyway.
+     * The live path now declines to substitute one at all, but that is only the
+     * `bitchord://watch?v=…` half: a track queued from a module's own search
+     * results plays through `bitchord://source?…`, is resolved by that module
+     * and by nothing else, and has no YouTube copy to start on. For those there
+     * is no choice to make in advance, and this is the only place that can see
+     * what actually came back.
+     *
+     * What makes it safe to act on is that the URL is not in doubt. The
+     * resolving data source records what it served ([StreamContainer.served]),
+     * so this is not an inference from an error code — the error only says
+     * "nothing could read these bytes", and the record says the bytes were an
+     * `.mpd`. Declaring the type is then the whole fix: same item, same URL,
+     * same position, a `DashMediaSource` instead of a progressive one.
+     *
+     * The cached bytes go first. They are the manifest, written under the
+     * track's ordinary key by the read that failed, and leaving them there
+     * invites the segments that follow to be appended to an index — the seam
+     * this file's [StreamChoice] note is about, reached from a new direction.
+     * [StreamChoice] itself is deliberately left alone: the whole point is to
+     * come back to the *same* stream, and forgetting the pin would send the
+     * reopen off to race for a different one.
+     *
+     * @return false when this is not that situation — no record, nothing
+     *   manifest-shaped, or an item that already declares its type and so has
+     *   failed for some other reason — and the caller should carry on with its
+     *   ordinary stream recovery.
+     */
+    private fun replayAsManifest(
+        player: ExoPlayer,
+        item: MediaItem,
+        uri: Uri?,
+        position: Long,
+    ): Boolean {
+        val mediaId = item.mediaId
+        // Already declared, and still unreadable: this is a real failure and
+        // re-preparing the identical item would only spend the budget on it.
+        if (item.localConfiguration?.mimeType != null) return false
+        val mime = StreamContainer.manifestServing(mediaId) ?: return false
+
+        TrackLog.w(
+            "BitChord",
+            "$mediaId was served a manifest through a progressive source; reopening it as $mime",
+            about = mediaId,
+        )
+        // Not claimed as [retryingMediaId], on the same reasoning as
+        // [restreamMissingLocalFile]: that flag stops a retry against the same
+        // stream refilling its own budget, and this is the first attempt this
+        // stream has had that could possibly work.
+        recoveries.remove(mediaId)
+        val declared = item.buildUpon().setMimeType(mime).build()
+        scope.launch(TrackLog.about(mediaId)) {
+            uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it) } }
+            withContext(Dispatchers.Main) {
+                val live = this@PlaybackService.player ?: return@withContext
+                // The queue can move while the discard runs, and replacing the
+                // current item then would rewrite whatever the listener skipped
+                // to instead.
+                if (live.currentMediaItem?.mediaId != mediaId) return@withContext
+                live.replaceMediaItem(live.currentMediaItemIndex, declared)
+                live.seekTo(live.currentMediaItemIndex, position)
+                live.prepare()
+            }
+        }
         return true
     }
 
@@ -2737,22 +2834,12 @@ class PlaybackService : MediaLibraryService() {
      * so the factory otherwise locks it into a progressive source and fails to
      * parse the manifest as audio bytes.
      *
-     * Both manifest kinds, because which one arrives is the backend's choice
-     * and it has already changed once: the same Tidal module served `.m3u8`
-     * until September 2026 and `.mpd` afterwards, for the same track at the
-     * same requested tier. Only HLS was recognised, so every module upgrade
-     * died on `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED` — an error that reads
-     * like a broken file and was in fact a manifest handed to an extractor.
-     * Read off the extension rather than from what the module claimed the
-     * codec was: `format: "flac"` describes the audio inside, and says nothing
-     * about the envelope the URL points at.
+     * Which manifest kind arrives is the backend's choice and it has already
+     * changed once — see [StreamContainer], which holds that reasoning and the
+     * test itself now that three paths need it rather than this one.
      */
     private fun MediaItem.Builder.withResolvedStreamType(streamUrl: String): MediaItem.Builder =
-        when (streamUrl.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)) {
-            "m3u8" -> setMimeType(MimeTypes.APPLICATION_M3U8)
-            "mpd" -> setMimeType(MimeTypes.APPLICATION_MPD)
-            else -> this
-        }
+        StreamContainer.manifestMimeOf(streamUrl)?.let(::setMimeType) ?: this
 
     /** How an audition in progress is coming along — see [auditionUpgrade]. */
     private sealed interface Audition {
@@ -3048,6 +3135,53 @@ class PlaybackService : MediaLibraryService() {
             // running. Exactly the case in the report — an age-gated track that
             // YouTube would never serve and a catalogue that had it all along.
             fallback.onAwait { resolved -> if (resolved.isSuccess) null else lookup.await() }
+        }
+
+        // A manifest cannot be substituted here, however good it is. This
+        // function runs on the loader thread, *inside* the open of a media
+        // source that was built minutes ago from an extensionless
+        // `bitchord://` URI — so the source is already progressive and cannot
+        // be told otherwise, and handing it a manifest is a track that fails
+        // at 0ms rather than a track that plays lossless. See [StreamContainer]
+        // for the log of exactly that.
+        //
+        // Nothing is thrown away for it. What the modules found is passed to
+        // the second look already answered, which is the same handover a lookup
+        // that merely lost the race gets — and [QualityUpgrade]'s swap does
+        // declare the type, so the manifest plays there. The cost is a seam a
+        // few seconds in instead of a clean start, which is the trade this
+        // whole path is built to make.
+        if (quick != null && StreamContainer.isManifest(quick.url)) {
+            val url = runCatching { fallback.await().getOrThrow() }.getOrNull()
+            if (url != null) {
+                TrackLog.d(
+                    "BitChord",
+                    "'${target.title}' was offered ${quick.format.summary} as a manifest; " +
+                        "starting on YouTube and swapping to it under the music",
+                    about = videoId,
+                )
+                val handed = QualityUpgrade.settledForLess(
+                    mediaId = videoId,
+                    target = target,
+                    inFlight = CompletableDeferred(quick),
+                    playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
+                )
+                if (!handed) NerdStats.onLosslessRaceEnd(videoId)
+                return Resolved.YouTube(url)
+            }
+            // YouTube cannot serve it either, so there is nothing to start on
+            // and nothing to swap from. The manifest goes out as it is: it will
+            // fail its first read, and [replayAsManifest] rebuilds the item
+            // with the type declared and prepares it again. A cut before the
+            // first note beats a track that does not play at all.
+            TrackLog.w(
+                "BitChord",
+                "'${target.title}' has only a manifest and YouTube cannot serve it; " +
+                    "letting it fail once to declare its type",
+                about = videoId,
+            )
+            NerdStats.onLosslessRaceEnd(videoId)
+            return Resolved.Module(quick)
         }
 
         if (quick != null) {
