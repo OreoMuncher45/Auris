@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.R
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
@@ -39,7 +42,6 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 
@@ -133,7 +135,10 @@ fun MiniPlayer(
                 if (reduceDynamicBlur) {
                     Modifier.background(MaterialTheme.colorScheme.surface)
                 } else {
-                    Modifier.hazeEffect(state = hazeState, style = HazeMaterials.thin(MaterialTheme.colorScheme.surface))
+                    Modifier.optimizedHazeEffect(
+                        state = hazeState,
+                        style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
+                    )
                 },
             )
             .border(0.5.dp, Color.White.copy(alpha = 0.10f), shape)
@@ -162,12 +167,10 @@ fun MiniPlayer(
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    text = song.title,
+                ExplicitSongTitle(
+                    song = song,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = song.artist,
@@ -195,7 +198,7 @@ fun MiniPlayer(
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
                         tint = MaterialTheme.colorScheme.onBackground,
                         modifier = Modifier.size(GLYPH_SIZE),
                     )
@@ -211,7 +214,7 @@ fun MiniPlayer(
             ) {
                 Icon(
                     Icons.Rounded.SkipNext,
-                    contentDescription = "Next",
+                    contentDescription = stringResource(R.string.widget_next),
                     tint = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.size(GLYPH_SIZE),
                 )
