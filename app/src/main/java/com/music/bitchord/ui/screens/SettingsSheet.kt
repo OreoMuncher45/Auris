@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
@@ -188,6 +189,7 @@ fun SettingsScreen(
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
     val canvasOverCellular by AppSettings.canvasOverCellular.collectAsStateWithLifecycle()
     val fullBleedArtwork by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val showLyricsLogs by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
@@ -640,6 +642,23 @@ fun SettingsScreen(
                 )
                 RowDivider()
             }
+            SettingsRow(
+                icon = Icons.Rounded.Gradient,
+                title = stringResource(R.string.legacy_mesh_gradient),
+                subtitle = stringResource(R.string.legacy_mesh_gradient_subtitle),
+                trailing = {
+                    Switch(
+                        checked = legacyMeshGradient,
+                        onCheckedChange = AppSettings::setLegacyMeshGradient,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
+            )
+            RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.Animation,
                 title = stringResource(R.string.animated_cover_art),

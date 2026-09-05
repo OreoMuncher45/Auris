@@ -371,6 +371,23 @@ object AppSettings {
     val fullBleedArtwork = MutableStateFlow(true)
 
     /**
+     * Puts v1.5's backdrop back on the player: four quantised blobs drifting
+     * behind the whole screen, rather than the artwork's own colours hung off
+     * the sleeve's bottom edge.
+     *
+     * Off by default, because the current backdrop replaced it for two reasons
+     * that have not gone away — see [ArtworkMesh][com.music.bitchord.ui.player.ArtworkMesh]
+     * for the colour one (a cover that is nine-tenths black with a red stripe
+     * comes back from the quantiser as a red screen) and
+     * [ArtworkMeshBackdrop][com.music.bitchord.ui.player.ArtworkMeshBackdrop]
+     * for the cost one (blobs that drift are a full-screen blur redrawn while
+     * they move, where a mesh is drawn once per track and then composited).
+     * Kept as a switch because people asked for the old look back, and neither
+     * reason is one a listener has to agree with.
+     */
+    val legacyMeshGradient = MutableStateFlow(false)
+
+    /**
      * Time-synced lyrics on the player, lit up as they are sung.
      *
      * On by default — it is most of the point of the player screen — but it
@@ -642,6 +659,7 @@ object AppSettings {
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
+        legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
@@ -1014,6 +1032,11 @@ object AppSettings {
     fun setFullBleedArtwork(value: Boolean) {
         fullBleedArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
+    }
+
+    fun setLegacyMeshGradient(value: Boolean) {
+        legacyMeshGradient.value = value
+        prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
     }
 
     /** Clamped to [DEFAULT_CACHE_LIMIT_BYTES]..[MAX_CACHE_LIMIT_BYTES] — the floor is the default, not zero. */
@@ -1404,6 +1427,7 @@ object AppSettings {
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
+    private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
