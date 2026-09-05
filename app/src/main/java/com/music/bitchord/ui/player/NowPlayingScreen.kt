@@ -1154,11 +1154,11 @@ fun NowPlayingScreen(
                             // swiping the sleeve and tapping skip feel like one
                             // gesture with two spellings.
                             when {
-                                total <= -swipeThreshold && hasNext -> {
+                                total <= -swipeThreshold -> {
                                     haptics.play(Haptic.SkipNext)
                                     onNext()
                                 }
-                                total >= swipeThreshold && hasPrevious -> {
+                                total >= swipeThreshold -> {
                                     haptics.play(Haptic.SkipPrevious)
                                     onPrevious()
                                 }
