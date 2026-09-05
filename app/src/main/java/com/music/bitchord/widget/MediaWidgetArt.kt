@@ -13,6 +13,7 @@ import android.graphics.PorterDuff
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
+import android.os.SystemClock
 import android.util.LruCache
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
@@ -22,8 +23,10 @@ import coil3.toBitmap
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
+import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.artworkAt
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -94,7 +97,15 @@ internal object MediaWidgetArt {
         peek(key, widthPx, heightPx, bandPx)?.let { return it }
         val cacheKey = key?.let { cacheKey(it, widthPx, heightPx, bandPx) }
 
-        val cover = loadArtwork(context, artworkUrl, maxOf(widthPx, heightPx))
+        val cover = if (isCoolingOff(key)) null else loadArtwork(context, artworkUrl, maxOf(widthPx, heightPx))
+        // A cover that was asked for and didn't arrive is a failure, not an
+        // answer. The composite is still drawn — the caller has a widget to
+        // fill either way — but it must not be remembered, or one dropped
+        // connection would pin the placeholder to this track for as long as the
+        // process lives and no amount of reconnecting would shift it. See the
+        // `put` at the end.
+        val failed = cover == null && !artworkUrl.isNullOrBlank()
+        if (failed && key != null) failures[key] = SystemClock.elapsedRealtime()
         val composed = Bitmap.createBitmap(widthPx, heightPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(composed)
         if (cover != null) canvas.fillCentreCropped(cover) else canvas.fillPlaceholder()
@@ -110,7 +121,7 @@ internal object MediaWidgetArt {
 
         val rounded = composed.withRoundedCorners(cornerRadiusPx)
         composed.recycle()
-        cacheKey?.let { composites.put(it, rounded) }
+        if (!failed) cacheKey?.let { composites.put(it, rounded) }
         return rounded
     }
 
@@ -128,7 +139,33 @@ internal object MediaWidgetArt {
         key?.let { composites[cacheKey(it, widthPx, heightPx, bandPx)] }?.takeIf { !it.isRecycled }
 
     /** Drops every remembered composite — the last widget has just been removed. */
-    fun clear() = composites.evictAll()
+    fun clear() {
+        composites.evictAll()
+        failures.clear()
+    }
+
+    /**
+     * Whether this cover failed recently enough that it isn't worth asking for
+     * again yet.
+     *
+     * The counterweight to not caching failures. A widget redraws on every play
+     * and every pause as well as on every track change, so a cover that is not
+     * merely slow but genuinely gone — a dead URL, a source that has moved its
+     * images — would otherwise be re-fetched, twice over with the fallback, on
+     * every tap of the play button. Long enough that a jammed play/pause finger
+     * costs one attempt; short enough that walking back into Wi-Fi fixes the
+     * widget on the next thing that happens rather than on the next restart.
+     */
+    private fun isCoolingOff(key: String?): Boolean {
+        val failedAt = key?.let { failures[it] } ?: return false
+        val since = SystemClock.elapsedRealtime() - failedAt
+        // Also the way back out: a clock that has gone backwards (elapsedRealtime
+        // does not, but a stale entry from before a process restart would read
+        // that way) must not read as "failed in the future" and cool off forever.
+        if (since in 0 until FAILURE_COOLDOWN_MS) return true
+        failures.remove(key)
+        return false
+    }
 
     private fun cacheKey(key: String, widthPx: Int, heightPx: Int, bandPx: Int) =
         "$key|$widthPx|$heightPx|$bandPx"
@@ -138,12 +175,26 @@ internal object MediaWidgetArt {
     private suspend fun loadArtwork(context: Context, url: String?, longestSidePx: Int): Bitmap? {
         if (url.isNullOrBlank()) return null
         val px = artPxFor(longestSidePx)
+        // Second choice, and only when the first misses: the size the media
+        // session itself asked for. A widget wider than [NOTIFICATION_ART_PX]
+        // lands on a rung above it, which is the right size to *draw* but not
+        // one this track is guaranteed to already have on disk — so with no
+        // network the correct size fails and the widget falls back to the
+        // gradient while the notification, the player and the lock screen are
+        // all showing the cover from cache. Asked for second rather than
+        // first because on a phone it is an upscale, and one worth avoiding
+        // whenever the better copy can actually be had.
+        val fallbackPx = NOTIFICATION_ART_PX.takeIf { it != px }
+        return load(context, url, px) ?: fallbackPx?.let { load(context, url, it) }
+    }
+
+    private suspend fun load(context: Context, url: String, px: Int): Bitmap? {
         val request = ImageRequest.Builder(context)
             // Through the app's own size ladder, so this shares a disk-cache
-            // entry with the rows, cards and headers already drawing the same
-            // cover instead of pulling a widget-sized copy of its own over the
-            // wire. Local artwork (content://…/albumart/…) carries no size hint
-            // and passes through untouched.
+            // entry with the rows, cards, headers and player already drawing the
+            // same cover instead of pulling a widget-sized copy of its own over
+            // the wire. Local artwork (content://…/albumart/…) carries no size
+            // hint and passes through untouched.
             .data(url.artworkAt(px) ?: url)
             .size(px)
             .allowHardware(false) // the blur below reads pixels
@@ -163,12 +214,19 @@ internal object MediaWidgetArt {
      * track, [NOTIFICATION_ART_PX] is the size the media session itself
      * requested, so it is certainly there. A 720px cover in an 860px-wide widget
      * is a 1.2× upscale that no one can see.
+     *
+     * [PLAYER_ART_PX] is on the ladder for exactly the same reason as the rest of
+     * it, and it matters most at the top: a tablet-sized instance is wider than
+     * every other rung, so without it the largest widgets were the ones certain
+     * to fetch a size of their own. It is what the full player asks for, so a
+     * widget that big now shares the player's copy instead.
      */
     private fun artPxFor(longestSidePx: Int): Int = when {
         longestSidePx <= ROW_ART_PX -> ROW_ART_PX
         longestSidePx <= CARD_ART_PX -> CARD_ART_PX
         longestSidePx <= NOTIFICATION_ART_PX -> NOTIFICATION_ART_PX
-        else -> HEADER_ART_PX
+        longestSidePx <= HEADER_ART_PX -> HEADER_ART_PX
+        else -> PLAYER_ART_PX
     }
 
     /** Fills the canvas with [src], cropped from its centre rather than squashed. */
@@ -545,4 +603,10 @@ internal object MediaWidgetArt {
     private val composites = object : LruCache<String, Bitmap>(8 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
+
+    /** When each cover last failed to load. @see isCoolingOff */
+    private val failures = ConcurrentHashMap<String, Long>()
+
+    /** @see isCoolingOff */
+    private const val FAILURE_COOLDOWN_MS = 30_000L
 }

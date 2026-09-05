@@ -39,7 +39,6 @@ import com.music.bitchord.R
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.settings.AppSettings
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 
@@ -62,7 +61,7 @@ private val NOTES_MAX_HEIGHT = 220.dp
 
 /**
  * Once-per-launch nudge that a newer build is on GitHub Releases — the top
- * bar's [Icons.Rounded.SystemUpdate][androidx.compose.material.icons.rounded.SystemUpdate]
+ * bar's [Icons.Rounded.Upgrade][androidx.compose.material.icons.rounded.Upgrade]
  * icon is the quiet, always-there version of this; this is the one-time,
  * hard-to-miss version shown the moment the check comes back.
  *
@@ -119,7 +118,10 @@ fun UpdateAvailableDialog(
                     if (reduceDynamicBlur) {
                         Modifier.background(MaterialTheme.colorScheme.surface)
                     } else {
-                        Modifier.hazeEffect(state = hazeState, style = HazeMaterials.regular(MaterialTheme.colorScheme.surface))
+                        Modifier.optimizedHazeEffect(
+                            state = hazeState,
+                            style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
+                        )
                     },
                 )
                 // Swallows the tap before it reaches the scrim behind, so

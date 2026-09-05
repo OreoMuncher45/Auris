@@ -15,6 +15,7 @@ import com.music.bitchord.data.canvas.CanvasCache
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LastPlayed
+import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.data.innertube.Innertube
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
@@ -35,22 +36,35 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
-        Innertube.cookie = authStore.cookie
+        // Migration-safe: an old single cookie becomes the first encrypted
+        // session, while newer installs restore the profile the listener chose.
+        val restoredSession = authStore.activeSession
+        if (restoredSession != null && authStore.activeAccountId == null) {
+            authStore.select(restoredSession.accountId, restoredSession.activeProfileId)
+        }
+        authStore.cookie = restoredSession?.cookie
+        Innertube.cookie = restoredSession?.cookie
         // Which account that cookie actually acts as. Read here rather than on
         // demand so the answer is usually in hand before the first request needs
         // it: a play registered under the wrong account is indistinguishable, to
         // the listener, from one that was never registered at all. Fire and
         // forget — every caller works without it, just less precisely.
-        if (authStore.cookie != null) {
+        if (restoredSession != null) {
+            // After the cookie, never before: setting the cookie clears any
+            // channel the last session was acting as, so restoring the choice
+            // first would restore it into the value about to be wiped.
+            restoredSession.profiles.firstOrNull { it.profileId == restoredSession.activeProfileId }
+                ?.let { Innertube.selectChannel(it.pageId, it.dataSyncId, it.authUser) }
             CoroutineScope(Dispatchers.IO).launch { Innertube.ensureSessionScope() }
         }
         AppSettings.init(this)
-        // Before LastPlayed: a restored queue can contain source-backed tracks,
-        // and turning one of those back into a playable item needs the registry
-        // that knows which source it belongs to.
         SourceRegistry.init(this)
         SearchHistory.init(this)
         LastPlayed.init(this)
+        // Which tracks the listener has reverted to YouTube's own upload. Read
+        // by [Song.toMediaItem], so it has to be open before the restart
+        // snapshot below is turned back into queue items.
+        OriginalVersion.init(this)
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)

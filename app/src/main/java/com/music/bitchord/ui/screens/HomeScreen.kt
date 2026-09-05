@@ -32,8 +32,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +65,7 @@ import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SignInBanner
 import com.music.bitchord.ui.components.feedMoreSkeleton
 import com.music.bitchord.ui.components.feedSkeleton
+import com.music.bitchord.ui.components.recentlyPlayedSkeleton
 import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.player.MeshGradientBackground
@@ -81,18 +83,20 @@ fun HomeScreen(
     pullState: PullToRefreshState,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
-    title: String = "Listen Now",
+    title: String,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
     /**
-     * Holding a card rather than tapping it — the album/playlist menu. Only the
-     * cards that point at a collection have one; a card that is a single track
-     * is a track, and its own menu lives on the rows in the lists below.
+     * Holding a card rather than tapping it. Every card on the feed answers,
+     * whichever kind it is: the caller reads the item the same way it does for
+     * a tap, so a track card opens the track menu and a card that points at a
+     * collection opens the album / playlist one.
      */
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
     // Explore doesn't page — only Home has a continuation worth following.
     onLoadMore: (() -> Unit)? = null,
     loadingMore: Boolean = false,
+    recentlyPlayedLoading: Boolean = false,
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -121,10 +125,19 @@ fun HomeScreen(
             when (state) {
                 is UiState.Loading -> feedSkeleton()
                 is UiState.Error -> item {
-                    MessageState(state.message, actionLabel = "Retry", onAction = onRetry)
+                    MessageState(state.message, actionLabel = stringResource(R.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
-                    itemsIndexedShelves(state.data, onItemClick, onItemLongPress)
+                    if (recentlyPlayedLoading) recentlyPlayedSkeleton()
+                    // The loading skeleton already owns the hero slot. Until
+                    // Recently Played lands, every real shelf must retain its
+                    // compact-card layout instead of briefly becoming a hero.
+                    itemsIndexedShelves(
+                        shelves = state.data,
+                        onItemClick = onItemClick,
+                        onItemLongPress = onItemLongPress,
+                        firstIsHero = !recentlyPlayedLoading,
+                    )
                     if (loadingMore) feedMoreSkeleton()
                 }
             }
@@ -132,19 +145,21 @@ fun HomeScreen(
     }
 
     if (onLoadMore != null && state is UiState.Success) {
-        // Fires again each time the tail end of the list comes back into
-        // view — appending shelves doesn't reset it, only leaving the
-        // bottom and scrolling back down does, which is exactly when
-        // another page is worth asking for.
-        val nearEnd by remember {
-            derivedStateOf {
+        val loadMore by rememberUpdatedState(onLoadMore)
+        // Re-checked on every layout change, rather than on the rising edge of
+        // "the tail is in view". A page that appends only a shelf or two leaves
+        // the list still near its end, so an edge-triggered effect would never
+        // fire a second time: the feed dead-ended at the bottom with no
+        // skeleton and no request in flight to explain it. Restarting on
+        // [loadingMore] re-checks the moment a page settles, so the next one is
+        // asked for while the tail is still on screen to show it loading.
+        LaunchedEffect(listState, loadingMore) {
+            snapshotFlow {
                 val layout = listState.layoutInfo
-                val last = layout.visibleItemsInfo.lastOrNull()?.index ?: return@derivedStateOf false
-                layout.totalItemsCount > 0 && last >= layout.totalItemsCount - 3
+                (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
+            }.collect { (lastVisible, total) ->
+                if (!loadingMore && total > 0 && lastVisible >= total - 3) loadMore()
             }
-        }
-        LaunchedEffect(nearEnd) {
-            if (nearEnd) onLoadMore()
         }
     }
 }
@@ -157,10 +172,11 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
+    firstIsHero: Boolean = true,
 ) {
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
-            if (index == 0) {
+            if (index == 0 && firstIsHero) {
                 HeroShelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
             } else {
                 Shelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
@@ -465,7 +481,7 @@ internal fun ShelfCard(
             if (isPinned) {
                 Icon(
                     imageVector = BitChordIcons.Pin,
-                    contentDescription = "Pinned",
+                    contentDescription = stringResource(R.string.pinned),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp),
                 )
