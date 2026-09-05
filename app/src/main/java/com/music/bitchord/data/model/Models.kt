@@ -88,6 +88,32 @@ data class Song(
 fun Song.artworkAt(px: Int): String? = thumbnailUrl.artworkAt(px)
 
 /**
+ * Whether a row is the track the player is on, for the now-playing highlight.
+ *
+ * Title and credit, matched exactly, and nothing else. Every id a row could be
+ * matched on instead is scoped to where the row came from and so lies when
+ * asked across that boundary: a set-video-id names a slot in one playlist, and
+ * two playlists hand the same one to unrelated tracks, which is what used to
+ * light up a stranger's row while something else played. A video id is no
+ * better across catalogues — the same recording arrives with a different id
+ * from a local file, a download and a module source, and the highlight would
+ * simply go missing.
+ *
+ * The cost is that name and credit are not unique: an album track and its
+ * appearance on a compilation are one and the same to this, and both light up.
+ * That is the trade the highlight is meant to make — it says "this is the song
+ * you are hearing", not "this is the queue entry you are hearing".
+ *
+ * The one place that must not use this is the player's own queue, where the
+ * entry, not the song, is what the row stands for — that list matches on
+ * position.
+ */
+fun Song.isSameTrackAs(other: Song?): Boolean {
+    other ?: return false
+    return title == other.title && artist == other.artist
+}
+
+/**
  * [Song.durationText] in milliseconds, or 0 when the row didn't state one.
  *
  * A row's duration is a display string — YouTube sends `"3:45"`, not a

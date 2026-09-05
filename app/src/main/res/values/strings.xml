@@ -150,8 +150,8 @@
     <string name="revert_to_original">Revert to original</string>
     <string name="upgrade_quality">Upgrade quality</string>
     <string name="dolby_atmos">Dolby Atmos</string>
-    <string name="dolby_atmos_subtitle">Play the Atmos mix when a source has one. It\'s immersive but lossy — turn it off to prefer lossless.</string>
-    <string name="dolby_atmos_unavailable">This device has no Dolby decoder, so Atmos tracks play from another source instead</string>
+    <string name="dolby_atmos_subtitle">Play the more immersive, surround version of a song when there is one.</string>
+    <string name="dolby_atmos_unavailable">This device can\'t play Atmos, so these songs play in their usual version</string>
     <string name="spatial_audio">Spatial audio</string>
     <string name="spatial_audio_subtitle">Widens stereo tracks for a more immersive feel</string>
     <string name="animated_cover_cellular">Play animated cover over cellular</string>

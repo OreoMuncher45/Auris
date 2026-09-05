@@ -376,6 +376,41 @@ fun SettingsScreen(
                 value = cellularQuality.localizedLabel(),
                 onClick = { picking = QualityTarget.CELLULAR },
             )
+            RowDivider()
+            // Sits with the quality ceilings rather than with Playback: it
+            // decides which version of a track gets fetched, the same question
+            // the two rows above answer, and not how one is played back.
+            //
+            // Greyed rather than hidden where the device can't decode E-AC-3.
+            // A missing row reads as a feature the app doesn't have; a disabled
+            // one with a reason under it is the difference between "BitChord
+            // has no Atmos" and "this phone has no Dolby decoder", and only the
+            // second is true. The stored preference is left untouched either
+            // way — see [AppSettings.dolbyAtmos].
+            SettingsRow(
+                iconPainter = painterResource(R.drawable.ic_dolby_atmos),
+                title = stringResource(R.string.dolby_atmos),
+                subtitle = stringResource(
+                    if (dolbyAtmosSupported) {
+                        R.string.dolby_atmos_subtitle
+                    } else {
+                        R.string.dolby_atmos_unavailable
+                    },
+                ),
+                enabled = dolbyAtmosSupported,
+                trailing = {
+                    Switch(
+                        checked = dolbyAtmos && dolbyAtmosSupported,
+                        onCheckedChange = AppSettings::setDolbyAtmos,
+                        enabled = dolbyAtmosSupported,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
+            )
         }
 
         // Its own group rather than rows bolted onto the two above, because a
@@ -496,37 +531,6 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setSkipSilence(!skipSilence) },
-            )
-            RowDivider()
-            // Greyed rather than hidden where the device can't decode E-AC-3.
-            // A missing row reads as a feature the app doesn't have; a disabled
-            // one with a reason under it is the difference between "BitChord
-            // has no Atmos" and "this phone has no Dolby decoder", and only the
-            // second is true. The stored preference is left untouched either
-            // way — see [AppSettings.dolbyAtmos].
-            SettingsRow(
-                iconPainter = painterResource(R.drawable.ic_dolby_atmos),
-                title = stringResource(R.string.dolby_atmos),
-                subtitle = stringResource(
-                    if (dolbyAtmosSupported) {
-                        R.string.dolby_atmos_subtitle
-                    } else {
-                        R.string.dolby_atmos_unavailable
-                    },
-                ),
-                enabled = dolbyAtmosSupported,
-                trailing = {
-                    Switch(
-                        checked = dolbyAtmos && dolbyAtmosSupported,
-                        onCheckedChange = AppSettings::setDolbyAtmos,
-                        enabled = dolbyAtmosSupported,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
             )
             RowDivider()
             SettingsRow(

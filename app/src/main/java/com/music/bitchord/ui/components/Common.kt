@@ -237,6 +237,15 @@ fun SongRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongPress: (() -> Unit)? = null,
+    /**
+     * What the trailing ⋮ does, when it should differ from [onLongPress].
+     *
+     * Defaults to the long-press, since on most pages the two are the same
+     * menu. Downloads is the exception: holding a row there starts a
+     * multi-selection, and the ⋮ has to stay the actions sheet rather than
+     * silently tick a checkbox.
+     */
+    onMore: (() -> Unit)? = null,
     onSwipeToQueue: (() -> Unit)? = null,
     /**
      * What the row paints over the swipe reveal as it slides back.
@@ -304,6 +313,7 @@ fun SongRow(
             song = song,
             onClick = onClick,
             onLongPress = onLongPress,
+            onMore = onMore ?: onLongPress,
             modifier = modifier,
             trackNumber = trackNumber,
             subtitleColor = subtitleColor,
@@ -349,6 +359,7 @@ fun SongRow(
             song = song,
             onClick = onClick,
             onLongPress = onLongPress,
+            onMore = onMore ?: onLongPress,
             modifier = Modifier.background(rowBackground),
             trackNumber = trackNumber,
             subtitleColor = subtitleColor,
@@ -414,6 +425,7 @@ private fun SongRowContent(
     song: Song,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)?,
+    onMore: (() -> Unit)?,
     modifier: Modifier = Modifier,
     trackNumber: Int? = null,
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -518,12 +530,12 @@ private fun SongRowContent(
             )
         }
         // Same sheet the long-press opens, for anyone who doesn't think to hold.
-        if (onLongPress != null) {
+        if (onMore != null) {
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .clickable(onClick = onLongPress),
+                    .clickable(onClick = onMore),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(

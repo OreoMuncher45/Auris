@@ -95,6 +95,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.data.settings.LocalMusicSort
@@ -383,6 +384,9 @@ fun LocalMusicScreen(
                             if (isDownloads) selectedDownloadIds = selectedDownloadIds + song.videoId
                             else onSongLongPress(song)
                         },
+                        // Downloads redefines the hold as "select", so the ⋮ has to
+                        // carry the actions sheet itself or the page loses it.
+                        onSongMore = onSongLongPress,
                         onSongSwipe = onSongSwipe,
                         onShuffle = onShuffle,
                         onMore = onCollectionLongPress?.let { more ->
@@ -415,6 +419,9 @@ fun LocalMusicScreen(
                                 leaveDrillDown()
                             } else onSongLongPress(song)
                         },
+                        // Downloads redefines the hold as "select", so the ⋮ has to
+                        // carry the actions sheet itself or the page loses it.
+                        onSongMore = onSongLongPress,
                         onSongSwipe = onSongSwipe,
                         contentPadding = bodyContentPadding,
                     )
@@ -487,6 +494,8 @@ private fun SongsTab(
     isPlaying: Boolean = false,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
+    /** The row's ⋮, where holding it does something else — see [SongRow]. */
+    onSongMore: ((Song) -> Unit)? = null,
     onSongSwipe: (Song) -> Unit,
     contentPadding: PaddingValues,
 ) {
@@ -516,7 +525,7 @@ private fun SongsTab(
                 SongGridCard(
                     song = song,
                     selected = song.videoId in selectedIds,
-                    isCurrent = song.isCurrentLocal(currentSong),
+                    isCurrent = song.isSameTrackAs(currentSong),
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                 )
@@ -539,10 +548,11 @@ private fun SongsTab(
                 SongRow(
                     song = song,
                     selected = song.videoId in selectedIds,
-                    isCurrent = song.isCurrentLocal(currentSong),
-                    isPlaying = song.isCurrentLocal(currentSong) && isPlaying,
+                    isCurrent = song.isSameTrackAs(currentSong),
+                    isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
+                    onMore = onSongMore?.let { more -> { more(song) } },
                     onSwipeToQueue = { onSongSwipe(song) },
                 )
                 if (index < songs.lastIndex) {
@@ -1314,8 +1324,11 @@ private fun DrillDownSongList(
     isPlaying: Boolean = false,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
+    /** The row's ⋮, where holding it does something else — see [SongRow]. */
+    onSongMore: ((Song) -> Unit)? = null,
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
+    /** The ⋮ in the header, acting on the whole artist or album. */
     onMore: (() -> Unit)?,
     onBack: () -> Unit,
     contentPadding: PaddingValues,
@@ -1355,7 +1368,7 @@ private fun DrillDownSongList(
                 SongGridCard(
                     song = song,
                     selected = song.videoId in selectedIds,
-                    isCurrent = song.isCurrentLocal(currentSong),
+                    isCurrent = song.isSameTrackAs(currentSong),
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                 )
@@ -1388,11 +1401,12 @@ private fun DrillDownSongList(
                 SongRow(
                     song = song,
                     selected = song.videoId in selectedIds,
-                    isCurrent = song.isCurrentLocal(currentSong),
-                    isPlaying = song.isCurrentLocal(currentSong) && isPlaying,
+                    isCurrent = song.isSameTrackAs(currentSong),
+                    isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
                     trackNumber = index + 1,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
+                    onMore = onSongMore?.let { more -> { more(song) } },
                     onSwipeToQueue = { onSongSwipe(song) },
                 )
                 if (index < songs.lastIndex) {
@@ -1568,13 +1582,6 @@ private fun LocalMusicSort.localizedLabel(): String = when (this) {
     LocalMusicSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
     LocalMusicSort.DATE_ADDED -> stringResource(R.string.sort_date_added)
     LocalMusicSort.DATE_MODIFIED -> stringResource(R.string.sort_date_modified)
-}
-
-/** Local/downloaded rows have a stable URI; ordinary catalogue rows fall back to video id. */
-private fun Song.isCurrentLocal(current: Song?): Boolean {
-    current ?: return false
-    if (localUri != null && current.localUri != null) return localUri == current.localUri
-    return videoId == current.videoId
 }
 
 /** The Downloads-only replacement for the usual search and sort controls. */

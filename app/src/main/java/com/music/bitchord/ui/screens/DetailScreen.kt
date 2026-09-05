@@ -92,6 +92,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.ArtworkWash
 import com.music.bitchord.ui.components.DownloadedBadge
@@ -483,7 +484,7 @@ fun DetailScreen(
                     }
                     itemsIndexed(matches) { position, entry ->
                         val song = entry.value
-                        val isCurrent = song.isSameQueueEntry(currentSong)
+                        val isCurrent = song.isSameTrackAs(currentSong)
                         SongRow(
                             song = if (numbered) {
                                 song
@@ -566,20 +567,6 @@ fun DetailScreen(
             }
         }
     }
-}
-
-/**
- * Playlist entries have their own identity because the same recording can be
- * added more than once. Fall back to media identity for albums and local rows,
- * which do not carry a set-video-id.
- */
-private fun Song.isSameQueueEntry(current: Song?): Boolean {
-    current ?: return false
-    if (setVideoId != null && current.setVideoId != null) {
-        return setVideoId == current.setVideoId
-    }
-    if (localUri != null && current.localUri != null) return localUri == current.localUri
-    return videoId == current.videoId
 }
 
 /**
