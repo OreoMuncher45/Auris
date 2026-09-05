@@ -148,6 +148,16 @@ internal object LyricsTag {
      * waits out whichever HTTP call is in flight (its own timeouts, not this
      * one) before it moves on. The same is true of the lossless search this
      * sits beside — see `Downloads.SOURCE_LOOKUP_MS`.
+     *
+     * Widened from fifteen seconds, which was sized on the assumption in the
+     * paragraph above — that the transfer has usually been paying for this
+     * already by the time anyone waits on it. On a bulk download that
+     * assumption doesn't hold twice over: four workers are racing four lyric
+     * providers apiece over one connection, and a lossless transfer that lands
+     * in a few seconds gives the lookup almost none of the head start it was
+     * budgeted. Tracks were finishing with the lookup still outstanding, which
+     * from outside is a queue that saved lyrics for some songs and not others.
+     * Whatever this costs is paid once; the file is kept.
      */
-    private const val LOOKUP_MS = 15_000L
+    private const val LOOKUP_MS = 30_000L
 }

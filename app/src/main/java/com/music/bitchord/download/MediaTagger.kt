@@ -8,8 +8,11 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import kotlin.math.max
 
 /**
@@ -39,6 +42,21 @@ object MediaTagger {
     private const val COVER_MAX_SIDE = 1000
 
     /**
+     * How much of a FLAC has to be read to be sure the whole metadata chain is
+     * in hand — see [tagFlacStreaming].
+     *
+     * Enormously more than any real file needs: `STREAMINFO` is 34 bytes, a
+     * `SEEKTABLE` runs to tens of kilobytes on a long track, and the only block
+     * that could be large is an existing `PICTURE`, which this replaces anyway.
+     * Sized this way because the cost of guessing short is a fall back to the
+     * in-memory path, and the cost of this number being generous is a read that
+     * stops at the end of a small file regardless.
+     */
+    private const val FLAC_HEAD_BYTES = 16 * 1024 * 1024
+
+    private const val COPY_BUFFER = 64 * 1024
+
+    /**
      * The containers there is a tagger for.
      *
      * A download can land as something else — `.wav` from a source that serves
@@ -62,9 +80,44 @@ object MediaTagger {
     internal class Artwork(val bytes: ByteArray, val mime: String)
 
     /** Fetch artwork before publication so batch downloads can overlap it with audio. */
-    internal fun artworkFor(track: Song): Artwork? = fetchCover(track)
+    internal fun artworkFor(track: Song): Artwork? {
+        if (track.thumbnailUrl.isNullOrBlank()) {
+            // Said out loud rather than returned as a quiet null. An album's own
+            // track rows carry no artwork — the release is billed once in the
+            // header — so a row that gets this far without having the release's
+            // cover filled in on the way (`MainViewModel.withArtwork`, and again
+            // at the tap in `MainActivity.startDownload`) saves a file with no
+            // cover in it, permanently and without complaint. This line is how
+            // that gets noticed.
+            Log.d(TAG, "no artwork url for ${track.videoId}; saving it without a cover")
+            return null
+        }
+        return fetchCover(track)
+    }
 
-    internal fun embed(
+    /**
+     * One tagging pass at a time, across every download worker.
+     *
+     * Not about correctness — the four workers write four different files and
+     * never touch each other's. It is about the heap. [embed] reads the whole
+     * finished track into a `ByteArray`, hands it to a tagger that builds a
+     * second copy of it in a [ByteArrayOutputStream], and takes a third on
+     * `toByteArray()`; a 40MB FLAC is therefore ~120MB in flight for the length
+     * of one rewrite. Four of those at once is half a gigabyte of byte arrays
+     * on a heap this app already runs near the ceiling of, and the way it fails
+     * is the reason this is worth a lock: the `runCatching` below catches
+     * [Throwable], so an [OutOfMemoryError] thrown mid-rewrite was swallowed
+     * whole and the download completed — untagged, with no cover and no lyrics,
+     * and nothing in the log to say why. Which is exactly what "sometimes it
+     * saves the lyrics and sometimes it doesn't" looks like from outside.
+     *
+     * Serialising costs nothing that matters. Tagging is a memcpy against a
+     * transfer that just spent seconds on the network, and the workers are
+     * overlapping *lookups*, not rewrites.
+     */
+    private val taggingLock = Mutex()
+
+    internal suspend fun embed(
         context: Context,
         uri: Uri,
         track: Song,
@@ -73,12 +126,31 @@ object MediaTagger {
         artwork: Artwork? = null,
     ) {
         if (!carriesTags(extension)) return
-        val original = readAll(context, uri) ?: return
+        taggingLock.withLock { embedNow(context, uri, track, extension, lyrics, artwork) }
+    }
+
+    private fun embedNow(
+        context: Context,
+        uri: Uri,
+        track: Song,
+        extension: String,
+        lyrics: LyricsTag.Embeddable?,
+        artwork: Artwork?,
+    ) {
         // The portable field and this app's own. Split here rather than inside
         // each tagger so all three agree on which string goes where.
         val plain = lyrics?.plain
         val words = lyrics?.enhanced
 
+        // FLAC is the format worth not doing in memory, and the only one that
+        // can be done any other way — see [tagFlacStreaming].
+        if (extension == "flac" &&
+            tagFlacStreaming(context, uri, track, plain, words, artwork)
+        ) {
+            return
+        }
+
+        val original = readAll(context, uri) ?: return
         val tagged = runCatching {
             when (extension) {
                 "m4a" -> Mp4Tagger.tag(
@@ -112,6 +184,12 @@ object MediaTagger {
                     wordLyrics = words,
                 )
             }
+        }.onFailure {
+            // Named, because the two things that land here are the two things
+            // the user actually notices going missing. An OutOfMemoryError on a
+            // large lossless file is the common one and reads as a track that
+            // simply saved without its cover or its words.
+            Log.w(TAG, "could not build tags for ${track.videoId} (${original.size}B $extension): $it")
         }.getOrNull() ?: return
 
         // Every tagger hands back the same array reference when there was
@@ -120,6 +198,137 @@ object MediaTagger {
         // downloading" rather than "these bytes happen to be equal".
         if (tagged === original) return
         writeAll(context, uri, tagged)
+    }
+
+    /**
+     * Tag a FLAC without ever holding it in memory.
+     *
+     * The in-memory route below is the general one because MP4 and WebM need it
+     * — an `moov` that grows shifts every `stco` offset after it, and a
+     * `Segment` size has to be rewritten in place — so both taggers have to be
+     * able to reach any byte of the file. FLAC has no such constraint: the
+     * metadata lives in a block chain at the front, nothing addresses itself by
+     * an absolute file offset, and the frames are copied through untouched. So
+     * the only part that has to be *read* is the front of the file, and the rest
+     * is a stream copy.
+     *
+     * That distinction is worth the extra path because FLAC is also the format
+     * this matters for. It is the one a download at the Lossless rung produces,
+     * and a 40MB track through [readAll] plus a tagger's two working copies is
+     * ~120MB of byte arrays for a job whose actual output is a few kilobytes of
+     * text and a cover. On a hi-res file it is enough to fail outright, and the
+     * way it failed was invisible: [OutOfMemoryError] is a [Throwable], the
+     * `runCatching` below catches those, and the download finished untagged with
+     * nothing said. Here the ceiling is the metadata region plus one 64kB
+     * buffer, whatever the track's length.
+     *
+     * @return true when the file has been dealt with — rewritten, or found to
+     *   have nothing to write. False asks the caller to fall back, which happens
+     *   only for a metadata region larger than [FLAC_HEAD_BYTES] or an I/O
+     *   failure, and is safe at any point: the original is untouched until the
+     *   finished copy replaces it in one move.
+     */
+    private fun tagFlacStreaming(
+        context: Context,
+        uri: Uri,
+        track: Song,
+        lyrics: String?,
+        wordLyrics: String?,
+        artwork: Artwork?,
+    ): Boolean {
+        val head = readPrefix(context, uri, FLAC_HEAD_BYTES) ?: return false
+        // Short of the cap means the read hit the end of the file, so this *is*
+        // the whole file and a refusal below is a final answer rather than a
+        // prefix that was cut too fine.
+        val wholeFile = head.size < FLAC_HEAD_BYTES
+        val rewrite = FlacTagger.header(
+            head,
+            track.title,
+            track.artist,
+            track.albumName,
+            lyrics,
+            artwork?.bytes,
+            artwork?.mime ?: "image/jpeg",
+            wordLyrics = wordLyrics,
+        ) ?: return wholeFile
+
+        val temp = File(context.cacheDir, "tagging-${track.videoId.hashCode()}-${System.nanoTime()}.flac")
+        return runCatching {
+            temp.outputStream().buffered().use { sink ->
+                sink.write(rewrite.metadata)
+                openInput(context, uri)?.use { source ->
+                    source.skipFully(rewrite.audioStart.toLong())
+                    source.copyTo(sink, COPY_BUFFER)
+                } ?: error("could not reopen $uri")
+            }
+            replaceWith(context, uri, temp)
+            true
+        }.onFailure {
+            Log.w(TAG, "streaming flac tag failed for ${track.videoId}: ${it.message}")
+            temp.delete()
+        }.getOrDefault(false)
+    }
+
+    /** Move [temp] over whatever [uri] names, leaving nothing behind either way. */
+    private fun replaceWith(context: Context, uri: Uri, temp: File) {
+        if (uri.scheme == "file") {
+            val target = File(requireNotNull(uri.path))
+            // Both live under the app's own data directory, so this is a rename
+            // within one filesystem and the file is never half-replaced.
+            if (temp.renameTo(target)) return
+        }
+        temp.inputStream().use { source ->
+            val sink = if (uri.scheme == "file") {
+                File(requireNotNull(uri.path)).outputStream()
+            } else {
+                context.contentResolver.openOutputStream(uri, "wt")
+                    ?: error("could not open $uri for writing")
+            }
+            sink.use { source.copyTo(it, COPY_BUFFER) }
+        }
+        temp.delete()
+    }
+
+    /** At most [max] bytes from the front of [uri], or null if it can't be read. */
+    private fun readPrefix(context: Context, uri: Uri, max: Int): ByteArray? = runCatching {
+        openInput(context, uri)?.use { source ->
+            val out = ByteArrayOutputStream()
+            val buffer = ByteArray(COPY_BUFFER)
+            while (out.size() < max) {
+                val read = source.read(buffer, 0, minOf(buffer.size, max - out.size()))
+                if (read == -1) break
+                out.write(buffer, 0, read)
+            }
+            out.toByteArray()
+        }
+    }.onFailure { Log.w(TAG, "could not read the start of $uri: ${it.message}") }.getOrNull()
+
+    private fun openInput(context: Context, uri: Uri): InputStream? =
+        if (uri.scheme == "file") {
+            File(requireNotNull(uri.path)).inputStream()
+        } else {
+            context.contentResolver.openInputStream(uri)
+        }
+
+    /**
+     * [InputStream.skip] is allowed to skip fewer bytes than asked for and does,
+     * on the wrapped streams a `content://` uri hands back. Landing one byte
+     * short here would splice the tail of a frame header onto the new metadata
+     * and produce a file that is the right length and unplayable.
+     */
+    private fun InputStream.skipFully(count: Long) {
+        var left = count
+        while (left > 0) {
+            val skipped = skip(left)
+            if (skipped > 0) {
+                left -= skipped
+                continue
+            }
+            // A stream that reports zero is not necessarily finished, so fall
+            // back to reading the bytes away before believing it is.
+            if (read() == -1) error("file ended ${left}B before its audio frames")
+            left--
+        }
     }
 
     private fun fetchCover(track: Song): Artwork? {

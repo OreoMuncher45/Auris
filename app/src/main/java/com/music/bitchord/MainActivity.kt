@@ -1207,7 +1207,31 @@ private fun BitChordApp(
         val saved = Downloads.saved.value
         // Already on disk, and already queued or running: neither needs asking
         // again. What's left is what a tap on "Download" actually means.
-        val songs = requested.filter { it.videoId !in saved }
+        //
+        // The release's cover is stamped onto any row that hasn't got one, as a
+        // last check before the tap becomes a file.
+        //
+        // An album page bills its artwork once, in the header — its track rows
+        // carry no thumbnail at all, see [InnertubeParser.parseResponsiveListItem]
+        // — and a row that reaches [MediaTagger.artworkFor] with a null url is a
+        // track saved with no cover in the file and none in [SavedSongMetadata]
+        // either, so nothing downstream can draw one afterwards.
+        // `MainViewModel.withArtwork` normally fills those in as a page loads and
+        // covers the usual route here; this is the backstop for a list that
+        // reached this function some other way, and it is worth having precisely
+        // because the failure is silent and permanent — the file is written
+        // without a cover, and re-downloading adopts the untagged copy rather
+        // than replacing it.
+        val songs = requested
+            .filter { it.videoId !in saved }
+            .map { song ->
+                val cover = from?.thumbnailUrl
+                if (song.thumbnailUrl.isNullOrBlank() && !cover.isNullOrBlank()) {
+                    song.copy(thumbnailUrl = cover)
+                } else {
+                    song
+                }
+            }
         // Asked here as well as inside [Downloads.enqueue] — not instead of it.
         // Enqueue is the invariant and has to refuse whoever calls it, including
         // the storage-permission continuation below, which resumes long enough

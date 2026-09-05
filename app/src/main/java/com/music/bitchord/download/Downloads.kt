@@ -6,7 +6,6 @@ import android.content.SharedPreferences
 import android.net.Uri
 import com.music.bitchord.data.DebugLog as Log
 import androidx.core.content.ContextCompat
-import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -708,7 +707,12 @@ object Downloads {
      * Everything that has to be known before a byte can be asked for, and
      * nothing that touches the destination.
      *
-     * Split out of [run] so it can be done *ahead* of time — see [peekNext].
+     * Split out of [run] so it *can* be done ahead of time. Nothing does yet —
+     * [DownloadService] still calls it inline, and the overlap that used to be
+     * the point of the split is bought by running four workers instead. Kept
+     * apart anyway, because the split is what makes the expensive half
+     * separately measurable and separately cancellable.
+     *
      * On a lossless queue this is the expensive half by a wide margin: a module
      * search fans out across a whole index and then a stream endpoint is
      * opened, tens of seconds against the few the transfer itself takes on a
@@ -1014,6 +1018,13 @@ object Downloads {
         track: Song,
         quality: DownloadQuality,
     ): Pair<SourceStream, DownloadStore.Storable>? {
+        // Wrapped so the two ways this can come back empty stay apart in the
+        // log. `withTimeoutOrNull` collapses them into one null, and the
+        // difference is the whole diagnosis: "no enabled source holds this
+        // recording" is a fact about the track, and "the clock ran out" is a
+        // fact about [SOURCE_LOOKUP_MS] — which is what silently sent a whole
+        // Lossless queue to YouTube's AAC while the log said nothing at all.
+        var timedOut = true
         val stream = withTimeoutOrNull(SOURCE_LOOKUP_MS) {
             try {
                 SourceResolver.forDownload(
@@ -1025,8 +1036,18 @@ object Downloads {
             } catch (e: Exception) {
                 Log.w(TAG, "source lookup failed for ${track.videoId}: ${e.message}")
                 null
+            }.also { timedOut = false }
+        }
+        if (stream == null) {
+            if (timedOut) {
+                Log.w(
+                    TAG,
+                    "source lookup for ${track.videoId} ran past ${SOURCE_LOOKUP_MS}ms; " +
+                        "downloading it from YouTube instead of ${quality.label}",
+                )
             }
-        } ?: return null
+            return null
+        }
 
         val storable = DownloadStore.storable(stream.format.codec)
         if (storable == null) {
@@ -1068,18 +1089,39 @@ object Downloads {
      * How long the source lookup may hold a download up before it goes to
      * YouTube regardless.
      *
-     * Matched to `PlaybackService.SUBSTITUTE_TIMEOUT_MS`, which bounds the same
-     * search on the playback side. Generous, because nothing is waiting on the
-     * first note here and a found FLAC is worth some patience — but finite,
-     * because the alternative is the queue stalled per track on modules that
-     * simply do not have it.
+     * **This has to clear `ModuleSource.SEARCH_PATIENT_MS`, and for a long time
+     * it didn't.** It was 20s against a patient window of 25s, which made the
+     * arithmetic decide the outcome: [SourceResolver.forDownload] asks every
+     * source with `waitForAll = true`, that flag buys each module the full 25s
+     * patient window, and this timeout fired five seconds before the window it
+     * was waiting on could even close. Every track whose modules were not
+     * unusually quick came back null — not "no source has it", but "nobody was
+     * asked for long enough" — and null here means YouTube. So a Lossless
+     * setting reliably produced YouTube's AAC, and it looked like a bulk-only
+     * fault because it *was* one: a single download runs with the engines to
+     * itself and lands inside 20s, while four workers sharing three interpreter
+     * engines per module (`QuickJsExecutor.ENGINES_PER_MODULE`) do not.
+     *
+     * Sized off what it actually bounds, therefore, rather than off the playback
+     * timeout it used to be matched to. One patient search is 25s, the matcher
+     * offers up to two queries (`TrackMatcher.queries`), and [streamBest] may
+     * then open up to `STREAM_ATTEMPTS` stream endpoints on the winner. Sixty
+     * seconds covers a slow-but-working index; it is still finite, because the
+     * alternative is the queue stalled per track on modules that simply do not
+     * have the recording.
+     *
+     * The comparison with playback is no longer the right one and is worth
+     * stating plainly: `PlaybackService.SUBSTITUTE_TIMEOUT_MS` is short because
+     * a listener is staring at a paused player. Nothing is waiting here, the
+     * answer becomes a permanent file, and re-fetching it later costs the whole
+     * download again.
      *
      * It bounds the lossy half of that lookup too, which is why
      * [SourceResolver.forDownload] runs both halves at once rather than in
      * turn: a fast source queued behind a slow one would spend this budget
      * waiting for a module and never be asked.
      */
-    private const val SOURCE_LOOKUP_MS = 20_000L
+    private const val SOURCE_LOOKUP_MS = 60_000L
 
     /**
      * The extensions a file in Music can carry that say, on their own, that a

@@ -571,7 +571,20 @@ object InnertubeParser {
         val subtitle = columns.getOrNull(1)
             .o("musicResponsiveListItemFlexColumnRenderer").o("text").runs()
         val parts = subtitle.split(" • ").filter { it.isNotBlank() }
+        // A search row states its runtime in the subtitle; an album's own rows
+        // do not — the release is billed once in the header and the per-track
+        // duration sits in a `fixedColumns` entry off to the right instead.
+        // Nothing here read that column, so every track parsed off an album page
+        // came back with a null duration, and two things downstream quietly got
+        // worse for it: [LyricsTag.forTrack] fell back to matching on title and
+        // artist alone against providers that key on runtime, and
+        // [TrackMatcher] lost the one check that separates the album cut from
+        // the extended mix sitting beside it in a source's search results.
         val duration = parts.lastOrNull()?.takeIf { it.matches(DURATION) }
+            ?: renderer.a("fixedColumns").orEmpty().firstNotNullOfOrNull { column ->
+                column.o("musicResponsiveListItemFixedColumnRenderer")
+                    .o("text").runs().takeIf { it.matches(DURATION) }
+            }
         // On the "All" tab the first segment is the row type ("Song", "Video"),
         // not the artist — skip those so the subtitle reads like a credit.
         val rowType = parts.firstOrNull { it.lowercase(Locale.ROOT) in TYPE_WORDS }?.lowercase(Locale.ROOT)
