@@ -1050,6 +1050,39 @@ private fun BitChordApp(
     }
 
     /**
+     * The track a song card stands for, or null if the card is a collection.
+     *
+     * The card's own subtitle is billed as "Song • Chelsea Wolfe"; only the
+     * credit belongs in the field the player, mini player and everything
+     * downstream read.
+     */
+    val shelfSong: (ShelfItem) -> Song? = { item ->
+        item.videoId?.let { videoId ->
+            Song(
+                videoId = videoId,
+                title = item.title,
+                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                thumbnailUrl = item.thumbnailUrl,
+            )
+        }
+    }
+
+    /**
+     * Holding a card on a feed whose shelves mix tracks with collections —
+     * Quick picks and Recently played are songs, Listen again is either.
+     *
+     * [onBrowseLongPress] alone answered only half of them: a track card
+     * carries a videoId and no browse id, so holding one fell through its
+     * null check and nothing opened. Dispatched on the same test as the tap
+     * below, so a card that plays a song offers the track menu and a card that
+     * opens a page offers the album / playlist one.
+     */
+    val onShelfLongPress: (ShelfItem) -> Unit = { item ->
+        val song = shelfSong(item)
+        if (song != null) openSongMenu(song) else onBrowseLongPress(item)
+    }
+
+    /**
      * Hands [action] the target's whole track list.
      *
      * A card has no tracks behind it — its page was never opened — so the
@@ -1949,20 +1982,9 @@ private fun BitChordApp(
                             signedIn = signedIn,
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onItemClick = { item ->
+                                val song = shelfSong(item)
                                 when {
-                                    item.videoId != null -> playRadio(
-                                        Song(
-                                            videoId = item.videoId,
-                                            title = item.title,
-                                            // The card's own subtitle is billed
-                                            // as "Song • Chelsea Wolfe"; only
-                                            // the credit belongs in the field
-                                            // the player, mini player and
-                                            // everything downstream read.
-                                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        ),
-                                    )
+                                    song != null -> playRadio(song)
                                     item.browseId != null -> viewModel.openDetail(
                                         browseId = item.browseId,
                                         title = item.title,
@@ -1971,7 +1993,7 @@ private fun BitChordApp(
                                     )
                                 }
                             },
-                            onItemLongPress = onBrowseLongPress,
+                            onItemLongPress = onShelfLongPress,
                             onRetry = viewModel::loadHome,
                             refreshing = MainViewModel.Feed.HOME in refreshing,
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.HOME) },

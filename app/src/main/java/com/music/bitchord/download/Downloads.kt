@@ -828,24 +828,38 @@ object Downloads {
                     return@coroutineScope
                 }
 
-                if (route.offlineHls != null) {
-                    val savedUri = OfflineHls.save(
-                        context = context,
-                        id = id,
-                        url = route.offlineHls.url,
-                        headers = route.offlineHls.headers,
-                        onProgress = { written, total ->
-                            val fraction = written.toFloat() / total
-                            _active.update { it + (id to DownloadState.Running(fraction)) }
-                            DownloadSession.running(id, fraction)
-                        },
-                        lyrics = lyrics?.await(),
-                        artwork = artwork?.await(),
-                    )
+                val manifest = route.offlineHls
+                if (manifest != null) {
+                    val onSegment: (Long, Long) -> Unit = { written, total ->
+                        val fraction = written.toFloat() / total
+                        _active.update { it + (id to DownloadState.Running(fraction)) }
+                        DownloadSession.running(id, fraction)
+                    }
+                    val savedUri = if (manifest.dash) {
+                        OfflineDash.save(
+                            context = context,
+                            id = id,
+                            url = manifest.url,
+                            headers = manifest.headers,
+                            onProgress = onSegment,
+                            lyrics = lyrics?.await(),
+                            artwork = artwork?.await(),
+                        )
+                    } else {
+                        OfflineHls.save(
+                            context = context,
+                            id = id,
+                            url = manifest.url,
+                            headers = manifest.headers,
+                            onProgress = onSegment,
+                            lyrics = lyrics?.await(),
+                            artwork = artwork?.await(),
+                        )
+                    }
                     remember(song, track, savedUri, route.downloadFormat)
                     DownloadSession.done(id)
                     clear(id)
-                    Log.d(TAG, "saved offline HLS package for $name")
+                    Log.d(TAG, "saved offline ${if (manifest.dash) "DASH" else "HLS"} package for $name")
                     return@coroutineScope
                 }
 
@@ -902,11 +916,20 @@ object Downloads {
         /** Short premium-rendition badge shown only in BitChord's Downloads list. */
         val downloadFormat: String? = null,
         val taggable: Boolean = true,
-        val offlineHls: Hls? = null,
+        val offlineHls: Manifest? = null,
         val write: suspend (OutputStream, (written: Long, total: Long) -> Unit) -> Unit,
     )
 
-    internal class Hls(val url: String, val headers: Map<String, String>)
+    /**
+     * A stream that arrived as an index rather than as audio, and which of the
+     * two index formats it is. Both are saved into the same offline package —
+     * see [OfflineDash] — so [dash] only decides who does the parsing.
+     */
+    internal class Manifest(
+        val url: String,
+        val headers: Map<String, String>,
+        val dash: Boolean = false,
+    )
 
     /**
      * Where this download's bytes are coming from.
@@ -922,18 +945,29 @@ object Downloads {
      */
     private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
         fromSources(track, quality)?.let { (stream, storable) ->
+            // A manifest is an index, not audio. Whichever kind it is, fetching
+            // it as a file writes the index into something named `.flac` —
+            // which is exactly what a `.mpd` did until [OfflineDash] existed:
+            // a 2.7 KB download that reported success and could never play.
+            // Read off the URL rather than off `stream.format`, which describes
+            // the audio inside and says nothing about the envelope.
+            val dash = OfflineDash.handles(stream.url)
             val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
-            // An HLS package is only useful inside BitChord. When the user
+            val packaged = hls || dash
+            // A package is only useful inside BitChord. When the user
             // explicitly exports files for another player, decline it here and
             // let the ordinary portable-file fallback resolve instead.
-            if (hls && AppSettings.exportDownloads.value) return@let
+            if (packaged && AppSettings.exportDownloads.value) return@let
             return Route(
-                extension = if (hls) "m3u8" else storable.extension,
-                mimeType = if (hls) "application/vnd.apple.mpegurl" else storable.mimeType,
+                // DASH is saved *as* HLS — see [OfflineDash] for why — so both
+                // kinds land as the same package and are named for what was
+                // written rather than for what was fetched.
+                extension = if (packaged) "m3u8" else storable.extension,
+                mimeType = if (packaged) "application/vnd.apple.mpegurl" else storable.mimeType,
                 describe = stream.format.summary,
                 downloadFormat = stream.format.downloadBadge(),
                 taggable = true,
-                offlineHls = Hls(stream.url, stream.headers).takeIf { hls },
+                offlineHls = Manifest(stream.url, stream.headers, dash = dash).takeIf { packaged },
                 write = { sink, onProgress ->
                     Downloader.fetchDirect(stream.url, stream.headers, sink, onProgress)
                 },

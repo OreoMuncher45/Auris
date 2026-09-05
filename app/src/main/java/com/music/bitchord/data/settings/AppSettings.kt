@@ -255,6 +255,30 @@ object AppSettings {
     val preferUsbDac = MutableStateFlow(false)
 
     /**
+     * Whether a source offering a Dolby Atmos rendition is allowed to serve it.
+     *
+     * On by default: where the device can decode it, Atmos is the premium
+     * rendition the catalogue holds and the one most people are paying a
+     * subscription for.
+     *
+     * Off is a real preference and not just a safety valve. Atmos is E-AC-3,
+     * which is *lossy* — a track with an Atmos master is frequently also held
+     * as a FLAC, and someone listening on wired headphones may well prefer the
+     * bit-exact stereo copy to a spatial mix their output can't render. Turning
+     * this off is how they say so; see
+     * [ModuleSource.unplayable][com.music.bitchord.data.sources.ModuleSource],
+     * which is where the refusal is applied.
+     *
+     * Independent of whether the device *can* decode it — that question is
+     * [DeviceCodecs.playsDolbyAtmos][com.music.bitchord.data.sources.DeviceCodecs],
+     * and the two are deliberately not folded together: this one is the
+     * listener's answer, is persisted, and must survive being read on a phone
+     * that cannot honour it (a restored backup, a swapped device) without
+     * quietly rewriting itself.
+     */
+    val dolbyAtmos = MutableStateFlow(true)
+
+    /**
      * Widens stereo output via [com.music.bitchord.playback.SpatialAudioProcessor],
      * a stereo widening + cross-feed effect running inside ExoPlayer's own
      * pipeline. Not true object-based spatial audio — YouTube only ever hands
@@ -588,6 +612,7 @@ object AppSettings {
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
+        dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
         themeMode.value = runCatching {
@@ -816,6 +841,11 @@ object AppSettings {
     fun setSkipSilence(value: Boolean) {
         skipSilence.value = value
         prefs.edit().putBoolean(KEY_SKIP_SILENCE, value).apply()
+    }
+
+    fun setDolbyAtmos(value: Boolean) {
+        dolbyAtmos.value = value
+        prefs.edit().putBoolean(KEY_DOLBY_ATMOS, value).apply()
     }
 
     fun setSpatialAudio(value: Boolean) {
@@ -1351,6 +1381,7 @@ object AppSettings {
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
+    private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_SPEED = "playback_speed"
     private const val KEY_THEME = "theme_mode"

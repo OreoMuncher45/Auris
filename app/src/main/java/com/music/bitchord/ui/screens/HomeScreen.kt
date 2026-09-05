@@ -87,9 +87,10 @@ fun HomeScreen(
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
     /**
-     * Holding a card rather than tapping it — the album/playlist menu. Only the
-     * cards that point at a collection have one; a card that is a single track
-     * is a track, and its own menu lives on the rows in the lists below.
+     * Holding a card rather than tapping it. Every card on the feed answers,
+     * whichever kind it is: the caller reads the item the same way it does for
+     * a tap, so a track card opens the track menu and a card that points at a
+     * collection opens the album / playlist one.
      */
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
     // Explore doesn't page — only Home has a continuation worth following.

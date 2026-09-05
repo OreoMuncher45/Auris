@@ -50,8 +50,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "v1.5.1beta1"
+        versionCode = 12
+        versionName = "v1.5.1beta2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -229,6 +229,14 @@ dependencies {
     // Audio is progressive, but Apple serves its motion artwork as HLS — this
     // is what lets the animated sleeve play it. See CanvasArtworkPlayer.
     implementation("androidx.media3:media3-exoplayer-hls:1.11.0")
+    // Source modules hand back manifests rather than files, and which kind is
+    // the backend's choice, not ours: the Tidal one served `.m3u8` until
+    // September 2026 and `.mpd` after it, for the same track and the same
+    // request. Without this artifact a DASH manifest is not merely unplayed —
+    // DefaultMediaSourceFactory cannot build a source for it, falls back to
+    // progressive, and the extractors try to sniff XML as audio
+    // (ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED). See withResolvedStreamType.
+    implementation("androidx.media3:media3-exoplayer-dash:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
     // ---- Images: Coil 3 + Palette (dominant colors for the mesh gradient) ----

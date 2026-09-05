@@ -92,12 +92,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -127,6 +129,7 @@ import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
+import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.settings.AudioQuality
@@ -173,6 +176,11 @@ fun SettingsScreen(
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
+    val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
+    // A property of the hardware, so it is read once rather than remembered
+    // against a key that can never change — see [DeviceCodecs.playsDolbyAtmos],
+    // which caches the codec-list walk for the life of the process.
+    val dolbyAtmosSupported = DeviceCodecs.playsDolbyAtmos
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
@@ -488,6 +496,37 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setSkipSilence(!skipSilence) },
+            )
+            RowDivider()
+            // Greyed rather than hidden where the device can't decode E-AC-3.
+            // A missing row reads as a feature the app doesn't have; a disabled
+            // one with a reason under it is the difference between "BitChord
+            // has no Atmos" and "this phone has no Dolby decoder", and only the
+            // second is true. The stored preference is left untouched either
+            // way — see [AppSettings.dolbyAtmos].
+            SettingsRow(
+                iconPainter = painterResource(R.drawable.ic_dolby_atmos),
+                title = stringResource(R.string.dolby_atmos),
+                subtitle = stringResource(
+                    if (dolbyAtmosSupported) {
+                        R.string.dolby_atmos_subtitle
+                    } else {
+                        R.string.dolby_atmos_unavailable
+                    },
+                ),
+                enabled = dolbyAtmosSupported,
+                trailing = {
+                    Switch(
+                        checked = dolbyAtmos && dolbyAtmosSupported,
+                        onCheckedChange = AppSettings::setDolbyAtmos,
+                        enabled = dolbyAtmosSupported,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
             )
             RowDivider()
             SettingsRow(
@@ -1742,16 +1781,22 @@ internal fun RowDivider() {
 /**
  * The standard row: glyph, title, optional subtitle, and on the right either
  * [trailing] (a switch, say) or the current [value] followed by a chevron.
+ *
+ * [iconPainter] is for the handful of rows whose glyph is a drawable rather
+ * than a Material icon — the Dolby double-D, which is a mark and not something
+ * to approximate with the nearest speaker outline. Exactly one of it and [icon]
+ * is expected; the painter wins where both are given.
  */
 @Composable
 internal fun SettingsRow(
-    icon: ImageVector,
+    icon: ImageVector? = null,
     title: String,
     subtitle: String? = null,
     subtitleContent: (@Composable () -> Unit)? = null,
     value: String? = null,
     badge: String? = null,
     enabled: Boolean = true,
+    iconPainter: Painter? = null,
     onClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
@@ -1764,12 +1809,21 @@ internal fun SettingsRow(
             .padding(horizontal = ROW_INSET, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.size(ICON_SIZE),
-        )
+        if (iconPainter != null) {
+            Icon(
+                painter = iconPainter,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(ICON_SIZE),
+            )
+        } else if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(ICON_SIZE),
+            )
+        }
         Spacer(Modifier.width(ICON_GAP))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

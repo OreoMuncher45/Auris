@@ -94,6 +94,31 @@ class SourcesTest {
     }
 
     /**
+     * ...and premium only where it is allowed to play. E-AC-3 ships with the
+     * vendor image, not with Android, and a module that answers every request
+     * with its Atmos master — the Tidal one does — hands a device without that
+     * decoder a stream that cannot be selected, let alone played. Refusing it
+     * at the source is what sends the track to somebody who can serve it;
+     * nothing downstream gets a second chance to notice.
+     *
+     * The listener's own switch enters by the same door, because refusing for
+     * taste and refusing for hardware have to leave the resolver in the same
+     * state — anything else is a second code path for the rarer case.
+     */
+    @Test
+    fun `an Atmos rendition is refused when it is not allowed to play`() {
+        val atmos = StreamFormat(codec = "eac3-joc")
+        assertTrue(ModuleSource.unplayable(atmos, atmosAllowed = false))
+        assertFalse(ModuleSource.unplayable(atmos, atmosAllowed = true))
+
+        // Nothing else is affected either way: a FLAC is a FLAC on every phone,
+        // and an undescribed stream is still worth handing to the decoder.
+        val flac = StreamFormat(codec = "flac", bitDepth = 16, sampleRateHz = 44_100)
+        assertFalse(ModuleSource.unplayable(flac, atmosAllowed = false))
+        assertFalse(ModuleSource.unplayable(StreamFormat(), atmosAllowed = false))
+    }
+
+    /**
      * The badge tiers. "Hi-Quality" exists to separate a module's 320kbps
      * stream from YouTube's 160kbps Opus, which the screen otherwise renders
      * identically — as nothing at all.

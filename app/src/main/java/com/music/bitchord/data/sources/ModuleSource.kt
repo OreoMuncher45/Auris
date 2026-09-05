@@ -3,6 +3,7 @@ package com.music.bitchord.data.sources
 import android.util.Log
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.module.ModuleManager
 import com.music.bitchord.data.sources.module.ModuleSearchResult
 import com.music.bitchord.data.sources.module.SpineModule
@@ -256,17 +257,29 @@ class ModuleSource(
             }
 
             val trackMeta = streamResponse.track
-            SourceStream(
-                url = url,
-                format = StreamFormat(
-                    codec = codecOf(trackMeta?.mimeType, trackMeta?.audioQuality, url),
-                    kbps = trackMeta?.bitrate ?: kbpsFor(trackMeta?.audioQuality, url),
-                    sampleRateHz = trackMeta?.sampleRate?.let {
-                        if (it < 1000) (it * 1000).toInt() else it.toInt()
-                    }?.takeIf { it > 0 },
-                    bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
-                ),
+            val format = StreamFormat(
+                codec = codecOf(trackMeta?.mimeType, trackMeta?.audioQuality, url),
+                kbps = trackMeta?.bitrate ?: kbpsFor(trackMeta?.audioQuality, url),
+                sampleRateHz = trackMeta?.sampleRate?.let {
+                    if (it < 1000) (it * 1000).toInt() else it.toInt()
+                }?.takeIf { it > 0 },
+                bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
             )
+            val playsAtmos = DeviceCodecs.playsDolbyAtmos
+            if (unplayable(format, atmosAllowed = playsAtmos && AppSettings.dolbyAtmos.value)) {
+                val why = if (playsAtmos) {
+                    "which is switched off in Settings"
+                } else {
+                    "which this device has no decoder for"
+                }
+                TrackLog.w(
+                    TAG,
+                    "${config.displayName}: $moduleId answered a ${request.tier} request with " +
+                        "${format.summary}, $why — passing",
+                )
+                return@withContext null
+            }
+            SourceStream(url = url, format = format)
         }
 
     /**
@@ -335,6 +348,20 @@ class ModuleSource(
     private fun settingsFor(request: StreamRequest): Map<String, String> = mapOf(
         "quality" to request.tier,
         "fallbackMode" to if (request is StreamRequest.Lossless) "strict" else "flexible",
+        // Whether an immersive rendition is wanted at all, which the tier
+        // above cannot express: `LOSSLESS` is a statement about bit-exactness
+        // and Atmos is not bit-exact, so a module reading only the tier has to
+        // guess which of the two the listener meant. Both answers are wrong
+        // somewhere — guess Atmos and a lossless request comes back lossy;
+        // guess FLAC and a device that can render the spatial mix never gets
+        // offered it. This says it outright.
+        //
+        // Repeats what [unplayable] enforces on the way back rather than
+        // replacing it. A module is somebody else's JavaScript and is free to
+        // ignore anything it is handed — the Tidal one ignores the tier and
+        // asks its backend for `MAX` regardless — so this is the polite ask
+        // and the check on the response is the guarantee.
+        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value).toString(),
     )
 
     private val StreamRequest.tier: String
@@ -435,6 +462,39 @@ class ModuleSource(
             if (originEnd < 0) return false
             return url.indexOf(url.substring(0, originEnd), originEnd) >= 0
         }
+
+        /**
+         * Whether the rendition a module has just handed over is one that must
+         * not be played.
+         *
+         * Only Dolby Atmos, and only because it is the one tier a module can
+         * serve that a phone can be flatly unable to decode — see
+         * [DeviceCodecs] for why the player is the wrong place to find that
+         * out. Every other codec a module returns is either in Android's own
+         * set or fails loudly enough for the recovery path to hear it.
+         *
+         * [atmosAllowed] is the two answers folded into one, because from here
+         * they mean the same thing and neither is more binding than the other:
+         * the device has no decoder
+         * ([DeviceCodecs.playsDolbyAtmos]) or the listener turned it off
+         * ([AppSettings.dolbyAtmos]). The caller keeps them apart only to say
+         * which it was in the log.
+         *
+         * Caught *here*, where the module answers, rather than by ranking it
+         * lower in [SourceResolver]: an Atmos rendition is routinely the only
+         * one a module will give for a track, so there is no lower-ranked
+         * sibling of it to fall to and a ranking has nothing to choose between.
+         * The Tidal module traced in September 2026 is exactly that shape — it
+         * ignores the tier it is passed and always asks its backend for `MAX`,
+         * so a track with an Atmos master answers a `LOSSLESS` request with
+         * Atmos, over a FLAC of the same recording the same backend serves
+         * happily when asked for one. Refusing is what lets [SourceResolver]
+         * move to a source that can be heard. Nothing on this side can reach
+         * past the module to the copy it declined to offer, so on a device with
+         * no Dolby decoder that track is YouTube's until the module is fixed.
+         */
+        internal fun unplayable(format: StreamFormat, atmosAllowed: Boolean): Boolean =
+            format.isDolbyAtmos && !atmosAllowed
 
         /**
          * The three tiers every compatible module speaks, whatever it

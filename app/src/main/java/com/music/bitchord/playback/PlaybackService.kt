@@ -2733,15 +2733,25 @@ class PlaybackService : MediaLibraryService() {
      *
      * The resolver replaces that URI with the real URL only after
      * [DefaultMediaSourceFactory] has selected a source implementation. A
-     * Tidal upgrade is an HLS manifest, but its virtual URI has no `.m3u8`
-     * suffix, so the factory otherwise locks it into a progressive source and
-     * fails to parse the manifest as audio bytes.
+     * Tidal upgrade is a manifest, but its virtual URI has no manifest suffix,
+     * so the factory otherwise locks it into a progressive source and fails to
+     * parse the manifest as audio bytes.
+     *
+     * Both manifest kinds, because which one arrives is the backend's choice
+     * and it has already changed once: the same Tidal module served `.m3u8`
+     * until September 2026 and `.mpd` afterwards, for the same track at the
+     * same requested tier. Only HLS was recognised, so every module upgrade
+     * died on `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED` — an error that reads
+     * like a broken file and was in fact a manifest handed to an extractor.
+     * Read off the extension rather than from what the module claimed the
+     * codec was: `format: "flac"` describes the audio inside, and says nothing
+     * about the envelope the URL points at.
      */
     private fun MediaItem.Builder.withResolvedStreamType(streamUrl: String): MediaItem.Builder =
-        if (streamUrl.substringBefore('?').endsWith(".m3u8", ignoreCase = true)) {
-            setMimeType(MimeTypes.APPLICATION_M3U8)
-        } else {
-            this
+        when (streamUrl.substringBefore('?').substringAfterLast('.').lowercase(Locale.ROOT)) {
+            "m3u8" -> setMimeType(MimeTypes.APPLICATION_M3U8)
+            "mpd" -> setMimeType(MimeTypes.APPLICATION_MPD)
+            else -> this
         }
 
     /** How an audition in progress is coming along — see [auditionUpgrade]. */
