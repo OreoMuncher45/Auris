@@ -63,12 +63,15 @@ object CanvasRepository {
     /**
      * The canvas for [song], or null when there isn't one. Never throws.
      *
-     * A local file has no catalogue identity worth searching on and no network
-     * expectation attached to playing it, so it is answered as a miss without
-     * a request.
+     * A local file with no catalogue identity (no [Song.videoId]) is answered
+     * as a miss without a request — there is nothing to search on.  Downloaded
+     * tracks carry a videoId and full metadata, so they get the same canvas
+     * lookup as streaming ones; network guards live in the caller
+     * ([NowPlayingScreen], which checks [AppSettings.canvasOverCellular]).
      */
     suspend fun canvasFor(song: Song): CanvasArtwork? {
-        if (song.localUri != null || song.localPath != null) return null
+        // Only skip when there is no catalogue identity to search on.
+        if (song.videoId.isBlank() && (song.localUri != null || song.localPath != null)) return null
 
         val title = song.title.cleaned()
         val artist = song.artist.cleaned()
