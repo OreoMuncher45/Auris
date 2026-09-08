@@ -34,7 +34,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -103,6 +102,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -130,6 +130,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -171,6 +172,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -218,7 +220,6 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.random.Random
@@ -541,14 +542,14 @@ private sealed interface LyricsTranslationUiState {
     data object SameLanguage : LyricsTranslationUiState
 }
 
+private const val TRANSLATION_MOTION_MS = 540
+private const val PARTICLES_PER_VOICE = 18
+
 private data class TranslationParticle(
-    val x: Float,
-    val y: Float,
-    val angle: Float,
-    val distance: Float,
+    val anchor: Offset,
+    val drift: Offset,
     val radius: Float,
     val delay: Float,
-    val cool: Boolean,
 )
 
 /**
@@ -2102,12 +2103,13 @@ fun NowPlayingScreen(
                                     alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
                                     translationY = (1f - p) * 26.dp.toPx()
                                 },
-                        ) {
+                        ) { particleProgress ->
                             LyricsPanel(
                                 lines = displayedLyrics,
                                 positionMs = positionMs,
                                 isPlaying = isPlaying,
                                 onSeekToLine = onSeek,
+                                translationProgress = particleProgress,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -2172,9 +2174,9 @@ fun NowPlayingScreen(
                         // the timestamps below are pulled back up into it.
                         .offset(y = 6.dp),
                 ) {
-                    if (!lyrics.isNullOrEmpty()) {
+                    if (displayedLyrics.isNotEmpty()) {
                         CurrentLyricLine(
-                            lines = lyrics,
+                            lines = displayedLyrics,
                             trackKey = song.videoId,
                             positionMs = positionMs,
                             isPlaying = isPlaying,
@@ -2701,6 +2703,7 @@ private fun SweptLyricLine(
     glowAlpha: Float = 0f,
     glowRadius: Dp = GLOW_RADIUS,
     glowRoom: Dp = 0.dp,
+    translationProgress: State<Float>? = null,
 ) {
     var layout by remember(line) { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -2730,7 +2733,7 @@ private fun SweptLyricLine(
         }
     }
 
-    Box(modifier) {
+    Box(modifier.lyricParticles(layout, translationProgress, glowRoom)) {
         Text(
             text = line.text,
             style = style,
@@ -2811,9 +2814,11 @@ private fun ContentDrawScope.glowAt(
     val lineStart = layout.getLineStart(visualLine)
     val lineEnd = layout.getLineEnd(visualLine, visibleEnd = true)
 
-    val right = horizontalAt(layout, edge.coerceIn(lineStart.toFloat(), lineEnd.toFloat()), lineStart, lineEnd)
+    val boundary = horizontalAt(layout, edge.coerceIn(lineStart.toFloat(), lineEnd.toFloat()), lineStart, lineEnd)
+    val rtl = layout.getParagraphDirection(lineStart) == ResolvedTextDirection.Rtl
     val trail = GLOW_TRAIL.toPx() * (GLOW_TRAIL_FLOOR + (1f - GLOW_TRAIL_FLOOR) * intensity)
-    val left = (right - trail).coerceAtLeast(layout.getLineLeft(visualLine))
+    val left = if (rtl) boundary else (boundary - trail).coerceAtLeast(layout.getLineLeft(visualLine))
+    val right = if (rtl) (boundary + trail).coerceAtMost(layout.getLineRight(visualLine)) else boundary
     if (right <= left) return
 
     // The band, cut out of the line. This is only the vertical and trailing
@@ -2841,8 +2846,8 @@ private fun ContentDrawScope.glowAt(
             0f to Color.Transparent,
             0.45f to Color.White.copy(alpha = 0.22f),
             1f to Color.White,
-            startX = left,
-            endX = right,
+            startX = if (rtl) right else left,
+            endX = if (rtl) left else right,
         ),
         blendMode = BlendMode.DstIn,
     )
@@ -2855,13 +2860,17 @@ private fun horizontalAt(
     lineStart: Int,
     lineEnd: Int,
 ): Float {
-    val index = chars.toInt().coerceIn(lineStart, lineEnd)
-    val here = layout.getHorizontalPosition(index, usePrimaryDirection = true)
-    val next = layout.getHorizontalPosition(
-        (index + 1).coerceAtMost(lineEnd),
-        usePrimaryDirection = true,
-    )
-    return here + (next - here) * (chars - index)
+    if (lineEnd <= lineStart) return layout.getLineLeft(layout.getLineForOffset(lineStart))
+    // A caret at lineEnd may belong to the NEXT wrapped row. Interpolating to
+    // that caret made the last glyph's fill travel backwards across the row.
+    val index = chars.toInt().coerceIn(lineStart, lineEnd - 1)
+    val box = layout.getBoundingBox(index)
+    val fraction = (chars - index).coerceIn(0f, 1f)
+    return if (layout.getBidiRunDirection(index) == ResolvedTextDirection.Rtl) {
+        box.right - box.width * fraction
+    } else {
+        box.left + box.width * fraction
+    }
 }
 
 /**
@@ -2885,15 +2894,13 @@ private fun ContentDrawScope.sweepTo(layout: TextLayoutResult, revealedChars: Fl
         // anything after them.
         if (revealedChars <= start) return
         val end = layout.getLineEnd(visualLine, visibleEnd = true)
-        val right = if (revealedChars >= end) {
-            layout.getLineRight(visualLine)
-        } else {
-            horizontalAt(layout, revealedChars, start, end)
-        }
+        val complete = revealedChars >= end
+        val rtl = layout.getParagraphDirection(start) == ResolvedTextDirection.Rtl
+        val edge = if (complete) 0f else horizontalAt(layout, revealedChars, start, end)
         clipRect(
-            left = layout.getLineLeft(visualLine),
+            left = if (!complete && rtl) edge else layout.getLineLeft(visualLine),
             top = layout.getLineTop(visualLine),
-            right = right,
+            right = if (!complete && !rtl) edge else layout.getLineRight(visualLine),
             bottom = layout.getLineBottom(visualLine),
         ) {
             this@sweepTo.drawContent()
@@ -2961,31 +2968,23 @@ private fun LyricsTranslationMotion(
     trigger: Int,
     reduceMotion: Boolean,
     modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
+    content: @Composable (State<Float>?) -> Unit,
 ) {
     val progress = remember { Animatable(1f) }
-    val particles = remember(trigger) {
-        val random = Random(trigger * 7_919 + 41)
-        List(30) {
-            TranslationParticle(
-                x = 0.06f + random.nextFloat() * 0.88f,
-                y = 0.05f + random.nextFloat() * 0.78f,
-                angle = random.nextFloat() * (PI * 2.0).toFloat(),
-                distance = 0.012f + random.nextFloat() * 0.045f,
-                radius = 0.7f + random.nextFloat() * 1.35f,
-                delay = random.nextFloat() * 0.34f,
-                cool = random.nextBoolean(),
-            )
-        }
-    }
-    LaunchedEffect(trigger, reduceMotion) {
-        if (trigger <= 0 || reduceMotion) {
+    val foreground = rememberIsForeground()
+    // Reopening the panel or returning from the background must not replay a
+    // previous toggle. A new toggle cancels the previous effect automatically.
+    var consumedTrigger by remember { mutableIntStateOf(trigger) }
+    LaunchedEffect(trigger, reduceMotion, foreground) {
+        val changed = trigger != consumedTrigger
+        consumedTrigger = trigger
+        if (!changed || trigger <= 0 || reduceMotion || !foreground) {
             progress.snapTo(1f)
         } else {
             progress.snapTo(0f)
             progress.animateTo(
                 targetValue = 1f,
-                animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = TRANSLATION_MOTION_MS, easing = LinearEasing),
             )
         }
     }
@@ -2995,37 +2994,48 @@ private fun LyricsTranslationMotion(
         // particular, do not read progress in composition or apply a clipping
         // layer here: the panel's active line deliberately scales beyond its
         // measured bounds and its glow uses unbounded blur.
-        content()
+        content(progress.asState().takeIf { !reduceMotion && foreground && trigger > 0 })
+    }
+}
 
-        if (!reduceMotion && trigger > 0) {
-            Canvas(
-                Modifier
-                    .fillMaxSize()
-                    // Particles stay inside the panel; only this decorative
-                    // layer is clipped, never the text or its bloom.
-                    .clipToBounds(),
-            ) {
-                // Reading Animatable state from DrawScope invalidates only
-                // this Canvas. The LazyColumn and every text layout remain
-                // untouched for all frames of the 620 ms flourish.
-                val amount = progress.value
-                if (amount >= 0.999f) return@Canvas
-                val travelBase = size.minDimension
+/** Glyph positions are cached at layout time; the shared clock is draw-only. */
+private fun Modifier.lyricParticles(
+    layout: TextLayoutResult?,
+    progress: State<Float>?,
+    room: Dp,
+): Modifier {
+    if (layout == null || progress == null) return this
+    return drawWithCache {
+        val text = layout.layoutInput.text.text
+        val candidates = text.indices.filter { text[it].isLetterOrDigit() }
+        val random = Random(text.hashCode())
+        val inset = room.toPx()
+        val particles = candidates.shuffled(random).take(PARTICLES_PER_VOICE).map { index ->
+            val glyph = layout.getBoundingBox(index)
+            TranslationParticle(
+                anchor = glyph.center + Offset(inset, inset),
+                drift = Offset((random.nextFloat() - 0.5f) * 12.dp.toPx(),
+                    -(5f + random.nextFloat() * 11f).dp.toPx()),
+                radius = (0.65f + random.nextFloat() * 0.65f).dp.toPx(),
+                delay = 0.16f * index / text.length.coerceAtLeast(1),
+            )
+        }
+        onDrawWithContent {
+            drawContent()
+            val value = progress.value
+            if (value > 0f && value < 1f) {
                 particles.forEach { particle ->
-                    val local = ((amount - particle.delay) / (1f - particle.delay)).coerceIn(0f, 1f)
-                    if (local > 0f && local < 1f) {
-                        val envelope = sin(PI * local).toFloat()
-                        val travel = travelBase * particle.distance * local
-                        drawCircle(
-                            color = if (particle.cool) Color(0xFFBFE9FF) else Color.White,
-                            radius = particle.radius.dp.toPx() * (0.75f + envelope * 0.55f),
-                            center = Offset(
-                                x = size.width * particle.x + cos(particle.angle) * travel,
-                                y = size.height * particle.y + sin(particle.angle) * travel,
-                            ),
-                            alpha = envelope * 0.72f,
-                        )
-                    }
+                    val t = ((value - particle.delay) / 0.84f).coerceIn(0f, 1f)
+                    val envelope = sin(PI * t).toFloat()
+                    val ease = 1f - (1f - t) * (1f - t)
+                    val center = particle.anchor + Offset(
+                        particle.drift.x * ease,
+                        particle.drift.y * ease + 3.dp.toPx() * t * t,
+                    )
+                    // Two inexpensive circles give a soft halo without another
+                    // blur layer; opacity rises and falls without a flash.
+                    drawCircle(Color.White, particle.radius * 2.7f, center, alpha = envelope * 0.07f)
+                    drawCircle(Color.White, particle.radius, center, alpha = envelope * 0.58f)
                 }
             }
         }
@@ -3046,6 +3056,7 @@ private fun LyricsPanel(
     positionMs: Long,
     isPlaying: Boolean,
     onSeekToLine: (Long) -> Unit,
+    translationProgress: State<Float>? = null,
     modifier: Modifier = Modifier,
 ) {
     val clock = rememberLyricClock(positionMs, isPlaying)
@@ -3102,7 +3113,7 @@ private fun LyricsPanel(
         }
     }
 
-    var placed by remember(lines) { mutableStateOf(false) }
+    var placed by remember { mutableStateOf(false) }
     LaunchedEffect(activeLine, browsing) {
         if (isSynced && !browsing && !listState.isScrollInProgress &&
             activeLine >= 0 && activeLine in lines.indices
@@ -3271,6 +3282,9 @@ private fun LyricsPanel(
                         browsing = browsing,
                         glowAlpha = glow,
                         room = GLOW_ROOM,
+                        translationProgress = translationProgress.takeIf {
+                            if (isSynced) distance <= 1 else index < 4
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     line.background?.let { backing ->
@@ -3323,6 +3337,7 @@ private fun PanelVoice(
     browsing: Boolean,
     glowAlpha: Float,
     room: Dp,
+    translationProgress: State<Float>? = null,
     modifier: Modifier = Modifier,
 ) {
     if (line.isWordSynced && !browsing) {
@@ -3347,6 +3362,7 @@ private fun PanelVoice(
             modifier = modifier,
             glowAlpha = glowAlpha,
             glowRoom = room,
+            translationProgress = translationProgress,
         )
     } else if (line.isWordSynced) {
         // Browsing: keep the sweep so sung lines stay fully lit and unsung
@@ -3365,17 +3381,20 @@ private fun PanelVoice(
             modifier = modifier,
             glowAlpha = 0f,
             glowRoom = room,
+            translationProgress = translationProgress,
         )
     } else {
         // Non word-synced: during playback the sweep is not available so we
         // rely on graphicsLayer alpha (set by the parent) to dim inactive
         // lines.  During browsing the same rule applies — do not default to
         // full white.
+        var layout by remember(line.text) { mutableStateOf<TextLayoutResult?>(null) }
         Text(
             text = line.text,
             style = style,
             color = Color.White,
-            modifier = modifier.padding(room),
+            onTextLayout = { layout = it },
+            modifier = modifier.lyricParticles(layout, translationProgress, room).padding(room),
         )
     }
 }
@@ -3483,7 +3502,7 @@ private fun CurrentLyricLine(
     val text = when {
         intro -> introLine
         instrumental -> stringResource(R.string.instrumental)
-        else -> current!!.text
+        else -> current.text
     }
 
     Row(

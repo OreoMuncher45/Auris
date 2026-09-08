@@ -21,6 +21,9 @@ change Automix, playback transitions, source replacement or audio processing.
 6. Tap the same button again to return immediately to the original lyrics.
 
 The original lyrics are always retained in memory and are never overwritten.
+While the translated version is selected, the compact current-lyric strip above
+the playback scrubber uses that version too. Closing the full lyrics view does
+not switch the strip back to the source language.
 
 ## Destination language
 
@@ -67,21 +70,32 @@ Every translated `LyricLine` retains:
 
 Exact source-language word boundaries cannot describe a translated sentence
 because word order and word count can change. For word-synced lyrics, BitChord
-tokenizes the translated line and redistributes those words proportionally over
-the original line's first-to-last sung interval. This preserves the continuous
-playback sweep without presenting invented phoneme-level precision. Line-synced
-lyrics remain line-synced.
+projects the original character progress onto the translated text. The sweep
+therefore follows the original holds, pauses and pace changes instead of running
+uniformly from start to end. Bloom also uses the source vocal envelope. This is
+an approximate reading guide, not semantic word alignment or phoneme timing in
+the target language. Line-synced lyrics remain line-synced. Cached translations
+are rebuilt with this timing on load; no cache deletion or download is needed.
+
+The renderer interpolates within glyph bounds, avoiding next-row caret positions
+that could send the highlight backwards at a line wrap. Right-to-left paragraphs
+use a reversed reveal and glow direction.
 
 ## Visual response
 
 Switching versions keeps the existing lyrics list and playback clock mounted.
-For 620 ms, 30 small Canvas particles resolve through the lyric field. The
-animation clock is read only from the Canvas draw phase, so it does not
-recompose, rescale or clip the lyrics list on every frame.
+For 540 ms, small particles drift from actual glyph positions in the active lyric
+and its immediate neighbours (up to 18 per voice). Unsynchronized lyrics use the
+first four lines. Positions and drift vectors are cached at text layout time.
+A single animation clock is read only in the draw phase, so it does not
+recompose, rescale or clip the lyrics list on every frame. Soft halos use two
+circles rather than extra blur layers; particles fade in and out continuously.
 
-The effect only animates draw properties, does not intercept touches and is
-clipped to the lyrics panel. Enabling BitChord's **Reduce animations** preference
-turns the effect into an immediate text swap.
+The effect only animates draw properties and does not intercept touches.
+Enabling BitChord's **Reduce animations** preference turns it into an immediate
+text swap. Compose's animator respects the platform duration scale. Going into
+the background cancels decoration, and returning or reopening the panel does
+not replay an old toggle. Rapid toggles replace the previous animation.
 
 ## Storage and performance
 
@@ -122,6 +136,10 @@ settings.
 - Translate English lyrics with BitChord set to Spanish.
 - Translate the same song again and verify the cached response is immediate.
 - Switch back and forth without losing the active line or scroll position.
+- Check held notes, vocal pauses and two-line phrases: the translated sweep
+  should follow the source progress without reversing near a line wrap.
+- Toggle repeatedly, close/reopen the panel, and background/restore the app;
+  particles should settle completely and old transitions should not replay.
 - Use Spanish lyrics while BitChord is set to Spanish and verify no translation
   view is created.
 - Change BitChord to another supported language and verify the new destination.

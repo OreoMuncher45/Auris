@@ -14,6 +14,7 @@ import java.util.zip.GZIPOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -227,7 +228,13 @@ object LyricsTranslation {
             .header("Accept", "application/json")
             .post(body)
             .build()
-        val response = runCatching { client.newCall(request).awaitBody() }.getOrNull() ?: return null
+        val response = try {
+            client.newCall(request).awaitBody()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            return null
+        }
         return runCatching {
             val root = json.parseToJsonElement(response).jsonArray
             val translatedBody = root[0].jsonArray.joinToString(separator = "") { segment ->
@@ -273,36 +280,29 @@ object LyricsTranslation {
             line.copy(
                 text = leadText,
                 words = retimeWords(line, leadText),
+                timingSource = line.takeIf { it.isWordSynced },
                 background = line.background?.let { source ->
                     val text = backing?.second ?: source.text
-                    source.copy(text = text, words = retimeWords(source, text))
+                    source.copy(
+                        text = text,
+                        words = retimeWords(source, text),
+                        timingSource = source.takeIf { it.isWordSynced },
+                    )
                 },
             )
         }
     }
 
     /**
-     * A translation changes word count, so source word boundaries cannot be
-     * copied. Re-spread the translated words across the exact original sung
-     * interval. The lyric sweep and line timing therefore remain continuous,
-     * while never pretending that a translated word has an exact phoneme stamp.
+     * Keep the source vocal bounds without inventing translated word timings.
+     * LyricLine.timingSource projects the original non-uniform character sweep
+     * onto the new text, preserving holds, pauses and the original glow envelope.
      */
     private fun retimeWords(source: LyricLine, translated: String): List<LyricWord> {
         if (source.words.isEmpty()) return emptyList()
-        val tokens = Regex("\\S+").findAll(translated).map { it.value }.toList()
-        if (tokens.isEmpty()) return emptyList()
+        if (translated.isEmpty()) return emptyList()
         val start = source.words.first().startMs
-        val end = source.words.last().endMs.coerceAtLeast(start + tokens.size)
-        val duration = end - start
-        val weights = tokens.map { token -> token.count(Char::isLetterOrDigit).coerceAtLeast(1) }
-        val total = weights.sum().coerceAtLeast(1)
-        var consumed = 0
-        return tokens.mapIndexed { index, token ->
-            val wordStart = start + duration * consumed / total
-            consumed += weights[index]
-            val wordEnd = if (index == tokens.lastIndex) end else start + duration * consumed / total
-            LyricWord(wordStart, wordEnd.coerceAtLeast(wordStart + 1), token)
-        }
+        return listOf(LyricWord(start, source.words.last().endMs, translated))
     }
 
     private fun canonicalLanguage(tag: String): String = when (
