@@ -75,11 +75,9 @@ lyrics remain line-synced.
 ## Visual response
 
 Switching versions keeps the existing lyrics list and playback clock mounted.
-For 620 ms, the new text resolves through:
-
-- a subtle alpha recovery;
-- a 0.8% scale settle;
-- 52 small Canvas particles distributed through the lyric field.
+For 620 ms, 30 small Canvas particles resolve through the lyric field. The
+animation clock is read only from the Canvas draw phase, so it does not
+recompose, rescale or clip the lyrics list on every frame.
 
 The effect only animates draw properties, does not intercept touches and is
 clipped to the lyrics panel. Enabling BitChord's **Reduce animations** preference

@@ -2952,7 +2952,7 @@ private fun TranslationToggleButton(
 /**
  * A short text-material transition: the list and its playback clock stay in
  * place while a field of tiny glyph-like particles resolves into the new text.
- * Only alpha/scale and Canvas drawing move, so changing language never causes a
+ * Only the dedicated Canvas drawing moves, so changing language never causes a
  * second scroll, a blank frame, or a new lyrics timeline. The app's Reduce
  * animation preference collapses the whole response to an immediate swap.
  */
@@ -2966,7 +2966,7 @@ private fun LyricsTranslationMotion(
     val progress = remember { Animatable(1f) }
     val particles = remember(trigger) {
         val random = Random(trigger * 7_919 + 41)
-        List(52) {
+        List(30) {
             TranslationParticle(
                 x = 0.06f + random.nextFloat() * 0.88f,
                 y = 0.05f + random.nextFloat() * 0.78f,
@@ -2990,27 +2990,26 @@ private fun LyricsTranslationMotion(
         }
     }
 
-    val amount = progress.value
-    val eased = FastOutSlowInEasing.transform(amount)
-    Box(modifier = modifier.clipToBounds()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    if (!reduceMotion && trigger > 0) {
-                        alpha = 0.74f + eased * 0.26f
-                        val scale = 0.992f + eased * 0.008f
-                        scaleX = scale
-                        scaleY = scale
-                        transformOrigin = TransformOrigin(0.5f, 0.42f)
-                    }
-                },
-        ) {
-            content()
-        }
+    Box(modifier = modifier) {
+        // Keep the lyrics subtree completely outside the animation clock. In
+        // particular, do not read progress in composition or apply a clipping
+        // layer here: the panel's active line deliberately scales beyond its
+        // measured bounds and its glow uses unbounded blur.
+        content()
 
-        if (!reduceMotion && trigger > 0 && amount < 0.999f) {
-            Canvas(Modifier.fillMaxSize()) {
+        if (!reduceMotion && trigger > 0) {
+            Canvas(
+                Modifier
+                    .fillMaxSize()
+                    // Particles stay inside the panel; only this decorative
+                    // layer is clipped, never the text or its bloom.
+                    .clipToBounds(),
+            ) {
+                // Reading Animatable state from DrawScope invalidates only
+                // this Canvas. The LazyColumn and every text layout remain
+                // untouched for all frames of the 620 ms flourish.
+                val amount = progress.value
+                if (amount >= 0.999f) return@Canvas
                 val travelBase = size.minDimension
                 particles.forEach { particle ->
                     val local = ((amount - particle.delay) / (1f - particle.delay)).coerceIn(0f, 1f)
