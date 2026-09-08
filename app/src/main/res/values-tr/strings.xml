@@ -280,6 +280,12 @@
     <string name="buttons">Düğmeler</string>
     <string name="clear_name">Adı temizle</string>
     <string name="close_lyrics">Sözleri kapat</string>
+    <string name="translate_lyrics">Sözleri çevir</string>
+    <string name="show_original_lyrics">Özgün sözleri göster</string>
+    <string name="translating_lyrics_to">%1$s diline çevriliyor…</string>
+    <string name="lyrics_translated_to">%1$s diline çevrildi</string>
+    <string name="lyrics_already_in_language">Bu sözler zaten %1$s dilinde</string>
+    <string name="lyrics_translation_unavailable">Çeviri şu anda kullanılamıyor</string>
     <string name="connect_account_first">Önce bir hesap bağlayın</string>
     <string name="connected_presence_off">Bağlandı, varlık kapalı</string>
     <string name="copy_log">Günlüğü kopyala</string>

@@ -256,6 +256,12 @@
     <string name="buttons">बटन</string>
     <string name="clear_name">नाम साफ़ करें</string>
     <string name="close_lyrics">लिरिक्स बंद करें</string>
+    <string name="translate_lyrics">लिरिक्स का अनुवाद करें</string>
+    <string name="show_original_lyrics">मूल लिरिक्स दिखाएँ</string>
+    <string name="translating_lyrics_to">%1$s में अनुवाद हो रहा है…</string>
+    <string name="lyrics_translated_to">%1$s में अनुवादित</string>
+    <string name="lyrics_already_in_language">ये लिरिक्स पहले से %1$s में हैं</string>
+    <string name="lyrics_translation_unavailable">अनुवाद अभी उपलब्ध नहीं है</string>
     <string name="connect_account_first">पहले कोई खाता कनेक्ट करें</string>
     <string name="connected_presence_off">कनेक्टेड, प्रेज़ेंस बंद</string>
     <string name="copy_log">लॉग कॉपी करें</string>

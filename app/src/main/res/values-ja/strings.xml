@@ -252,6 +252,12 @@
     <string name="buttons">ボタン</string>
     <string name="clear_name">名前を消去</string>
     <string name="close_lyrics">歌詞を閉じる</string>
+    <string name="translate_lyrics">歌詞を翻訳</string>
+    <string name="show_original_lyrics">元の歌詞を表示</string>
+    <string name="translating_lyrics_to">%1$sに翻訳中…</string>
+    <string name="lyrics_translated_to">%1$sに翻訳済み</string>
+    <string name="lyrics_already_in_language">この歌詞はすでに%1$sです</string>
+    <string name="lyrics_translation_unavailable">現在、翻訳を利用できません</string>
     <string name="connect_account_first">先にアカウントを連携してください</string>
     <string name="connected_presence_off">接続済み、プレゼンスはオフ</string>
     <string name="copy_log">ログをコピー</string>

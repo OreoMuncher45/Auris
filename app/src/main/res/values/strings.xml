@@ -293,6 +293,12 @@
     <string name="buttons">Buttons</string>
     <string name="clear_name">Clear name</string>
     <string name="close_lyrics">Close lyrics</string>
+    <string name="translate_lyrics">Translate lyrics</string>
+    <string name="show_original_lyrics">Show original lyrics</string>
+    <string name="translating_lyrics_to">Translating to %1$s…</string>
+    <string name="lyrics_translated_to">Translated to %1$s</string>
+    <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
+    <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
     <string name="connect_account_first">Connect an account first</string>
     <string name="connected_presence_off">Connected, presence off</string>
     <string name="copy_log">Copy log</string>

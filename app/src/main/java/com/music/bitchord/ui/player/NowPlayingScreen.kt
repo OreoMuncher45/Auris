@@ -12,10 +12,12 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
+import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
@@ -32,6 +34,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -93,6 +96,7 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -194,6 +198,7 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.lyrics.Genius
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.ui.components.LyricsLogConsole
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
@@ -204,6 +209,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
@@ -211,7 +217,11 @@ import dev.chrisbanes.haze.materials.HazeMaterials
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.random.Random
 
 /** Collapsed-header geometry, shared by the layout and its animation. */
 /**
@@ -524,6 +534,23 @@ private const val BACKING_ALPHA = 0.72f
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
 
+private sealed interface LyricsTranslationUiState {
+    data object Idle : LyricsTranslationUiState
+    data object Loading : LyricsTranslationUiState
+    data class Ready(val lines: List<LyricLine>) : LyricsTranslationUiState
+    data object SameLanguage : LyricsTranslationUiState
+}
+
+private data class TranslationParticle(
+    val x: Float,
+    val y: Float,
+    val angle: Float,
+    val distance: Float,
+    val radius: Float,
+    val delay: Float,
+    val cool: Boolean,
+)
+
 /**
  * Apple Music's Now Playing, closely: artwork that shrinks when paused, a
  * hairline scrubber with elapsed / remaining either side, oversized transport
@@ -684,6 +711,98 @@ fun NowPlayingScreen(
     var lyricsOpen by remember { mutableStateOf(false) }
     var lyricsLogsOpen by remember { mutableStateOf(false) }
     val showLyricsLogsEnabled by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
+    val reduceTranslationMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val configuredLocale = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
+        ?.takeIf { it.isNotBlank() }
+        ?: context.resources.configuration.locales.get(0).toLanguageTag()
+    val translationLanguage = remember(configuredLocale) {
+        Locale.forLanguageTag(configuredLocale).language.ifBlank { "en" }
+    }
+    val translationLanguageName = remember(configuredLocale, translationLanguage) {
+        val locale = Locale.forLanguageTag(configuredLocale)
+        Locale.forLanguageTag(translationLanguage).getDisplayLanguage(locale)
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+    }
+    var translationState by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
+    }
+    var showingTranslation by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf(false)
+    }
+    var translationTransition by remember(song.videoId) { mutableIntStateOf(0) }
+    var translationJob by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf<Job?>(null)
+    }
+    DisposableEffect(song.videoId, translationLanguage, lyrics) {
+        onDispose { translationJob?.cancel() }
+    }
+    val displayedLyrics = if (showingTranslation) {
+        (translationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
+    } else {
+        lyrics.orEmpty()
+    }
+    val translationScope = rememberCoroutineScope()
+    val toggleTranslation: () -> Unit = toggleTranslation@{
+        when (val state = translationState) {
+            is LyricsTranslationUiState.Ready -> {
+                showingTranslation = !showingTranslation
+                translationTransition++
+                haptics.play(Haptic.Select)
+            }
+            LyricsTranslationUiState.Loading -> Unit
+            LyricsTranslationUiState.SameLanguage -> {
+                haptics.play(Haptic.Tap)
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.lyrics_already_in_language, translationLanguageName),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            LyricsTranslationUiState.Idle -> {
+                val source = lyrics.orEmpty()
+                if (source.isEmpty()) return@toggleTranslation
+                haptics.play(Haptic.Tap)
+                translationState = LyricsTranslationUiState.Loading
+                translationJob?.cancel()
+                translationJob = translationScope.launch {
+                    when (
+                        val result = LyricsTranslation.translate(
+                            context = context.applicationContext,
+                            trackId = song.videoId,
+                            lines = source,
+                            targetLanguageTag = configuredLocale,
+                        )
+                    ) {
+                        is LyricsTranslation.Result.Translated -> {
+                            translationState = LyricsTranslationUiState.Ready(result.lines)
+                            showingTranslation = true
+                            translationTransition++
+                            haptics.play(Haptic.ToggleOn)
+                        }
+                        is LyricsTranslation.Result.SameLanguage -> {
+                            translationState = LyricsTranslationUiState.SameLanguage
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.lyrics_already_in_language,
+                                    translationLanguageName,
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        LyricsTranslation.Result.Unavailable -> {
+                            translationState = LyricsTranslationUiState.Idle
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.lyrics_translation_unavailable),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
+            }
+        }
+    }
     LaunchedEffect(song.videoId) {
         lyricsOpen = false
         lyricsLogsOpen = false
@@ -1968,11 +2087,9 @@ fun NowPlayingScreen(
                                 },
                         )
                     } else {
-                        LyricsPanel(
-                            lines = lyrics.orEmpty(),
-                            positionMs = positionMs,
-                            isPlaying = isPlaying,
-                            onSeekToLine = onSeek,
+                        LyricsTranslationMotion(
+                            trigger = translationTransition,
+                            reduceMotion = reduceTranslationMotion,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = HEADER_HEIGHT)
@@ -1985,7 +2102,15 @@ fun NowPlayingScreen(
                                     alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
                                     translationY = (1f - p) * 26.dp.toPx()
                                 },
-                        )
+                        ) {
+                            LyricsPanel(
+                                lines = displayedLyrics,
+                                positionMs = positionMs,
+                                isPlaying = isPlaying,
+                                onSeekToLine = onSeek,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
 
@@ -2212,6 +2337,12 @@ fun NowPlayingScreen(
                     ) {
                         Text(
                             text = when {
+                                translationState is LyricsTranslationUiState.Loading ->
+                                    stringResource(R.string.translating_lyrics_to, translationLanguageName)
+                                showingTranslation ->
+                                    stringResource(R.string.lyrics_translated_to, translationLanguageName)
+                                translationState is LyricsTranslationUiState.SameLanguage ->
+                                    stringResource(R.string.lyrics_already_in_language, translationLanguageName)
                                 lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
                                 lyrics.isNullOrEmpty() -> stringResource(R.string.no_lyrics_found)
                                 else -> stringResource(R.string.lyrics_saved_with_download)
@@ -2222,6 +2353,13 @@ fun NowPlayingScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
+                    TranslationToggleButton(
+                        state = translationState,
+                        showingTranslation = showingTranslation,
+                        enabled = !lyricsLogsOpen && !lyrics.isNullOrEmpty(),
+                        onClick = toggleTranslation,
+                    )
                     Spacer(Modifier.width(8.dp))
                     Box(
                         modifier = Modifier
@@ -2763,6 +2901,137 @@ private fun ContentDrawScope.sweepTo(layout: TextLayoutResult, revealedChars: Fl
     }
 }
 
+
+@Composable
+private fun TranslationToggleButton(
+    state: LyricsTranslationUiState,
+    showingTranslation: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val active = showingTranslation || state is LyricsTranslationUiState.Loading
+    val tint = when {
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> Color.White.copy(alpha = 0.42f)
+        active -> Color.White
+        else -> Color.White.copy(alpha = 0.78f)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .width(54.dp)
+            .clip(RoundedCornerShape(percent = 50))
+            .background(Color.White.copy(alpha = if (active) 0.22f else 0.10f))
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (state is LyricsTranslationUiState.Loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = tint,
+                strokeWidth = 1.7.dp,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Translate,
+                contentDescription = stringResource(
+                    if (showingTranslation) R.string.show_original_lyrics
+                    else R.string.translate_lyrics,
+                ),
+                tint = tint,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+/**
+ * A short text-material transition: the list and its playback clock stay in
+ * place while a field of tiny glyph-like particles resolves into the new text.
+ * Only alpha/scale and Canvas drawing move, so changing language never causes a
+ * second scroll, a blank frame, or a new lyrics timeline. The app's Reduce
+ * animation preference collapses the whole response to an immediate swap.
+ */
+@Composable
+private fun LyricsTranslationMotion(
+    trigger: Int,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val progress = remember { Animatable(1f) }
+    val particles = remember(trigger) {
+        val random = Random(trigger * 7_919 + 41)
+        List(52) {
+            TranslationParticle(
+                x = 0.06f + random.nextFloat() * 0.88f,
+                y = 0.05f + random.nextFloat() * 0.78f,
+                angle = random.nextFloat() * (PI * 2.0).toFloat(),
+                distance = 0.012f + random.nextFloat() * 0.045f,
+                radius = 0.7f + random.nextFloat() * 1.35f,
+                delay = random.nextFloat() * 0.34f,
+                cool = random.nextBoolean(),
+            )
+        }
+    }
+    LaunchedEffect(trigger, reduceMotion) {
+        if (trigger <= 0 || reduceMotion) {
+            progress.snapTo(1f)
+        } else {
+            progress.snapTo(0f)
+            progress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = 620, easing = FastOutSlowInEasing),
+            )
+        }
+    }
+
+    val amount = progress.value
+    val eased = FastOutSlowInEasing.transform(amount)
+    Box(modifier = modifier.clipToBounds()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    if (!reduceMotion && trigger > 0) {
+                        alpha = 0.74f + eased * 0.26f
+                        val scale = 0.992f + eased * 0.008f
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = TransformOrigin(0.5f, 0.42f)
+                    }
+                },
+        ) {
+            content()
+        }
+
+        if (!reduceMotion && trigger > 0 && amount < 0.999f) {
+            Canvas(Modifier.fillMaxSize()) {
+                val travelBase = size.minDimension
+                particles.forEach { particle ->
+                    val local = ((amount - particle.delay) / (1f - particle.delay)).coerceIn(0f, 1f)
+                    if (local > 0f && local < 1f) {
+                        val envelope = sin(PI * local).toFloat()
+                        val travel = travelBase * particle.distance * local
+                        drawCircle(
+                            color = if (particle.cool) Color(0xFFBFE9FF) else Color.White,
+                            radius = particle.radius.dp.toPx() * (0.75f + envelope * 0.55f),
+                            center = Offset(
+                                x = size.width * particle.x + cos(particle.angle) * travel,
+                                y = size.height * particle.y + sin(particle.angle) * travel,
+                            ),
+                            alpha = envelope * 0.72f,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /**
  * Apple Music's lyrics view: big tight type, the playing line crisp and
