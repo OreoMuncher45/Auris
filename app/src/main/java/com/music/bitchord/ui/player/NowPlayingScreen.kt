@@ -18,6 +18,11 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -517,8 +522,8 @@ private val GLOW_ROOM = 10.dp
  * Small enough to be read as a second voice at a glance and no smaller —
  * these are the words of the song, not a caption.
  */
-private val BACKING_FONT_SIZE = 19.sp
-private val BACKING_LINE_HEIGHT = 24.sp
+private val BACKING_FONT_SIZE = 23.sp
+private val BACKING_LINE_HEIGHT = 29.sp
 private const val BACKING_ALPHA = 0.72f
 
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
@@ -551,6 +556,7 @@ fun NowPlayingScreen(
     shuffleEnabled: Boolean,
     autoplayEnabled: Boolean,
     signedIn: Boolean,
+    accountName: String?,
     likeStatus: LikeStatus,
     onToggleLike: () -> Unit,
     onPlayPause: () -> Unit,
@@ -682,6 +688,8 @@ fun NowPlayingScreen(
     // The queue lives inside the player, Apple-style, rather than in a sheet.
     var queueOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
+    var lyricsControlsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(lyricsOpen) { lyricsControlsOpen = false }
     var lyricsLogsOpen by remember { mutableStateOf(false) }
     val showLyricsLogsEnabled by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
     LaunchedEffect(song.videoId) {
@@ -732,17 +740,21 @@ fun NowPlayingScreen(
     BackHandler(enabled = lyricsOpen) {
         if (lyricsLogsOpen) {
             lyricsLogsOpen = false
+        } else if (lyricsControlsOpen) {
+            lyricsControlsOpen = false
         } else {
             lyricsOpen = false
         }
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         val view = LocalView.current
-        DisposableEffect(view, lyricsOpen, lyricsLogsOpen) {
+        DisposableEffect(view, lyricsOpen, lyricsLogsOpen, lyricsControlsOpen) {
             val callback = if (lyricsOpen) {
                 OverlayBack.register(view) {
                     if (lyricsLogsOpen) {
                         lyricsLogsOpen = false
+                    } else if (lyricsControlsOpen) {
+                        lyricsControlsOpen = false
                     } else {
                         lyricsOpen = false
                     }
@@ -880,6 +892,12 @@ fun NowPlayingScreen(
         )
     }
     var volumeDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(lyricsOpen, lyricsControlsOpen, scrubbing, volumeDragging) {
+        if (lyricsOpen && lyricsControlsOpen && !scrubbing && !volumeDragging) {
+            delay(5_000)
+            lyricsControlsOpen = false
+        }
+    }
     var systemVolume by remember { mutableFloatStateOf(volume.value) }
 
     // Glide to the level the system reports, but never fight the finger — a
@@ -1519,7 +1537,9 @@ fun NowPlayingScreen(
                 // of settling — a full-amplitude standing oscillation, not the
                 // single-pixel shiver this rounding alone was built to absorb.
                 // See [granted] below for the fix.
-                if (!lyricsOpen) {
+                // Do not feed transitional artwork measurements back into the controls.
+                // The settled player's spread is retained throughout the return animation.
+                if (!lyricsOpen && p == 0f) {
                     val target = with(density) {
                         val half = slack
                             .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
@@ -1973,6 +1993,9 @@ fun NowPlayingScreen(
                             positionMs = positionMs,
                             isPlaying = isPlaying,
                             onSeekToLine = onSeek,
+                            controlsOpen = lyricsControlsOpen,
+                            onRevealControls = { lyricsControlsOpen = true },
+                            onHideControls = { lyricsControlsOpen = false },
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = HEADER_HEIGHT)
@@ -2020,6 +2043,13 @@ fun NowPlayingScreen(
             // of the player. Whatever is left over above it is the artwork's,
             // which is what keeps this row of controls in the same place on
             // every screen instead of being shoved off the bottom of a tall one.
+            AnimatedVisibility(
+                visible = !lyricsOpen || lyricsControlsOpen,
+                // Fade at the final position; never animate the controls' height.
+                enter = fadeIn(tween(220)),
+                exit = fadeOut(tween(160)),
+            ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Column(
                 modifier = Modifier
                     .widthIn(max = PLAYER_MAX_WIDTH)
@@ -2035,8 +2065,7 @@ fun NowPlayingScreen(
             //
             // Switched off in Settings it goes entirely, rather than sitting
             // there saying no lyrics were found: none were looked for. It is
-            // also the only way into the full lyrics panel, so with it gone
-            // the feature is properly gone.
+            // accompanied by a dedicated lyrics button in the bottom row.
             if (!lyricsOpen && syncedLyricsEnabled) {
                 Box(
                     modifier = Modifier
@@ -2076,6 +2105,26 @@ fun NowPlayingScreen(
                         )
                     }
                 }
+            }
+            if (lyricsOpen) {
+                Text(
+                    text = when {
+                        lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
+                        lyrics.isNullOrEmpty() -> stringResource(R.string.no_lyrics_found)
+                        else -> stringResource(R.string.lyrics_saved_with_download)
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = 0.55f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset(y = 6.dp)
+                        .clickable(enabled = showLyricsLogsEnabled) {
+                            lyricsLogsOpen = !lyricsLogsOpen
+                        }
+                        .padding(vertical = 4.dp),
+                )
             }
             val transitionWindow by AppSettings.smartTransitionWindow.collectAsStateWithLifecycle()
             ThinSlider(
@@ -2161,103 +2210,13 @@ fun NowPlayingScreen(
                 )
             }
 
-            if (lyricsOpen) {
-                Spacer(Modifier.height(16.dp))
-                // Full-width header row: optional logs icon on the far left,
-                // source credit pill in the middle, close circle on the right.
-                // The row stretches edge-to-edge so there is no dangling gap
-                // on either side — the pill just sits between the two icons.
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Min),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // Logs icon — only shown when the debug-log setting is on
-                    // (Advanced Options in Settings). Icon-only, no label.
-                    if (showLyricsLogsEnabled) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                                .clip(CircleShape)
-                                .background(if (lyricsLogsOpen) Color.White.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.10f))
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                ) {
-                                    haptics.play(Haptic.Tap)
-                                    lyricsLogsOpen = !lyricsLogsOpen
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.History,
-                                contentDescription = "Lyrics Logs",
-                                tint = if (lyricsLogsOpen) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    // Source credit pill — same style as original, but sits between
-                    // the two icon buttons and fills leftover horizontal space.
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(percent = 50))
-                            .background(Color.White.copy(alpha = 0.10f))
-                            .padding(horizontal = 18.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = when {
-                                lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
-                                lyrics.isNullOrEmpty() -> stringResource(R.string.no_lyrics_found)
-                                else -> stringResource(R.string.lyrics_saved_with_download)
-                            },
-                            style = MaterialTheme.typography.labelLarge,
-                            color = Color.White.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Box(
-                        modifier = Modifier
-                            // Height from the row, width from the height: a
-                            // circle, not an oval, whatever the pill measures.
-                            .fillMaxHeight()
-                            .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.10f))
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) {
-                                haptics.play(Haptic.Tap)
-                                lyricsLogsOpen = false
-                                lyricsOpen = false
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.Close,
-                            contentDescription = stringResource(R.string.close_lyrics),
-                            tint = Color.White.copy(alpha = 0.7f),
-                            modifier = Modifier.size(16.dp),
-                        )
-                    }
-                }
-                Spacer(Modifier.height(20.dp))
-            } else {
 
             // The transport rides midway between the two blocks it separates:
             // the scrubber above it, and the volume bar and toggle row below,
             // which sit close enough together to read as one. Both of its own
             // gaps take half the spread, so on a tall screen it holds the
             // centre rather than drifting up under the seek bar.
-            Spacer(Modifier.height(14.dp + controlSpread / 2))
+            Spacer(Modifier.height(14.dp + if (lyricsOpen) 0.dp else controlSpread / 2))
 
             // ---- Transport ----
             Row(
@@ -2311,9 +2270,9 @@ fun NowPlayingScreen(
             // the toggle row below it close the gap instead of leaving a
             // blank strip where the volume bar used to be.
             if (hideVolumeBar) {
-                Spacer(Modifier.height(24.dp + controlSpread / 2))
+                Spacer(Modifier.height(6.dp + if (lyricsOpen) 0.dp else controlSpread / 2))
             } else {
-                Spacer(Modifier.height(18.dp + controlSpread / 2))
+                Spacer(Modifier.height(18.dp + if (lyricsOpen) 0.dp else controlSpread / 2))
 
                 // ---- Volume ----
                 Row(
@@ -2353,17 +2312,30 @@ fun NowPlayingScreen(
                     )
                 }
 
-                Spacer(Modifier.height(24.dp))
+                // The volume slider already has 13dp below its drawn track.
+                // Balance that invisible inset with the caption gap below the icons.
+                Spacer(Modifier.height(6.dp))
             }
 
-            // ---- Shuffle · Repeat · AutoPlay · Queue ----
-            // These live here rather than in the queue panel so their state is
-            // readable without opening anything.
+            // The queue owns playback modes; the player owns lyrics and output.
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+            // Preserve the four-button row's outer gaps in both states. SpaceBetween
+            // redistributes only the interior gaps, leaving Queue at the same edge.
+            val edgeInset = ((maxWidth - BOTTOM_ACTION_SIZE * 4) / 5).coerceAtLeast(0.dp)
+            AnimatedContent(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
+                targetState = queueOpen,
+                transitionSpec = {
+                    fadeIn(tween(180, delayMillis = 140)) togetherWith fadeOut(tween(140))
+                },
+                label = "playerBottomActions",
+            ) { showQueueModes ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (showQueueModes) {
                 BottomGlyph(
                     icon = BitChordIcons.Shuffle,
                     contentDescription = stringResource(
@@ -2403,8 +2375,32 @@ fun NowPlayingScreen(
                     haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                     tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
                 )
+                } else {
+                    BottomGlyph(
+                        icon = BitChordIcons.LyricsQuote,
+                        contentDescription = stringResource(if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics),
+                        onClick = {
+                            lyricsLogsOpen = false
+                            lyricsOpen = !lyricsOpen
+                        },
+                        highlighted = lyricsOpen,
+                    )
+                    BottomGlyph(
+                        icon = Icons.Rounded.Headphones,
+                        contentDescription = stringResource(R.string.audio_output),
+                        onClick = { openAudioOutput(context) },
+                    )
+                }
+                Spacer(Modifier.size(BOTTOM_ACTION_SIZE))
+            }
+
+            }
+            // Queue remains mounted and opaque while only the other actions fade.
+            Box(
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = edgeInset),
+            ) {
                 BottomGlyph(
-                    icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                    icon = BitChordIcons.Queue,
                     contentDescription = stringResource(R.string.up_next),
                     onClick = {
                         lyricsOpen = false
@@ -2414,8 +2410,28 @@ fun NowPlayingScreen(
                     haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
                 )
             }
-
+            }
+            // Keep the current output caption visible in both player and queue modes.
             Spacer(Modifier.height(18.dp))
+            val outputName = rememberAudioOutputName(accountName)
+            Box(
+                modifier = Modifier.fillMaxWidth().height(20.dp),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                    Text(
+                        text = outputName,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                        color = Color.White.copy(alpha = 0.55f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth(0.65f)
+                            .clickable { openAudioOutput(context) },
+                    )
+            }
+            Spacer(Modifier.height(18.dp))
+            }
             }
             }
             }
@@ -2498,8 +2514,8 @@ private suspend fun AwaitPointerEventScope.dragQueueIn(
  * The player reports where it is about twice a second, which is fine for a
  * scrubber and far too coarse for a highlight that has to keep up with a
  * singer. This carries that report forward on the frame clock between
- * reports, and resets to the real value whenever a fresh one lands — so it
- * never drifts, it just fills in.
+ * reports. Small corrections hold the highlight until playback catches up;
+ * discontinuities still reset immediately so seeking remains responsive.
  *
  * Returned as state rather than a plain value on purpose: read inside a draw
  * lambda, only the draw phase re-runs each frame. Read in composition, the
@@ -2515,17 +2531,18 @@ private fun rememberLyricClock(positionMs: Long, isPlaying: Boolean): MutableLon
     // pocket, and the composition alone cannot tell the two apart.
     //
     // Resuming needs no catch-up: [positionMs] is a key, so coming back
-    // restarts the effect and the clock is set from the player's own position
-    // before the first frame is asked for.
+    // restarts the effect and reconciles the latest playback report before
+    // requesting another frame.
     val foreground = rememberIsForeground()
     LaunchedEffect(positionMs, isPlaying, foreground) {
-        clock.longValue = positionMs
+        clock.longValue = reconcileLyricPosition(clock.longValue, positionMs)
         if (!isPlaying || !foreground) return@LaunchedEffect
-        var previousFrame = withFrameMillis { it }
+        val firstFrame = withFrameMillis { it }
         while (true) {
             withFrameMillis { frame ->
-                clock.longValue += frame - previousFrame
-                previousFrame = frame
+                // Advance from the authoritative report, not the held display value:
+                // otherwise each small correction would accumulate permanent drift.
+                clock.longValue = maxOf(clock.longValue, positionMs + frame - firstFrame)
             }
         }
     }
@@ -2778,29 +2795,37 @@ private fun LyricsPanel(
     positionMs: Long,
     isPlaying: Boolean,
     onSeekToLine: (Long) -> Unit,
+    controlsOpen: Boolean,
+    onRevealControls: () -> Unit,
+    onHideControls: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val clock = rememberLyricClock(positionMs, isPlaying)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
 
-    // Which line is playing right now: the last one whose stamp has passed.
-    val activeLine by remember(lines, isSynced) {
+    val activeRows by remember(lines, isSynced) {
         derivedStateOf {
-            if (!isSynced) -1 else lines.indexOfLast { it.timeMs <= clock.longValue }
+            if (!isSynced) emptyList() else activeLyricRows(lines, clock.longValue)
         }
     }
-    val alsoActive by remember(lines, isSynced) {
-        derivedStateOf {
-            if (!isSynced) return@derivedStateOf -1
-            val previous = activeLine - 1
-            val line = lines.getOrNull(previous)
-            if (line != null && line.hasKnownEnd && clock.longValue < line.endMs) previous else -1
-        }
-    }
+    // The uppermost unfinished vocal owns the scroll anchor until its end,
+    // even as later rows begin their own independent highlight animations.
+    val scrollLine = activeRows.firstOrNull() ?: -1
     val listState = rememberLazyListState()
+    // LayoutInfo changes on every scroll frame. Observe only height here so
+    // the entire lyrics list is not recomposed for every scrolling pixel.
+    val viewportHeight by remember(listState) {
+        derivedStateOf { listState.layoutInfo.viewportSize.height }
+    }
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     var browsing by remember { mutableStateOf(false) }
+    val onBottomHalfTap: () -> Unit = {
+        if (!listState.isScrollInProgress) {
+            onRevealControls()
+        }
+    }
+
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
@@ -2808,13 +2833,17 @@ private fun LyricsPanel(
     val glowing = !reduceAnimation && !reduceDynamicBlur && lyricsBlur &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
+    val hideControls by rememberUpdatedState(onHideControls)
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
-            if (interaction is DragInteraction.Start) browsing = true
+            if (interaction is DragInteraction.Start) {
+                browsing = true
+                hideControls()
+            }
         }
     }
 
-    val currentLine by rememberUpdatedState(activeLine)
+    val currentLine by rememberUpdatedState(scrollLine)
     val activeOnScreen by remember(listState) {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo.any { it.index == currentLine }
@@ -2835,24 +2864,31 @@ private fun LyricsPanel(
     }
 
     var placed by remember(lines) { mutableStateOf(false) }
-    LaunchedEffect(activeLine, browsing) {
-        if (isSynced && !browsing && !listState.isScrollInProgress &&
-            activeLine >= 0 && activeLine in lines.indices
+    LaunchedEffect(controlsOpen) {
+        if (controlsOpen) browsing = false
+    }
+    // A newer line replaces an unfinished automatic scroll. Only a user's
+    // browsing gesture should suspend following, not our own animation.
+    LaunchedEffect(scrollLine, browsing, controlsOpen) {
+        if (isSynced && !browsing &&
+            scrollLine >= 0 && scrollLine in lines.indices
         ) {
-            val viewport = snapshotFlow { listState.layoutInfo.viewportSize.height }
-                .first { it > 0 }
-            val third = viewport / 3
+            snapshotFlow { listState.layoutInfo.viewportSize.height }.first { it > 0 }
+            // Keep the same top anchor whether the playback controls are visible or hidden.
             if (placed) {
-                listState.animateScrollToItem(activeLine, scrollOffset = -third)
+                listState.animateScrollToItem(scrollLine, scrollOffset = 0)
             } else {
-                listState.scrollToItem(activeLine, scrollOffset = -third)
+                listState.scrollToItem(scrollLine, scrollOffset = 0)
                 placed = true
             }
         }
     }
 
     if (lines.isEmpty()) {
-        Box(modifier, contentAlignment = Alignment.Center) {
+        Box(
+            modifier.revealLyricsControlsOnTap(!controlsOpen && !browsing, onBottomHalfTap),
+            contentAlignment = Alignment.Center,
+        ) {
             Text(
                 text = stringResource(R.string.no_lyrics_for_track),
                 style = MaterialTheme.typography.titleMedium,
@@ -2867,13 +2903,17 @@ private fun LyricsPanel(
         modifier = modifier
             .bleedHorizontally(PLAYER_GUTTER)
             .nestedScroll(keepScroll)
+            // Browsing leaves taps to each lyric row's seek action throughout the list.
+            .revealLyricsControlsOnTap(!controlsOpen && !browsing, onBottomHalfTap)
             .fadingEdges(),
         // Each row carries GLOW_ROOM of its own inset for the halo, so the
         // list hands that much back — otherwise the lines would sit a glow's
         // width further apart and further in than they used to.
         contentPadding = PaddingValues(
-            vertical = 40.dp - GLOW_ROOM,
-            horizontal = PLAYER_GUTTER - GLOW_ROOM,
+            top = 40.dp - GLOW_ROOM,
+            bottom = with(LocalDensity.current) { viewportHeight.toDp() } * 0.8f,
+            start = PLAYER_GUTTER - GLOW_ROOM,
+            end = PLAYER_GUTTER - GLOW_ROOM,
         ),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
@@ -2911,12 +2951,13 @@ private fun LyricsPanel(
                 return@itemsIndexed
             }
 
-            val offset = if (activeLine < 0) 0 else index - activeLine
+            val offset = if (scrollLine < 0) 0 else index - scrollLine
             val distance = abs(offset)
-            val isActive = isSynced && (index == activeLine || index == alsoActive)
+            val isActive = isSynced && index in activeRows
             val blur by animateDpAsState(
                 targetValue = when {
                     !isSynced || reduceDynamicBlur || !lyricsBlur || browsing || isActive -> 0.dp
+                    offset < 0 -> 0.dp
                     else -> (distance * 1.6f).coerceAtMost(7f).dp
                 },
                 label = "lyricBlur",
@@ -2955,14 +2996,15 @@ private fun LyricsPanel(
             } else {
                 val style = if (isSynced) {
                     MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = 27.sp,
-                        lineHeight = 33.sp,
+                        fontSize = 34.sp,
+                        lineHeight = 41.sp,
+                        fontWeight = FontWeight.ExtraBold,
                     )
                 } else {
                     MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 23.sp,
-                        lineHeight = 31.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 30.sp,
+                        lineHeight = 38.sp,
+                        fontWeight = FontWeight.ExtraBold,
                     )
                 }
                 // The playing line swells a touch. Anchored to its left edge,
@@ -2982,6 +3024,15 @@ private fun LyricsPanel(
                 )
                 val shape = Modifier
                     .fillMaxWidth()
+                    .layout { measurable, constraints ->
+                        val textWidth = (constraints.maxWidth / 1.04f).toInt()
+                        val placeable = measurable.measure(
+                            constraints.copy(minWidth = textWidth, maxWidth = textWidth),
+                        )
+                        layout(constraints.maxWidth, placeable.height) {
+                            placeable.placeRelative(0, 0)
+                        }
+                    }
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
@@ -3513,6 +3564,8 @@ private fun TransportGlyph(
     }
 }
 
+private val BOTTOM_ACTION_SIZE = 44.dp
+
 @Composable
 private fun BottomGlyph(
     icon: ImageVector?,
@@ -3537,7 +3590,7 @@ private fun BottomGlyph(
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(BOTTOM_ACTION_SIZE)
             .clip(CircleShape)
             .background(
                 if (highlighted) Color.White.copy(alpha = 0.20f) else Color.Transparent,

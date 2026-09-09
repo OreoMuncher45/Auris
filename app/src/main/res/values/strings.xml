@@ -704,4 +704,8 @@
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>
     <string name="profile_unavailable">No signed-in profile is available on this page yet.</string>
+    <string name="open_lyrics">Lyrics</string>
+    <string name="audio_output">Audio output</string>
+    <string name="personal_phone">%1$s’s Phone</string>
+    <string name="this_phone">This phone</string>
 </resources>

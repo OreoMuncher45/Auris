@@ -1400,6 +1400,7 @@ private fun BitChordApp(
             ?: song
         NowPlayingScreen(
             song = displayedSong,
+            accountName = account?.name,
             windowWidth = windowWidth,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
