@@ -382,14 +382,15 @@ private fun LazyListScope.searchSuggestions(
     // This is a list-level inset rather than padding hidden inside the first
     // row. It keeps the gap under the field stable even when that row changes
     // its text or icon treatment.
-    item(key = "suggestions:top-inset") { Spacer(Modifier.height(12.dp)) }
-    itemsIndexed(suggestions, key = { _, term -> "suggest:$term" }) { index, term ->
+    item(key = "suggestions:top-inset") { Spacer(Modifier.height(8.dp)) }
+    // Skip the echo of the typed text (element 0) — it's already visible in
+    // the search field itself — and cap at N so the list stays compact above
+    // the playable-media cards.
+    itemsIndexed(suggestions.drop(1).take(5), key = { _, term -> "suggest:$term" }) { _, term ->
         SuggestionRow(
             term = term,
-            isQueryAction = index == 0,
-            // The lead row *is* what's in the field, so there is nothing to
-            // fill it with and the arrow would be a no-op button.
-            onFill = if (index == 0) null else ({ onFill(term) }),
+            isQueryAction = false,
+            onFill = { onFill(term) },
             onClick = { onClick(term) },
         )
     }
@@ -415,8 +416,8 @@ private fun SuggestionRow(
             .padding(
                 start = PAGE_GUTTER,
                 end = 8.dp,
-                top = 6.dp,
-                bottom = 6.dp,
+                top = 4.dp,
+                bottom = 4.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
