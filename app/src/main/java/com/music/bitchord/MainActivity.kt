@@ -2161,189 +2161,197 @@ private fun BitChordApp(
 
                 // Every top bar is a fade rather than a pane — see [TopFadeBlur].
                 // Drawn before the bar so the bar's own content sits on top of it.
-                val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
-                    !showAccountScrobbling && !showSources && !showReplay
-                TopFadeBlur(
-                    hazeState = hazeState,
-                    // Replay paints its own full-bleed black backdrop up under the
-                    // status bar, exactly as a release page's artwork does.
-                    pageColor = when {
-                        showReplay -> Color.Black
-                        isDetailVisible -> detailPalette.wash
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    scrimColor = when {
-                        showReplay -> Color.Black
-                        isDetailVisible -> detailPalette.background
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
+                // Hidden on the Search tab: the search field itself becomes the
+                // top element, sitting cleanly under the status bar inset.
+                val isSearchTab = selectedTab == TAB_SEARCH && !showSettings &&
+                    !showAccountScrobbling && !showSources && !showDiscord &&
+                    !showHistory && detail == null && libraryShowAll == null &&
+                    selectedMoodGenre == null && !showReplay
+                if (!isSearchTab) {
+                    val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
+                        !showAccountScrobbling && !showSources && !showReplay
+                    TopFadeBlur(
+                        hazeState = hazeState,
+                        // Replay paints its own full-bleed black backdrop up under the
+                        // status bar, exactly as a release page's artwork does.
+                        pageColor = when {
+                            showReplay -> Color.Black
+                            isDetailVisible -> detailPalette.wash
+                            else -> MaterialTheme.colorScheme.background
+                        },
+                        scrimColor = when {
+                            showReplay -> Color.Black
+                            isDetailVisible -> detailPalette.background
+                            else -> MaterialTheme.colorScheme.background
+                        },
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
 
-                FrostedTopBar(
-                    title = when {
-                        showDiscord -> "Discord"
-                        showHistory -> stringResource(R.string.history)
-                        libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
-                        showAccountScrobbling -> stringResource(R.string.account_scrobbling)
-                        showSources -> stringResource(R.string.sources)
-                        showSettings -> stringResource(R.string.settings)
-                        showReplay -> stringResource(R.string.replay)
-                        detail != null -> detail.title
-                        selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                        else -> tabs[selectedTab].let {
-                            if (it.label == "Play") stringResource(R.string.listen_now) else it.label
-                        }
-                    },
-                    // Search has no large in-list header to hand the title back to —
-                    // the field takes that space — so its bar title is always up.
-                    scrolled = when {
-                        showSettings || showAccountScrobbling || showSources || showDiscord || showHistory ||
-                            (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
-                        // The page leads with its own large "Replay", so the bar
-                        // stays out of the way until that has been scrolled off.
-                        showReplay -> replayScrolled
-                        detail != null -> detailScrolled
-                        else -> scrolled || selectedTab == TAB_SEARCH
-                    },
-                    refreshing = currentFeed != null && currentFeed in refreshing,
-                    pullFraction = { currentPull?.distanceFraction ?: 0f },
-                    onBack = when {
-                        showDiscord -> ({ showDiscord = false })
-                        showHistory -> ({ showHistory = false })
-                        libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
-                        showAccountScrobbling -> ({ showAccountScrobbling = false })
-                        showSources -> ({ showSources = false })
-                        showSettings -> ({ showSettings = false })
-                        showReplay -> ({ showReplay = false })
-                        detail != null -> ({ viewModel.closeDetail(); Unit })
-                        selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
-                        else -> null
-                    },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                    actions = {
-                        // Only worth surfacing where there's room for it and it won't
-                        // be mistaken for a per-page action — Home, at rest.
-                        if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
-                            updateNotice?.let { update ->
-                                IconButton(onClick = { showUpdateDialog = true }) {
-                                    Icon(
-                                        // An arrow rising out of a bar, not the
-                                        // little phone-with-an-arrow: at 24dp the
-                                        // handset outline is mush, and the glyph
-                                        // has to read as "newer version" rather
-                                        // than as "something about your device".
-                                        Icons.Rounded.Upgrade,
-                                        contentDescription = stringResource(R.string.update_available, update.version),
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
+                    FrostedTopBar(
+                        title = when {
+                            showDiscord -> "Discord"
+                            showHistory -> stringResource(R.string.history)
+                            libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
+                            showAccountScrobbling -> stringResource(R.string.account_scrobbling)
+                            showSources -> stringResource(R.string.sources)
+                            showSettings -> stringResource(R.string.settings)
+                            showReplay -> stringResource(R.string.replay)
+                            detail != null -> detail.title
+                            selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
+                            else -> tabs[selectedTab].let {
+                                if (it.label == "Play") stringResource(R.string.listen_now) else it.label
+                            }
+                        },
+                        // Search has no large in-list header to hand the title back to —
+                        // the field takes that space — so its bar title is always up.
+                        scrolled = when {
+                            showSettings || showAccountScrobbling || showSources || showDiscord || showHistory ||
+                                (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
+                            // The page leads with its own large "Replay", so the bar
+                            // stays out of the way until that has been scrolled off.
+                            showReplay -> replayScrolled
+                            detail != null -> detailScrolled
+                            else -> scrolled || selectedTab == TAB_SEARCH
+                        },
+                        refreshing = currentFeed != null && currentFeed in refreshing,
+                        pullFraction = { currentPull?.distanceFraction ?: 0f },
+                        onBack = when {
+                            showDiscord -> ({ showDiscord = false })
+                            showHistory -> ({ showHistory = false })
+                            libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
+                            showAccountScrobbling -> ({ showAccountScrobbling = false })
+                            showSources -> ({ showSources = false })
+                            showSettings -> ({ showSettings = false })
+                            showReplay -> ({ showReplay = false })
+                            detail != null -> ({ viewModel.closeDetail(); Unit })
+                            selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
+                            else -> null
+                        },
+                        modifier = Modifier.align(Alignment.TopCenter),
+                        actions = {
+                            // Only worth surfacing where there's room for it and it won't
+                            // be mistaken for a per-page action — Home, at rest.
+                            if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
+                                updateNotice?.let { update ->
+                                    IconButton(onClick = { showUpdateDialog = true }) {
+                                        Icon(
+                                            // An arrow rising out of a bar, not the
+                                            // little phone-with-an-arrow: at 24dp the
+                                            // handset outline is mush, and the glyph
+                                            // has to read as "newer version" rather
+                                            // than as "something about your device".
+                                            Icons.Rounded.Upgrade,
+                                            contentDescription = stringResource(R.string.update_available, update.version),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
                                 }
                             }
-                        }
-                        if (!showSettings && !showAccountScrobbling) {
-                            // Left of the account photo, and only on Library itself:
-                            // a history is a record of what was played, which reads
-                            // as that tab's business rather than every tab's.
-                            if (!showHistory && !showReplay && !showDiscord && libraryShowAll == null &&
-                                detail == null && selectedTab == TAB_LIBRARY
-                            ) {
-                                IconButton(
-                                    onClick = {
-                                        showHistory = true
-                                        viewModel.loadHistory()
-                                    },
+                            if (!showSettings && !showAccountScrobbling) {
+                                // Left of the account photo, and only on Library itself:
+                                // a history is a record of what was played, which reads
+                                // as that tab's business rather than every tab's.
+                                if (!showHistory && !showReplay && !showDiscord && libraryShowAll == null &&
+                                    detail == null && selectedTab == TAB_LIBRARY
                                 ) {
-                                    Icon(
-                                        Icons.Rounded.History,
-                                        contentDescription = stringResource(R.string.listening_history),
-                                        tint = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                }
-                            }
-                            // Left of the account photo, and only on a Library
-                            // "Show all" grid — the same control the Downloads
-                            // folder offers (see `LocalSearchField`), adapted to
-                            // the one thing a playlist or album card carries: a
-                            // title.
-                            if (libraryShowAll != null && detail == null) {
-                                Box {
-                                    IconButton(onClick = { librarySortMenuOpen = true }) {
+                                    IconButton(
+                                        onClick = {
+                                            showHistory = true
+                                            viewModel.loadHistory()
+                                        },
+                                    ) {
                                         Icon(
-                                            Icons.Rounded.Sort,
-                                            contentDescription = stringResource(R.string.sort_library),
+                                            Icons.Rounded.History,
+                                            contentDescription = stringResource(R.string.listening_history),
                                             tint = MaterialTheme.colorScheme.onSurface,
                                         )
                                     }
-                                    DropdownMenu(
-                                        expanded = librarySortMenuOpen,
-                                        onDismissRequest = { librarySortMenuOpen = false },
-                                    ) {
-                                        LibrarySort.entries.forEach { option ->
-                                            DropdownMenuItem(
-                                                text = { Text(option.localizedLabel()) },
-                                                trailingIcon = if (option == librarySort) {
-                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                } else null,
-                                                onClick = {
-                                                    AppSettings.setLibrarySort(option)
-                                                    librarySortMenuOpen = false
-                                                },
+                                }
+                                // Left of the account photo, and only on a Library
+                                // "Show all" grid — the same control the Downloads
+                                // folder offers (see `LocalSearchField`), adapted to
+                                // the one thing a playlist or album card carries: a
+                                // title.
+                                if (libraryShowAll != null && detail == null) {
+                                    Box {
+                                        IconButton(onClick = { librarySortMenuOpen = true }) {
+                                            Icon(
+                                                Icons.Rounded.Sort,
+                                                contentDescription = stringResource(R.string.sort_library),
+                                                tint = MaterialTheme.colorScheme.onSurface,
                                             )
+                                        }
+                                        DropdownMenu(
+                                            expanded = librarySortMenuOpen,
+                                            onDismissRequest = { librarySortMenuOpen = false },
+                                        ) {
+                                            LibrarySort.entries.forEach { option ->
+                                                DropdownMenuItem(
+                                                    text = { Text(option.localizedLabel()) },
+                                                    trailingIcon = if (option == librarySort) {
+                                                        { Icon(Icons.Rounded.Check, contentDescription = null) }
+                                                    } else null,
+                                                    onClick = {
+                                                        AppSettings.setLibrarySort(option)
+                                                        librarySortMenuOpen = false
+                                                    },
+                                                )
+                                            }
                                         }
                                     }
                                 }
-                            }
-                            // Left of the account photo, and only on an album or
-                            // playlist page — an artist page has no single track
-                            // list to reorder, and the device folders already
-                            // carry this same control themselves (see
-                            // `LocalSearchField`).
-                            if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
-                                Box {
-                                    IconButton(onClick = { songSortMenuOpen = true }) {
-                                        Icon(
-                                            Icons.Rounded.Sort,
-                                            contentDescription = stringResource(R.string.sort_songs),
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = songSortMenuOpen,
-                                        onDismissRequest = { songSortMenuOpen = false },
-                                    ) {
-                                        SongSort.entries.forEach { option ->
-                                            DropdownMenuItem(
-                                                text = { Text(option.localizedLabel()) },
-                                                trailingIcon = if (option == songSort) {
-                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                } else null,
-                                                onClick = {
-                                                    songSort = option
-                                                    songSortMenuOpen = false
-                                                },
+                                // Left of the account photo, and only on an album or
+                                // playlist page — an artist page has no single track
+                                // list to reorder, and the device folders already
+                                // carry this same control themselves (see
+                                // `LocalSearchField`).
+                                if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
+                                    Box {
+                                        IconButton(onClick = { songSortMenuOpen = true }) {
+                                            Icon(
+                                                Icons.Rounded.Sort,
+                                                contentDescription = stringResource(R.string.sort_songs),
+                                                tint = MaterialTheme.colorScheme.onSurface,
                                             )
+                                        }
+                                        DropdownMenu(
+                                            expanded = songSortMenuOpen,
+                                            onDismissRequest = { songSortMenuOpen = false },
+                                        ) {
+                                            SongSort.entries.forEach { option ->
+                                                DropdownMenuItem(
+                                                    text = { Text(option.localizedLabel()) },
+                                                    trailingIcon = if (option == songSort) {
+                                                        { Icon(Icons.Rounded.Check, contentDescription = null) }
+                                                    } else null,
+                                                    onClick = {
+                                                        songSort = option
+                                                        songSortMenuOpen = false
+                                                    },
+                                                )
+                                            }
                                         }
                                     }
                                 }
+                                // Left of the account photo, and only there while
+                                // there is a batch to report on — see
+                                // [TopBarDownloadButton], which decides that for
+                                // itself rather than being told.
+                                TopBarDownloadButton(onClick = { showDownloadManager = true })
+                                TopBarAccountButton(
+                                    account = account,
+                                    onClick = {
+                                        if (signedIn) {
+                                            viewModel.loadChannels()
+                                            showAccountSelector = true
+                                        } else showSettings = true
+                                    },
+                                    onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
+                                )
                             }
-                            // Left of the account photo, and only there while
-                            // there is a batch to report on — see
-                            // [TopBarDownloadButton], which decides that for
-                            // itself rather than being told.
-                            TopBarDownloadButton(onClick = { showDownloadManager = true })
-                            TopBarAccountButton(
-                                account = account,
-                                onClick = {
-                                    if (signedIn) {
-                                        viewModel.loadChannels()
-                                        showAccountSelector = true
-                                    } else showSettings = true
-                                },
-                                onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
-                            )
-                        }
-                    },
-                )
+                        },
+                    )
+                }
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(

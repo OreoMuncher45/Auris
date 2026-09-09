@@ -47,6 +47,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -151,7 +155,9 @@ fun SearchScreen(
         // Search field and filter tabs stay fixed at the top, outside the
         // scrolling list, so they're always reachable rather than scrolling
         // away with the results or recent searches beneath them.
-        Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+        // The top bar is hidden on this tab, so we use status bar insets
+        // directly — no need to clear a frosted bar that isn't there.
+        Column(modifier = Modifier.statusBarsPadding()) {
             SearchField(
                 query = query,
                 onQueryChange = onQueryChange,
@@ -416,8 +422,8 @@ private fun SuggestionRow(
             .padding(
                 start = PAGE_GUTTER,
                 end = 8.dp,
-                top = 4.dp,
-                bottom = 4.dp,
+                top = 6.dp,
+                bottom = 6.dp,
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
