@@ -104,11 +104,14 @@ fun SearchScreen(
     onBrowseLongPress: ((BrowseItem) -> Unit)? = null,
     history: List<String>,
     suggestions: List<String>,
+    typeaheadResults: List<SearchResult>,
     onSubmit: () -> Unit,
     onSuggestionClick: (String) -> Unit,
     onHistoryClick: (String) -> Unit,
     onHistoryRemove: (String) -> Unit,
     onHistoryClear: () -> Unit,
+    /** Long-press handler for typeahead rows — opens the song actions sheet. */
+    onTypeaheadLongPress: ((Song) -> Unit)? = null,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
 ) {
@@ -130,6 +133,11 @@ fun SearchScreen(
     // up: the results are for whatever was searched before this edit began,
     // and so are the filter tabs above them.
     val suggesting = suggestions.isNotEmpty()
+    // Live media results arrive from the parallel typeahead pipeline; show
+    // them only while the user is still typing (suggestions visible), so they
+    // appear as a dropdown beneath the text completions rather than floating
+    // after the search has committed.
+    val showTypeahead = typeaheadResults.isNotEmpty() && suggesting
     LaunchedEffect(listState, results, loadingMore) {
         if (results !is UiState.Success) return@LaunchedEffect
         snapshotFlow {
@@ -174,6 +182,12 @@ fun SearchScreen(
                         focusManager.clearFocus()
                     },
                     onFill = onQueryChange,
+                )
+                // While typing, show live media results beneath text suggestions
+                showTypeahead -> searchTypeaheadDropdown(
+                    typeaheadResults = typeaheadResults,
+                    onSongClick = { song -> onTopResultPlay(song) },
+                    onSongLongPress = onTypeaheadLongPress,
                 )
                 results == null -> if (history.isEmpty()) {
                     item { MessageState(stringResource(R.string.search_empty)) }
@@ -408,7 +422,7 @@ private fun SuggestionRow(
             // The first row is the deliberate action to search the exact text
             // in the field, not a server-provided completion. Naming it makes
             // the otherwise duplicated wording read as intentional.
-            text = if (isQueryAction) "${stringResource(R.string.search)} “$term”" else term,
+            text = if (isQueryAction) "${stringResource(R.string.search)} "$term"" else term,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
@@ -435,6 +449,97 @@ private fun SuggestionRow(
             // A width-only spacer made the first row shorter than the ones
             // below, so its vertical rhythm looked visibly uneven.
             Spacer(Modifier.size(40.dp))
+        }
+    }
+}
+
+/**
+ * Hybrid dropdown shown beneath text suggestions while typing: a horizontal
+ * divider, then live media rows (cover art + title + subtitle) that play on
+ * tap and open the song menu on long-press.
+ */
+@Composable
+private fun LazyListScope.searchTypeaheadDropdown(
+    typeaheadResults: List<SearchResult>,
+    onSongClick: (Song) -> Unit,
+    onSongLongPress: ((Song) -> Unit)?,
+) {
+    item(key = "typeahead:divider") {
+        HorizontalDivider(
+            modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+        )
+    }
+    items(typeaheadResults, key = { result ->
+        when (result) {
+            is SearchResult.Track -> "ta:track:${result.song.videoId}"
+            is SearchResult.Browse -> "ta:browse:${result.item.browseId}"
+            is SearchResult.TopTrack -> "ta:top:${result.song.videoId}"
+        }
+    }) { result ->
+        when (result) {
+            is SearchResult.Track -> TypeaheadSongRow(
+                song = result.song,
+                onClick = { onSongClick(result.song) },
+                onLongPress = onSongLongPress?.let { { it(result.song) } },
+            )
+            is SearchResult.Browse -> BrowseRow(
+                item = result.item,
+                onClick = { /* browse handled via detail page — not available here */ },
+            )
+            is SearchResult.TopTrack -> TypeaheadSongRow(
+                song = result.song,
+                onClick = { onSongClick(result.song) },
+                onLongPress = onSongLongPress?.let { { it(result.song) } },
+            )
+        }
+    }
+}
+
+/**
+ * A single media row inside the typeahead dropdown: 52dp cover art, title,
+ * and artist/album subtitle. Tap plays the track; long-press opens the menu.
+ */
+@Composable
+private fun TypeaheadSongRow(
+    song: Song,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = song.artworkAt(ROW_ART_PX),
+            contentDescription = null,
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .thumbnailBorder(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = song.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = listOfNotNull(song.artist).joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
