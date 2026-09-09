@@ -173,21 +173,28 @@ fun SearchScreen(
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
             when {
-                suggesting -> searchSuggestions(
-                    suggestions = suggestions,
-                    // Picking one is done typing, so the keyboard comes down
-                    // with it and the results get the whole screen.
-                    onClick = { term ->
-                        onSuggestionClick(term)
-                        focusManager.clearFocus()
-                    },
-                    onFill = onQueryChange,
-                )
-                showTypeahead -> searchTypeaheadDropdown(
-                    typeaheadResults = typeaheadResults,
-                    onSongClick = { song -> onTopResultPlay(song) },
-                    onSongLongPress = onTypeaheadLongPress,
-                )
+                suggesting -> {
+                    searchSuggestions(
+                        suggestions = suggestions,
+                        // Picking one is done typing, so the keyboard comes down
+                        // with it and the results get the whole screen.
+                        onClick = { term ->
+                            onSuggestionClick(term)
+                            focusManager.clearFocus()
+                        },
+                        onFill = onQueryChange,
+                    )
+                    if (showTypeahead) {
+                        searchTypeaheadDropdown(
+                            typeaheadResults = typeaheadResults,
+                            onSongClick = { song -> onTopResultPlay(song) },
+                            onSongLongPress = onTypeaheadLongPress,
+                            onBrowseClick = { item ->
+                                onBrowseClick(item)
+                            },
+                        )
+                    }
+                }
                 results == null -> if (history.isEmpty()) {
                     item { MessageState(stringResource(R.string.search_empty)) }
                 } else {
@@ -464,6 +471,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
     typeaheadResults: List<SearchResult>,
     onSongClick: (Song) -> Unit,
     onSongLongPress: ((Song) -> Unit)?,
+    onBrowseClick: (BrowseItem) -> Unit,
 ) {
     item(key = "typeahead:divider") {
         HorizontalDivider(
@@ -487,7 +495,8 @@ private fun LazyListScope.searchTypeaheadDropdown(
             )
             is SearchResult.Browse -> BrowseRow(
                 item = result.item,
-                onClick = { /* browse handled via detail page — not available here */ },
+                onClick = { onBrowseClick(result.item) },
+                onLongPress = onSongLongPress?.let { { /* browse long-press not applicable */ } },
             )
             is SearchResult.TopTrack -> TypeaheadSongRow(
                 song = result.song,

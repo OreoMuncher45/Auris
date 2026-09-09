@@ -157,6 +157,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _suggestions = MutableStateFlow<List<String>>(emptyList())
     val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
 
+    /**
+     * Live media results shown alongside typeahead suggestions. Populated by a
+     * lightweight search that runs in parallel with text completions; the UI
+     * renders these as playable track cards and browse items below the text
+     * suggestion rows. Cleared when the user commits to a search or empties
+     * the field.
+     */
+    private val _typeaheadResults = MutableStateFlow<List<SearchResult>>(emptyList())
+    val typeaheadResults: StateFlow<List<SearchResult>> = _typeaheadResults.asStateFlow()
+
     // The search pipeline's own state. Declared here, above [init], because
     // that is where the collector is started from and a property declared
     // below it would still be null when it runs. See [startSearchPipeline].
@@ -1025,6 +1035,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         startSearchPipeline()
         startSuggestPipeline()
+        startTypeaheadMediaPipeline()
         loadHome()
         loadExplore()
         if (_signedIn.value) {
@@ -1397,6 +1408,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _searchLoadingMore.value = false
             _results.value = null
             _suggestions.value = emptyList()
+            _typeaheadResults.value = emptyList()
             return
         }
         // The previous keystroke's completions are left up beneath the new
@@ -1433,6 +1445,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun submitSearch() {
         recordSearch()
         _suggestions.value = emptyList()
+        _typeaheadResults.value = emptyList()
         runSearch()
     }
 
@@ -1445,6 +1458,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun searchFor(term: String) {
         _query.value = term
         _suggestions.value = emptyList()
+        _typeaheadResults.value = emptyList()
         SearchHistory.record(term)
         runSearch()
     }
@@ -1625,6 +1639,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
     }
 
+    /**
+     * Parallel pipeline that fetches live media results (tracks, artists,
+     * albums) for the current query text. Runs alongside [startSuggestPipeline]
+     * with its own debounce so a fast typist doesn't saturate the network.
+     */
+    @OptIn(FlowPreview::class)
+    private fun startTypeaheadMediaPipeline() = viewModelScope.launch {
+        suggestRequests
+            .debounce(TYPEAHEAD_MEDIA_DEBOUNCE_MS)
+            .collectLatest { input ->
+                if (input.isBlank()) {
+                    _typeaheadResults.value = emptyList()
+                    return@collectLatest
+                }
+                // Only show media results while suggestions are still visible —
+                // i.e., the user is still typing, not reading search results.
+                if (_suggestions.value.isEmpty()) {
+                    _typeaheadResults.value = emptyList()
+                    return@collectLatest
+                }
+                val result = YtMusicRepository.searchTypeahead(input).getOrNull()
+                // If the field moved on, drop the result silently.
+                if (_query.value != input) {
+                    _typeaheadResults.value = emptyList()
+                    return@collectLatest
+                }
+                // Cap results so the dropdown doesn't grow unbounded.
+                _typeaheadResults.value = result?.rows.orEmpty().take(TYPEAHEAD_MAX_RESULTS)
+            }
+    }
+
     /** Caches and publishes the initial result page without waiting for later pages. */
     private fun published(
         page: YtMusicRepository.SearchPage,
@@ -1755,6 +1800,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * list is up by the time the thumb has left the key.
          */
         const val SUGGEST_DEBOUNCE_MS = 180L
+
+        /**
+         * Debounce for the parallel media-search pipeline. Slightly longer than
+         * text suggestions so it doesn't fire on every single keystroke — a
+         * full search is heavier than a suggestion request, and the UI only
+         * needs a few results to fill the dropdown.
+         */
+        const val TYPEAHEAD_MEDIA_DEBOUNCE_MS = 350L
+
+        /**
+         * Maximum number of live media results shown in the typeahead dropdown.
+         * Enough to give variety without making the list unscrollable.
+         */
+        const val TYPEAHEAD_MAX_RESULTS = 6
 
         const val SEARCH_CACHE_ENTRIES = 100
 
