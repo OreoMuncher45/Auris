@@ -172,8 +172,8 @@ fun SearchScreen(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
-            when {
-                suggesting -> searchSuggestions(
+            if (suggesting) {
+                searchSuggestions(
                     suggestions = suggestions,
                     // Picking one is done typing, so the keyboard comes down
                     // with it and the results get the whole screen.
@@ -183,19 +183,24 @@ fun SearchScreen(
                     },
                     onFill = onQueryChange,
                 )
+            } else if (showTypeahead) {
                 // While typing, show live media results beneath text suggestions
-                showTypeahead -> searchTypeaheadDropdown(
+                searchTypeaheadDropdown(
                     typeaheadResults = typeaheadResults,
                     onSongClick = { song -> onTopResultPlay(song) },
                     onSongLongPress = onTypeaheadLongPress,
                 )
-                results == null -> if (history.isEmpty()) {
+            } else if (results == null) {
+                if (history.isEmpty()) {
                     item { MessageState(stringResource(R.string.search_empty)) }
                 } else {
                     recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
                 }
-                results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
-                results is UiState.Error -> item { MessageState(results.message) }
+            } else when (results) {
+                is UiState.Loading -> item(key = "search:skeleton:loading") {
+                    songListSkeleton(circular = filter == SearchFilter.ARTISTS)
+                }
+                is UiState.Error -> item { MessageState(results.message) }
                 results is UiState.Success -> {
                     val tracks = results.data
                         .mapNotNull { row -> when (row) {
@@ -256,11 +261,15 @@ fun SearchScreen(
                             }
                         }
                     }
-                    if (loadingMore) songListSkeleton(
-                        count = 3,
-                        keyPrefix = "skeleton:search:more",
-                        circular = filter == SearchFilter.ARTISTS,
-                    )
+                    if (loadingMore) {
+                        item(key = "search:skeleton:more") {
+                            songListSkeleton(
+                                count = 3,
+                                keyPrefix = "skeleton:search:more",
+                                circular = filter == SearchFilter.ARTISTS,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -422,7 +431,7 @@ private fun SuggestionRow(
             // The first row is the deliberate action to search the exact text
             // in the field, not a server-provided completion. Naming it makes
             // the otherwise duplicated wording read as intentional.
-            text = if (isQueryAction) "${stringResource(R.string.search)} "$term"" else term,
+            text = if (isQueryAction) """${stringResource(R.string.search)} "$term"""" else term,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
