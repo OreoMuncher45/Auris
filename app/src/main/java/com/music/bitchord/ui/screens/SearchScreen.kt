@@ -151,7 +151,16 @@ fun SearchScreen(
         // Search field and filter tabs stay fixed at the top, outside the
         // scrolling list, so they're always reachable rather than scrolling
         // away with the results or recent searches beneath them.
-        Column(modifier = Modifier.padding(top = contentPadding.calculateTopPadding())) {
+        // While the user is typing (suggestions visible), collapse the top
+        // inset so the search field sits near the status bar — the frosted
+        // top bar becomes invisible behind it, freeing ~64dp of vertical
+        // space for playable-media rows above the soft keyboard.
+        val topPad = if (suggesting) {
+            0.dp
+        } else {
+            contentPadding.calculateTopPadding()
+        }
+        Column(modifier = Modifier.padding(top = topPad)) {
             SearchField(
                 query = query,
                 onQueryChange = onQueryChange,
@@ -509,7 +518,7 @@ private fun LazyListScope.searchTypeaheadDropdown(
 }
 
 /**
- * A single media row inside the typeahead dropdown: 52dp cover art, title,
+ * A single media row inside the typeahead dropdown: 44dp cover art, title,
  * and artist/album subtitle. Tap plays the track; long-press opens the menu.
  */
 @Composable
@@ -522,14 +531,14 @@ private fun TypeaheadSongRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
             model = song.artworkAt(ROW_ART_PX),
             contentDescription = null,
             modifier = Modifier
-                .size(52.dp)
+                .size(44.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .thumbnailBorder(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant),
@@ -647,14 +656,14 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
             model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
             contentDescription = null,
             modifier = Modifier
-                .size(52.dp)
+                .size(44.dp)
                 .clip(
                     if (item.type == BrowseType.ARTIST) CircleShape
                     else RoundedCornerShape(8.dp),
