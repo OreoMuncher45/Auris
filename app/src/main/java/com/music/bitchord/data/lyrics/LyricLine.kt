@@ -43,6 +43,55 @@ data class LyricLine(
     val isWordSynced: Boolean get() = words.isNotEmpty()
 
     /**
+     * Where each of [words] sits in [text], as character ranges.
+     *
+     * Walked from where the last one ended rather than searched from the start,
+     * so a word repeated in the line lines up with its own occurrence — the
+     * same walk [revealedChars] does, kept once because the rise reads it on
+     * every frame of the line being sung rather than once as it passes.
+     */
+    val wordSpans: List<IntRange> by lazy(LazyThreadSafetyMode.NONE) {
+        var offset = 0
+        words.map { word ->
+            val start = text.indexOf(word.text, offset).takeIf { it >= 0 } ?: offset
+            val end = start + word.text.length
+            offset = end
+            start until end
+        }
+    }
+
+    /**
+     * Whether anything on this line is off the floor at [positionMs].
+     *
+     * Two comparisons, so the lines that are not being sung — which is every
+     * line but one, on every frame — settle the question without walking their
+     * words to find out that none of them have moved.
+     */
+    fun isLifted(positionMs: Long): Boolean {
+        val first = words.firstOrNull() ?: return false
+        return positionMs > first.startMs && positionMs < words.last().endMs + RISE_MS
+    }
+
+    /**
+     * How far the word covering [positionMs] has lifted, 0..1.
+     *
+     * Apple Music's words don't only light up, they rise as they land and
+     * settle back once they are past — the lift travelling along the line is
+     * most of what separates singing from a bar sliding across the text.
+     *
+     * Up from the word's own start and down from its own end, both over
+     * [RISE_MS], so a word held longer than that reaches the top and rests
+     * there while patter only ever gets part of the way up — the same "a note
+     * carried is worth more than a note rattled off" that shapes the glow.
+     */
+    fun wordLift(index: Int, positionMs: Long): Float {
+        val word = words.getOrNull(index) ?: return 0f
+        val rising = ((positionMs - word.startMs) / RISE_MS).coerceIn(0f, 1f)
+        val falling = (1f - (positionMs - word.endMs) / RISE_MS).coerceIn(0f, 1f)
+        return smooth(minOf(rising, falling))
+    }
+
+    /**
      * Whether anything actually told us when the singing stops, rather than
      * only when it starts. Word timings carry it, and so does a provider that
      * stamps the line's own end ([sungUntilMs]).
@@ -136,6 +185,12 @@ data class LyricLine(
         return (GLOW_FLOOR + (1f - GLOW_FLOOR) * pace) * envelope.coerceIn(0f, 1f)
     }
 }
+
+/** How long a word takes to rise, and to settle back down once it is past. */
+private const val RISE_MS = 700f
+
+/** Ease in and out of the ends, so the lift has no corners on it. */
+private fun smooth(fraction: Float) = fraction * fraction * (3f - 2f * fraction)
 
 /** A word this short is patter; it gets [GLOW_FLOOR] and no more. */
 private const val GLOW_FAST_MS = 130L
