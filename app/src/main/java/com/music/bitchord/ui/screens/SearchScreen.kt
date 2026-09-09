@@ -196,78 +196,80 @@ fun SearchScreen(
                 } else {
                     recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
                 }
-            } else when (results) {
-                is UiState.Loading -> item(key = "search:skeleton:loading") {
-                    songListSkeleton(circular = filter == SearchFilter.ARTISTS)
-                }
-                is UiState.Error -> item { MessageState(results.message) }
-                results is UiState.Success -> {
-                    val tracks = results.data
-                        .mapNotNull { row -> when (row) {
-                            is SearchResult.TopTrack -> row.song
-                            is SearchResult.Track -> row.song
-                            is SearchResult.Browse -> null
-                        } }
-                    val topResult = results.data.filterIsInstance<SearchResult.TopTrack>().firstOrNull()
-                    if (filter == SearchFilter.ALL && topResult != null) {
-                        item(key = "search:top-result:${topResult.song.videoId}") {
-                            TopResultCard(
-                                song = topResult.song,
-                                onPlay = { onTopResultPlay(topResult.song) },
-                                onPlaylist = { onTopResultPlaylist(topResult.song) },
-                                onLongPress = { onSongLongPress(topResult.song) },
-                            )
-                        }
+            } else {
+                when (val state = results) {
+                    is UiState.Loading -> item(key = "search:skeleton:loading") {
+                        songListSkeleton(circular = filter == SearchFilter.ARTISTS)
                     }
-                    searchSections(results.data, filter).forEach { section ->
-                        section.title?.let { title ->
-                            item(key = "search-section:$title") {
-                                Text(
-                                    text = title,
-                                    modifier = Modifier.padding(
-                                        start = PAGE_GUTTER,
-                                        end = PAGE_GUTTER,
-                                        top = 16.dp,
-                                        bottom = 6.dp,
-                                    ),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface,
+                    is UiState.Error -> item { MessageState(state.message) }
+                    is UiState.Success -> {
+                        val tracks = state.data
+                            .mapNotNull { row -> when (row) {
+                                is SearchResult.TopTrack -> row.song
+                                is SearchResult.Track -> row.song
+                                is SearchResult.Browse -> null
+                            } }
+                        val topResult = state.data.filterIsInstance<SearchResult.TopTrack>().firstOrNull()
+                        if (filter == SearchFilter.ALL && topResult != null) {
+                            item(key = "search:top-result:${topResult.song.videoId}") {
+                                TopResultCard(
+                                    song = topResult.song,
+                                    onPlay = { onTopResultPlay(topResult.song) },
+                                    onPlaylist = { onTopResultPlaylist(topResult.song) },
+                                    onLongPress = { onSongLongPress(topResult.song) },
                                 )
                             }
                         }
-                        itemsIndexed(section.rows) { index, row ->
-                            when (row) {
-                                is SearchResult.TopTrack -> Unit
-                                is SearchResult.Track -> SongRow(
-                                    song = row.song,
-                                    onClick = {
-                                        onSongClick(tracks, tracks.indexOf(row.song).coerceAtLeast(0))
-                                    },
-                                    onLongPress = { onSongLongPress(row.song) },
-                                    onSwipeToQueue = { onSongSwipe(row.song) },
-                                )
-                                is SearchResult.Browse -> BrowseRow(
-                                    item = row.item,
-                                    onClick = { onBrowseClick(row.item) },
-                                    onLongPress = onBrowseLongPress?.let { { it(row.item) } },
-                                )
+                        searchSections(state.data, filter).forEach { section ->
+                            section.title?.let { title ->
+                                item(key = "search-section:$title") {
+                                    Text(
+                                        text = title,
+                                        modifier = Modifier.padding(
+                                            start = PAGE_GUTTER,
+                                            end = PAGE_GUTTER,
+                                            top = 16.dp,
+                                            bottom = 6.dp,
+                                        ),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
                             }
-                            if (index < section.rows.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
-                                    thickness = 0.5.dp,
-                                    color = MaterialTheme.colorScheme.outline,
-                                )
+                            itemsIndexed(section.rows) { index, row ->
+                                when (row) {
+                                    is SearchResult.TopTrack -> Unit
+                                    is SearchResult.Track -> SongRow(
+                                        song = row.song,
+                                        onClick = {
+                                            onSongClick(tracks, tracks.indexOf(row.song).coerceAtLeast(0))
+                                        },
+                                        onLongPress = { onSongLongPress(row.song) },
+                                        onSwipeToQueue = { onSongSwipe(row.song) },
+                                    )
+                                    is SearchResult.Browse -> BrowseRow(
+                                        item = row.item,
+                                        onClick = { onBrowseClick(row.item) },
+                                        onLongPress = onBrowseLongPress?.let { { it(row.item) } },
+                                    )
+                                }
+                                if (index < section.rows.lastIndex) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
+                                        thickness = 0.5.dp,
+                                        color = MaterialTheme.colorScheme.outline,
+                                    )
+                                }
                             }
                         }
-                    }
-                    if (loadingMore) {
-                        item(key = "search:skeleton:more") {
-                            songListSkeleton(
-                                count = 3,
-                                keyPrefix = "skeleton:search:more",
-                                circular = filter == SearchFilter.ARTISTS,
-                            )
+                        if (loadingMore) {
+                            item(key = "search:skeleton:more") {
+                                songListSkeleton(
+                                    count = 3,
+                                    keyPrefix = "skeleton:search:more",
+                                    circular = filter == SearchFilter.ARTISTS,
+                                )
+                            }
                         }
                     }
                 }
