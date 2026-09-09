@@ -2163,13 +2163,13 @@ private fun BitChordApp(
                 // Drawn before the bar so the bar's own content sits on top of it.
                 // Hidden on the Search tab: the search field itself becomes the
                 // top element, sitting cleanly under the status bar inset.
+                val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
+                    !showAccountScrobbling && !showSources && !showReplay
                 val isSearchTab = selectedTab == TAB_SEARCH && !showSettings &&
                     !showAccountScrobbling && !showSources && !showDiscord &&
                     !showHistory && detail == null && libraryShowAll == null &&
                     selectedMoodGenre == null && !showReplay
                 if (!isSearchTab) {
-                    val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
-                        !showAccountScrobbling && !showSources && !showReplay
                     TopFadeBlur(
                         hazeState = hazeState,
                         // Replay paints its own full-bleed black backdrop up under the
