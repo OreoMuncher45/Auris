@@ -734,8 +734,7 @@ private fun BitChordApp(
         activeRadioSeed = null
         scope.launch {
             controller?.playSongs(songs, index)
-            // Nothing to raise where the player is already open beside the page.
-            if (!playerDocked) showNowPlaying = true
+            // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
     LaunchedEffect(player.song?.videoId) {
@@ -759,7 +758,7 @@ private fun BitChordApp(
         activeRadioSeed = null
         scope.launch {
             controller?.playSongs(listOf(song), 0)
-            if (!playerDocked) showNowPlaying = true
+            // Start radio in the mini-player; the user opens the full view by tapping it.
         }
     }
 
@@ -835,7 +834,6 @@ private fun BitChordApp(
                     context.getString(R.string.radio_started, song.title),
                     Toast.LENGTH_SHORT,
                 ).show()
-                if (!playerDocked) showNowPlaying = true
             }
         }
     }
