@@ -21,6 +21,7 @@ import androidx.media3.datasource.cache.SimpleCache
 import java.io.IOException
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
@@ -368,7 +369,7 @@ object AudioCache {
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
                 when {
                     rendition != null -> "$videoId#$rendition"
-                    SourceResolver.canSubstituteForYouTube() -> "$videoId#alt"
+                    SourceResolver.canSubstituteForYouTube() -> "$videoId#alt${atmosKeySuffix()}"
                     else -> videoId
                 }
             }
@@ -385,6 +386,26 @@ object AudioCache {
             ?: spec.key
             ?: spec.uri.toString()
     }
+
+    /**
+     * Splits the `#alt` bucket in two along whatever this process currently
+     * believes about Dolby Atmos, so a listener who turns the setting off
+     * cannot be handed an Atmos file back out of the cache.
+     *
+     * Without this, `#alt` names one entry regardless of which rendition of
+     * "not YouTube" ended up in it, and [CacheDataSource] answers from that
+     * entry without ever calling the resolver — see the class doc. A track
+     * first played with Atmos on writes an Atmos file under `#alt`; turning
+     * the setting off changes nothing about that file, so the very next play
+     * of the same track reads it straight off disk, atmosAllowed check and
+     * all, because the check lives in [ModuleSource.unplayable] and that code
+     * never runs. The suffix means "atmos off" resolves and caches under a
+     * key the "atmos on" file was never written to, so the setting actually
+     * takes effect on replay; flipping back on reads the original file again
+     * rather than re-fetching it.
+     */
+    private fun atmosKeySuffix(): String =
+        if (DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value) "" else "-noatmos"
 
     private const val CACHE_STATE_PREFS = "audio_cache_state"
     private const val KEY_MATCHING_SCHEMA = "matching_schema"

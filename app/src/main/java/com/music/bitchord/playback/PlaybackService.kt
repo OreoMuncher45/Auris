@@ -4115,7 +4115,18 @@ class PlaybackService : MediaLibraryService() {
         // state is only legal to read from the thread it was built on.
         val positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
         val durationMs = exoPlayer.duration.takeIf { it > 0 } ?: 0L
-        val speed = exoPlayer.playbackParameters.speed
+        // The listener's own rate, not the player's instantaneous one.
+        //
+        // This is called from the middle of a track change, which is exactly
+        // when [CrossfadeController] has a beatmatch stretch stacked on the
+        // incoming player — so the player reads back 1.06x for the couple of
+        // seconds the blend lasts. Discord only hears about a track when it
+        // changes, so that transient rate got stamped into the title as
+        // "Song [1.06x]" and stayed there for the rest of the song, over a
+        // track that had already been put back on the listener's own tempo.
+        // The setting is what the track plays at for all but the handoff, so
+        // it is both the honest tag and the right divisor for the countdown.
+        val speed = AppSettings.playbackSpeed.value
 
         discordUpdateJob?.cancel()
         discordPresenceUp = true

@@ -62,6 +62,17 @@ object InnertubeParser {
         }
         val rows = collectRenderers(response, "musicResponsiveListItemRenderer")
 
+        // The rows tucked inside an artist's promoted card, paired with the
+        // credit that card bills them to — see [cardShelfCredit]. Matched by
+        // identity below, because these are the same renderer objects the walk
+        // above already found; a card row is just a row that also sits here.
+        val cardCredits: List<Pair<JsonObject, Credits>> = if (includeVideos) emptyList() else {
+            collectRenderers(response, "musicCardShelfRenderer").flatMap { card ->
+                val credit = cardShelfCredit(card) ?: return@flatMap emptyList()
+                collectRenderers(card, "musicResponsiveListItemRenderer").map { it to credit }
+            }
+        }
+
         val seen = HashSet<String>()
         val parsed = buildList {
             topResults.forEach { result ->
@@ -85,7 +96,8 @@ object InnertubeParser {
                 if (browse != null) {
                     if (seen.add("b:${browse.browseId}")) add(SearchResult.Browse(browse))
                 } else {
-                    parseResponsiveListItem(renderer)?.let { song ->
+                    val fallback = cardCredits.firstOrNull { it.first === renderer }?.second
+                    parseResponsiveListItem(renderer, fallback ?: Credits())?.let { song ->
                         // The mixed All page stays music-only; the dedicated Videos
                         // filter is the one place music-video uploads belong.
                         if (song.isVideo == includeVideos && seen.add("v:${song.videoId}")) {
@@ -669,6 +681,36 @@ object InnertubeParser {
             isVideo = rowType == "video" || thumbnails.isNotSquare(),
             isExplicit = renderer["subtitleBadges"].hasExplicitBadge(),
         )
+    }
+
+    /**
+     * Who the rows inside a promoted card are by, or null if the card isn't
+     * one that bills them.
+     *
+     * An artist card is a header with a track list under it, the same shape a
+     * release page has: searching "mc stan" promotes the artist and hangs three
+     * of their songs off the card, and those rows say only "Song • 3:16" —
+     * the credit is on the card, stated once, so every row read on its own came
+     * back as "Unknown artist". This is [pageCredit] for the one page that
+     * carries a header without being a page.
+     *
+     * Only artist cards, which is why this reads `onTap` rather than the
+     * subtitle. A song or video card's rows are *related* uploads rather than
+     * its own — "Shape of You" promotes the track and lists a dance cover and a
+     * choreography video under it, by other people entirely — so lending them
+     * the card's credit would put the wrong name on rows that are not missing
+     * one to begin with.
+     */
+    private fun cardShelfCredit(card: JsonObject): Credits? {
+        val endpoint = card.o("onTap").o("browseEndpoint") ?: return null
+        val pageType = endpoint.o("browseEndpointContextSupportedConfigs")
+            .o("browseEndpointContextMusicConfig").s("pageType").orEmpty()
+        if ("ARTIST" !in pageType) return null
+        val name = card.o("title").runs().takeIf { it.isNotBlank() } ?: return null
+        // Deliberately no album: the card says who the song is by and nothing
+        // about which release it came off, and a guess there would show up as a
+        // wrong "go to album" in the row's own long-press menu.
+        return Credits(artistId = endpoint.s("browseId"), artistName = name)
     }
 
     /** Artist, album and playlist cards use the same promoted-search container as a song. */
