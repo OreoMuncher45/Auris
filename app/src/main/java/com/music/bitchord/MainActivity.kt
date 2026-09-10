@@ -620,7 +620,12 @@ private fun BitChordApp(
                 it.videoId,
                 it.title,
                 it.artist,
-                player.durationMs,
+                // The player's own length, and the catalogue's where it has
+                // none yet. Paused, ExoPlayer never finishes preparing the
+                // track it was skipped to, so it reports no duration at all —
+                // and a lookup that waits for one waits for ever, which left
+                // the lyrics of a paused track loading until it was played.
+                player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
                 it.albumName,
                 it.localUri,
             )

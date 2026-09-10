@@ -960,7 +960,13 @@ object AppSettings {
 
     fun setLyricsSources(value: Set<LyricsSource>) {
         lyricsSources.value = value
-        prefs.edit().putString(KEY_LYRICS_SOURCES, value.joinToString(",") { it.name }).apply()
+        prefs.edit()
+            .putString(KEY_LYRICS_SOURCES, value.joinToString(",") { it.name })
+            // Everything that was on the list this choice was made from, so a
+            // later build can tell a source the user turned off from one they
+            // have never been shown. See [readLyricsSources].
+            .putString(KEY_LYRICS_SOURCES_SEEN, LyricsSource.entries.joinToString(",") { it.name })
+            .apply()
     }
 
     /**
@@ -969,14 +975,43 @@ object AppSettings {
      * quietly, and the default when nothing has been saved is "all of them",
      * which a missing key and an empty set would otherwise be unable to tell
      * apart.
+     *
+     * A source *added* by an upgrade is enabled rather than left out. Absence
+     * from a saved list is a decision only about the sources that list was
+     * chosen from; a new one was never on it, so its absence says nothing, and
+     * treating it as "off" would ship a source nobody could discover without
+     * first going and looking for it. [KEY_LYRICS_SOURCES_SEEN] is what makes
+     * the two cases distinguishable — before it existed, [LEGACY_SOURCES]
+     * stands in as the list of everything there was to have an opinion about.
      */
     private fun readLyricsSources(): Set<LyricsSource> {
         val stored = prefs.getString(KEY_LYRICS_SOURCES, null)
             ?: return LyricsSource.entries.toSet()
-        return stored.split(",")
-            .mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }
-            .toSet()
+        val chosen = stored.split(",").toSources()
+        val seen = prefs.getString(KEY_LYRICS_SOURCES_SEEN, null)
+            ?.split(",")?.toSources()
+            ?: LEGACY_SOURCES
+        return chosen + LyricsSource.entries.filter { it !in seen }
     }
+
+    private fun List<String>.toSources(): Set<LyricsSource> =
+        mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }.toSet()
+
+    /**
+     * The sources that existed before [KEY_LYRICS_SOURCES_SEEN] was written.
+     * Fixed forever: it describes what an old build could have saved, so it
+     * does not grow when [LyricsSource] does.
+     */
+    private val LEGACY_SOURCES = setOf(
+        LyricsSource.LYRICS_PLUS,
+        LyricsSource.PAXSENIX,
+        LyricsSource.BETTER_LYRICS,
+        LyricsSource.SIMP_MUSIC,
+        LyricsSource.KUGOU,
+        LyricsSource.LRCLIB,
+        LyricsSource.MUSIXMATCH,
+        LyricsSource.GENIUS,
+    )
 
     fun setLyricsSourceOrder(value: List<LyricsSource>) {
         lyricsSourceOrder.value = value
@@ -1430,6 +1465,7 @@ object AppSettings {
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
+    private const val KEY_LYRICS_SOURCES_SEEN = "lyrics_sources_seen"
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
     private const val KEY_SHOW_LYRICS_LOGS = "show_lyrics_logs"
