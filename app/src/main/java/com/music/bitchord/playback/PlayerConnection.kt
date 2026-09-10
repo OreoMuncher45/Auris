@@ -19,6 +19,7 @@ import androidx.core.os.bundleOf
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
@@ -29,8 +30,10 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.rememberIsForeground
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.guava.await
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 
@@ -164,6 +167,18 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
         // walk over a large playlist.
         var queueSnapshot = emptyList<Song>()
 
+        // Set when the timeline change was the *contents* changing, which is the
+        // only kind this has to convert again.
+        //
+        // `EVENT_TIMELINE_CHANGED` on its own is not that question. It also
+        // fires for `TIMELINE_CHANGE_REASON_SOURCE_UPDATE`, which every track
+        // raises as its source is prepared and reports its real duration — the
+        // running order is identical, only the window it describes has filled
+        // in. Rebuilding on those meant a thousand-track queue converted a
+        // thousand songs out of the session for every track it loaded, on the
+        // main thread, for as long as the queue kept playing.
+        var queueChanged = false
+
         fun sync(
             error: String? = null,
             rebuildQueue: Boolean = false,
@@ -199,9 +214,19 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
         }
 
         val listener = object : Player.Listener {
+            override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+                // The count guard is belt and braces: a playlist change is the
+                // only reason the queue can be a different length, so if it is,
+                // this must convert it again whatever the reason claims.
+                if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED ||
+                    timeline.windowCount != queueSnapshot.size
+                ) {
+                    queueChanged = true
+                }
+            }
             override fun onEvents(p: Player, events: Player.Events) = sync(
                 error = state.error,
-                rebuildQueue = events.contains(Player.EVENT_TIMELINE_CHANGED),
+                rebuildQueue = queueChanged.also { queueChanged = false },
                 refreshCurrentQueueItem = events.contains(Player.EVENT_MEDIA_METADATA_CHANGED),
             )
             override fun onPlayerErrorChanged(error: androidx.media3.common.PlaybackException?) {
@@ -581,18 +606,33 @@ fun mediaIdIn(uri: Uri): String? = if (uri.authority == "source") {
     uri.getQueryParameter("v")
 }
 
-fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
+/**
+ * Replaces the queue with [songs] and starts it.
+ *
+ * Suspending because of the mapping: [toMediaItem] is not the cheap struct copy
+ * it looks like — it builds a URI and a metadata bundle per track, and asks
+ * [Downloads] whether the file it has on record for the track is still on disk,
+ * which is a `stat` per downloaded song. One track's worth of that is nothing.
+ * A playlist's worth is hundreds of milliseconds of it, and run inline it lands
+ * on the frame that handles the tap, so the page freezes before the music
+ * starts. Built off the main thread and handed to the player back on it, which
+ * is where Media3 requires the call to be made.
+ */
+suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
     if (songs.isEmpty()) return
     // A queue started while shuffle is on goes in shuffled rather than being
     // played out of order — see [QueueShuffle]. The track the user picked still
     // leads, so it ends up at the top instead of at [startIndex].
     val shuffled = QueueShuffle.enabled.value
-    val queue = if (shuffled) {
-        QueueShuffle.startingOrder(songs, startIndex.coerceIn(songs.indices))
-    } else {
-        queueStartingAt(songs, startIndex)
+    val items = withContext(Dispatchers.Default) {
+        val queue = if (shuffled) {
+            QueueShuffle.startingOrder(songs, startIndex.coerceIn(songs.indices))
+        } else {
+            queueStartingAt(songs, startIndex)
+        }
+        queue.map { it.toMediaItem() }
     }
-    setMediaItems(queue.map { it.toMediaItem() }, 0, 0L)
+    setMediaItems(items, 0, 0L)
     prepare()
     play()
 }
