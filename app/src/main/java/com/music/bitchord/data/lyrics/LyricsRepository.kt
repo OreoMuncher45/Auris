@@ -89,22 +89,14 @@ object LyricsRepository {
         prioritizeSyllableSync: Boolean = false,
         isrc: String? = null,
     ): Result? = coroutineScope {
-        LyricsLog.clear()
-        LyricsLog.i("Repository", "Looking up lyrics for \"$title\" by \"$artist\" (${durationMs / 1000}s)")
-
         val sequence = order.filter { it in sources } +
             LyricsSource.entries.filter { it in sources && it !in order }
-
-        LyricsLog.i("Repository", "Active sources order: ${sequence.joinToString { it.label }}")
 
         // Every source but [SimpMusicLyrics] is asked for a name, and
         // YouTube's is not the name anyone catalogued. Cleaned once, here,
         // rather than by whichever source thought to do it for itself.
         val searchTitle = title.forLyricsSearch()
         val searchArtist = artist.artistForLyricsSearch()
-        if (searchTitle != title || searchArtist != artist) {
-            LyricsLog.i("Repository", "Searching as \"$searchTitle\" by \"$searchArtist\"")
-        }
 
         // Settled before anyone is asked for words, so every source that can
         // name the recording does. What the caller knows beats what we worked
@@ -116,7 +108,6 @@ object LyricsRepository {
             null
         }
         val recording = known ?: hit?.isrc?.takeIf { it.isNotBlank() }
-        if (recording != null) LyricsLog.i("Repository", "Matching on ISRC $recording")
 
         // Genius is a plain text web scraper. To preserve bandwidth and avoid rate-limiting,
         // it starts lazily and is only contacted if all higher-priority synced sources miss.
@@ -131,22 +122,11 @@ object LyricsRepository {
             var lineSynced: Result? = null
             for ((source, job) in racing) {
                 // If we already found a line-synced or better result, skip Genius completely
-                if (lineSynced != null && source == LyricsSource.GENIUS) {
-                    LyricsLog.i("Repository", "Skipping Genius fallback because higher-priority source answered")
-                    continue
-                }
-
-                if (source == LyricsSource.GENIUS && lineSynced == null) {
-                    LyricsLog.w("Repository", "All synced providers missed. Running Genius fallback...")
-                }
+                if (lineSynced != null && source == LyricsSource.GENIUS) continue
 
                 val lines = runCatching { job.await() }.getOrNull() ?: continue
-                if (lines.any { it.isWordSynced }) {
-                    LyricsLog.s("Repository", "Word-synced match from ${source.label}")
-                    return@coroutineScope result(source, lines)
-                }
+                if (lines.any { it.isWordSynced }) return@coroutineScope result(source, lines)
                 if (!prioritizeSyllableSync && lines.any { it.timeMs > 0 }) {
-                    LyricsLog.s("Repository", "Line-synced match from ${source.label}")
                     return@coroutineScope result(source, lines)
                 }
                 if (lineSynced == null) lineSynced = result(source, lines)
@@ -170,7 +150,6 @@ object LyricsRepository {
         /** What [identify] already found, where it ran; saves a second search. */
         hit: BiniLyrics.Hit?,
     ): List<LyricLine>? {
-        LyricsLog.i(source.label, "Querying $source...")
         val found = when (source) {
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.LYRICS_PLUS -> LyricsPlus.lyrics(title, artist, durationMs, album, isrc)
@@ -186,22 +165,6 @@ object LyricsRepository {
             LyricsSource.PAXSENIX -> PaxSenix.lyrics(title, artist, durationMs, album)
             LyricsSource.KUGOU -> KuGou.lyrics(title, artist, durationMs, album)
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
-        }
-        if (found.isNullOrEmpty()) {
-            LyricsLog.w(source.label, "No lyrics returned")
-        } else {
-            val syncType = when {
-                found.any { it.isWordSynced } -> "word-synced"
-                found.any { it.timeMs > 0 } -> "line-synced"
-                else -> "plain text"
-            }
-            // Whether a second voice came back with them. Worth a word in the
-            // log: a song that is a duet everywhere else and arrives here as
-            // one voice is a matching problem, and one that arrives with two
-            // and still draws down one side is not.
-            val answering = found.count { it.alignment == LyricAlignment.End }
-            val voices = if (answering > 0) ", $answering on the right" else ""
-            LyricsLog.s(source.label, "Returned ${found.size} lines ($syncType$voices)")
         }
         return found
     }
@@ -246,11 +209,7 @@ object LyricsRepository {
         val hit = withTimeoutOrNull(IDENTIFY_TIMEOUT_MS) {
             runCatching { BiniLyrics.identify(title, artist, durationMs, album) }.getOrNull()
         }
-        if (hit == null) {
-            LyricsLog.w("Repository", "No recording identified; matching on the name")
-            return null
-        }
-        LyricsLog.s("Repository", "Identified as \"${hit.trackName}\" by \"${hit.artistName}\"")
+        if (hit == null) return null
         remember(videoId, hit.isrc)
         return hit
     }
@@ -274,8 +233,6 @@ object LyricsRepository {
 
     private fun remember(videoId: String, isrc: String?) {
         if (isrc.isNullOrBlank() || videoId.isEmpty()) return
-        if (isrcs.put(videoId, isrc) != isrc) {
-            LyricsLog.i("Repository", "Recording for $videoId is $isrc")
-        }
+        isrcs.put(videoId, isrc)
     }
 }

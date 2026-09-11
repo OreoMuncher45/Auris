@@ -217,7 +217,6 @@
     <string name="dark">深色</string>
     <string name="full_screen_cover_art_subtitle">让封面延伸至播放器边缘，而不是显示为方形</string>
     <string name="animated_cover_art_subtitle">播放部分发行版自带的循环视频，而不是静态封面</string>
-    <string name="miscellaneous_footer">启用后，从最近任务界面关闭应用也会停止音乐播放。</string>
     <string name="dont_repeat_songs_subtitle">自动播放不会在本次会话中重复推荐已播放或已推荐过的歌曲</string>
     <string name="download_quality_subtitle">无论何种网络连接，每首曲目均为%1$s</string>
     <string name="filter_non_music_audio">过滤非音乐音频</string>

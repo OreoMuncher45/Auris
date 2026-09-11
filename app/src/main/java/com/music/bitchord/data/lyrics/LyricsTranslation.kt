@@ -105,7 +105,12 @@ object LyricsTranslation {
         lines: List<LyricLine>,
         targetLanguageTag: String,
     ): Result {
-        val target = canonicalLanguage(targetLanguageTag)
+        // Sent as given rather than reduced to a base language: zh-CN and
+        // zh-TW are the same language in two scripts, and canonicalising either
+        // to "zh" hands back Simplified whichever one was asked for. The
+        // narrowing is still done, but only where it belongs — in
+        // [sameLanguage], which is asking a different question.
+        val target = targetLanguageTag.trim()
         if (target.isBlank() || lines.isEmpty()) return Result.Unavailable
 
         val slots = flatten(lines)

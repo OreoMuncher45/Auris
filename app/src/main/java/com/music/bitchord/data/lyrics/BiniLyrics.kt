@@ -82,14 +82,8 @@ object BiniLyrics {
     /** The document a search already found, fetched and parsed. */
     internal suspend fun lyricsFor(hit: Hit): Match? = withContext(Dispatchers.IO) {
         val document = hit.lyricsUrl?.takeIf { it.isNotBlank() } ?: return@withContext null
-        val ttml = lyricsGet(document) ?: run {
-            LyricsLog.w("BiniLyrics", "Storage host did not serve $document")
-            return@withContext null
-        }
-        val lines = TtmlLyrics.parse(ttml).takeIf { it.isNotEmpty() } ?: run {
-            LyricsLog.w("BiniLyrics", "Fetched ${ttml.length} bytes of TTML with nothing readable in it")
-            return@withContext null
-        }
+        val ttml = lyricsGet(document) ?: return@withContext null
+        val lines = TtmlLyrics.parse(ttml).takeIf { it.isNotEmpty() } ?: return@withContext null
         Match(hit.isrc?.takeIf { it.isNotBlank() }, lines)
     }
 

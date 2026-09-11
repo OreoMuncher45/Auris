@@ -332,6 +332,17 @@ object AppSettings {
     val lyricsBlur = MutableStateFlow(true)
 
     /**
+     * Which language the lyrics translate button translates *into*.
+     *
+     * Blank — the default — means "whatever the app is set to", and is stored
+     * as blank rather than resolved once: someone who has never touched this
+     * has expressed no preference, and switching the app to Spanish should
+     * carry their lyrics with it rather than leaving them on the English they
+     * happened to be reading the day the setting was written.
+     */
+    val translationLanguage = MutableStateFlow("")
+
+    /**
      * Plays a looping video behind the cover art on the player when one is
      * published for the track — Spotify's Canvas, Apple's motion artwork.
      *
@@ -418,9 +429,6 @@ object AppSettings {
      * always behaved.
      */
     val prioritizeSyllableSync = MutableStateFlow(false)
-
-    /** When enabled, shows lyrics fetching and Genius scraping logs in the lyrics menu/panel. */
-    val showLyricsLogs = MutableStateFlow(false)
 
     /** Disk budget for cached audio. [AudioCache][com.music.bitchord.playback.AudioCache] evicts past it. */
     val audioCacheLimitBytes = MutableStateFlow(DEFAULT_CACHE_LIMIT_BYTES)
@@ -652,6 +660,7 @@ object AppSettings {
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
+        translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
         if (highPerformanceMode.value) {
             reduceAnimation.value = false
             reduceDynamicBlur.value = false
@@ -664,7 +673,6 @@ object AppSettings {
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
         prioritizeSyllableSync.value = prefs.getBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, false)
-        showLyricsLogs.value = prefs.getBoolean(KEY_SHOW_LYRICS_LOGS, false)
         audioCacheLimitBytes.value = prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES)
             .coerceIn(DEFAULT_CACHE_LIMIT_BYTES, MAX_CACHE_LIMIT_BYTES)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
@@ -953,6 +961,12 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LYRICS_BLUR, value).apply()
     }
 
+    /** Blank restores "follow the app language"; see [translationLanguage]. */
+    fun setTranslationLanguage(value: String) {
+        translationLanguage.value = value
+        prefs.edit().putString(KEY_TRANSLATION_LANGUAGE, value).apply()
+    }
+
     fun setSyncedLyrics(value: Boolean) {
         syncedLyrics.value = value
         prefs.edit().putBoolean(KEY_SYNCED_LYRICS, value).apply()
@@ -1037,11 +1051,6 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_PRIORITIZE_SYLLABLE_SYNC, value).apply()
     }
 
-    fun setShowLyricsLogs(value: Boolean) {
-        showLyricsLogs.value = value
-        prefs.edit().putBoolean(KEY_SHOW_LYRICS_LOGS, value).apply()
-    }
-
     /**
      * Puts the source list, its order and [prioritizeSyllableSync] back the
      * way a fresh install finds them. [syncedLyrics] itself is left alone —
@@ -1051,7 +1060,6 @@ object AppSettings {
         setLyricsSources(LyricsSource.entries.toSet())
         setLyricsSourceOrder(LyricsSource.entries)
         setPrioritizeSyllableSync(false)
-        setShowLyricsLogs(false)
     }
 
     fun setAnimatedCanvas(value: Boolean) {
@@ -1459,6 +1467,7 @@ object AppSettings {
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
+    private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
@@ -1468,7 +1477,6 @@ object AppSettings {
     private const val KEY_LYRICS_SOURCES_SEEN = "lyrics_sources_seen"
     private const val KEY_LYRICS_SOURCE_ORDER = "lyrics_source_order"
     private const val KEY_PRIORITIZE_SYLLABLE_SYNC = "prioritize_syllable_sync"
-    private const val KEY_SHOW_LYRICS_LOGS = "show_lyrics_logs"
     private const val KEY_REPLAY_GENRES = "replay_genres"
     private const val KEY_FILTER_NON_MUSIC_AUDIO = "filter_non_music_audio"
     private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"

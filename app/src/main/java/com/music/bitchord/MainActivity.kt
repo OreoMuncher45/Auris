@@ -185,6 +185,7 @@ import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
+import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -443,6 +444,7 @@ private fun BitChordApp(
     var librarySortMenuOpen by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showAppLanguage by remember { mutableStateOf(false) }
+    var showTranslationLanguage by remember { mutableStateOf(false) }
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -1882,6 +1884,7 @@ private fun BitChordApp(
                                 showReplay = true
                             },
                             onLyricsSources = { showLyricsSources = true },
+                            onTranslationLanguage = { showTranslationLanguage = true },
                             onSources = { showSources = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
@@ -3057,6 +3060,14 @@ private fun BitChordApp(
             AppLanguageDialog(
                 hazeState = hazeState,
                 onDismiss = { showAppLanguage = false },
+            )
+        }
+
+        if (showTranslationLanguage) {
+            BackHandler { showTranslationLanguage = false }
+            TranslationLanguageDialog(
+                hazeState = hazeState,
+                onDismiss = { showTranslationLanguage = false },
             )
         }
 

@@ -46,32 +46,17 @@ object Genius {
     }
 
     suspend fun lyrics(title: String, artist: String): List<LyricLine>? = withContext(Dispatchers.IO) {
-        LyricsLog.i("Genius", "Fallback scraper triggered for: \"$title\" by \"$artist\"")
         val cleanTitle = cleanQuery(title)
         val cleanArtist = cleanQuery(artist)
 
         val songUrl = searchSongUrl(cleanTitle, cleanArtist)
-        if (songUrl == null) {
-            LyricsLog.w("Genius", "No matching song found on Genius")
-            return@withContext null
-        }
+        if (songUrl == null) return@withContext null
 
-        LyricsLog.i("Genius", "Found song page: $songUrl")
         val html = fetchHtml(songUrl)
-        if (html.isNullOrBlank()) {
-            LyricsLog.e("Genius", "Failed to fetch HTML from song page")
-            return@withContext null
-        }
+        if (html.isNullOrBlank()) return@withContext null
 
         val lines = parseHtml(html)
-        if (lines.isNullOrEmpty()) {
-            LyricsLog.w("Genius", "HTML parsed but no lyric lines could be extracted")
-            return@withContext null
-        }
-
-        val sectionCount = lines.count { isSectionHeader(it.text) }
-        val sungCount = lines.count { !it.isGap && !isSectionHeader(it.text) }
-        LyricsLog.s("Genius", "Successfully scraped $sungCount lines and $sectionCount sections")
+        if (lines.isNullOrEmpty()) return@withContext null
         lines
     }
 
@@ -81,12 +66,7 @@ object Genius {
     internal fun searchSongUrl(cleanTitle: String, cleanArtist: String): String? {
         val query = "$cleanArtist $cleanTitle".trim()
         val url = "https://genius.com/api/search/multi?q=${URLEncoder.encode(query, "UTF-8")}"
-        LyricsLog.i("Genius", "Querying Genius search API: $query")
-
-        val responseBody = httpGet(url) ?: run {
-            LyricsLog.w("Genius", "Search API request failed")
-            return null
-        }
+        val responseBody = httpGet(url) ?: return null
 
         return runCatching {
             val root = json.parseToJsonElement(responseBody).jsonObject
@@ -102,8 +82,6 @@ object Genius {
 
             val best = bestMatch(candidates, cleanTitle, cleanArtist)
             best?.get("url")?.jsonPrimitive?.contentOrNull
-        }.onFailure {
-            LyricsLog.e("Genius", "Failed to parse search response: ${it.message}")
         }.getOrNull()
     }
 

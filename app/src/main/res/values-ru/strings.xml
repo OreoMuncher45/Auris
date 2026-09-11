@@ -229,7 +229,6 @@
     <string name="dark">Тёмная</string>
     <string name="full_screen_cover_art_subtitle">Растягивает обложку до краёв плеера вместо квадратного варианта</string>
     <string name="animated_cover_art_subtitle">Воспроизводит зацикленное видео, которое есть у некоторых релизов вместо неподвижной обложки</string>
-    <string name="miscellaneous_footer">При включении закрытие приложения из недавних также останавливает воспроизведение музыки.</string>
     <string name="dont_repeat_songs_subtitle">Автовоспроизведение не будет предлагать уже сыгранную или предложенную в этой сессии песню</string>
     <string name="download_quality_subtitle">%1$s за трек, независимо от соединения</string>
     <string name="filter_non_music_audio">Фильтровать немузыкальное аудио</string>

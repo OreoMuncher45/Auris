@@ -101,7 +101,6 @@ import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
-import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -217,7 +216,7 @@ import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsTranslation
-import com.music.bitchord.ui.components.LyricsLogConsole
+import com.music.bitchord.data.lyrics.translationLanguageName
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.LikeStatus
@@ -898,19 +897,22 @@ fun NowPlayingScreen(
     var lyricsOpen by remember { mutableStateOf(false) }
     var lyricsControlsOpen by remember { mutableStateOf(false) }
     LaunchedEffect(lyricsOpen) { lyricsControlsOpen = false }
-    var lyricsLogsOpen by remember { mutableStateOf(false) }
-    val showLyricsLogsEnabled by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
     val reduceTranslationMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val configuredLocale = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
         ?.takeIf { it.isNotBlank() }
         ?: context.resources.configuration.locales.get(0).toLanguageTag()
-    val translationLanguage = remember(configuredLocale) {
-        Locale.forLanguageTag(configuredLocale).language.ifBlank { "en" }
+    val preferredTranslation by AppSettings.translationLanguage.collectAsStateWithLifecycle()
+    // Settings wins where it has been set; blank means follow the app. Only the
+    // app-language path is reduced to a base language — a code chosen in
+    // Settings is already exactly what the endpoint wants and narrowing it
+    // would throw away the script half of zh-TW.
+    val translationLanguage = remember(configuredLocale, preferredTranslation) {
+        preferredTranslation.ifBlank {
+            Locale.forLanguageTag(configuredLocale).language.ifBlank { "en" }
+        }
     }
     val translationLanguageName = remember(configuredLocale, translationLanguage) {
-        val locale = Locale.forLanguageTag(configuredLocale)
-        Locale.forLanguageTag(translationLanguage).getDisplayLanguage(locale)
-            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+        translationLanguageName(translationLanguage, Locale.forLanguageTag(configuredLocale))
     }
     var translationState by remember(song.videoId, translationLanguage, lyrics) {
         mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
@@ -959,7 +961,7 @@ fun NowPlayingScreen(
                             context = context.applicationContext,
                             trackId = song.videoId,
                             lines = source,
-                            targetLanguageTag = configuredLocale,
+                            targetLanguageTag = translationLanguage,
                         )
                     ) {
                         is LyricsTranslation.Result.Translated -> {
@@ -992,18 +994,12 @@ fun NowPlayingScreen(
             }
         }
     }
-    // The panel is a place, not a property of the track. Someone reading along
-    // who skips — or who simply lets the queue run on — means to carry on
-    // reading, so the words change underneath them and the panel stays. Closing
-    // it dropped them back onto the artwork every few minutes with no gesture
-    // of their own behind it.
-    //
-    // The log sheet is per-lookup, so that one does still close: it is a
-    // debugging view of *this* track's providers and holding it open across a
-    // skip would leave it describing a lookup that is no longer on screen.
-    LaunchedEffect(song.videoId) {
-        lyricsLogsOpen = false
-    }
+    // Nothing here resets [lyricsOpen] on a track change, deliberately. The
+    // panel is a place, not a property of the track: someone reading along who
+    // skips — or who simply lets the queue run on — means to carry on reading,
+    // so the words change underneath them and the panel stays. Closing it
+    // dropped them back onto the artwork every few minutes with no gesture of
+    // their own behind it.
     // A brief, non-modal confirmation that the three-dot menu now contains a
     // way back to the original YouTube rendition. The control keeps its usual
     // action — opening the menu — so the cue teaches rather than surprises.
@@ -1052,9 +1048,7 @@ fun NowPlayingScreen(
     // dispatcher to outrank and the BackHandler is already the newest
     // callback on the dialog's, so it wins there unaided.
     BackHandler(enabled = lyricsOpen) {
-        if (lyricsLogsOpen) {
-            lyricsLogsOpen = false
-        } else if (lyricsControlsOpen) {
+        if (lyricsControlsOpen) {
             lyricsControlsOpen = false
         } else {
             lyricsOpen = false
@@ -1062,12 +1056,10 @@ fun NowPlayingScreen(
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         val view = LocalView.current
-        DisposableEffect(view, lyricsOpen, lyricsLogsOpen, lyricsControlsOpen) {
+        DisposableEffect(view, lyricsOpen, lyricsControlsOpen) {
             val callback = if (lyricsOpen) {
                 OverlayBack.register(view) {
-                    if (lyricsLogsOpen) {
-                        lyricsLogsOpen = false
-                    } else if (lyricsControlsOpen) {
+                    if (lyricsControlsOpen) {
                         lyricsControlsOpen = false
                     } else {
                         lyricsOpen = false
@@ -2294,20 +2286,6 @@ fun NowPlayingScreen(
                 }
 
                 if (lyricsOpen) {
-                    if (lyricsLogsOpen) {
-                        // Full-screen log console — replaces the lyrics list while
-                        // the debug panel is open. Same fade-in timing as the lyrics
-                        // panel so the transition is identical from the user's side.
-                        LyricsLogConsole(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT)
-                                .graphicsLayer {
-                                    alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                                    translationY = (1f - p) * 26.dp.toPx()
-                                },
-                        )
-                    } else {
                         LyricsTranslationMotion(
                             trigger = translationTransition,
                             reduceMotion = reduceTranslationMotion,
@@ -2336,6 +2314,40 @@ fun NowPlayingScreen(
                                 onHideControls = { lyricsControlsOpen = false },
                                 translationProgress = particleProgress,
                                 modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+
+                    // Floated over the foot of the lyrics rather than placed in
+                    // the controls below them. In the controls it was a row of
+                    // layout like any other, and the bottom block is measured at
+                    // its natural height — so the button's 34dp came straight
+                    // off the panel above it and the lyrics lost a line. Drawn
+                    // here it costs the panel nothing and still reads as sitting
+                    // on top of the half player, because that is where it is.
+                    //
+                    // Arrives and leaves on the controls' own fade: the panel is
+                    // for reading, and a control parked over the words when
+                    // nobody asked for the controls is one more thing between
+                    // the reader and them.
+                    val translateShown = lyricsControlsOpen
+                    val translateFade by animateFloatAsState(
+                        targetValue = if (translateShown) 1f else 0f,
+                        animationSpec = tween(if (translateShown) 220 else 160),
+                        label = "translateFade",
+                    )
+                    if (translateFade > 0.01f) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .graphicsLayer { alpha = translateFade },
+                        ) {
+                            TranslationToggleButton(
+                                state = translationState,
+                                showingTranslation = showingTranslation,
+                                // Not tappable on the way out: a disc at 20%
+                                // opacity is on its way to gone, not a target.
+                                enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                onClick = toggleTranslation,
                             )
                         }
                     }
@@ -2436,25 +2448,6 @@ fun NowPlayingScreen(
                 }
             }
             if (lyricsOpen) {
-                // Translation lives with the half player rather than on the
-                // lyrics themselves: the panel is for reading, and a control
-                // parked over the words is one more thing between the reader
-                // and them. It arrives and leaves with the controls below it,
-                // on the same fade, so the lyrics are never covered by a
-                // button that was not asked for.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TranslationToggleButton(
-                        state = translationState,
-                        showingTranslation = showingTranslation,
-                        enabled = !lyricsLogsOpen && !lyrics.isNullOrEmpty(),
-                        onClick = toggleTranslation,
-                    )
-                }
-                Spacer(Modifier.height(6.dp))
                 Text(
                     text = when {
                         translationState is LyricsTranslationUiState.Loading ->
@@ -2474,9 +2467,6 @@ fun NowPlayingScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .offset(y = 6.dp)
-                        .clickable(enabled = showLyricsLogsEnabled) {
-                            lyricsLogsOpen = !lyricsLogsOpen
-                        }
                         .padding(vertical = 4.dp),
                 )
             }
@@ -2734,7 +2724,6 @@ fun NowPlayingScreen(
                         icon = BitChordIcons.LyricsQuote,
                         contentDescription = stringResource(if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics),
                         onClick = {
-                            lyricsLogsOpen = false
                             lyricsOpen = !lyricsOpen
                         },
                         highlighted = lyricsOpen,

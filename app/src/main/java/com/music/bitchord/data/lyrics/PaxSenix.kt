@@ -94,29 +94,18 @@ object PaxSenix {
         val response = runCatching { lyricsJson.decodeFromString<LyricsResponse>(body) }.getOrNull()
             ?: return null
 
-        // Which of the three shapes answered is worth a line in the log. They
-        // are not equivalent: only the TTML carries the voices, so a track that
-        // came back as enhanced LRC will be drawn down one side however much of
-        // a duet it is, and that is a fact about the document rather than a bug
-        // to go looking for in the panel.
+        // Tried in descending order of what the document carries: only the
+        // TTML has the voices, so a track that comes back as enhanced LRC is
+        // drawn down one side however much of a duet it is. That is a fact
+        // about the document rather than a bug to go looking for in the panel.
         response.ttmlContent?.takeIf { it.isNotBlank() }?.let { ttml ->
-            TtmlLyrics.parse(ttml).takeIf { it.isNotEmpty() }?.let {
-                LyricsLog.i(NAME, "Apple id $appleId, read as TTML")
-                return it
-            }
-            LyricsLog.w(NAME, "Apple id $appleId has TTML this parser could not read")
+            TtmlLyrics.parse(ttml).takeIf { it.isNotEmpty() }?.let { return it }
         }
         response.elrcMultiPerson?.takeIf { it.isNotBlank() }?.let { elrc ->
-            EnhancedLrc.parse(elrc).takeIf { it.isNotEmpty() }?.let {
-                LyricsLog.i(NAME, "Apple id $appleId, read as multi-person enhanced LRC")
-                return it
-            }
+            EnhancedLrc.parse(elrc).takeIf { it.isNotEmpty() }?.let { return it }
         }
         response.elrc?.takeIf { it.isNotBlank() }?.let { elrc ->
-            EnhancedLrc.parse(elrc).takeIf { it.isNotEmpty() }?.let {
-                LyricsLog.i(NAME, "Apple id $appleId, read as enhanced LRC — no voices in it")
-                return it
-            }
+            EnhancedLrc.parse(elrc).takeIf { it.isNotEmpty() }?.let { return it }
         }
         return null
     }

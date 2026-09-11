@@ -256,7 +256,6 @@
     <string name="dark">Dark</string>
     <string name="full_screen_cover_art_subtitle">Runs the cover to the edges of the player instead of a square sleeve</string>
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
-    <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay won’t suggest a song already played or suggested this session</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>
@@ -299,6 +298,12 @@
     <string name="lyrics_translated_to">Translated to %1$s</string>
     <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
+    <string name="translation_language">Translation language</string>
+    <string name="translation_language_description">The language the translate button turns lyrics into.</string>
+    <string name="translation_language_app_default">App language</string>
+    <string name="translation_language_subtitle">Follows the app language</string>
+    <string name="search_languages">Search languages</string>
+    <string name="no_languages_match">No languages match</string>
     <string name="connect_account_first">Connect an account first</string>
     <string name="connected_presence_off">Connected, presence off</string>
     <string name="copy_log">Copy log</string>

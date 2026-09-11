@@ -222,7 +222,6 @@
     <string name="dark">Escuro</string>
     <string name="full_screen_cover_art_subtitle">Estende a capa até as bordas do player em vez de um quadrado</string>
     <string name="animated_cover_art_subtitle">Reproduz o vídeo em loop que alguns lançamentos trazem em vez de uma capa estática</string>
-    <string name="miscellaneous_footer">Quando ativado, fechar o app pela tela de apps recentes também interrompe a reprodução de música.</string>
     <string name="dont_repeat_songs_subtitle">A reprodução automática não sugerirá uma música já tocada ou sugerida nesta sessão</string>
     <string name="download_quality_subtitle">%1$s por faixa, independentemente da conexão</string>
     <string name="filter_non_music_audio">Filtrar áudio não musical</string>

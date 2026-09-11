@@ -221,7 +221,6 @@
     <string name="dark">כהה</string>
     <string name="full_screen_cover_art_subtitle">מותח את העטיפה עד לקצוות הנגן במקום עטיפה מרובעת</string>
     <string name="animated_cover_art_subtitle">מנגן את סרטון הלופ שמגיע עם חלק מההוצאות במקום עטיפה סטטית</string>
-    <string name="miscellaneous_footer">כשמופעל, סגירת האפליקציה ממסך האפליקציות האחרונות תעצור גם את השמעת המוזיקה.</string>
     <string name="dont_repeat_songs_subtitle">ההשמעה האוטומטית לא תציע שיר שכבר הושמע או הוצע בהפעלה הנוכחית</string>
     <string name="download_quality_subtitle">%1$s לרצועה, ללא קשר לחיבור</string>
     <string name="filter_non_music_audio">סנן שמע שאינו מוזיקה</string>

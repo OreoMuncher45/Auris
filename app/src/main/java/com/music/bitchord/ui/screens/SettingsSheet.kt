@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicOff
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.rounded.Wifi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
+import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -159,6 +161,7 @@ fun SettingsScreen(
     onAccountScrobbling: () -> Unit,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
+    onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
     onSpotifyCanvasAuth: () -> Unit,
     onAppLanguage: () -> Unit,
@@ -192,7 +195,7 @@ fun SettingsScreen(
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    val showLyricsLogs by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
+    val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -753,6 +756,21 @@ fun SettingsScreen(
                     trailing = { Chevron() },
                     onClick = onLyricsSources,
                 )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Translate,
+                    title = stringResource(R.string.translation_language),
+                    subtitle = if (translationLanguage.isBlank()) {
+                        stringResource(R.string.translation_language_subtitle)
+                    } else {
+                        translationLanguageName(
+                            translationLanguage,
+                            AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault(),
+                        )
+                    },
+                    trailing = { Chevron() },
+                    onClick = onTranslationLanguage,
+                )
             }
         }
 
@@ -935,10 +953,9 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(
-            header = stringResource(R.string.miscellaneous),
-            footer = stringResource(R.string.miscellaneous_footer),
-        ) {
+        // No footer: it only restated the stop-on-close row's own subtitle,
+        // which sits four rows above it and says the same thing in fewer words.
+        SettingsGroup(header = stringResource(R.string.miscellaneous)) {
             SettingsRow(
                 icon = Icons.Rounded.PlaylistPlay,
                 title = stringResource(R.string.play_next_on_swipe),
@@ -1039,23 +1056,6 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setShowNerdStats(!nerdStats) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.History,
-                title = "Lyrics Debug Logs",
-                subtitle = "Show live API queries and scraper activity in the lyrics panel",
-                trailing = {
-                    Switch(
-                        checked = showLyricsLogs,
-                        onCheckedChange = AppSettings::setShowLyricsLogs,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setShowLyricsLogs(!showLyricsLogs) },
             )
         }
 
