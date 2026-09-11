@@ -1027,6 +1027,7 @@ class PlaybackService : MediaLibraryService() {
                         mediaId = videoId,
                         target = SourceResolver.targetIn(dataSpec.uri),
                         playing = serving.format,
+                        servedBy = serving.sourceConfigId,
                     )
                     if (!pending) NerdStats.onLosslessRaceEnd(videoId)
                 }
@@ -3218,6 +3219,7 @@ class PlaybackService : MediaLibraryService() {
                 mediaId = videoId,
                 target = target,
                 playing = quick.format,
+                servedBy = quick.sourceConfigId,
             )
             if (!settled) NerdStats.onLosslessRaceEnd(videoId)
             return Resolved.Module(quick)

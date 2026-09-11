@@ -80,6 +80,13 @@ object QualityUpgrade {
          * floor is one nothing lossy clears.
          */
         val playing: StreamFormat? = null,
+        /**
+         * The source already serving this track, if known — see
+         * [SourceResolver.upgradeFor]'s own `servedBy`. Left out of the second
+         * look so a deterministic catalogue isn't asked the same question
+         * twice for a rejection it already gave the first time.
+         */
+        val servedBy: String? = null,
     )
 
     private val pending = ConcurrentHashMap<String, Pending>()
@@ -191,6 +198,7 @@ object QualityUpgrade {
         target: TrackMatcher.Target,
         inFlight: Deferred<SourceStream?>? = null,
         playing: StreamFormat? = null,
+        servedBy: String? = null,
     ): Boolean {
         // Not gated on the request being lossless. A source ranked above
         // YouTube can be worth swapping to on bitrate alone — see
@@ -205,7 +213,7 @@ object QualityUpgrade {
             inFlight?.cancel()
             return false
         }
-        pending[mediaId] = Pending(target, inFlight, playing)
+        pending[mediaId] = Pending(target, inFlight, playing, servedBy)
         NerdStats.onLosslessRaceStart(mediaId)
         TrackLog.d(
             TAG,
@@ -434,7 +442,11 @@ object QualityUpgrade {
                 ) {
                     found = late
                     if (needsLosslessFollowUp(late.format)) {
-                        followUps[mediaId] = waiting.copy(inFlight = null, playing = late.format)
+                        followUps[mediaId] = waiting.copy(
+                            inFlight = null,
+                            playing = late.format,
+                            servedBy = late.sourceConfigId,
+                        )
                     }
                     answered = true
                     return late
@@ -442,14 +454,20 @@ object QualityUpgrade {
             }
             // It finished with nothing better, so the question gets asked
             // again from scratch — this time waiting on every module, which is
-            // what the live path could not afford to do.
+            // what the live path could not afford to do. The source already
+            // serving the track is left out — see [SourceResolver.upgradeFor].
             SourceResolver.upgradeFor(
                 waiting.target.copy(durationSec = playingDurationSec ?: waiting.target.durationSec),
                 playing = waiting.playing,
+                servedBy = waiting.servedBy,
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
-                    followUps[mediaId] = waiting.copy(inFlight = null, playing = it.format)
+                    followUps[mediaId] = waiting.copy(
+                        inFlight = null,
+                        playing = it.format,
+                        servedBy = it.sourceConfigId,
+                    )
                 }
                 answered = true
             }
