@@ -256,6 +256,12 @@
     <string name="buttons">Schaltflächen</string>
     <string name="clear_name">Namen löschen</string>
     <string name="close_lyrics">Songtexte schließen</string>
+    <string name="translate_lyrics">Songtext übersetzen</string>
+    <string name="show_original_lyrics">Originaltext anzeigen</string>
+    <string name="translating_lyrics_to">Wird ins %1$s übersetzt…</string>
+    <string name="lyrics_translated_to">Ins %1$s übersetzt</string>
+    <string name="lyrics_already_in_language">Dieser Songtext ist bereits auf %1$s</string>
+    <string name="lyrics_translation_unavailable">Die Übersetzung ist derzeit nicht verfügbar</string>
     <string name="connect_account_first">Verbinde zuerst ein Konto</string>
     <string name="connected_presence_off">Verbunden, Presence aus</string>
     <string name="copy_log">Protokoll kopieren</string>

@@ -49,6 +49,8 @@ data class LyricLine(
     val sungUntilMs: Long? = null,
     val background: LyricLine? = null,
     val alignment: LyricAlignment = LyricAlignment.Start,
+    /** Display-only translation: drive its sweep and bloom from the original vocal. */
+    val timingSource: LyricLine? = null,
 ) {
     val isGap: Boolean get() = text.isEmpty()
 
@@ -143,6 +145,11 @@ data class LyricLine(
      * on rather than jumping ahead of the next word's first letter.
      */
     fun revealedChars(positionMs: Long): Float {
+        timingSource?.let { source ->
+            if (source.text.isEmpty()) return 0f
+            return (source.revealedChars(positionMs) / source.text.length)
+                .coerceIn(0f, 1f) * text.length
+        }
         if (words.isEmpty()) return if (positionMs >= timeMs) text.length.toFloat() else 0f
         var offset = 0
         words.forEachIndexed { index, word ->

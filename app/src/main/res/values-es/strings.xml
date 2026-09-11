@@ -268,6 +268,12 @@
     <string name="buttons">Botones</string>
     <string name="clear_name">Borrar nombre</string>
     <string name="close_lyrics">Cerrar letra</string>
+    <string name="translate_lyrics">Traducir letra</string>
+    <string name="show_original_lyrics">Mostrar letra original</string>
+    <string name="translating_lyrics_to">Traduciendo al %1$s…</string>
+    <string name="lyrics_translated_to">Traducida al %1$s</string>
+    <string name="lyrics_already_in_language">Esta letra ya está en %1$s</string>
+    <string name="lyrics_translation_unavailable">La traducción no está disponible ahora</string>
     <string name="connect_account_first">Primero conecta una cuenta</string>
     <string name="connected_presence_off">Conectado, presencia desactivada</string>
     <string name="copy_log">Copiar registro</string>

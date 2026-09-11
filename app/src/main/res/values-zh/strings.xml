@@ -252,6 +252,12 @@
     <string name="buttons">按钮</string>
     <string name="clear_name">清除名称</string>
     <string name="close_lyrics">关闭歌词</string>
+    <string name="translate_lyrics">翻译歌词</string>
+    <string name="show_original_lyrics">显示原歌词</string>
+    <string name="translating_lyrics_to">正在翻译为%1$s…</string>
+    <string name="lyrics_translated_to">已翻译为%1$s</string>
+    <string name="lyrics_already_in_language">歌词已经是%1$s</string>
+    <string name="lyrics_translation_unavailable">翻译目前不可用</string>
     <string name="connect_account_first">请先连接账号</string>
     <string name="connected_presence_off">已连接，状态显示已关闭</string>
     <string name="copy_log">复制日志</string>

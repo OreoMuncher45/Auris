@@ -280,6 +280,12 @@
     <string name="buttons">Pulsanti</string>
     <string name="clear_name">Cancella nome</string>
     <string name="close_lyrics">Chiudi testi</string>
+    <string name="translate_lyrics">Traduci testo</string>
+    <string name="show_original_lyrics">Mostra testo originale</string>
+    <string name="translating_lyrics_to">Traduzione in %1$s…</string>
+    <string name="lyrics_translated_to">Tradotto in %1$s</string>
+    <string name="lyrics_already_in_language">Questo testo è già in %1$s</string>
+    <string name="lyrics_translation_unavailable">La traduzione non è disponibile al momento</string>
     <string name="connect_account_first">Collega prima un account</string>
     <string name="connected_presence_off">Connesso, presenza disattivata</string>
     <string name="copy_log">Copia log</string>

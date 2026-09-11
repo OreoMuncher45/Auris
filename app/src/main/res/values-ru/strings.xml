@@ -264,6 +264,12 @@
     <string name="buttons">Кнопки</string>
     <string name="clear_name">Очистить имя</string>
     <string name="close_lyrics">Закрыть текст песни</string>
+    <string name="translate_lyrics">Перевести текст</string>
+    <string name="show_original_lyrics">Показать оригинал</string>
+    <string name="translating_lyrics_to">Перевод на %1$s…</string>
+    <string name="lyrics_translated_to">Переведено на %1$s</string>
+    <string name="lyrics_already_in_language">Текст уже на языке %1$s</string>
+    <string name="lyrics_translation_unavailable">Перевод сейчас недоступен</string>
     <string name="connect_account_first">Сначала подключите аккаунт</string>
     <string name="connected_presence_off">Подключено, Presence отключён</string>
     <string name="copy_log">Скопировать журнал</string>

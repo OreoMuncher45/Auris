@@ -12,10 +12,12 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.View
+import android.widget.Toast
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedContent
@@ -103,12 +105,14 @@ import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -138,6 +142,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -211,6 +216,7 @@ import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.ui.components.LyricsLogConsole
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
@@ -221,6 +227,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
@@ -229,7 +236,10 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.pow
+import kotlin.math.PI
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.random.Random
 
 /** Collapsed-header geometry, shared by the layout and its animation. */
 /**
@@ -710,6 +720,23 @@ private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
 
+private sealed interface LyricsTranslationUiState {
+    data object Idle : LyricsTranslationUiState
+    data object Loading : LyricsTranslationUiState
+    data class Ready(val lines: List<LyricLine>) : LyricsTranslationUiState
+    data object SameLanguage : LyricsTranslationUiState
+}
+
+private const val TRANSLATION_MOTION_MS = 540
+private const val PARTICLES_PER_VOICE = 18
+
+private data class TranslationParticle(
+    val anchor: Offset,
+    val drift: Offset,
+    val radius: Float,
+    val delay: Float,
+)
+
 /**
  * Apple Music's Now Playing, closely: artwork that shrinks when paused, a
  * hairline scrubber with elapsed / remaining either side, oversized transport
@@ -873,6 +900,98 @@ fun NowPlayingScreen(
     LaunchedEffect(lyricsOpen) { lyricsControlsOpen = false }
     var lyricsLogsOpen by remember { mutableStateOf(false) }
     val showLyricsLogsEnabled by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
+    val reduceTranslationMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val configuredLocale = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
+        ?.takeIf { it.isNotBlank() }
+        ?: context.resources.configuration.locales.get(0).toLanguageTag()
+    val translationLanguage = remember(configuredLocale) {
+        Locale.forLanguageTag(configuredLocale).language.ifBlank { "en" }
+    }
+    val translationLanguageName = remember(configuredLocale, translationLanguage) {
+        val locale = Locale.forLanguageTag(configuredLocale)
+        Locale.forLanguageTag(translationLanguage).getDisplayLanguage(locale)
+            .replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+    }
+    var translationState by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
+    }
+    var showingTranslation by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf(false)
+    }
+    var translationTransition by remember(song.videoId) { mutableIntStateOf(0) }
+    var translationJob by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf<Job?>(null)
+    }
+    DisposableEffect(song.videoId, translationLanguage, lyrics) {
+        onDispose { translationJob?.cancel() }
+    }
+    val displayedLyrics = if (showingTranslation) {
+        (translationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
+    } else {
+        lyrics.orEmpty()
+    }
+    val translationScope = rememberCoroutineScope()
+    val toggleTranslation: () -> Unit = toggleTranslation@{
+        when (val state = translationState) {
+            is LyricsTranslationUiState.Ready -> {
+                showingTranslation = !showingTranslation
+                translationTransition++
+                haptics.play(Haptic.Select)
+            }
+            LyricsTranslationUiState.Loading -> Unit
+            LyricsTranslationUiState.SameLanguage -> {
+                haptics.play(Haptic.Tap)
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.lyrics_already_in_language, translationLanguageName),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            LyricsTranslationUiState.Idle -> {
+                val source = lyrics.orEmpty()
+                if (source.isEmpty()) return@toggleTranslation
+                haptics.play(Haptic.Tap)
+                translationState = LyricsTranslationUiState.Loading
+                translationJob?.cancel()
+                translationJob = translationScope.launch {
+                    when (
+                        val result = LyricsTranslation.translate(
+                            context = context.applicationContext,
+                            trackId = song.videoId,
+                            lines = source,
+                            targetLanguageTag = configuredLocale,
+                        )
+                    ) {
+                        is LyricsTranslation.Result.Translated -> {
+                            translationState = LyricsTranslationUiState.Ready(result.lines)
+                            showingTranslation = true
+                            translationTransition++
+                            haptics.play(Haptic.ToggleOn)
+                        }
+                        is LyricsTranslation.Result.SameLanguage -> {
+                            translationState = LyricsTranslationUiState.SameLanguage
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.lyrics_already_in_language,
+                                    translationLanguageName,
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        LyricsTranslation.Result.Unavailable -> {
+                            translationState = LyricsTranslationUiState.Idle
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.lyrics_translation_unavailable),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
+            }
+        }
+    }
     // The panel is a place, not a property of the track. Someone reading along
     // who skips — or who simply lets the queue run on — means to carry on
     // reading, so the words change underneath them and the panel stays. Closing
@@ -2189,15 +2308,9 @@ fun NowPlayingScreen(
                                 },
                         )
                     } else {
-                        LyricsPanel(
-                            lines = lyrics.orEmpty(),
-                            positionMs = positionMs,
-                            looking = !lyricsUnavailable,
-                            isPlaying = isPlaying,
-                            onSeekToLine = onSeek,
-                            controlsOpen = lyricsControlsOpen,
-                            onRevealControls = { lyricsControlsOpen = true },
-                            onHideControls = { lyricsControlsOpen = false },
+                        LyricsTranslationMotion(
+                            trigger = translationTransition,
+                            reduceMotion = reduceTranslationMotion,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .padding(top = HEADER_HEIGHT)
@@ -2210,7 +2323,21 @@ fun NowPlayingScreen(
                                     alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
                                     translationY = (1f - p) * 26.dp.toPx()
                                 },
-                        )
+                        ) { particleProgress ->
+                            LyricsPanel(
+                                lines = displayedLyrics,
+                                trackKey = song.videoId,
+                                positionMs = positionMs,
+                                looking = !lyricsUnavailable,
+                                isPlaying = isPlaying,
+                                onSeekToLine = onSeek,
+                                controlsOpen = lyricsControlsOpen,
+                                onRevealControls = { lyricsControlsOpen = true },
+                                onHideControls = { lyricsControlsOpen = false },
+                                translationProgress = particleProgress,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
 
@@ -2278,9 +2405,9 @@ fun NowPlayingScreen(
                         // the timestamps below are pulled back up into it.
                         .offset(y = 6.dp),
                 ) {
-                    if (!lyrics.isNullOrEmpty()) {
+                    if (displayedLyrics.isNotEmpty()) {
                         CurrentLyricLine(
-                            lines = lyrics,
+                            lines = displayedLyrics,
                             trackKey = song.videoId,
                             positionMs = positionMs,
                             isPlaying = isPlaying,
@@ -2309,8 +2436,33 @@ fun NowPlayingScreen(
                 }
             }
             if (lyricsOpen) {
+                // Translation lives with the half player rather than on the
+                // lyrics themselves: the panel is for reading, and a control
+                // parked over the words is one more thing between the reader
+                // and them. It arrives and leaves with the controls below it,
+                // on the same fade, so the lyrics are never covered by a
+                // button that was not asked for.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TranslationToggleButton(
+                        state = translationState,
+                        showingTranslation = showingTranslation,
+                        enabled = !lyricsLogsOpen && !lyrics.isNullOrEmpty(),
+                        onClick = toggleTranslation,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = when {
+                        translationState is LyricsTranslationUiState.Loading ->
+                            stringResource(R.string.translating_lyrics_to, translationLanguageName)
+                        showingTranslation ->
+                            stringResource(R.string.lyrics_translated_to, translationLanguageName)
+                        translationState is LyricsTranslationUiState.SameLanguage ->
+                            stringResource(R.string.lyrics_already_in_language, translationLanguageName)
                         lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
                         lyrics.isNullOrEmpty() -> stringResource(R.string.no_lyrics_found)
                         else -> stringResource(R.string.lyrics_saved_with_download)
@@ -2785,6 +2937,7 @@ private fun SweptLyricLine(
     feather: Boolean = false,
     rise: Boolean = true,
     alignEnd: Boolean = false,
+    translationProgress: State<Float>? = null,
 ) {
     var layout by remember(line) { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -2860,7 +3013,10 @@ private fun SweptLyricLine(
     // within the block, for the case where it has wrapped. Neither alone is
     // enough, and the three copies all take both, so they still land on top of
     // each other.
-    Box(modifier, contentAlignment = if (alignEnd) Alignment.TopEnd else Alignment.TopStart) {
+    Box(
+        modifier.lyricParticles(layout, translationProgress, glowRoom),
+        contentAlignment = if (alignEnd) Alignment.TopEnd else Alignment.TopStart,
+    ) {
         Text(
             text = line.text,
             style = style,
@@ -3272,6 +3428,148 @@ private fun ContentDrawScope.sweepTo(
 
 
 /**
+ * The translate control, sized and lit like every other disc in the player —
+ * see [CircleGlyph]. Its own composable rather than a [CircleGlyph] call
+ * because it has a fourth state the others do not: a request in flight, which
+ * takes the icon's place rather than sitting beside it.
+ */
+@Composable
+private fun TranslationToggleButton(
+    state: LyricsTranslationUiState,
+    showingTranslation: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val active = showingTranslation || state is LyricsTranslationUiState.Loading
+    val tint = when {
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> Color.White.copy(alpha = 0.42f)
+        active -> Color.White
+        else -> Color.White.copy(alpha = 0.78f)
+    }
+    val discAlpha by animateFloatAsState(
+        targetValue = if (active) 0.34f else 0.18f,
+        label = "translateDisc",
+    )
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = discAlpha))
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (state is LyricsTranslationUiState.Loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = tint,
+                strokeWidth = 1.7.dp,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Translate,
+                contentDescription = stringResource(
+                    if (showingTranslation) R.string.show_original_lyrics
+                    else R.string.translate_lyrics,
+                ),
+                tint = tint,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+/**
+ * A short text-material transition: the list and its playback clock stay in
+ * place while a field of tiny glyph-like particles resolves into the new text.
+ * Only the dedicated Canvas drawing moves, so changing language never causes a
+ * second scroll, a blank frame, or a new lyrics timeline. The app's Reduce
+ * animation preference collapses the whole response to an immediate swap.
+ */
+@Composable
+private fun LyricsTranslationMotion(
+    trigger: Int,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable (State<Float>?) -> Unit,
+) {
+    val progress = remember { Animatable(1f) }
+    val foreground = rememberIsForeground()
+    // Reopening the panel or returning from the background must not replay a
+    // previous toggle. A new toggle cancels the previous effect automatically.
+    var consumedTrigger by remember { mutableIntStateOf(trigger) }
+    LaunchedEffect(trigger, reduceMotion, foreground) {
+        val changed = trigger != consumedTrigger
+        consumedTrigger = trigger
+        if (!changed || trigger <= 0 || reduceMotion || !foreground) {
+            progress.snapTo(1f)
+        } else {
+            progress.snapTo(0f)
+            progress.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(durationMillis = TRANSLATION_MOTION_MS, easing = LinearEasing),
+            )
+        }
+    }
+
+    Box(modifier = modifier) {
+        // Keep the lyrics subtree completely outside the animation clock. In
+        // particular, do not read progress in composition or apply a clipping
+        // layer here: the panel's active line deliberately scales beyond its
+        // measured bounds and its glow uses unbounded blur.
+        content(progress.asState().takeIf { !reduceMotion && foreground && trigger > 0 })
+    }
+}
+
+/** Glyph positions are cached at layout time; the shared clock is draw-only. */
+private fun Modifier.lyricParticles(
+    layout: TextLayoutResult?,
+    progress: State<Float>?,
+    room: Dp,
+): Modifier {
+    if (layout == null || progress == null) return this
+    return drawWithCache {
+        val text = layout.layoutInput.text.text
+        val candidates = text.indices.filter { text[it].isLetterOrDigit() }
+        val random = Random(text.hashCode())
+        val inset = room.toPx()
+        val particles = candidates.shuffled(random).take(PARTICLES_PER_VOICE).map { index ->
+            val glyph = layout.getBoundingBox(index)
+            TranslationParticle(
+                anchor = glyph.center + Offset(inset, inset),
+                drift = Offset((random.nextFloat() - 0.5f) * 12.dp.toPx(),
+                    -(5f + random.nextFloat() * 11f).dp.toPx()),
+                radius = (0.65f + random.nextFloat() * 0.65f).dp.toPx(),
+                delay = 0.16f * index / text.length.coerceAtLeast(1),
+            )
+        }
+        onDrawWithContent {
+            drawContent()
+            val value = progress.value
+            if (value > 0f && value < 1f) {
+                particles.forEach { particle ->
+                    val t = ((value - particle.delay) / 0.84f).coerceIn(0f, 1f)
+                    val envelope = sin(PI * t).toFloat()
+                    val ease = 1f - (1f - t) * (1f - t)
+                    val center = particle.anchor + Offset(
+                        particle.drift.x * ease,
+                        particle.drift.y * ease + 3.dp.toPx() * t * t,
+                    )
+                    // Two inexpensive circles give a soft halo without another
+                    // blur layer; opacity rises and falls without a flash.
+                    drawCircle(Color.White, particle.radius * 2.7f, center, alpha = envelope * 0.07f)
+                    drawCircle(Color.White, particle.radius, center, alpha = envelope * 0.58f)
+                }
+            }
+        }
+    }
+}
+
+/**
  * Stands in for the lyrics while the lookup is still out.
  *
  * Without it the panel had one empty state doing two jobs: a lookup that had
@@ -3347,6 +3645,7 @@ private fun LyricsSkeleton(modifier: Modifier = Modifier) {
 @Composable
 private fun LyricsPanel(
     lines: List<LyricLine>,
+    trackKey: String,
     positionMs: Long,
     /** Whether a lookup for this track is still in flight. */
     looking: Boolean,
@@ -3355,6 +3654,7 @@ private fun LyricsPanel(
     controlsOpen: Boolean,
     onRevealControls: () -> Unit,
     onHideControls: () -> Unit,
+    translationProgress: State<Float>? = null,
     modifier: Modifier = Modifier,
 ) {
     val clock = rememberLyricClock(positionMs, isPlaying)
@@ -3459,7 +3759,10 @@ private fun LyricsPanel(
             animationSpec = tween(run.spanMs.toInt(), easing = LinearEasing),
         ) { value, _ -> since.floatValue = value }
     }
-    var placed by remember(lines) { mutableStateOf(false) }
+    // Keyed to the track, not to [lines]: toggling the translation replaces
+    // every line while the reader's place in the song is unchanged, and a reset
+    // here would snap the panel back to the top mid-read.
+    var placed by remember(trackKey) { mutableStateOf(false) }
     LaunchedEffect(controlsOpen) {
         if (controlsOpen) browsing = false
     }
@@ -3793,6 +4096,12 @@ private fun LyricsPanel(
                         glowAlpha = glow,
                         room = GLOW_ROOM,
                         alignEnd = alignEnd,
+                        // Only the rows actually in front of the reader get the
+                        // particle pass. Sixty rows' worth of glyph boxes is a
+                        // layout walk per frame for text nobody is looking at.
+                        translationProgress = translationProgress.takeIf {
+                            if (isSynced) abs(index - focusLine) <= 1 else index < 4
+                        },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     line.background?.let { backing ->
@@ -3854,6 +4163,7 @@ private fun PanelVoice(
     room: Dp,
     /** Whether this line is one of the right-hand voice's; see [LyricAlignment]. */
     alignEnd: Boolean,
+    translationProgress: State<Float>? = null,
     modifier: Modifier = Modifier,
 ) {
     if (line.isWordSynced && !browsing) {
@@ -3880,6 +4190,7 @@ private fun PanelVoice(
             glowRoom = room,
             feather = isActive,
             alignEnd = alignEnd,
+            translationProgress = translationProgress,
         )
     } else if (line.isWordSynced) {
         // Browsing: keep the sweep so sung lines stay fully lit and unsung
@@ -3899,6 +4210,7 @@ private fun PanelVoice(
             glowAlpha = 0f,
             glowRoom = room,
             alignEnd = alignEnd,
+            translationProgress = translationProgress,
         )
     } else {
         // No word timings, so there is no sweep to light the words as they are
@@ -3914,11 +4226,13 @@ private fun PanelVoice(
             targetValue = if (!synced || sung || isActive) 1f else UNSUNG_ALPHA,
             label = "lyricLit",
         )
+        var layout by remember(line.text) { mutableStateOf<TextLayoutResult?>(null) }
         Text(
             text = line.text,
             style = style,
             color = Color.White.copy(alpha = lit),
-            modifier = modifier.padding(room),
+            onTextLayout = { layout = it },
+            modifier = modifier.lyricParticles(layout, translationProgress, room).padding(room),
         )
     }
 }
@@ -4026,7 +4340,7 @@ private fun CurrentLyricLine(
     val text = when {
         intro -> introLine
         instrumental -> stringResource(R.string.instrumental)
-        else -> current!!.text
+        else -> current.text
     }
 
     Row(
