@@ -159,6 +159,7 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
+    onEqualizer: () -> Unit,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
     onTranslationLanguage: () -> Unit,
@@ -550,8 +551,12 @@ fun SettingsScreen(
                 icon = Icons.Rounded.Tune,
                 title = stringResource(R.string.equalizer),
                 subtitle = stringResource(R.string.equalizer_subtitle),
-                onClick = { openEqualizer(context, sessionId) },
+                onClick = onEqualizer,
             )
+            // The system panel is not listed here as well. A device with a
+            // Dolby or Dirac panel has something BitChord cannot reproduce and
+            // keeps its row — but one level in, at the foot of the equaliser
+            // screen, rather than as a second equaliser entry alongside ours.
         }
 
         SettingsGroup(header = stringResource(R.string.appearance)) {
@@ -1392,7 +1397,13 @@ private fun AutomixPerformanceMode.localizedLabel(): String = stringResource(
     },
 )
 
-private fun openEqualizer(context: Context, sessionId: Int) {
+/**
+ * Hands the device's own effect panel this app's audio session.
+ *
+ * Shared with [EqualizerScreen], which offers the same escape hatch a second
+ * time next to the equaliser it might be an alternative to.
+ */
+internal fun openEqualizer(context: Context, sessionId: Int) {
     val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
         putExtra(AudioEffect.EXTRA_AUDIO_SESSION, sessionId)
         putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
@@ -1743,6 +1754,8 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
 internal fun SettingsGroup(
     header: String? = null,
     footer: String? = null,
+    /** Room above the card, where there is no [header] to provide it. */
+    topSpacing: Dp = 26.dp,
     content: @Composable () -> Unit,
 ) {
     if (header != null) {
@@ -1758,7 +1771,7 @@ internal fun SettingsGroup(
             ),
         )
     } else {
-        Spacer(Modifier.height(26.dp))
+        Spacer(Modifier.height(topSpacing))
     }
     Column(
         modifier = Modifier
@@ -2038,7 +2051,7 @@ internal fun DestructiveRow(label: String, onClick: () -> Unit) {
 
 /** Sliding pill selector, for the handful of settings with two or three states. */
 @Composable
-private fun SegmentedControl(
+internal fun SegmentedControl(
     options: List<String>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
@@ -2050,7 +2063,11 @@ private fun SegmentedControl(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.outline)
-            .padding(2.dp),
+            // Enough of a margin for the track to read as a track. At 2dp the
+            // selected pill sat all but flush against the container's own edge,
+            // so the two rounded rectangles merged into one shape and the
+            // control stopped looking like something with a position in it.
+            .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         options.forEachIndexed { index, label ->
