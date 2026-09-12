@@ -57,7 +57,7 @@ import dev.chrisbanes.haze.materials.HazeMaterials
 
 private val PIPELINE_CARD_SHAPE = RoundedCornerShape(24.dp)
 private val PIPELINE_SCRIM_COLOR = Color.Black.copy(alpha = 0.5f)
-private val PIPELINE_STAGE_ACCENT = Color(0xFF29B6F6) // Electric cyan/blue matching reference
+private val PIPELINE_STAGE_ACCENT = Color.White
 
 /**
  * Full audio playback pipeline inspection surface opened by tapping the Now Playing
@@ -163,9 +163,7 @@ fun AudioPipelineDialog(
                 }
 
                 // 2. Decoder Stage
-                val decoderName = outputStatus.decoderName
-                    ?: nerdStats?.mimeType?.let { "c2.android.${NerdStats.codecLabel(it)?.lowercase() ?: "audio"}.decoder" }
-                    ?: "—"
+                val decoderName = outputStatus.decoderName ?: "—"
 
                 PipelineStage(
                     icon = Icons.Rounded.Memory,
@@ -228,10 +226,21 @@ fun AudioPipelineDialog(
                 }
                 val stereoExpandText = if (spatialAudio) "250%" else "100%"
                 val buffersText = outputStatus.bufferSize?.let { size ->
-                    val rate = outputStatus.actualSampleRateHz ?: 48000
-                    val frames = if (rate > 0) size / 4 else 0
-                    val ms = if (rate > 0 && frames > 0) (frames * 1000L) / rate else 80L
-                    "2x (${ms}ms, $frames frames)"
+                    val rate = outputStatus.actualSampleRateHz
+                    val bytesPerSample = when (outputStatus.actualEncoding) {
+                        AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_32BIT -> 4
+                        AudioFormat.ENCODING_PCM_24BIT_PACKED -> 3
+                        else -> 2
+                    }
+                    val channelCount = nerdStats?.channels ?: 2
+                    val bytesPerFrame = bytesPerSample * channelCount
+                    val frames = if (bytesPerFrame > 0) size / bytesPerFrame else 0
+                    if (rate != null && rate > 0 && frames > 0) {
+                        val ms = (frames * 1000L) / rate
+                        "2x (${ms}ms, $frames frames)"
+                    } else {
+                        "—"
+                    }
                 } ?: "—"
 
                 PipelineStage(
@@ -244,8 +253,6 @@ fun AudioPipelineDialog(
                     PipelineRow(stringResource(R.string.pipeline_eq_preset), eqPresetText)
                     PipelineRow(stringResource(R.string.pipeline_stereo_expand), stereoExpandText)
                     PipelineRow(stringResource(R.string.pipeline_buffers), buffersText)
-                    PipelineRow(stringResource(R.string.pipeline_latency), "~175 ms")
-                    PipelineRow(stringResource(R.string.pipeline_visualizer_latency), "~175 ms")
                     PipelineRow(stringResource(R.string.pipeline_output_api), outputStatus.sink.ifBlank { "AAudio" })
                 }
 

@@ -418,8 +418,6 @@
     <string name="pipeline_eq_preset">EQ Preset</string>
     <string name="pipeline_stereo_expand">Stereo Expand</string>
     <string name="pipeline_buffers">Buffers</string>
-    <string name="pipeline_latency">Latency</string>
-    <string name="pipeline_visualizer_latency">Visualizer Latency</string>
     <string name="pipeline_output_api">Output API</string>
     <string name="pipeline_device_name">Device Name</string>
     <string name="bit_depth">%1$d-bit</string>
