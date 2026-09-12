@@ -141,37 +141,24 @@ fun EqualizerScreen(
         }
 
         // Off, the whole apparatus below reads as unavailable rather than
-        // merely idle: it is dimmed and stops answering touches, so nobody
-        // drags a band for a second wondering why nothing changed. Consumed
-        // on the Initial pass so the sliders never see the gesture at all.
+        // merely idle. Each control is told so itself rather than having its
+        // touches swallowed by a layer above: the pad and the faders all claim
+        // the gesture with `awaitFirstDown(requireUnconsumed = false)` — they
+        // have to, or the scrolling page would steal every vertical drag — so
+        // an ancestor's consumption never reaches them. Consuming on the
+        // Initial pass to force it took the page's own scrolling down too.
         val settingsAlpha by animateFloatAsState(
             targetValue = if (enabled) 1f else 0.38f,
             animationSpec = tween(220),
             label = "equalizerEnabled",
         )
-        Column(
-            modifier = Modifier
-                .graphicsLayer { alpha = settingsAlpha }
-                .then(
-                    if (enabled) {
-                        Modifier
-                    } else {
-                        Modifier.pointerInput(Unit) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    awaitPointerEvent(PointerEventPass.Initial)
-                                        .changes.forEach { it.consume() }
-                                }
-                            }
-                        }
-                    },
-                ),
-        ) {
+        Column(modifier = Modifier.graphicsLayer { alpha = settingsAlpha }) {
             Spacer(Modifier.height(18.dp))
             SegmentedControl(
                 options = EqualizerMode.entries.map { it.localizedLabel() },
                 selectedIndex = EqualizerMode.entries.indexOf(mode),
                 onSelect = { AppSettings.setEqualizerMode(EqualizerMode.entries[it]) },
+                enabled = enabled,
                 modifier = Modifier.padding(horizontal = GROUP_INSET),
             )
 
@@ -187,6 +174,7 @@ fun EqualizerScreen(
                             x = toneX,
                             y = toneY,
                             onChange = { newX, newY -> AppSettings.setEqualizerTone(newX, newY) },
+                            enabled = enabled,
                         )
                         ToneReadout(x = toneX, y = toneY)
                         RowDivider()
@@ -194,12 +182,14 @@ fun EqualizerScreen(
                             label = stringResource(R.string.equalizer_broad),
                             selected = !focused,
                             onClick = { AppSettings.setEqualizerFocused(false) },
+                            enabled = enabled,
                         )
                         RowDivider()
                         ChoiceRow(
                             label = stringResource(R.string.equalizer_focused),
                             selected = focused,
                             onClick = { AppSettings.setEqualizerFocused(true) },
+                            enabled = enabled,
                         )
                     }
                 }
@@ -211,6 +201,7 @@ fun EqualizerScreen(
                             title = stringResource(R.string.equalizer_preset),
                             value = preset.localizedLabel(),
                             onClick = { pickingPreset = true },
+                            enabled = enabled,
                         )
                     }
                     SettingsGroup(
@@ -220,9 +211,13 @@ fun EqualizerScreen(
                         BandSliders(
                             bands = bands,
                             onChange = { AppSettings.setEqualizerBands(it) },
+                            enabled = enabled,
                         )
                         RowDivider()
-                        DestructiveRow(stringResource(R.string.equalizer_reset)) {
+                        DestructiveRow(
+                            label = stringResource(R.string.equalizer_reset),
+                            enabled = enabled,
+                        ) {
                             haptics.play(Haptic.Select)
                             AppSettings.setEqualizerPreset(EqualizerPreset.FLAT)
                         }
@@ -237,6 +232,7 @@ fun EqualizerScreen(
                 BalanceControl(
                     balance = balance,
                     onChange = { AppSettings.setEqualizerBalance(it) },
+                    enabled = enabled,
                 )
             }
 
@@ -307,6 +303,7 @@ fun EqualizerScreen(
 private fun TonePad(
     x: Int,
     y: Int,
+    enabled: Boolean,
     onChange: (Int, Int) -> Unit,
 ) {
     val haptics = rememberHaptics()
@@ -340,7 +337,8 @@ private fun TonePad(
             .fillMaxWidth()
             .padding(horizontal = ROW_INSET, vertical = 18.dp)
             .height(PAD_HEIGHT)
-            .pointerInput(steps) {
+            .pointerInput(steps, enabled) {
+                if (!enabled) return@pointerInput
                 awaitEachGesture {
                     // Claimed on the way down, before the scrolling parent gets
                     // to count this as the start of a fling. Everything in this
@@ -470,12 +468,17 @@ private fun signed(value: Int): String = if (value > 0) "+$value" else value.toS
 
 /** A row that is one of a set, ticked when it is the one in force. */
 @Composable
-private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun ChoiceRow(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
     val haptics = rememberHaptics()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
+            .clickable(enabled = enabled) {
                 if (!selected) {
                     haptics.play(Haptic.Select)
                     onClick()
@@ -517,7 +520,11 @@ private fun ChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
  * one.
  */
 @Composable
-private fun BandSliders(bands: List<Float>, onChange: (List<Float>) -> Unit) {
+private fun BandSliders(
+    bands: List<Float>,
+    enabled: Boolean,
+    onChange: (List<Float>) -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -542,6 +549,7 @@ private fun BandSliders(bands: List<Float>, onChange: (List<Float>) -> Unit) {
                 )
                 Spacer(Modifier.height(8.dp))
                 BandFader(
+                    enabled = enabled,
                     value = value,
                     onChange = { updated ->
                         onChange(bands.toMutableList().also { it[index] = updated })
@@ -561,7 +569,11 @@ private fun BandSliders(bands: List<Float>, onChange: (List<Float>) -> Unit) {
 }
 
 @Composable
-private fun BandFader(value: Float, onChange: (Float) -> Unit) {
+private fun BandFader(
+    value: Float,
+    enabled: Boolean,
+    onChange: (Float) -> Unit,
+) {
     val haptics = rememberHaptics()
     val trackColor = MaterialTheme.colorScheme.outline
     val fillColor = MaterialTheme.colorScheme.primary
@@ -574,7 +586,8 @@ private fun BandFader(value: Float, onChange: (Float) -> Unit) {
         modifier = Modifier
             .width(FADER_WIDTH)
             .height(FADER_HEIGHT)
-            .pointerInput(Unit) {
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()
@@ -687,7 +700,11 @@ private fun formatFrequency(hz: Float): String = when {
  * is the one position a drag cannot land on by aim alone.
  */
 @Composable
-private fun BalanceControl(balance: Float, onChange: (Float) -> Unit) {
+private fun BalanceControl(
+    balance: Float,
+    enabled: Boolean,
+    onChange: (Float) -> Unit,
+) {
     val haptics = rememberHaptics()
     val trackColor = MaterialTheme.colorScheme.outline
     val fillColor = MaterialTheme.colorScheme.primary
@@ -720,7 +737,8 @@ private fun BalanceControl(balance: Float, onChange: (Float) -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .height(KNOB_RADIUS * 2 + 8.dp)
-                .pointerInput(Unit) {
+                .pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         down.consume()

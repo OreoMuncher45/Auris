@@ -2033,11 +2033,15 @@ internal fun SliderRow(
 
 /** Sign out: centered, accent-coloured, no glyph — the shape of a real one. */
 @Composable
-internal fun DestructiveRow(label: String, onClick: () -> Unit) {
+internal fun DestructiveRow(
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -2056,6 +2060,7 @@ internal fun SegmentedControl(
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val haptics = LocalHapticFeedback.current
     Row(
@@ -2095,7 +2100,7 @@ internal fun SegmentedControl(
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(pill)
-                    .clickable {
+                    .clickable(enabled = enabled) {
                         if (!chosen) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSelect(index)

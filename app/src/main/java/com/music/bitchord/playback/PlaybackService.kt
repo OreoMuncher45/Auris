@@ -1888,7 +1888,22 @@ class PlaybackService : MediaLibraryService() {
         // same FLAC at the same dead URL, cuts the audio for it again, and
         // fails again — twice more before [MAX_RECOVERIES] stops it. Observed
         // on a Tidal URL answering ERROR_CODE_IO_BAD_HTTP_STATUS.
-        if (uri?.let(QualityUpgrade::cacheTag) != null) {
+        //
+        // This is also the other half of what [StreamChoice.isSubstitute]
+        // cannot see below: a track that started on YouTube and swapped to a
+        // module mid-song (see [QualityUpgrade]) was remembered by
+        // [StreamChoice] as an *un*substituted YouTube choice — the swap
+        // never went through [StreamChoice.remember] at all — so a die on
+        // this URI is invisible to the `isSubstitute` check even though it is
+        // exactly the same failure: a module handed over a URL it cannot
+        // actually serve. Left as it was, [resolveWithModulePriority] — the
+        // only place that reads [StreamChoice.substitutesRefused] — kept
+        // racing the same broken module on every single retry, because
+        // nothing had ever told it to stop. Observed on a Tidal DASH manifest
+        // that came back malformed 23 times in two minutes, once for every
+        // tap of the play button.
+        val diedOnModuleStream = uri?.let(QualityUpgrade::cacheTag) != null
+        if (diedOnModuleStream) {
             QualityUpgrade.refuseUpgrades(mediaId)
         }
         // Whatever failed took its claimed format with it. The stream that
@@ -1906,18 +1921,20 @@ class PlaybackService : MediaLibraryService() {
         // The same reasoning as [QualityUpgrade.refuseUpgrades] above, for the
         // substitution that happens *before* the first note rather than after.
         // Read before the forget below, which is what clears the evidence.
-        uri?.getQueryParameter("v")?.takeIf(StreamChoice::isSubstitute)?.let { videoId ->
-            StreamChoice.refuseSubstitutes(videoId)
-            TrackLog.w(
-                "BitChord",
-                "$videoId broke on a substituted stream; YouTube serves it for now",
-                about = mediaId,
-            )
-            // And no swapping back to it mid-song either: the second look asks
-            // the same catalogues the same question and would cut the audio that
-            // just recovered to land on the same refusal.
-            QualityUpgrade.refuseUpgrades(videoId)
-        }
+        uri?.getQueryParameter("v")
+            ?.takeIf { diedOnModuleStream || StreamChoice.isSubstitute(it) }
+            ?.let { videoId ->
+                StreamChoice.refuseSubstitutes(videoId)
+                TrackLog.w(
+                    "BitChord",
+                    "$videoId broke on a substituted stream; YouTube serves it for now",
+                    about = mediaId,
+                )
+                // And no swapping back to it mid-song either: the second look asks
+                // the same catalogues the same question and would cut the audio that
+                // just recovered to land on the same refusal.
+                QualityUpgrade.refuseUpgrades(videoId)
+            }
         uri?.getQueryParameter("v")?.let(StreamChoice::forget)
         scope.launch(TrackLog.about(mediaId)) {
             // Long enough for the released source to let go of the cache keys
