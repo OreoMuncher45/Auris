@@ -91,9 +91,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFontFamilyResolver
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.createFontFamilyResolver
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
@@ -223,19 +221,6 @@ import java.util.Locale
 /** A full first screen of a native YouTube Music radio before AutoPlay tops it up. */
 private const val INITIAL_RADIO_TRACKS = 24
 
-/**
- * The same context, reporting no [Configuration.fontWeightAdjustment].
- *
- * Only fonts are resolved through it, so the snapshot a configuration context
- * takes is not a staleness risk here: the answer this one exists to give is a
- * constant zero, whatever the device later changes.
- */
-private fun Context.withoutFontWeightAdjustment(): Context {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return this
-    val configuration = Configuration(resources.configuration).apply { fontWeightAdjustment = 0 }
-    return createConfigurationContext(configuration)
-}
-
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -246,25 +231,6 @@ class MainActivity : AppCompatActivity() {
         // Likewise for a link tapped or shared from another app — see [MusicLink].
         MusicLink.consume(intent)
         setContent {
-            // "Bold text" (Accessibility, Android 12+) sets a configuration-wide
-            // fontWeightAdjustment that Compose adds to *every* weight it
-            // resolves. The type scale here is already heavy by design — W600 to
-            // W800 — so the adjustment pushes most of the app onto the single
-            // heaviest SF Pro cut and the hierarchy between a title and its
-            // subtitle collapses. Body text is what that setting is for, and
-            // BitChord's body text is already the weight it asks for.
-            //
-            // The adjustment is read from the *context's* resources, not from
-            // LocalConfiguration, so opting out means handing the tree a
-            // resolver built from a context that reports no adjustment.
-            // LocalFontFamilyResolver is installed with `providesDefault`, so
-            // this override survives into the dialog and bottom-sheet
-            // subcompositions rather than being reset by their own owner.
-            val context = LocalContext.current
-            val fontFamilyResolver = remember(context) {
-                createFontFamilyResolver(context.withoutFontWeightAdjustment())
-            }
-            CompositionLocalProvider(LocalFontFamilyResolver provides fontFamilyResolver) {
             val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
             val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
             val liquidGlassEnabled by AppSettings.liquidGlass.collectAsStateWithLifecycle()
@@ -317,7 +283,6 @@ class MainActivity : AppCompatActivity() {
                     BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth, appBackdrop = appBackdrop)
                 }
                 }
-            }
             }
         }
     }
