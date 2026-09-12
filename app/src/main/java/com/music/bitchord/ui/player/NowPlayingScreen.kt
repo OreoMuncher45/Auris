@@ -4107,7 +4107,12 @@ private fun LyricsPanel(
                             glowAlpha = glow,
                             room = GLOW_ROOM,
                             alignEnd = alignEnd,
-                            translationProgress = null,
+                            // Only the rows actually in front of the reader get the
+                            // particle pass. Sixty rows' worth of glyph boxes is a
+                            // layout walk per frame for text nobody is looking at.
+                            translationProgress = translationProgress.takeIf {
+                                if (isSynced) abs(index - focusLine) <= 1 else index < 4
+                            },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         renderedLine.background?.let { backing ->
@@ -4351,19 +4356,13 @@ private fun CurrentLyricLine(
     }
 
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val lineAlpha by animateFloatAsState(
-        targetValue = if (instrumental) 0.5f else 0.85f,
-        animationSpec = tween(300),
-        label = "currentLyricLineAlpha",
-    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp)
-            .graphicsLayer { alpha = lineAlpha },
+            .padding(vertical = 4.dp),
     ) {
         if (instrumental) {
             Icon(
@@ -4375,7 +4374,7 @@ private fun CurrentLyricLine(
             Spacer(Modifier.width(6.dp))
         }
         AnimatedContent(
-            targetState = current to text,
+            targetState = Triple(index, current, text),
             transitionSpec = {
                 val duration = if (reduceAnimation) 0 else 340
                 if (reduceAnimation) {
@@ -4395,26 +4394,51 @@ private fun CurrentLyricLine(
             },
             label = "currentLyricTransition",
             modifier = Modifier.weight(1f, fill = false),
-        ) { (lineItem, lineText) ->
-            val swept = lineItem?.takeIf { !instrumental && it.isWordSynced }
-            if (swept != null) {
-                SweptLyricLine(
-                    line = swept,
-                    clock = clock,
-                    style = MaterialTheme.typography.titleMedium,
-                    dimAlpha = UNSUNG_ALPHA_STRIP,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    rise = false,
-                )
-            } else {
-                Text(
-                    text = lineText,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        ) { (itemIndex, lineItem, lineText) ->
+            val itemInstrumental = lineItem == null || lineItem.isGap
+            Box(
+                // Each rendered instance — the line sliding out, the one sliding
+                // in — fades against its own timing, not whichever line is
+                // "current" right now. Sharing one alpha across both (as a
+                // modifier up on the Row) snapped the outgoing line back to full
+                // brightness the moment the next one became current, undoing its
+                // own fade mid-exit.
+                modifier = Modifier.graphicsLayer {
+                    if (itemInstrumental) {
+                        // Nothing is being sung; hold it steady rather than fading.
+                        alpha = 0.5f
+                        return@graphicsLayer
+                    }
+                    val start = lineItem?.timeMs ?: 0L
+                    val end = lines.getOrNull(itemIndex + 1)?.timeMs
+                        ?: durationMs.takeIf { it > start }
+                        ?: (start + 4_000L)
+                    val fade = ((end - start) * LYRIC_FADE_FRACTION)
+                        .coerceIn(LYRIC_FADE_MIN_MS, LYRIC_FADE_MAX_MS)
+                    val remaining = (end - clock.longValue).toFloat()
+                    alpha = 0.78f * (remaining / fade).coerceIn(0f, 1f)
+                },
+            ) {
+                val swept = lineItem?.takeIf { !itemInstrumental && it.isWordSynced }
+                if (swept != null) {
+                    SweptLyricLine(
+                        line = swept,
+                        clock = clock,
+                        style = MaterialTheme.typography.titleMedium,
+                        dimAlpha = UNSUNG_ALPHA_STRIP,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        rise = false,
+                    )
+                } else {
+                    Text(
+                        text = lineText,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         Spacer(Modifier.width(6.dp))
