@@ -407,6 +407,23 @@ object QualityUpgrade {
      * @return the better stream, or null if there isn't one, in which case
      *   this track is never asked about again.
      */
+    /**
+     * Computes the duration to match against during an upgrade.
+     * When runtime decoder duration differs severely from the known catalogue
+     * duration (e.g. a 3:29 video edit playing for a 5:02 album track), the
+     * authoritative catalogue duration is preserved so the correct recording can
+     * be found.
+     */
+    fun effectiveTargetDuration(expectedSec: Int?, playingSec: Int?): Int? {
+        return if (expectedSec != null && playingSec != null &&
+            TrackMatcher.isSevereMismatch(expectedSec, playingSec)
+        ) {
+            expectedSec
+        } else {
+            playingSec ?: expectedSec
+        }
+    }
+
     suspend fun lookAgain(mediaId: String, playingDurationSec: Int?): SourceStream? {
         val waiting = pending[mediaId] ?: return null
         var found: SourceStream? = null
@@ -416,6 +433,17 @@ object QualityUpgrade {
          * [asked] is allowed to mean.
          */
         var answered = false
+        val expectedSec = waiting.target.durationSec
+        val effectiveDurationSec = effectiveTargetDuration(expectedSec, playingDurationSec)
+        if (expectedSec != null && playingDurationSec != null &&
+            TrackMatcher.isSevereMismatch(expectedSec, playingDurationSec)
+        ) {
+            TrackLog.w(
+                TAG,
+                "playing duration ($playingDurationSec s) drifted severely from catalogue duration ($expectedSec s); preserving catalogue duration for upgrade",
+                about = mediaId,
+            )
+        }
         return try {
             // The lookup that was still running when the fallback won the race
             // gets first refusal: what it returns is the stream that would
@@ -438,11 +466,12 @@ object QualityUpgrade {
                 val late = runCatching { lookup.await() }.getOrNull()
                 if (late != null &&
                     SourceResolver.worthSwapping(late.format, waiting.playing) &&
-                    SourceResolver.sameRecordingAs(late.durationSec, playingDurationSec)
+                    SourceResolver.sameRecordingAs(late.durationSec, effectiveDurationSec)
                 ) {
                     found = late
                     if (needsLosslessFollowUp(late.format)) {
                         followUps[mediaId] = waiting.copy(
+                            target = waiting.target.copy(durationSec = effectiveDurationSec),
                             inFlight = null,
                             playing = late.format,
                             servedBy = late.sourceConfigId,
@@ -457,13 +486,14 @@ object QualityUpgrade {
             // what the live path could not afford to do. The source already
             // serving the track is left out — see [SourceResolver.upgradeFor].
             SourceResolver.upgradeFor(
-                waiting.target.copy(durationSec = playingDurationSec ?: waiting.target.durationSec),
+                waiting.target.copy(durationSec = effectiveDurationSec),
                 playing = waiting.playing,
                 servedBy = waiting.servedBy,
             ).also {
                 found = it
                 if (it != null && needsLosslessFollowUp(it.format)) {
                     followUps[mediaId] = waiting.copy(
+                        target = waiting.target.copy(durationSec = effectiveDurationSec),
                         inFlight = null,
                         playing = it.format,
                         servedBy = it.sourceConfigId,

@@ -2411,10 +2411,20 @@ class PlaybackService : MediaLibraryService() {
         val videoId = uri.getQueryParameter("v") ?: return false
         val downloaded = com.music.bitchord.download.Downloads.savedUri(this, videoId) != null
         if (downloaded) return false
+        val target = SourceResolver.targetIn(uri)
+        val expectedSec = target.durationSec
+        if (TrackMatcher.isSevereMismatch(expectedSec, durationSec)) {
+            TrackLog.w(
+                "BitChord",
+                "cached rendition duration mismatch: playing ${durationSec}s vs catalogue ${expectedSec}s for $videoId; discarding cache rendition",
+                about = mediaId,
+            )
+            withContext(Dispatchers.IO) { AudioCache.discardRendition(uri) }
+        }
         return QualityUpgrade.adoptUnresolved(
             mediaId = mediaId,
             uri = uri,
-            target = SourceResolver.targetIn(uri),
+            target = target,
             playingMime = mime,
             playing = withContext(Dispatchers.IO) { cachedFloor(uri, format, durationSec) },
         )
