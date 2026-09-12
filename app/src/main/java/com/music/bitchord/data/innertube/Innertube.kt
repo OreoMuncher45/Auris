@@ -617,6 +617,22 @@ object Innertube {
         }
 
     /**
+     * Live media results for the typeahead phase — same shape as [search] but
+     * deliberately unauthenticated so YouTube Music does not log each debounced
+     * keystroke to the account's server-side search history.
+     *
+     * The regular [search] endpoint records every call against the signed-in
+     * account, which turns a slow typist's intermediate queries ("P", "Pe",
+     * "Perf…") into polluting history entries.  By omitting the session cookie
+     * here we still get full search results (tracks, artists, albums) but they
+     * land as anonymous lookups that don't touch the user's account history.
+     */
+    suspend fun searchTypeahead(query: String): JsonObject =
+        postMusicAnonymous("search") {
+            put("query", query)
+        }
+
+    /**
      * The `player` response for [videoId] as seen by [client] — the audio
      * formats and whatever it takes to unlock them.
      *
@@ -1205,6 +1221,52 @@ object Innertube {
                 ?.get("visitorData")?.jsonPrimitive?.content
         }
         return response
+    }
+
+    /**
+     * Like [postMusic] but deliberately strips the session cookie so YouTube
+     * Music does not record the call against any account.
+     *
+     * Used for typeahead lookups where intermediate keystrokes must remain
+     * anonymous — see [searchTypeahead].
+     */
+    private suspend fun postMusicAnonymous(
+        endpoint: String,
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject {
+        val clientVersion = webRemixVersion
+        return withRetry {
+            client.post("$MUSIC_BASE/$endpoint") {
+                contentType(ContentType.Application.Json)
+                parameter("prettyPrint", "false")
+                header("X-Origin", MUSIC_ORIGIN)
+                header("Origin", MUSIC_ORIGIN)
+                header("Referer", "$MUSIC_ORIGIN/")
+                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
+                header("X-YouTube-Client-Version", clientVersion)
+                visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                // No Cookie / Authorization headers — anonymous request.
+                setBody(
+                    buildJsonObject {
+                        putJsonObject("context") {
+                            putJsonObject("client") {
+                                put("clientName", "WEB_REMIX")
+                                put("clientVersion", clientVersion)
+                                put("hl", "en")
+                                put("gl", "US")
+                                visitorData?.let { put("visitorData", it) }
+                            }
+                            putJsonObject("user") {
+                                put("lockedSafetyMode", false)
+                                // No onBehalfOfUser — no account context.
+                            }
+                            putJsonObject("request") { put("useSsl", true) }
+                        }
+                        bodyExtras()
+                    },
+                )
+            }.body<JsonObject>()
+        }
     }
 
     /**

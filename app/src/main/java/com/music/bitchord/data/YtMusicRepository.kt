@@ -308,11 +308,17 @@ object YtMusicRepository {
      * returns tracks, artists, and albums so the dropdown can show playable
      * cards alongside text completions. Uses the ALL filter to get mixed
      * results quickly; callers may want to limit how many they display.
+     *
+     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
+     * session cookie so YouTube Music does not log each debounced keystroke
+     * to the account's server-side search history. Confirmed searches (Enter /
+     * IME Search / tapping a suggestion) still use the normal authenticated
+     * [searchPage] path and are recorded properly.
      */
     suspend fun searchTypeahead(input: String): Result<SearchPage> =
         call("typeahead:$input") {
             InnertubeParser.parseSearchPage(
-                Innertube.search(input, null),
+                Innertube.searchTypeahead(input),
                 includeVideos = false,
             ).let { page ->
                 SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
