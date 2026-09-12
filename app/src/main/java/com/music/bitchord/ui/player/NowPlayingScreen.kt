@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.LruCache
 import android.view.View
 import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
@@ -530,6 +531,9 @@ private const val BACKING_ALPHA = 0.72f
 
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
+private const val LIGHT_ARTWORK_LUMINANCE_THRESHOLD = 0.45f
+
+private val artworkLuminanceCache = LruCache<String, Float>(20)
 
 @Composable
 private fun rememberArtworkLuminance(imageUrl: String?): Float? {
@@ -537,10 +541,14 @@ private fun rememberArtworkLuminance(imageUrl: String?): Float? {
     var luminance by remember(imageUrl) { mutableStateOf<Float?>(null) }
 
     LaunchedEffect(imageUrl) {
-        if (imageUrl == null) {
-            luminance = null
+        luminance = null
+        if (imageUrl == null) return@LaunchedEffect
+
+        artworkLuminanceCache.get(imageUrl)?.let { cached ->
+            luminance = cached
             return@LaunchedEffect
         }
+
         val request = ImageRequest.Builder(context)
             .data(imageUrl.artworkAt(ART_PX))
             .size(128)
@@ -552,8 +560,10 @@ private fun rememberArtworkLuminance(imageUrl: String?): Float? {
             val lum = withContext(Dispatchers.Default) {
                 bitmap.topAreaLuminance()
             }
+            artworkLuminanceCache.put(imageUrl, lum)
             luminance = lum
         } else {
+            // Default to dark artwork (0f) so status bar icons stay light if image fails to load
             luminance = 0f
         }
     }
@@ -656,7 +666,7 @@ fun NowPlayingScreen(
     val haptics = rememberHaptics()
 
     val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
-    val isLightArtwork = artLuminance?.let { it > 0.45f } ?: false
+    val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
     SystemBarIcons(dark = isLightArtwork)
 
     // Kept local to the player: a modal player is not in the page's Haze
