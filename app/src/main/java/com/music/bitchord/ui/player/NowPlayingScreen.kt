@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.LruCache
 import android.view.View
 import android.widget.Toast
 import android.window.OnBackInvokedCallback
@@ -199,9 +200,16 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
+import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.request.ImageRequest
+import coil3.request.SuccessResult
+import coil3.request.allowHardware
+import coil3.toBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.music.bitchord.ui.theme.SystemBarIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.optimizedHazeEffect
@@ -722,6 +730,62 @@ private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
 
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
+private const val LIGHT_ARTWORK_LUMINANCE_THRESHOLD = 0.45f
+
+private val artworkLuminanceCache = LruCache<String, Float>(20)
+
+@Composable
+private fun rememberArtworkLuminance(imageUrl: String?): Float? {
+    val context = LocalContext.current
+    var luminance by remember(imageUrl) { mutableStateOf<Float?>(null) }
+
+    LaunchedEffect(imageUrl) {
+        luminance = null
+        if (imageUrl == null) return@LaunchedEffect
+
+        artworkLuminanceCache.get(imageUrl)?.let { cached ->
+            luminance = cached
+            return@LaunchedEffect
+        }
+
+        val request = ImageRequest.Builder(context)
+            .data(imageUrl.artworkAt(ART_PX))
+            .size(128)
+            .allowHardware(false)
+            .build()
+        val result = SingletonImageLoader.get(context).execute(request)
+        val bitmap = (result as? SuccessResult)?.image?.toBitmap()
+        if (bitmap != null) {
+            val lum = withContext(Dispatchers.Default) {
+                bitmap.topAreaLuminance()
+            }
+            artworkLuminanceCache.put(imageUrl, lum)
+            luminance = lum
+        } else {
+            // Default to dark artwork (0f) so status bar icons stay light if image fails to load
+            luminance = 0f
+        }
+    }
+    return luminance
+}
+
+private fun Bitmap.topAreaLuminance(): Float {
+    val sampleHeight = (height * 0.35f).toInt().coerceIn(1, height)
+    val sampleWidth = width.coerceAtLeast(1)
+    val pixels = IntArray(sampleWidth * sampleHeight)
+    getPixels(pixels, 0, sampleWidth, 0, 0, sampleWidth, sampleHeight)
+
+    var totalLuminance = 0.0
+    val count = pixels.size.coerceAtLeast(1)
+    for (pixel in pixels) {
+        val r = ((pixel shr 16) and 0xFF) / 255.0f
+        val g = ((pixel shr 8) and 0xFF) / 255.0f
+        val b = (pixel and 0xFF) / 255.0f
+        val lum = 0.2126f * r + 0.7152f * g + 0.0722f * b
+        totalLuminance += lum
+    }
+    return (totalLuminance / count).toFloat()
+}
 
 private sealed interface LyricsTranslationUiState {
     data object Idle : LyricsTranslationUiState
@@ -817,6 +881,16 @@ fun NowPlayingScreen(
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = rememberHaptics()
+
+    // A docked pane sits beside the page rather than covering the screen, so
+    // the status bar it's under belongs to the page, not this artwork — only
+    // the full-screen sheet gets to repaint it.
+    if (!docked) {
+        val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
+        val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
+        SystemBarIcons(dark = isLightArtwork)
+    }
+
     // Kept local to the player: a modal player is not in the page's Haze
     // source tree, so it needs its own source for the same frosted material as
     // the bottom navigation pill.
