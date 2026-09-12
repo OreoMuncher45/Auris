@@ -69,6 +69,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
 import com.music.bitchord.data.Http
@@ -787,6 +788,7 @@ class PlaybackService : MediaLibraryService() {
             initializedTimestampMs: Long,
             initializationDurationMs: Long,
         ) {
+            AudioOutputStatus.publishDecoder(decoderName)
             TrackLog.i(
                 "AUDIO_OUT",
                 "decoder=$decoderName initialized in ${initializationDurationMs}ms",
@@ -808,6 +810,7 @@ class PlaybackService : MediaLibraryService() {
             AudioOutputStatus.publishAudioTrack(
                 encoding = audioTrackConfig.encoding,
                 sampleRateHz = audioTrackConfig.sampleRate,
+                bufferSize = audioTrackConfig.bufferSize,
             )
             TrackLog.i(
                 "AUDIO_OUT",
@@ -897,7 +900,14 @@ class PlaybackService : MediaLibraryService() {
                 val stream = runBlocking(about) {
                     withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) }
                 } ?: throw java.io.IOException("No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}")
-                NerdStats.onSourceStream(dataSpec.uri.getQueryParameter("t"), stream.format)
+                val configId = dataSpec.uri.getQueryParameter("s")
+                val sourceName = configId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: "Source"
+                val trackParam = dataSpec.uri.getQueryParameter("t")
+                NerdStats.onSourceStream(trackParam, stream.format, sourceName)
+                NerdStats.recordSource(trackParam, sourceName)
+                NerdStats.recordSource(mediaIdIn(dataSpec.uri), sourceName)
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(stream.url))
                     .setHttpRequestHeaders(stream.headers)
@@ -913,6 +923,7 @@ class PlaybackService : MediaLibraryService() {
                 QualityUpgrade.forget(videoId)
                 StreamChoice.forget(videoId)
                 NerdStats.clearDeclared(videoId)
+                NerdStats.recordSource(videoId, "YouTube")
                 val streamUrl = try {
                     runBlocking(about) {
                         withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
@@ -934,6 +945,7 @@ class PlaybackService : MediaLibraryService() {
                     dataSpec.uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
                 )
             ) {
+                NerdStats.recordSource(videoId, "YouTube")
                 val streamUrl = try {
                     runBlocking(about) {
                         withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
@@ -959,7 +971,12 @@ class PlaybackService : MediaLibraryService() {
                 // the lossy stream still coming out of the speaker. The real
                 // open, moments later, records it.
                 val proving = QualityUpgrade.isAuditioning(videoId)
-                if (!proving) NerdStats.onSourceStream(videoId, upgraded.format)
+                val sourceName = upgraded.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: "Upgrade"
+                if (!proving) {
+                    NerdStats.onSourceStream(videoId, upgraded.format, sourceName)
+                    NerdStats.recordSource(videoId, sourceName)
+                }
                 // Logged because the alternative — a swap that silently never
                 // reached its stream — is indistinguishable in the logs from
                 // one that reached it and got nothing back, and the two have
@@ -1007,9 +1024,12 @@ class PlaybackService : MediaLibraryService() {
                 // Only when the format states something. A plain YouTube choice
                 // is remembered with an empty one, and writing that over a
                 // claim some other path made would be worse than saying nothing.
+                val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
                 if (serving.format != StreamFormat()) {
-                    NerdStats.onSourceStream(videoId, serving.format)
+                    NerdStats.onSourceStream(videoId, serving.format, sourceName)
                 }
+                NerdStats.recordSource(videoId, sourceName)
                 // Read-ahead can pin JioSaavn's quick 320kbps answer before
                 // this track becomes current.  It is the right answer for an
                 // immediate start, but it is not the final quality verdict:
@@ -1062,6 +1082,7 @@ class PlaybackService : MediaLibraryService() {
                 // source enabled from Settings mid-track flips the branch
                 // above under a half-filled cache entry, and the entry would
                 // then be finished by a different file.
+                NerdStats.recordSource(videoId, "YouTube")
                 StreamChoice.remember(videoId, SourceStream(streamUrl, headers = headers), substituted = false)
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
@@ -1076,7 +1097,10 @@ class PlaybackService : MediaLibraryService() {
             }
             when (won) {
                 is Resolved.Module -> {
-                    NerdStats.onSourceStream(videoId, won.stream.format)
+                    val sourceName = won.stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                        ?: "Module"
+                    NerdStats.onSourceStream(videoId, won.stream.format, sourceName)
+                    NerdStats.recordSource(videoId, sourceName)
                     StreamChoice.remember(videoId, won.stream, substituted = true)
                     dataSpec.buildUpon()
                         .setUri(Uri.parse(won.stream.url))
@@ -1092,6 +1116,7 @@ class PlaybackService : MediaLibraryService() {
                 // no such deadline, so what was nearly in hand is asked for
                 // again while the fallback plays.
                 is Resolved.YouTube -> {
+                    NerdStats.recordSource(videoId, "YouTube")
                     val headers = PlayerClient.forStreamUrl(won.url).mediaHeaders()
                     StreamChoice.remember(videoId, SourceStream(won.url, headers = headers), substituted = false)
                     dataSpec.buildUpon()
@@ -3042,7 +3067,9 @@ class PlaybackService : MediaLibraryService() {
             // keep calling the fallback lossless after the upgrade it
             // borrowed that claim from got reverted.
             if (previousFormat != null) {
-                NerdStats.onSourceStream(mediaId, previousFormat)
+                val prevSource = StreamChoice.of(mediaId)?.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: if (StreamChoice.isSubstitute(mediaId)) "Module" else "YouTube"
+                NerdStats.onSourceStream(mediaId, previousFormat, prevSource)
             } else {
                 NerdStats.clearDeclared(mediaId)
             }
@@ -3384,6 +3411,33 @@ class PlaybackService : MediaLibraryService() {
      * several seconds ago. Anything still unknown is left null for the UI to
      * omit — better a shorter line than a made-up number.
      */
+    private fun currentSourceName(mediaId: String?, mediaItem: MediaItem?): String? {
+        val id = mediaId ?: return null
+        val recorded = NerdStats.sourceFor(id)
+        if (!recorded.isNullOrBlank()) return recorded
+
+        val uri = mediaItem?.localConfiguration?.uri
+        if (uri != null) {
+            if (uri.scheme == "file" || uri.scheme == "content") {
+                return if (Downloads.verifiedSavedUri(id) != null) "Downloaded" else "Local Storage"
+            }
+        }
+        if (id.startsWith("content://") || id.startsWith("file://")) {
+            return "Local Storage"
+        }
+        if (Downloads.verifiedSavedUri(id) != null) {
+            return "Downloaded"
+        }
+
+        val sourceTrack = SourceRegistry.parseTrackKey(id)
+        if (sourceTrack != null) {
+            val config = SourceRegistry.config(sourceTrack.first)
+            if (config != null) return config.displayName
+        }
+
+        return "YouTube"
+    }
+
     private fun publishNerdStats() {
         val player = player ?: return
         val format = player.audioFormat
@@ -3400,6 +3454,7 @@ class PlaybackService : MediaLibraryService() {
             channels = measured?.channels,
             bitDepth = measured?.bitDepth,
             claimed = NerdStats.declaredFormat(mediaId),
+            sourceName = currentSourceName(mediaId, player.currentMediaItem),
         )
     }
 
@@ -4365,6 +4420,8 @@ class PlaybackService : MediaLibraryService() {
         // is not a reason to leave either behind.
         spare?.release()
         spare = null
+        AudioOutputStatus.reset()
+        NerdStats.forgetLastSession()
         super.onDestroy()
     }
 

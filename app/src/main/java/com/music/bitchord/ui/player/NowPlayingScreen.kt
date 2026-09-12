@@ -201,6 +201,7 @@ import coil3.request.ImageRequest
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.optimizedHazeEffect
+import com.music.bitchord.ui.components.AudioPipelineDialog
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -817,6 +818,7 @@ fun NowPlayingScreen(
     // source tree, so it needs its own source for the same frosted material as
     // the bottom navigation pill.
     val playerHaze = remember { HazeState() }
+    var showAudioPipeline by remember { mutableStateOf(false) }
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -1082,6 +1084,19 @@ fun NowPlayingScreen(
         DisposableEffect(view, queueOpen) {
             val callback = if (queueOpen) {
                 OverlayBack.register(view) { queueOpen = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
+    BackHandler(enabled = showAudioPipeline) { showAudioPipeline = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, showAudioPipeline) {
+            val callback = if (showAudioPipeline) {
+                OverlayBack.register(view) { showAudioPipeline = false }
             } else {
                 null
             }
@@ -2506,8 +2521,8 @@ fun NowPlayingScreen(
             // makes, mirrored here so "Loading lossless" only appears when a
             // lossless fetch is actually in flight, not on every buffering
             // YouTube track.
-            val losslessRequested =
-                (if (metered == true) cellularQuality else wifiQuality) == AudioQuality.LOSSLESS
+            val effectiveQuality = if (metered == true) cellularQuality else wifiQuality
+            val losslessRequested = effectiveQuality == AudioQuality.LOSSLESS
             // Whether a module is still racing YouTube for this exact track —
             // see [NerdStats.racingLossless]. YouTube can win that race and
             // already be playing while the module lookup is still running
@@ -2547,7 +2562,9 @@ fun NowPlayingScreen(
                     isLoading = isLoading,
                     stillRacing = stillRacing,
                     losslessRequested = losslessRequested,
+                    effectiveQuality = effectiveQuality,
                     nerdStats = nerdStats,
+                    onBadgeClick = { showAudioPipeline = true },
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(horizontal = 8.dp),
@@ -2778,6 +2795,12 @@ fun NowPlayingScreen(
             }
             }
             }
+        }
+        if (showAudioPipeline) {
+            AudioPipelineDialog(
+                hazeState = playerHaze,
+                onDismiss = { showAudioPipeline = false },
+            )
         }
     }
 }
@@ -5643,7 +5666,9 @@ private fun LosslessOrStats(
     isLoading: Boolean,
     stillRacing: Boolean,
     losslessRequested: Boolean,
+    effectiveQuality: AudioQuality,
     nerdStats: NerdStats.Snapshot?,
+    onBadgeClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when {
@@ -5692,6 +5717,7 @@ private fun LosslessOrStats(
                 stringResource(R.string.upgrading_quality)
             },
             animated = false,
+            onClick = onBadgeClick,
             modifier = modifier,
         )
         nerdStats?.isLossless == true -> LosslessLabel(
@@ -5702,12 +5728,14 @@ private fun LosslessOrStats(
             // confirmed. It is what makes the badge read as an achievement
             // rather than a label, which only one of these two is.
             animated = true,
+            onClick = onBadgeClick,
             modifier = modifier,
         )
         nerdStats?.isDolbyAtmos == true -> LosslessLabel(
             text = "Dolby Atmos",
             animated = true,
             iconPainter = painterResource(R.drawable.ic_dolby_atmos),
+            onClick = onBadgeClick,
             modifier = modifier,
         )
         // Lossy, but the good end of lossy — a module's 320kbps tier, which
@@ -5716,13 +5744,26 @@ private fun LosslessOrStats(
         nerdStats?.isHiQuality == true -> LosslessLabel(
             text = stringResource(R.string.high_quality),
             animated = false,
+            onClick = onBadgeClick,
+            modifier = modifier,
+        )
+        effectiveQuality == AudioQuality.LOW && nerdStats?.isLowQuality == true -> LosslessLabel(
+            text = stringResource(R.string.data_saver),
+            animated = false,
+            onClick = onBadgeClick,
+            modifier = modifier,
+        )
+        effectiveQuality == AudioQuality.MEDIUM && nerdStats?.isMediumQuality == true -> LosslessLabel(
+            text = stringResource(R.string.medium_quality),
+            animated = false,
+            onClick = onBadgeClick,
             modifier = modifier,
         )
         else -> {}
     }
 }
 
-/** A quality glyph ahead of the status label. */
+/** A quality glyph ahead of the status label, opening Audio Pipeline when tapped. */
 @Composable
 private fun LosslessLabel(
     text: String,
@@ -5730,9 +5771,19 @@ private fun LosslessLabel(
     modifier: Modifier = Modifier,
     icon: ImageVector = Icons.Rounded.Headphones,
     iconPainter: Painter? = null,
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = modifier,
+        modifier = modifier
+            .then(
+                if (onClick != null) {
+                    Modifier.clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onClick,
+                    )
+                } else Modifier
+            ),
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
