@@ -2377,8 +2377,8 @@ private fun BitChordApp(
                                 onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
                             )
                         }
-                    ),
-                }
+                    },
+                )
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(
