@@ -3177,6 +3177,8 @@ private fun BitChordApp(
 
     }
 }
+}
+}
 
 private fun tween(durationMillis: Int) =
     androidx.compose.animation.core.tween<Float>(durationMillis)
