@@ -2271,8 +2271,10 @@ private fun BitChordApp(
                                         Icons.Rounded.Upgrade,
                                         contentDescription = stringResource(R.string.update_available, update.version),
                                         tint = MaterialTheme.colorScheme.primary,
-                                    )
-                            if (!showSettings && !showAccountScrobbling) {
+                                        )
+                                        }
+                                        }
+                                        if (!showSettings && !showAccountScrobbling) {
                                 // Left of the account photo, and only on Library itself:
                                 // a history is a record of what was played, which reads
                                 // as that tab's business rather than every tab's.
@@ -3176,8 +3178,6 @@ private fun BitChordApp(
         }
 
     }
-}
-}
 }
 
 private fun tween(durationMillis: Int) =
