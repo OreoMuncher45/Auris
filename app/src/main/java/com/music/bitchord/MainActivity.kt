@@ -2271,113 +2271,113 @@ private fun BitChordApp(
                                         Icons.Rounded.Upgrade,
                                         contentDescription = stringResource(R.string.update_available, update.version),
                                         tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                        }
-                                        }
-                                        if (!showSettings && !showAccountScrobbling) {
-                                // Left of the account photo, and only on Library itself:
-                                // a history is a record of what was played, which reads
-                                // as that tab's business rather than every tab's.
-                                if (!showHistory && !showReplay && !showDiscord && libraryShowAll == null &&
-                                    detail == null && selectedTab == TAB_LIBRARY
+                                    )
+                                }
+                            }
+                        }
+                        if (!showSettings && !showAccountScrobbling) {
+                            // Left of the account photo, and only on Library itself:
+                            // a history is a record of what was played, which reads
+                            // as that tab's business rather than every tab's.
+                            if (!showHistory && !showReplay && !showDiscord && libraryShowAll == null &&
+                                detail == null && selectedTab == TAB_LIBRARY
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        showHistory = true
+                                        viewModel.loadHistory()
+                                    },
                                 ) {
-                                    IconButton(
-                                        onClick = {
-                                            showHistory = true
-                                            viewModel.loadHistory()
-                                        },
-                                    ) {
+                                    Icon(
+                                        Icons.Rounded.History,
+                                        contentDescription = stringResource(R.string.listening_history),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            // Left of the account photo, and only on a Library
+                            // "Show all" grid — the same control the Downloads
+                            // folder offers (see `LocalSearchField`), adapted to
+                            // the one thing a playlist or album card carries: a
+                            // title.
+                            if (libraryShowAll != null && detail == null) {
+                                Box {
+                                    IconButton(onClick = { librarySortMenuOpen = true }) {
                                         Icon(
-                                            Icons.Rounded.History,
-                                            contentDescription = stringResource(R.string.listening_history),
+                                            Icons.Rounded.Sort,
+                                            contentDescription = stringResource(R.string.sort_library),
                                             tint = MaterialTheme.colorScheme.onSurface,
                                         )
                                     }
-                                }
-                                // Left of the account photo, and only on a Library
-                                // "Show all" grid — the same control the Downloads
-                                // folder offers (see `LocalSearchField`), adapted to
-                                // the one thing a playlist or album card carries: a
-                                // title.
-                                if (libraryShowAll != null && detail == null) {
-                                    Box {
-                                        IconButton(onClick = { librarySortMenuOpen = true }) {
-                                            Icon(
-                                                Icons.Rounded.Sort,
-                                                contentDescription = stringResource(R.string.sort_library),
-                                                tint = MaterialTheme.colorScheme.onSurface,
+                                    DropdownMenu(
+                                        expanded = librarySortMenuOpen,
+                                        onDismissRequest = { librarySortMenuOpen = false },
+                                    ) {
+                                        LibrarySort.entries.forEach { option ->
+                                            DropdownMenuItem(
+                                                text = { Text(option.localizedLabel()) },
+                                                trailingIcon = if (option == librarySort) {
+                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
+                                                } else null,
+                                                onClick = {
+                                                    AppSettings.setLibrarySort(option)
+                                                    librarySortMenuOpen = false
+                                                },
                                             )
-                                        }
-                                        DropdownMenu(
-                                            expanded = librarySortMenuOpen,
-                                            onDismissRequest = { librarySortMenuOpen = false },
-                                        ) {
-                                            LibrarySort.entries.forEach { option ->
-                                                DropdownMenuItem(
-                                                    text = { Text(option.localizedLabel()) },
-                                                    trailingIcon = if (option == librarySort) {
-                                                        { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                    } else null,
-                                                    onClick = {
-                                                        AppSettings.setLibrarySort(option)
-                                                        librarySortMenuOpen = false
-                                                    },
-                                                )
-                                            }
                                         }
                                     }
                                 }
-                                // Left of the account photo, and only on an album or
-                                // playlist page — an artist page has no single track
-                                // list to reorder, and the device folders already
-                                // carry this same control themselves (see
-                                // `LocalSearchField`).
-                                if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
-                                    Box {
-                                        IconButton(onClick = { songSortMenuOpen = true }) {
-                                            Icon(
-                                                Icons.Rounded.Sort,
-                                                contentDescription = stringResource(R.string.sort_songs),
-                                                tint = MaterialTheme.colorScheme.onSurface,
-                                            )
-                                        }
-                                        DropdownMenu(
-                                            expanded = songSortMenuOpen,
-                                            onDismissRequest = { songSortMenuOpen = false },
-                                        ) {
-                                            SongSort.entries.forEach { option ->
-                                                DropdownMenuItem(
-                                                    text = { Text(option.localizedLabel()) },
-                                                    trailingIcon = if (option == songSort) {
-                                                        { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                    } else null,
-                                                    onClick = {
-                                                        songSort = option
-                                                        songSortMenuOpen = false
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                // Left of the account photo, and only there while
-                                // there is a batch to report on — see
-                                // [TopBarDownloadButton], which decides that for
-                                // itself rather than being told.
-                                TopBarDownloadButton(onClick = { showDownloadManager = true })
-                                TopBarAccountButton(
-                                    account = account,
-                                    onClick = {
-                                        if (signedIn) {
-                                            viewModel.loadChannels()
-                                            showAccountSelector = true
-                                        } else showSettings = true
-                                    },
-                                    onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
-                                )
                             }
-                        },
-                    )
+                            // Left of the account photo, and only on an album or
+                            // playlist page — an artist page has no single track
+                            // list to reorder, and the device folders already
+                            // carry this same control themselves (see
+                            // `LocalSearchField`).
+                            if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
+                                Box {
+                                    IconButton(onClick = { songSortMenuOpen = true }) {
+                                        Icon(
+                                            Icons.Rounded.Sort,
+                                            contentDescription = stringResource(R.string.sort_songs),
+                                            tint = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = songSortMenuOpen,
+                                        onDismissRequest = { songSortMenuOpen = false },
+                                    ) {
+                                        SongSort.entries.forEach { option ->
+                                            DropdownMenuItem(
+                                                text = { Text(option.localizedLabel()) },
+                                                trailingIcon = if (option == songSort) {
+                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
+                                                } else null,
+                                                onClick = {
+                                                    songSort = option
+                                                    songSortMenuOpen = false
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            // Left of the account photo, and only there while
+                            // there is a batch to report on — see
+                            // [TopBarDownloadButton], which decides that for
+                            // itself rather than being told.
+                            TopBarDownloadButton(onClick = { showDownloadManager = true })
+                            TopBarAccountButton(
+                                account = account,
+                                onClick = {
+                                    if (signedIn) {
+                                        viewModel.loadChannels()
+                                        showAccountSelector = true
+                                    } else showSettings = true
+                                },
+                                onSwipeProfile = { forward -> viewModel.stepProfile(forward) },
+                            )
+                        }
+                    ),
                 }
 
                 // Drawn before the bars so their own glass reads on top of it.
