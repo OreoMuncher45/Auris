@@ -591,7 +591,18 @@ object TrackMatcher {
      * Wide enough for a fade or an intro a service trims differently, narrow
      * enough to rule out an extended cut or a full-album upload.
      */
-    private const val DURATION_LIMIT_SEC = 30
+    const val DURATION_LIMIT_SEC = 30
+
+    /**
+     * Whether two runtimes differ by more than [DURATION_LIMIT_SEC], meaning
+     * they cannot be the same recording. Used to detect when a cached or
+     * live stream is a different edit from the requested catalogue track.
+     */
+    fun isSevereMismatch(expectedSec: Int?, actualSec: Int?): Boolean {
+        if (expectedSec == null || actualSec == null) return false
+        return abs(actualSec - expectedSec) > DURATION_LIMIT_SEC
+    }
+
     /** Visual intros/outros can make the video substantially longer than its audio master. */
     private const val VIDEO_DURATION_LIMIT_SEC = 90
 
