@@ -304,6 +304,28 @@ object YtMusicRepository {
         }
 
     /**
+     * Live media results for the typeahead phase — a lightweight search that
+     * returns tracks, artists, and albums so the dropdown can show playable
+     * cards alongside text completions. Uses the ALL filter to get mixed
+     * results quickly; callers may want to limit how many they display.
+     *
+     * Deliberately unauthenticated: [Innertube.searchTypeahead] strips the
+     * session cookie so YouTube Music does not log each debounced keystroke
+     * to the account's server-side search history. Confirmed searches (Enter /
+     * IME Search / tapping a suggestion) still use the normal authenticated
+     * [searchPage] path and are recorded properly.
+     */
+    suspend fun searchTypeahead(input: String): Result<SearchPage> =
+        call("typeahead:$input") {
+            InnertubeParser.parseSearchPage(
+                Innertube.searchTypeahead(input),
+                includeVideos = false,
+            ).let { page ->
+                SearchPage(page.rows.distinctBy { it.identityKey() }, page.continuation)
+            }
+        }
+
+    /**
      * The catalogue (audio-only) release of a music-video upload, found the
      * same way the "Switch to audio" toggle in the real app would land on
      * it: searching the title and artist and taking the closest song match.

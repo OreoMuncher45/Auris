@@ -2140,6 +2140,7 @@ private fun BitChordApp(
                             },
                             history = searchHistory,
                             suggestions = searchSuggestions,
+                            typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                             onSubmit = viewModel::submitSearch,
                             // A suggestion and a recent search are the same act — a
                             // term picked out of a list rather than typed — so they run
@@ -2148,6 +2149,7 @@ private fun BitChordApp(
                             onHistoryClick = viewModel::searchFor,
                             onHistoryRemove = viewModel::removeSearch,
                             onHistoryClear = viewModel::clearSearchHistory,
+                            onTypeaheadLongPress = openSongMenu,
                             contentPadding = listPadding,
                         )
                         else -> LibraryScreen(
@@ -2177,6 +2179,8 @@ private fun BitChordApp(
 
                 // Every top bar is a fade rather than a pane — see [TopFadeBlur].
                 // Drawn before the bar so the bar's own content sits on top of it.
+                // Hidden on the Search tab: the search field itself becomes the
+                // top element, sitting cleanly under the status bar inset.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
                     !showAccountScrobbling && !showSources && !showEqualizer && !showReplay
                 // Search is the one page that doesn't get the fade. Its field sits
