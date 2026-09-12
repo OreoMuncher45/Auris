@@ -665,9 +665,14 @@ fun NowPlayingScreen(
     val density = LocalDensity.current
     val haptics = rememberHaptics()
 
-    val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
-    val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
-    SystemBarIcons(dark = isLightArtwork)
+    // A docked pane sits beside the page rather than covering the screen, so
+    // the status bar it's under belongs to the page, not this artwork — only
+    // the full-screen sheet gets to repaint it.
+    if (!docked) {
+        val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
+        val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
+        SystemBarIcons(dark = isLightArtwork)
+    }
 
     // Kept local to the player: a modal player is not in the page's Haze
     // source tree, so it needs its own source for the same frosted material as
