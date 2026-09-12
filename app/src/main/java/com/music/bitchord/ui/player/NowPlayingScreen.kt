@@ -22,8 +22,11 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -37,6 +40,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.LocalIndication
@@ -4073,53 +4077,67 @@ private fun LyricsPanel(
                 // Lead and answering vocal are one row: they are one line of
                 // the song, they scale and dim together, and tapping either
                 // seeks to the same place.
-                Column(modifier = shape) {
-                    PanelVoice(
-                        line = line,
-                        clock = clock,
-                        style = style,
-                        isActive = isActive,
-                        sung = sung,
-                        synced = isSynced,
-                        browsing = browsing,
-                        glowAlpha = glow,
-                        room = GLOW_ROOM,
-                        alignEnd = alignEnd,
-                        // Only the rows actually in front of the reader get the
-                        // particle pass. Sixty rows' worth of glyph boxes is a
-                        // layout walk per frame for text nobody is looking at.
-                        translationProgress = translationProgress.takeIf {
-                            if (isSynced) abs(index - focusLine) <= 1 else index < 4
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    line.background?.let { backing ->
+                AnimatedContent(
+                    targetState = line,
+                    transitionSpec = {
+                        val duration = if (reduceAnimation) 0 else 380
+                        val fadeSpec = if (reduceAnimation) snap() else tween<Float>(duration, easing = FastOutSlowInEasing)
+                        (fadeIn(fadeSpec) togetherWith fadeOut(fadeSpec)).using(
+                            SizeTransform(
+                                clip = false,
+                                sizeAnimationSpec = { _, _ ->
+                                    if (reduceAnimation) snap()
+                                    else tween(duration, easing = FastOutSlowInEasing)
+                                },
+                            )
+                        )
+                    },
+                    label = "lyricsTranslationLine",
+                    modifier = shape,
+                ) { renderedLine ->
+                    Column {
                         PanelVoice(
-                            line = backing.withoutBracketPunctuation(),
+                            line = renderedLine,
                             clock = clock,
-                            style = style.copy(
-                                fontSize = BACKING_FONT_SIZE,
-                                lineHeight = BACKING_LINE_HEIGHT,
-                            ),
+                            style = style,
                             isActive = isActive,
                             sung = sung,
                             synced = isSynced,
                             browsing = browsing,
-                            // No bloom on the second voice. The glow marks
-                            // what is being sung *at you*; putting it on both
-                            // makes the row read as two equal lines, which is
-                            // the thing this split exists to stop.
-                            glowAlpha = 0f,
-                            room = 0.dp,
+                            glowAlpha = glow,
+                            room = GLOW_ROOM,
                             alignEnd = alignEnd,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                // No top inset: the lead's own bottom room is
-                                // the gap, which leaves the two voices closer
-                                // to each other than to the rows either side.
-                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
-                                .graphicsLayer { alpha = BACKING_ALPHA },
+                            translationProgress = null,
+                            modifier = Modifier.fillMaxWidth(),
                         )
+                        renderedLine.background?.let { backing ->
+                            PanelVoice(
+                                line = backing.withoutBracketPunctuation(),
+                                clock = clock,
+                                style = style.copy(
+                                    fontSize = BACKING_FONT_SIZE,
+                                    lineHeight = BACKING_LINE_HEIGHT,
+                                ),
+                                isActive = isActive,
+                                sung = sung,
+                                synced = isSynced,
+                                browsing = browsing,
+                                // No bloom on the second voice. The glow marks
+                                // what is being sung *at you*; putting it on both
+                                // makes the row read as two equal lines, which is
+                                // the thing this split exists to stop.
+                                glowAlpha = 0f,
+                                room = 0.dp,
+                                alignEnd = alignEnd,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    // No top inset: the lead's own bottom room is
+                                    // the gap, which leaves the two voices closer
+                                    // to each other than to the rows either side.
+                                    .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                    .graphicsLayer { alpha = BACKING_ALPHA },
+                            )
+                        }
                     }
                 }
             }
@@ -4332,27 +4350,20 @@ private fun CurrentLyricLine(
         else -> current.text
     }
 
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val lineAlpha by animateFloatAsState(
+        targetValue = if (instrumental) 0.5f else 0.85f,
+        animationSpec = tween(300),
+        label = "currentLyricLineAlpha",
+    )
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 4.dp)
-            .graphicsLayer {
-                if (instrumental) {
-                    // Nothing is being sung; hold it steady rather than fading.
-                    alpha = 0.5f
-                    return@graphicsLayer
-                }
-                val start = lines.getOrNull(index)?.timeMs ?: 0L
-                val end = lines.getOrNull(index + 1)?.timeMs
-                    ?: durationMs.takeIf { it > start }
-                    ?: (start + 4_000L)
-                val fade = ((end - start) * LYRIC_FADE_FRACTION)
-                    .coerceIn(LYRIC_FADE_MIN_MS, LYRIC_FADE_MAX_MS)
-                val remaining = (end - clock.longValue).toFloat()
-                alpha = 0.78f * (remaining / fade).coerceIn(0f, 1f)
-            },
+            .graphicsLayer { alpha = lineAlpha },
     ) {
         if (instrumental) {
             Icon(
@@ -4363,27 +4374,48 @@ private fun CurrentLyricLine(
             )
             Spacer(Modifier.width(6.dp))
         }
-        val swept = current?.takeIf { !instrumental && it.isWordSynced }
-        if (swept != null) {
-            SweptLyricLine(
-                line = swept,
-                clock = clock,
-                style = MaterialTheme.typography.titleMedium,
-                dimAlpha = UNSUNG_ALPHA_STRIP,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                rise = false,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-        } else {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
+        AnimatedContent(
+            targetState = current to text,
+            transitionSpec = {
+                val duration = if (reduceAnimation) 0 else 340
+                if (reduceAnimation) {
+                    (fadeIn(snap()) togetherWith fadeOut(snap())).using(
+                        SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })
+                    )
+                } else {
+                    (fadeIn(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
+                        slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> (height * 0.35f).toInt() })
+                        .togetherWith(
+                            fadeOut(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
+                                slideOutVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> -(height * 0.35f).toInt() }
+                        ).using(
+                            SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> tween(duration, easing = FastOutSlowInEasing) })
+                        )
+                }
+            },
+            label = "currentLyricTransition",
+            modifier = Modifier.weight(1f, fill = false),
+        ) { (lineItem, lineText) ->
+            val swept = lineItem?.takeIf { !instrumental && it.isWordSynced }
+            if (swept != null) {
+                SweptLyricLine(
+                    line = swept,
+                    clock = clock,
+                    style = MaterialTheme.typography.titleMedium,
+                    dimAlpha = UNSUNG_ALPHA_STRIP,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    rise = false,
+                )
+            } else {
+                Text(
+                    text = lineText,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Spacer(Modifier.width(6.dp))
         // Disclosure hint: this strip opens the full lyrics screen.
