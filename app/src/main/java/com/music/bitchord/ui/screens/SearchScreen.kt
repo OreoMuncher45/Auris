@@ -47,10 +47,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,6 +70,7 @@ import com.music.bitchord.data.model.UiState
 import com.music.bitchord.R
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -155,9 +152,10 @@ fun SearchScreen(
         // Search field and filter tabs stay fixed at the top, outside the
         // scrolling list, so they're always reachable rather than scrolling
         // away with the results or recent searches beneath them.
-        // The top bar is hidden on this tab, so we use status bar insets
-        // directly — no need to clear a frosted bar that isn't there.
-        Column(modifier = Modifier.statusBarsPadding()) {
+        // The FrostedTopBar is visible on this tab (showing "Search"), so we
+        // clear it fully — status bar inset + bar height + breathing gap — so
+        // the search field sits cleanly below the bar instead of overlapping it.
+        Column(modifier = Modifier.padding(top = topBarContentPadding())) {
             SearchField(
                 query = query,
                 onQueryChange = onQueryChange,

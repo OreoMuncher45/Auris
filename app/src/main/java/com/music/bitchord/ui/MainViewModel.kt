@@ -1821,7 +1821,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * Maximum number of live media results shown in the typeahead dropdown.
          * Enough to give variety without making the list unscrollable.
          */
-        const val TYPEAHEAD_MAX_RESULTS = 5
+        const val TYPEAHEAD_MAX_RESULTS = 8
 
         const val SEARCH_CACHE_ENTRIES = 100
 
