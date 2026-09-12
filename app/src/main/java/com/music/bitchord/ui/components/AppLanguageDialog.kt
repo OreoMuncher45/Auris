@@ -59,6 +59,7 @@ val SUPPORTED_LANGUAGES = listOf(
     AppLanguage("he", R.string.hebrew),
     AppLanguage("it", R.string.italian),
     AppLanguage("tr", R.string.turkish),
+    AppLanguage("th", R.string.thai),
 )
 
 fun languageDisplayNameRes(languageTag: String): Int =
