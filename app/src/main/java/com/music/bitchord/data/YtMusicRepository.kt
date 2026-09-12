@@ -439,14 +439,20 @@ object YtMusicRepository {
      * than surfacing an error for a background sync. Cancellation is
      * cooperative and the caller (a ViewModel scope in the app) decides when
      * this outlives its usefulness.
+     *
+     * Guards only against a token repeating — a page pointing back at one
+     * already read, which would otherwise spin forever — rather than a page
+     * count, since a genuinely large library is exactly what this exists to
+     * keep reading.
      */
     suspend fun syncLikedMusic(
         firstToken: String?,
         loadNext: suspend (String) -> SongPage? = { moreSongs(it).getOrNull() },
     ) {
         if (firstToken == null) return
+        val seen = HashSet<String>()
         var next: String? = firstToken
-        while (next != null) {
+        while (next != null && seen.add(next)) {
             val page = loadNext(next) ?: return
             LikeState.seedLiked(page.songs.mapTo(HashSet()) { it.videoId })
             next = page.continuation

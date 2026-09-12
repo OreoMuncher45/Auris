@@ -1355,7 +1355,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // the rest of the collection is synced into LikeState here, in
                 // this ViewModel's scope, so it is cancelled with the screen and
                 // a liked track past the first page still reads as liked.
-                page.likedContinuation?.let { token -> syncLikedMusic(token) }
+                page.likedContinuation?.let { token -> syncLikedMusic(identity, token) }
                 if (page.isEmpty) UiState.Error(text(R.string.library_empty))
                 else UiState.Success(page.copy(likedContinuation = null))
             },
@@ -1371,11 +1371,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Scoped to [viewModelScope] — a re-fetch of the library cancels and
      * replaces it, and it dies with the screen. It only ever seeds ids, never
      * retaining the full songs for pages already behind the tab.
+     *
+     * [identity] is the listener this token belongs to, checked before every
+     * page: [LikeState] is a single shared map, not scoped per account, so a
+     * sync still in flight when the listener switches must stop rather than
+     * go on seeding the old account's likes into the new one's session.
      */
-    private fun syncLikedMusic(token: String) {
+    private fun syncLikedMusic(identity: String?, token: String) {
         likedSyncJob?.cancel()
         likedSyncJob = viewModelScope.launch {
-            YtMusicRepository.syncLikedMusic(token)
+            YtMusicRepository.syncLikedMusic(token) { next ->
+                if (identity != listenerKey()) null else YtMusicRepository.moreSongs(next).getOrNull()
+            }
         }
     }
 
@@ -2028,17 +2035,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * A playlist of a few hundred tracks is several round trips, and taking
      * them before showing anything meant a spinner for all of them. Growing
      * the list underneath the reader is also what makes it safe to keep
-     * following continuations [YtMusicRepository.MAX_PAGES] deep — nobody is
-     * waiting on the last one.
+     * following continuations however deep the playlist runs — nobody is
+     * waiting on the last one — so a playlist past YouTube's ~1000-track,
+     * ten-page shelf still loads to the end instead of stopping there.
      *
      * Stops the moment the page leaves the stack: there is no one to append
-     * for.
+     * for. A page that adds nothing new (below) is the other exit, for a feed
+     * that loops back on itself instead of running dry.
      */
     private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
         viewModelScope.launch {
             var next: String? = token
-            var page = 1
-            while (next != null && page++ < YtMusicRepository.MAX_PAGES) {
+            while (next != null) {
                 val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: return@launch
                 val stack = _detailStack.value
                 val index = stack.indexOfFirst { it.browseId == browseId }
@@ -2355,6 +2363,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun clearListenerState(restoreCached: Boolean = false) {
         _account.value = null
+        likedSyncJob?.cancel()
         LikeState.clear()
         _playlistsLoading.value = false
         _playlists.value = emptyList()
@@ -2418,6 +2427,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _library.value = UiState.Loading
         // Ratings and playlists belong to the account that just left; keeping
         // them would show the next signed-in user someone else's hearts.
+        likedSyncJob?.cancel()
         LikeState.clear()
         _playlists.value = emptyList()
         _playlistOwned.value = emptyMap()

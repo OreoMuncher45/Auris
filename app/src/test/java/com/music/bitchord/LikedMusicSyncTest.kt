@@ -10,6 +10,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import org.junit.After
@@ -58,6 +59,27 @@ class LikedMusicSyncTest {
         assertEquals(pageCount * perPage, liked.size)
         assertEquals(pageCount * perPage, liked.values.count { it == LikeStatus.LIKE })
         assertTrue(liked.containsKey("v${pageCount * perPage - 1}"))
+    }
+
+    @Test
+    fun `liked sync stops when a continuation points back at a page already read`() = runBlocking {
+        LikeState.clear()
+        val pages = LinkedHashMap<String, SongPage>()
+        pages["t0"] = SongPage(songs = songs(3, 0), continuation = "t1")
+        pages["t1"] = SongPage(songs = songs(3, 3), continuation = "t0")
+        var calls = 0
+
+        // "t0" points to "t1", which points back to "t0" — a malformed or
+        // buggy feed. Without the repeat guard this spins forever; with it,
+        // the loop ends the moment a token it has already consumed comes
+        // back around, instead of running until cancelled from outside.
+        val job = launch {
+            YtMusicRepository.syncLikedMusic("t0") { calls++; pages[it] }
+        }
+        withTimeout(1000) { job.join() }
+
+        assertEquals(2, calls)
+        assertEquals(setOf("v0", "v1", "v2", "v3", "v4", "v5"), LikeState.overrides.value.keys)
     }
 
     // ---- D. Continuation exhaustion -----------------------------------------
