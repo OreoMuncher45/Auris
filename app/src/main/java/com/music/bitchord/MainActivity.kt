@@ -2860,6 +2860,29 @@ private fun BitChordApp(
                                 },
                         )
                     }.takeIf { remote },
+                    // The same link a share off YouTube Music's own overflow
+                    // gives — built from the browse id rather than fetched,
+                    // since nothing about it depends on the tracks or the
+                    // account. Left off an artist card (Share there is a
+                    // channel link, not a release, and nobody asked for it)
+                    // and off anything with no real browse id behind it.
+                    onShare = target.browseId
+                        ?.takeIf { remote && (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST) }
+                        ?.let { id ->
+                            {
+                                val url = if (target.type == BrowseType.PLAYLIST) {
+                                    "https://music.youtube.com/playlist?list=${id.removePrefix("VL")}"
+                                } else {
+                                    "https://music.youtube.com/browse/$id"
+                                }
+                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, url)
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, target.title))
+                                browseActions = null
+                            }
+                        },
                     isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
                     onTogglePin = pinnableId?.let { id ->
                         {

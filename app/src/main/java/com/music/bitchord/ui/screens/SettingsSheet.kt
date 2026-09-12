@@ -119,6 +119,7 @@ import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
+import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
@@ -242,6 +243,9 @@ fun SettingsScreen(
 
     val replayGenres by AppSettings.replayGenres.collectAsStateWithLifecycle()
 
+    // Filters which groups below are shown — see [matchesSearch]. Blank
+    // shows everything, exactly as if the field weren't there.
+    var searchQuery by remember { mutableStateOf("") }
     var picking by remember { mutableStateOf<QualityTarget?>(null) }
     var pickingDownloadQuality by remember { mutableStateOf(false) }
     var pickingAutomixPerformance by remember { mutableStateOf(false) }
@@ -321,6 +325,13 @@ fun SettingsScreen(
         }.getOrNull() ?: "1.0"
     }
 
+    // A group is worth showing if the typed text turns up in its own header
+    // or in any one of its rows' titles — a whole group at a time, the same
+    // grain the group headers already divide the screen into, rather than
+    // picking rows apart from the cards that give them their meaning.
+    fun matchesSearch(vararg text: String?): Boolean =
+        searchQuery.isBlank() || text.any { it?.contains(searchQuery, ignoreCase = true) == true }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -333,15 +344,24 @@ fun SettingsScreen(
             color = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
         )
+        SearchField(
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            onSubmit = {},
+            modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
+        )
 
-        SettingsGroup {
-            SettingsRow(
-                icon = Icons.Rounded.Person,
-                title = stringResource(R.string.account_integrations),
-                subtitle = account?.email?.takeIf { it.isNotBlank() }
-                    ?: stringResource(if (signedIn) R.string.signed_in else R.string.not_signed_in),
-                onClick = onAccountScrobbling,
-            )
+        val accountTitle = stringResource(R.string.account_integrations)
+        if (matchesSearch(accountTitle)) {
+            SettingsGroup {
+                SettingsRow(
+                    icon = Icons.Rounded.Person,
+                    title = accountTitle,
+                    subtitle = account?.email?.takeIf { it.isNotBlank() }
+                        ?: stringResource(if (signedIn) R.string.signed_in else R.string.not_signed_in),
+                    onClick = onAccountScrobbling,
+                )
+            }
         }
 
         // The row that used to sit at the top of this group was called
@@ -350,64 +370,71 @@ fun SettingsScreen(
         // above lists that as the module's own row now. Lossless itself is no
         // longer a setting at all — see
         // [SourceResolver.requestForNow][com.music.bitchord.data.sources.SourceResolver.requestForNow].
-        SettingsGroup(header = stringResource(R.string.audio_quality)) {
-            SettingsRow(
-                icon = Icons.Rounded.Extension,
-                title = stringResource(R.string.source),
-                subtitle = stringResource(R.string.sources_subtitle),
-                onClick = onSources,
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Wifi,
-                title = stringResource(R.string.on_wifi),
-                badge = stringResource(R.string.in_use).takeIf { metered == false },
-                value = wifiQuality.localizedLabel(),
-                onClick = { picking = QualityTarget.WIFI },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.SignalCellularAlt,
-                title = stringResource(R.string.on_mobile_data),
-                badge = stringResource(R.string.in_use).takeIf { metered == true },
-                value = cellularQuality.localizedLabel(),
-                onClick = { picking = QualityTarget.CELLULAR },
-            )
-            RowDivider()
-            // Sits with the quality ceilings rather than with Playback: it
-            // decides which version of a track gets fetched, the same question
-            // the two rows above answer, and not how one is played back.
-            //
-            // Greyed rather than hidden where the device can't decode E-AC-3.
-            // A missing row reads as a feature the app doesn't have; a disabled
-            // one with a reason under it is the difference between "BitChord
-            // has no Atmos" and "this phone has no Dolby decoder", and only the
-            // second is true. The stored preference is left untouched either
-            // way — see [AppSettings.dolbyAtmos].
-            SettingsRow(
-                iconPainter = painterResource(R.drawable.ic_dolby_atmos),
-                title = stringResource(R.string.dolby_atmos),
-                subtitle = stringResource(
-                    if (dolbyAtmosSupported) {
-                        R.string.dolby_atmos_subtitle
-                    } else {
-                        R.string.dolby_atmos_unavailable
+        val audioQualityHeader = stringResource(R.string.audio_quality)
+        val sourceTitle = stringResource(R.string.source)
+        val onWifiTitle = stringResource(R.string.on_wifi)
+        val onMobileDataTitle = stringResource(R.string.on_mobile_data)
+        val dolbyAtmosTitle = stringResource(R.string.dolby_atmos)
+        if (matchesSearch(audioQualityHeader, sourceTitle, onWifiTitle, onMobileDataTitle, dolbyAtmosTitle)) {
+            SettingsGroup(header = audioQualityHeader) {
+                SettingsRow(
+                    icon = Icons.Rounded.Extension,
+                    title = sourceTitle,
+                    subtitle = stringResource(R.string.sources_subtitle),
+                    onClick = onSources,
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Wifi,
+                    title = onWifiTitle,
+                    badge = stringResource(R.string.in_use).takeIf { metered == false },
+                    value = wifiQuality.localizedLabel(),
+                    onClick = { picking = QualityTarget.WIFI },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.SignalCellularAlt,
+                    title = onMobileDataTitle,
+                    badge = stringResource(R.string.in_use).takeIf { metered == true },
+                    value = cellularQuality.localizedLabel(),
+                    onClick = { picking = QualityTarget.CELLULAR },
+                )
+                RowDivider()
+                // Sits with the quality ceilings rather than with Playback: it
+                // decides which version of a track gets fetched, the same question
+                // the two rows above answer, and not how one is played back.
+                //
+                // Greyed rather than hidden where the device can't decode E-AC-3.
+                // A missing row reads as a feature the app doesn't have; a disabled
+                // one with a reason under it is the difference between "BitChord
+                // has no Atmos" and "this phone has no Dolby decoder", and only the
+                // second is true. The stored preference is left untouched either
+                // way — see [AppSettings.dolbyAtmos].
+                SettingsRow(
+                    iconPainter = painterResource(R.drawable.ic_dolby_atmos),
+                    title = dolbyAtmosTitle,
+                    subtitle = stringResource(
+                        if (dolbyAtmosSupported) {
+                            R.string.dolby_atmos_subtitle
+                        } else {
+                            R.string.dolby_atmos_unavailable
+                        },
+                    ),
+                    enabled = dolbyAtmosSupported,
+                    trailing = {
+                        Switch(
+                            checked = dolbyAtmos && dolbyAtmosSupported,
+                            onCheckedChange = AppSettings::setDolbyAtmos,
+                            enabled = dolbyAtmosSupported,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
                     },
-                ),
-                enabled = dolbyAtmosSupported,
-                trailing = {
-                    Switch(
-                        checked = dolbyAtmos && dolbyAtmosSupported,
-                        onCheckedChange = AppSettings::setDolbyAtmos,
-                        enabled = dolbyAtmosSupported,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
-            )
+                    onClick = { AppSettings.setDolbyAtmos(!dolbyAtmos) },
+                )
+            }
         }
 
         // Its own group rather than rows bolted onto the two above, because a
@@ -415,152 +442,191 @@ fun SettingsScreen(
         // does this minute cost"; these answer "what am I keeping, and when may
         // it be fetched" — and those two questions only make sense read
         // together, which is what puts them side by side here.
-        SettingsGroup(header = stringResource(R.string.downloads)) {
-            SettingsRow(
-                icon = Icons.Rounded.Download,
-                title = stringResource(R.string.download_quality),
-                subtitle = stringResource(R.string.download_quality_subtitle, downloadQuality.perTrack),
-                value = downloadQuality.localizedLabel(),
-                onClick = { pickingDownloadQuality = true },
-            )
-            // Reads as part of Download quality above it, not as a setting
-            // of its own — same treatment as Play animated cover over
-            // cellular gets under Animated cover art.
-            SettingsSubRow(
-                title = stringResource(R.string.download_wifi_only),
-                checked = wifiOnlyDownloads,
-                onCheckedChange = AppSettings::setWifiOnlyDownloads,
-                badge = stringResource(R.string.blocking).takeIf { wifiOnlyDownloads && metered == true },
-            )
-            SettingsSubRow(
-                title = "Export compatible downloads",
-                checked = exportDownloads,
-                onCheckedChange = AppSettings::setExportDownloads,
-                badge = "Music/BitChord".takeIf { exportDownloads },
-            )
+        val downloadsHeader = stringResource(R.string.downloads)
+        val downloadQualityTitle = stringResource(R.string.download_quality)
+        val downloadWifiOnlyTitle = stringResource(R.string.download_wifi_only)
+        val exportDownloadsTitle = "Export compatible downloads"
+        if (matchesSearch(downloadsHeader, downloadQualityTitle, downloadWifiOnlyTitle, exportDownloadsTitle)) {
+            SettingsGroup(header = downloadsHeader) {
+                SettingsRow(
+                    icon = Icons.Rounded.Download,
+                    title = downloadQualityTitle,
+                    subtitle = stringResource(R.string.download_quality_subtitle, downloadQuality.perTrack),
+                    value = downloadQuality.localizedLabel(),
+                    onClick = { pickingDownloadQuality = true },
+                )
+                // Reads as part of Download quality above it, not as a setting
+                // of its own — same treatment as Play animated cover over
+                // cellular gets under Animated cover art.
+                SettingsSubRow(
+                    title = downloadWifiOnlyTitle,
+                    checked = wifiOnlyDownloads,
+                    onCheckedChange = AppSettings::setWifiOnlyDownloads,
+                    badge = stringResource(R.string.blocking).takeIf { wifiOnlyDownloads && metered == true },
+                )
+                SettingsSubRow(
+                    title = exportDownloadsTitle,
+                    checked = exportDownloads,
+                    onCheckedChange = AppSettings::setExportDownloads,
+                    badge = "Music/BitChord".takeIf { exportDownloads },
+                )
+            }
         }
 
-        SettingsGroup(header = stringResource(R.string.playback)) {
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = "Output precision",
-                subtitle = buildString {
-                    append(outputStatus.sink)
-                    append(" · ")
-                    append(outputStatus.deviceName)
-                    (outputStatus.actualSampleRateHz ?: outputStatus.sampleRatesHz.firstOrNull())
-                        ?.let { append(" · ${it / 1000.0} kHz") }
-                    append(" · ")
-                    append(AudioOutputStatus.encodingLabel(outputStatus))
-                },
+        val playbackHeader = stringResource(R.string.playback)
+        val outputPrecisionTitle = "Output precision"
+        val preferUsbDacTitle = "Prefer USB DAC"
+        val crossfadeTitle = stringResource(R.string.crossfade)
+        val automixTitle = stringResource(R.string.automix)
+        val automixPerformanceTitle = stringResource(R.string.automix_performance)
+        val skipSilenceTitle = stringResource(R.string.skip_silence)
+        val spatialAudioTitle = stringResource(R.string.spatial_audio)
+        val equalizerTitle = stringResource(R.string.equalizer)
+        if (matchesSearch(
+                playbackHeader, outputPrecisionTitle, preferUsbDacTitle, crossfadeTitle,
+                automixTitle, automixPerformanceTitle, skipSilenceTitle, spatialAudioTitle, equalizerTitle,
             )
-            SegmentedControl(
-                options = OutputPcmMode.entries.map(OutputPcmMode::label),
-                selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
-                onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
-                modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
-            )
-            RowDivider()
-            SettingsSubRow(
-                title = "Prefer USB DAC",
-                checked = preferUsbDac,
-                onCheckedChange = AppSettings::setPreferUsbDac,
-                badge = "Connected".takeIf { outputStatus.isUsb },
-            )
-            RowDivider()
-            // Automix decides its own length from each pair of tracks —
-            // tempo, key, structure — so it replaces the manual slider rather
-            // than needing it set to anything first.
-            if (!smartFade) {
-                SliderRow(
-                    icon = Icons.Rounded.Waves,
-                    title = stringResource(R.string.crossfade),
-                    subtitle = stringResource(R.string.crossfade_subtitle),
-                    value = if (crossfade == 0) stringResource(R.string.off) else "${crossfade}s",
-                    sliderValue = crossfade.toFloat(),
-                    onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
-                    valueRange = 0f..12f,
-                    steps = 11,
+        ) {
+            SettingsGroup(header = playbackHeader) {
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = outputPrecisionTitle,
+                    subtitle = buildString {
+                        append(outputStatus.sink)
+                        append(" · ")
+                        append(outputStatus.deviceName)
+                        (outputStatus.actualSampleRateHz ?: outputStatus.sampleRatesHz.firstOrNull())
+                            ?.let { append(" · ${it / 1000.0} kHz") }
+                        append(" · ")
+                        append(AudioOutputStatus.encodingLabel(outputStatus))
+                    },
+                )
+                SegmentedControl(
+                    options = OutputPcmMode.entries.map(OutputPcmMode::label),
+                    selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
+                    onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
+                    modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
                 RowDivider()
+                SettingsSubRow(
+                    title = preferUsbDacTitle,
+                    checked = preferUsbDac,
+                    onCheckedChange = AppSettings::setPreferUsbDac,
+                    badge = "Connected".takeIf { outputStatus.isUsb },
+                )
+                RowDivider()
+                // Automix decides its own length from each pair of tracks —
+                // tempo, key, structure — so it replaces the manual slider rather
+                // than needing it set to anything first.
+                if (!smartFade) {
+                    SliderRow(
+                        icon = Icons.Rounded.Waves,
+                        title = crossfadeTitle,
+                        subtitle = stringResource(R.string.crossfade_subtitle),
+                        value = if (crossfade == 0) stringResource(R.string.off) else "${crossfade}s",
+                        sliderValue = crossfade.toFloat(),
+                        onSliderValue = { AppSettings.setCrossfadeSeconds(it.roundToInt()) },
+                        valueRange = 0f..12f,
+                        steps = 11,
+                    )
+                    RowDivider()
+                }
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = automixTitle,
+                    subtitle = if (smartFade) {
+                        stringResource(R.string.automix_enabled_subtitle)
+                    } else {
+                        stringResource(R.string.automix_disabled_subtitle)
+                    },
+                    trailing = {
+                        Switch(
+                            checked = smartFade,
+                            onCheckedChange = AppSettings::setSmartFadeEnabled,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Tune,
+                    title = automixPerformanceTitle,
+                    subtitle = stringResource(R.string.automix_performance_subtitle),
+                    value = automixPerformance.localizedLabel(),
+                    onClick = { pickingAutomixPerformance = true },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.AutoMirrored.Rounded.VolumeOff,
+                    title = skipSilenceTitle,
+                    subtitle = stringResource(R.string.skip_silence_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = skipSilence,
+                            onCheckedChange = AppSettings::setSkipSilence,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSkipSilence(!skipSilence) },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.SurroundSound,
+                    title = spatialAudioTitle,
+                    subtitle = stringResource(R.string.spatial_audio_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = spatialAudio,
+                            onCheckedChange = AppSettings::setSpatialAudio,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Tune,
+                    title = equalizerTitle,
+                    subtitle = stringResource(R.string.equalizer_subtitle),
+                    onClick = onEqualizer,
+                )
+                // The system panel is not listed here as well. A device with a
+                // Dolby or Dirac panel has something BitChord cannot reproduce and
+                // keeps its row — but one level in, at the foot of the equaliser
+                // screen, rather than as a second equaliser entry alongside ours.
             }
-            SettingsRow(
-                icon = Icons.Rounded.AutoAwesome,
-                title = stringResource(R.string.automix),
-                subtitle = if (smartFade) {
-                    stringResource(R.string.automix_enabled_subtitle)
-                } else {
-                    stringResource(R.string.automix_disabled_subtitle)
-                },
-                trailing = {
-                    Switch(
-                        checked = smartFade,
-                        onCheckedChange = AppSettings::setSmartFadeEnabled,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Tune,
-                title = stringResource(R.string.automix_performance),
-                subtitle = stringResource(R.string.automix_performance_subtitle),
-                value = automixPerformance.localizedLabel(),
-                onClick = { pickingAutomixPerformance = true },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.AutoMirrored.Rounded.VolumeOff,
-                title = stringResource(R.string.skip_silence),
-                subtitle = stringResource(R.string.skip_silence_subtitle),
-                trailing = {
-                    Switch(
-                        checked = skipSilence,
-                        onCheckedChange = AppSettings::setSkipSilence,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setSkipSilence(!skipSilence) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.SurroundSound,
-                title = stringResource(R.string.spatial_audio),
-                subtitle = stringResource(R.string.spatial_audio_subtitle),
-                trailing = {
-                    Switch(
-                        checked = spatialAudio,
-                        onCheckedChange = AppSettings::setSpatialAudio,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Tune,
-                title = stringResource(R.string.equalizer),
-                subtitle = stringResource(R.string.equalizer_subtitle),
-                onClick = onEqualizer,
-            )
-            // The system panel is not listed here as well. A device with a
-            // Dolby or Dirac panel has something BitChord cannot reproduce and
-            // keeps its row — but one level in, at the foot of the equaliser
-            // screen, rather than as a second equaliser entry alongside ours.
         }
 
-        SettingsGroup(header = stringResource(R.string.appearance)) {
-            SettingsRow(icon = Icons.Rounded.Brightness4, title = stringResource(R.string.theme))
+        val appearanceHeader = stringResource(R.string.appearance)
+        val themeTitle = stringResource(R.string.theme)
+        val reduceAnimationTitle = stringResource(R.string.reduce_animation)
+        val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)
+        val liquidGlassTitle = stringResource(R.string.liquid_glass)
+        val fullScreenCoverArtTitle = stringResource(R.string.full_screen_cover_art)
+        val legacyMeshGradientTitle = stringResource(R.string.legacy_mesh_gradient)
+        val animatedCoverArtTitle = stringResource(R.string.animated_cover_art)
+        val syncedLyricsTitle = stringResource(R.string.synced_lyrics)
+        val lyricsBlurTitle = "Blur unfocused lyrics"
+        val lyricsSourcesTitle = stringResource(R.string.lyrics_sources)
+        val translationLanguageTitle = stringResource(R.string.translation_language)
+        if (matchesSearch(
+                appearanceHeader, themeTitle, reduceAnimationTitle, reduceDynamicBlurTitle, liquidGlassTitle,
+                fullScreenCoverArtTitle, legacyMeshGradientTitle, animatedCoverArtTitle, syncedLyricsTitle,
+                lyricsBlurTitle, lyricsSourcesTitle, translationLanguageTitle,
+            )
+        ) {
+        SettingsGroup(header = appearanceHeader) {
+            SettingsRow(icon = Icons.Rounded.Brightness4, title = themeTitle)
             SegmentedControl(
                 options = ThemeMode.entries.map { it.localizedLabel() },
                 selectedIndex = ThemeMode.entries.indexOf(theme),
@@ -570,7 +636,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.MotionPhotosOff,
-                title = stringResource(R.string.reduce_animation),
+                title = reduceAnimationTitle,
                 subtitle = stringResource(R.string.reduce_animation_subtitle),
                 trailing = {
                     Switch(
@@ -587,7 +653,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.BlurOff,
-                title = stringResource(R.string.reduce_dynamic_blur),
+                title = reduceDynamicBlurTitle,
                 subtitle = stringResource(R.string.reduce_dynamic_blur_subtitle),
                 trailing = {
                     Switch(
@@ -604,7 +670,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
-                title = stringResource(R.string.liquid_glass),
+                title = liquidGlassTitle,
                 subtitle = stringResource(
                     if (liquidGlassSupported) {
                         R.string.liquid_glass_subtitle
@@ -634,7 +700,7 @@ fun SettingsScreen(
             if (fullBleedArtworkAvailable(windowWidth)) {
                 SettingsRow(
                     icon = Icons.Rounded.Fullscreen,
-                    title = stringResource(R.string.full_screen_cover_art),
+                    title = fullScreenCoverArtTitle,
                     subtitle = stringResource(R.string.full_screen_cover_art_subtitle),
                     trailing = {
                         Switch(
@@ -652,7 +718,7 @@ fun SettingsScreen(
             }
             SettingsRow(
                 icon = Icons.Rounded.Gradient,
-                title = stringResource(R.string.legacy_mesh_gradient),
+                title = legacyMeshGradientTitle,
                 subtitle = stringResource(R.string.legacy_mesh_gradient_subtitle),
                 trailing = {
                     Switch(
@@ -669,7 +735,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.Animation,
-                title = stringResource(R.string.animated_cover_art),
+                title = animatedCoverArtTitle,
                 subtitle = stringResource(R.string.animated_cover_art_subtitle),
                 trailing = {
                     Switch(
@@ -715,7 +781,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.AutoMirrored.Rounded.Notes,
-                title = stringResource(R.string.synced_lyrics),
+                title = syncedLyricsTitle,
                 subtitle = stringResource(R.string.synced_lyrics_subtitle),
                 trailing = {
                     Switch(
@@ -736,7 +802,7 @@ fun SettingsScreen(
                 RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.BlurOn,
-                title = "Blur unfocused lyrics",
+                title = lyricsBlurTitle,
                 subtitle = "Keeps the spotlight on the current line",
                     trailing = {
                         Switch(
@@ -753,7 +819,7 @@ fun SettingsScreen(
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.Language,
-                    title = stringResource(R.string.lyrics_sources),
+                    title = lyricsSourcesTitle,
                     subtitle = lyricsSources
                         .sortedBy { it.ordinal }
                         .joinToString(", ") { it.label }
@@ -764,7 +830,7 @@ fun SettingsScreen(
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.Translate,
-                    title = stringResource(R.string.translation_language),
+                    title = translationLanguageTitle,
                     subtitle = if (translationLanguage.isBlank()) {
                         stringResource(R.string.translation_language_subtitle)
                     } else {
@@ -778,11 +844,16 @@ fun SettingsScreen(
                 )
             }
         }
+        }
 
-        SettingsGroup(header = stringResource(R.string.performance)) {
+        val performanceHeader = stringResource(R.string.performance)
+        val highPerformanceModeTitle = stringResource(R.string.high_performance_mode)
+        val refreshRateTitle = stringResource(R.string.refresh_rate)
+        if (matchesSearch(performanceHeader, highPerformanceModeTitle, refreshRateTitle)) {
+        SettingsGroup(header = performanceHeader) {
             SettingsRow(
                 icon = BitChordIcons.Performance,
-                title = stringResource(R.string.high_performance_mode),
+                title = highPerformanceModeTitle,
                 subtitle = if (highPerformanceMode) {
                     stringResource(R.string.high_performance_active, selectedPerformanceRefreshRate)
                 } else {
@@ -817,7 +888,7 @@ fun SettingsScreen(
                 RowDivider()
                 SettingsRow(
                     icon = BitChordIcons.FrameRate,
-                    title = stringResource(R.string.refresh_rate),
+                    title = refreshRateTitle,
                 )
                 SegmentedControl(
                     options = supportedRefreshRates.map { "$it Hz" },
@@ -833,11 +904,17 @@ fun SettingsScreen(
                 )
             }
         }
+        }
 
-        SettingsGroup(header = stringResource(R.string.local_music)) {
+        val localMusicHeader = stringResource(R.string.local_music)
+        val localMusicFolderTitle = stringResource(R.string.local_music_folder)
+        val useAllAudioFoldersTitle = stringResource(R.string.use_all_audio_folders)
+        val filterNonMusicAudioTitle = stringResource(R.string.filter_non_music_audio)
+        if (matchesSearch(localMusicHeader, localMusicFolderTitle, useAllAudioFoldersTitle, filterNonMusicAudioTitle)) {
+        SettingsGroup(header = localMusicHeader) {
             SettingsRow(
                 icon = Icons.Rounded.Folder,
-                title = stringResource(R.string.local_music_folder),
+                title = localMusicFolderTitle,
                 subtitle = LocalMediaRepository.selectedFolderLabel(localMusicFolderUri)
                     ?: stringResource(R.string.all_audio_folders),
                 onClick = { localMusicFolderPicker.launch(null) },
@@ -846,7 +923,7 @@ fun SettingsScreen(
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.LibraryMusic,
-                    title = stringResource(R.string.use_all_audio_folders),
+                    title = useAllAudioFoldersTitle,
                     subtitle = stringResource(R.string.use_all_audio_folders_subtitle),
                     onClick = { AppSettings.setLocalMusicFolderUri("") },
                 )
@@ -854,7 +931,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.FilterAlt,
-                title = stringResource(R.string.filter_non_music_audio),
+                title = filterNonMusicAudioTitle,
                 subtitle = stringResource(R.string.filter_non_music_audio_subtitle),
                 trailing = {
                     Switch(
@@ -869,12 +946,18 @@ fun SettingsScreen(
                 onClick = { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
             )
         }
+        }
 
         val cacheLimitMb = (cacheLimitBytes / (1024 * 1024)).toInt()
-        SettingsGroup(header = stringResource(R.string.storage)) {
+        val storageHeader = stringResource(R.string.storage)
+        val songCacheLimitTitle = stringResource(R.string.song_cache_limit)
+        val clearSongCacheTitle = stringResource(R.string.clear_song_cache)
+        val clearImageCacheTitle = stringResource(R.string.clear_image_cache)
+        if (matchesSearch(storageHeader, songCacheLimitTitle, clearSongCacheTitle, clearImageCacheTitle)) {
+        SettingsGroup(header = storageHeader) {
             SliderRow(
                 icon = Icons.Rounded.Storage,
-                title = stringResource(R.string.song_cache_limit),
+                title = songCacheLimitTitle,
                 subtitle = if (cacheLimitMb > CACHE_WARNING_MB) {
                     stringResource(R.string.song_cache_large_subtitle, formatCacheSize(cacheLimitMb))
                 } else {
@@ -892,7 +975,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.DeleteSweep,
-                title = stringResource(R.string.clear_song_cache),
+                title = clearSongCacheTitle,
                 subtitle = stringResource(R.string.clear_song_cache_subtitle),
                 onClick = {
                     AudioCache.clear {
@@ -903,7 +986,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.DeleteSweep,
-                title = stringResource(R.string.clear_image_cache),
+                title = clearImageCacheTitle,
                 subtitle = stringResource(R.string.clear_image_cache_subtitle),
                 onClick = {
                     val loader = SingletonImageLoader.get(context)
@@ -913,18 +996,25 @@ fun SettingsScreen(
                 },
             )
         }
+        }
 
-        SettingsGroup(header = stringResource(R.string.your_data)) {
+        val yourDataHeader = stringResource(R.string.your_data)
+        val replayTitle = stringResource(R.string.replay)
+        val workOutGenresTitle = stringResource(R.string.work_out_genres)
+        val exportDataTitle = stringResource(R.string.export_data)
+        val importDataTitle = stringResource(R.string.import_data)
+        if (matchesSearch(yourDataHeader, replayTitle, workOutGenresTitle, exportDataTitle, importDataTitle)) {
+        SettingsGroup(header = yourDataHeader) {
             SettingsRow(
                 icon = Icons.Rounded.BarChart,
-                title = stringResource(R.string.replay),
+                title = replayTitle,
                 subtitle = stringResource(R.string.replay_subtitle),
                 onClick = onOpenReplay,
             )
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.LocalOffer,
-                title = stringResource(R.string.work_out_genres),
+                title = workOutGenresTitle,
                 subtitle = if (replayGenres) {
                     stringResource(R.string.replay_genres_enabled_subtitle)
                 } else {
@@ -945,25 +1035,35 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.FileUpload,
-                title = stringResource(R.string.export_data),
+                title = exportDataTitle,
                 subtitle = exportStatus ?: stringResource(R.string.export_data_subtitle),
                 onClick = { exportPicker.launch(Backup.suggestedName()) },
             )
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.FileDownload,
-                title = stringResource(R.string.import_data),
+                title = importDataTitle,
                 subtitle = importStatus ?: stringResource(R.string.import_data_subtitle),
                 onClick = { confirmImport = true },
             )
         }
+        }
 
         // No footer: it only restated the stop-on-close row's own subtitle,
         // which sits four rows above it and says the same thing in fewer words.
-        SettingsGroup(header = stringResource(R.string.miscellaneous)) {
+        val miscHeader = stringResource(R.string.miscellaneous)
+        val playNextOnSwipeTitle = stringResource(R.string.play_next_on_swipe)
+        val dontRepeatSongsTitle = stringResource(R.string.dont_repeat_songs)
+        val stopMusicOnCloseTitle = stringResource(R.string.stop_music_on_close)
+        val hideVolumeBarTitle = stringResource(R.string.hide_volume_bar)
+        if (matchesSearch(
+                miscHeader, playNextOnSwipeTitle, dontRepeatSongsTitle, stopMusicOnCloseTitle, hideVolumeBarTitle,
+            )
+        ) {
+        SettingsGroup(header = miscHeader) {
             SettingsRow(
                 icon = Icons.Rounded.PlaylistPlay,
-                title = stringResource(R.string.play_next_on_swipe),
+                title = playNextOnSwipeTitle,
                 subtitle = if (swipeToPlayNext) {
                     stringResource(R.string.swipe_plays_next)
                 } else {
@@ -984,7 +1084,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.History,
-                title = stringResource(R.string.dont_repeat_songs),
+                title = dontRepeatSongsTitle,
                 subtitle = stringResource(R.string.dont_repeat_songs_subtitle),
                 trailing = {
                     Switch(
@@ -1001,7 +1101,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.MusicOff,
-                title = stringResource(R.string.stop_music_on_close),
+                title = stopMusicOnCloseTitle,
                 subtitle = stringResource(R.string.stop_music_on_close_subtitle),
                 trailing = {
                     Switch(
@@ -1018,7 +1118,7 @@ fun SettingsScreen(
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.VolumeOff,
-                title = stringResource(R.string.hide_volume_bar),
+                title = hideVolumeBarTitle,
                 subtitle = stringResource(R.string.hide_volume_bar_subtitle),
                 trailing = {
                     Switch(
@@ -1033,22 +1133,30 @@ fun SettingsScreen(
                 onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
             )
         }
+        }
 
-        SettingsGroup(header = stringResource(R.string.language)) {
+        val languageHeader = stringResource(R.string.language)
+        val appLanguageTitle = stringResource(R.string.app_language)
+        if (matchesSearch(languageHeader, appLanguageTitle)) {
+        SettingsGroup(header = languageHeader) {
             val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
                 ?: Locale.getDefault().language
             SettingsRow(
                 icon = Icons.Rounded.Language,
-                title = stringResource(R.string.app_language),
+                title = appLanguageTitle,
                 subtitle = stringResource(languageDisplayNameRes(selectedLanguage)),
                 onClick = onAppLanguage,
             )
         }
+        }
 
-        SettingsGroup(header = "Advanced Options") {
+        val advancedHeader = "Advanced Options"
+        val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
+        if (matchesSearch(advancedHeader, showNerdStatsTitle)) {
+        SettingsGroup(header = advancedHeader) {
             SettingsRow(
                 icon = Icons.Rounded.GraphicEq,
-                title = stringResource(R.string.show_nerd_stats),
+                title = showNerdStatsTitle,
                 subtitle = stringResource(R.string.show_nerd_stats_subtitle),
                 trailing = {
                     Switch(
@@ -1062,6 +1170,7 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setShowNerdStats(!nerdStats) },
             )
+        }
         }
 
         Text(
