@@ -221,7 +221,6 @@
     <string name="dark">Sombre</string>
     <string name="full_screen_cover_art_subtitle">Étend la pochette jusqu\'aux bords du lecteur au lieu d\'un carré</string>
     <string name="animated_cover_art_subtitle">Lit la vidéo en boucle que proposent certaines sorties au lieu d\'une pochette fixe</string>
-    <string name="miscellaneous_footer">Une fois activé, fermer l\'application depuis les applications récentes arrête aussi la musique.</string>
     <string name="dont_repeat_songs_subtitle">La lecture automatique ne proposera pas une chanson déjà jouée ou suggérée pendant cette session</string>
     <string name="download_quality_subtitle">%1$s par piste, quelle que soit la connexion</string>
     <string name="filter_non_music_audio">Filtrer l\'audio non musical</string>
@@ -256,6 +255,12 @@
     <string name="buttons">Boutons</string>
     <string name="clear_name">Effacer le nom</string>
     <string name="close_lyrics">Fermer les paroles</string>
+    <string name="translate_lyrics">Traduire les paroles</string>
+    <string name="show_original_lyrics">Afficher les paroles originales</string>
+    <string name="translating_lyrics_to">Traduction en %1$s…</string>
+    <string name="lyrics_translated_to">Traduit en %1$s</string>
+    <string name="lyrics_already_in_language">Ces paroles sont déjà en %1$s</string>
+    <string name="lyrics_translation_unavailable">La traduction est indisponible pour le moment</string>
     <string name="connect_account_first">Connectez d\'abord un compte</string>
     <string name="connected_presence_off">Connecté, présence désactivée</string>
     <string name="copy_log">Copier le journal</string>

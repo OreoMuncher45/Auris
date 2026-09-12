@@ -217,7 +217,6 @@
     <string name="dark">Gelap</string>
     <string name="full_screen_cover_art_subtitle">Membuat sampul memenuhi tepi pemutar alih-alih berbentuk persegi</string>
     <string name="animated_cover_art_subtitle">Memutar video berulang yang disertakan beberapa rilisan alih-alih sampul diam</string>
-    <string name="miscellaneous_footer">Jika diaktifkan, menutup aplikasi dari layar aplikasi terbaru juga akan menghentikan pemutaran musik.</string>
     <string name="dont_repeat_songs_subtitle">Putar Otomatis tidak akan menyarankan lagu yang sudah diputar atau disarankan dalam sesi ini</string>
     <string name="download_quality_subtitle">%1$s per trek, apa pun koneksinya</string>
     <string name="filter_non_music_audio">Filter audio non-musik</string>
@@ -252,6 +251,12 @@
     <string name="buttons">Tombol</string>
     <string name="clear_name">Hapus nama</string>
     <string name="close_lyrics">Tutup lirik</string>
+    <string name="translate_lyrics">Terjemahkan lirik</string>
+    <string name="show_original_lyrics">Tampilkan lirik asli</string>
+    <string name="translating_lyrics_to">Menerjemahkan ke %1$s…</string>
+    <string name="lyrics_translated_to">Diterjemahkan ke %1$s</string>
+    <string name="lyrics_already_in_language">Lirik ini sudah dalam %1$s</string>
+    <string name="lyrics_translation_unavailable">Terjemahan tidak tersedia saat ini</string>
     <string name="connect_account_first">Hubungkan akun terlebih dahulu</string>
     <string name="connected_presence_off">Terhubung, presence nonaktif</string>
     <string name="copy_log">Salin log</string>

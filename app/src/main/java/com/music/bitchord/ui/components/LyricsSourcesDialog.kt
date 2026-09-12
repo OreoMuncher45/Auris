@@ -5,6 +5,8 @@ import com.music.bitchord.R
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -139,21 +141,34 @@ fun LyricsSourcesDialog(
                 )
             }
 
-            ReorderableSourceList(
-                order = savedOrder,
-                selected = selected,
-                onReorder = AppSettings::setLyricsSourceOrder,
-                onToggle = { source ->
-                    val checked = source in selected
-                    // The last one standing can't be unchecked — an empty list
-                    // is indistinguishable from switching lyrics off, and there
-                    // is already a switch for that a row above this dialog.
-                    if (checked && selected.size <= 1) return@ReorderableSourceList
-                    AppSettings.setLyricsSources(
-                        if (checked) selected - source else selected + source,
-                    )
-                },
-            )
+            // Capped and scrolled rather than laid out at full height: there
+            // are enough providers now that the card ran off both ends of a
+            // phone, taking Reset and Done with it. Still a plain Column
+            // inside — the drag measures itself against a fixed row pitch and
+            // a lazy list would recycle the row being dragged out from under
+            // the finger.
+            Box(
+                modifier = Modifier
+                    .heightIn(max = SOURCES_MAX_HEIGHT)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                ReorderableSourceList(
+                    order = savedOrder,
+                    selected = selected,
+                    onReorder = AppSettings::setLyricsSourceOrder,
+                    onToggle = { source ->
+                        val checked = source in selected
+                        // The last one standing can't be unchecked — an empty
+                        // list is indistinguishable from switching lyrics off,
+                        // and there is already a switch for that a row above
+                        // this dialog.
+                        if (checked && selected.size <= 1) return@ReorderableSourceList
+                        AppSettings.setLyricsSources(
+                            if (checked) selected - source else selected + source,
+                        )
+                    },
+                )
+            }
 
             AlertRule()
             SyllableSyncToggle(
@@ -446,3 +461,6 @@ private fun ReorderableSourceList(
  * to swallow the shake without the swap feeling reluctant.
  */
 private const val SWAP_THRESHOLD = 0.6f
+
+/** How tall the source list may get before it scrolls inside the card. */
+private val SOURCES_MAX_HEIGHT = 340.dp

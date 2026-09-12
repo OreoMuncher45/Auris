@@ -43,6 +43,117 @@ class SearchPagingTest {
         assertNull(songs.first { it.videoId == "clean" }.isExplicit)
     }
 
+    /**
+     * Searching an artist promotes them to a card and hangs three of their
+     * songs off it. Those rows state only "Song • 3:16" — the credit is on the
+     * card, said once — so each one used to come back as "Unknown artist".
+     */
+    @Test
+    fun `songs under an artist card inherit the card's credit`() {
+        val json = """
+        {
+          "contents": [
+            {
+              "musicCardShelfRenderer": {
+                "title": { "runs": [{ "text": "MC STAN" }] },
+                "subtitle": { "runs": [{ "text": "Artist • 12.3M monthly audience" }] },
+                "onTap": {
+                  "browseEndpoint": {
+                    "browseId": "UCXPnAUkxJtng8M_5yWuSTjw",
+                    "browseEndpointContextSupportedConfigs": {
+                      "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" }
+                    }
+                  }
+                },
+                "contents": [
+                  {
+                    "musicResponsiveListItemRenderer": {
+                      "playlistItemData": { "videoId": "basti" },
+                      "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": {
+                          "text": { "runs": [{ "text": "Basti Ka Hasti" }] }
+                        } },
+                        { "musicResponsiveListItemFlexColumnRenderer": {
+                          "text": { "runs": [{ "text": "Song" }, { "text": " • " }, { "text": "3:16" }] }
+                        } }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """.trimIndent()
+
+        val page = InnertubeParser.parseSearchPage(Json.parseToJsonElement(json).jsonObject)
+
+        val artist = (page.rows.first { it is SearchResult.Browse } as SearchResult.Browse).item
+        assertEquals(BrowseType.ARTIST, artist.type)
+        val song = page.rows.filterIsInstance<SearchResult.Track>().single().song
+        assertEquals("basti", song.videoId)
+        assertEquals("MC STAN", song.artist)
+        assertEquals("UCXPnAUkxJtng8M_5yWuSTjw", song.artistId)
+        // The card names who, never off which release — see [cardShelfCredit].
+        assertNull(song.albumId)
+    }
+
+    /**
+     * The other card shape lists *related* uploads rather than its own — a
+     * dance cover, a choreography video — so the promoted track's credit must
+     * not be lent to rows that carry their own.
+     */
+    @Test
+    fun `rows under a song card keep their own credit`() {
+        val json = """
+        {
+          "contents": [
+            {
+              "musicCardShelfRenderer": {
+                "title": { "runs": [{ "text": "Shape of You" }] },
+                "subtitle": { "runs": [
+                  { "text": "Song" }, { "text": " • " },
+                  { "text": "Ed Sheeran", "navigationEndpoint": { "browseEndpoint": {
+                    "browseId": "UC_ED",
+                    "browseEndpointContextSupportedConfigs": {
+                      "browseEndpointContextMusicConfig": { "pageType": "MUSIC_PAGE_TYPE_ARTIST" }
+                    }
+                  } } },
+                  { "text": " • " }, { "text": "4:24" }
+                ] },
+                "onTap": { "watchEndpoint": { "videoId": "shape" } },
+                "contents": [
+                  {
+                    "musicResponsiveListItemRenderer": {
+                      "playlistItemData": { "videoId": "cover" },
+                      "flexColumns": [
+                        { "musicResponsiveListItemFlexColumnRenderer": {
+                          "text": { "runs": [{ "text": "Shape of you (Classical Dance)" }] }
+                        } },
+                        { "musicResponsiveListItemFlexColumnRenderer": {
+                          "text": { "runs": [
+                            { "text": "Pratibimb Productions" }, { "text": " • " }, { "text": "3:37" }
+                          ] }
+                        } }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+        """.trimIndent()
+
+        val page = InnertubeParser.parseSearchPage(Json.parseToJsonElement(json).jsonObject)
+
+        val songs = page.rows.filterIsInstance<SearchResult.Track>().map { it.song } +
+            page.rows.filterIsInstance<SearchResult.TopTrack>().map { it.song }
+        assertEquals("Ed Sheeran", songs.first { it.videoId == "shape" }.artist)
+        assertEquals("Pratibimb Productions", songs.first { it.videoId == "cover" }.artist)
+        assertNull(songs.first { it.videoId == "cover" }.artistId)
+    }
+
     @Test
     fun `search page keeps rows and next continuation`() {
         val json = """

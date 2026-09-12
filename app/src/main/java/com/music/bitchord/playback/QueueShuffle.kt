@@ -1,6 +1,11 @@
 package com.music.bitchord.playback
 
+import android.os.Bundle
+import androidx.core.os.bundleOf
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionCommand
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,6 +29,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * AutoPlay's tracks are shuffled among themselves and stay below the ones the
  * user queued, which is where the player's AutoPlay section shows them: a
  * shuffle is not a reason for a mix to start cutting in front of the album.
+ *
+ * The rearranging itself is worked out as a permutation and applied to the
+ * queue in one edit — see [applyOrder], which is where the size of the queue
+ * stops mattering.
  */
 object QueueShuffle {
 
@@ -70,74 +79,120 @@ object QueueShuffle {
      * and whatever sits above it stays there — those have had their turn.
      */
     private fun shuffle(player: Player) {
-        original = player.queueIds()
+        val items = player.queueItems()
+        original = items.map { it.mediaId }
         val from = player.currentMediaItemIndex + 1
-        val autoplay = player.autoplayIds()
-        val (mix, own) = original.drop(from).partition { it in autoplay }
+        val upcoming = items.drop(from)
+        val (mix, own) = upcoming.indices.partition { upcoming[it].fromAutoplay }
         applyOrder(player, from, own.shuffled() + mix.shuffled())
         _enabled.value = true
     }
 
     /** Puts the tracks still to come back into the order they were queued in. */
     private fun restore(player: Player) {
+        val items = player.queueItems()
         val from = player.currentMediaItemIndex + 1
-        val upcoming = player.queueIds().drop(from).toMutableList()
-        // Each track still queued goes back to where it stood in the old order.
-        // Whatever is left over was queued after the shuffle and was never part
-        // of that order, so it keeps its place at the end.
-        val restored = original.filter { upcoming.remove(it) } + upcoming
-        applyOrder(player, from, sections(restored, player.autoplayIds()))
+        val upcoming = items.drop(from)
+        val restored = restoreOrder(upcoming.map { it.mediaId }, original)
+        applyOrder(player, from, sections(restored, upcoming))
         original = emptyList()
         _enabled.value = false
     }
 
-    /** [ids] with AutoPlay's tracks moved below the user's, order otherwise kept. */
-    private fun sections(ids: List<String>, autoplay: Set<String>): List<String> =
-        ids.filterNot { it in autoplay } + ids.filter { it in autoplay }
-
     /**
-     * Rearranges the live queue from [from] onwards into [target], one move at
-     * a time. Moving items leaves the playing track's own source untouched;
-     * setting the queue afresh would restart it — and re-resolve its stream.
-     */
-    private fun applyOrder(player: Player, from: Int, target: List<String>) {
-        moves(player.queueIds(), from, target).forEach { (at, to) ->
-            player.moveMediaItem(at, to)
-        }
-    }
-
-    /**
-     * The moves that take [current] into [target] from [from] onwards, each a
-     * `from index to index` pair as [Player.moveMediaItem] takes them — the
-     * item at the first index lands on the second, the rest shifting along.
+     * Where each of [upcoming] belongs once [original] is put back, as indices
+     * into [upcoming].
      *
-     * Only the positions [target] names are placed; anything it doesn't
-     * mention is left to trail behind them, so a queue edited from under this
-     * comes out rearranged as far as it can be rather than not at all.
+     * Each track still queued goes back to where it stood in the old order.
+     * Whatever is left over was queued after the shuffle and was never part of
+     * that order, so it keeps its place at the end. A track named by [original]
+     * that has since been removed is simply skipped.
+     *
+     * Written against a map of the positions each id holds rather than by
+     * searching [upcoming] once per entry, because the queues this runs on are
+     * playlists: a linear search per track is a million comparisons over a
+     * thousand-track queue, and it happens on the frame that handles the tap.
+     * A queue holding the same track twice hands its copies out in the order
+     * they stand in, which is what keeps both of them.
      */
-    internal fun moves(
-        current: List<String>,
-        from: Int,
-        target: List<String>,
-    ): List<Pair<Int, Int>> {
-        val ids = current.toMutableList()
-        val out = mutableListOf<Pair<Int, Int>>()
-        target.forEachIndexed { offset, id ->
-            val to = from + offset
-            if (ids.getOrNull(to) == id) return@forEachIndexed
-            val at = (to + 1 until ids.size).firstOrNull { ids[it] == id }
-                ?: return@forEachIndexed
-            out += at to to
-            ids.add(to, ids.removeAt(at))
+    internal fun restoreOrder(upcoming: List<String>, original: List<String>): List<Int> {
+        val positions = HashMap<String, ArrayDeque<Int>>(upcoming.size)
+        upcoming.forEachIndexed { index, id ->
+            positions.getOrPut(id) { ArrayDeque() }.addLast(index)
         }
+        val placed = BooleanArray(upcoming.size)
+        val out = ArrayList<Int>(upcoming.size)
+        for (id in original) {
+            val index = positions[id]?.removeFirstOrNull() ?: continue
+            placed[index] = true
+            out += index
+        }
+        for (index in upcoming.indices) if (!placed[index]) out += index
         return out
     }
 
-    private fun Player.queueIds(): List<String> =
-        (0 until mediaItemCount).map { getMediaItemAt(it).mediaId }
+    /** [order] with AutoPlay's tracks moved below the user's, order otherwise kept. */
+    private fun sections(order: List<Int>, upcoming: List<MediaItem>): List<Int> =
+        order.filterNot { upcoming[it].fromAutoplay } + order.filter { upcoming[it].fromAutoplay }
 
-    private fun Player.autoplayIds(): Set<String> =
-        (0 until mediaItemCount)
-            .filter { getMediaItemAt(it).fromAutoplay }
-            .mapTo(mutableSetOf()) { getMediaItemAt(it).mediaId }
+    /**
+     * Rearranges the live queue from [from] onwards, [order] naming where each
+     * slot's new occupant is standing now.
+     *
+     * One edit, not a run of [Player.moveMediaItem], which is what this used to
+     * do and what made shuffling a long playlist hang the app. Every move is a
+     * separate trip across the session boundary and each one lands as a playlist
+     * change: the service reserialises its queue snapshot to disk, the
+     * notification's custom layout is rebuilt, and the whole timeline is
+     * broadcast back for the UI to convert to songs and recompose from. One move
+     * costs that once. A thousand-track shuffle is a thousand moves, so it cost
+     * all of it a thousand times over, on the main thread, with nothing drawing
+     * in between — which is an ANR, not a shuffle.
+     *
+     * A permutation rather than the rearranged items themselves because of what
+     * a controller can see. Media3 strips a [MediaItem]'s `localConfiguration`
+     * on the way out to a controller, so the items read back out of one have no
+     * playback URI left on them; handing those to `replaceMediaItems` would send
+     * the queue back with every upcoming track's URI missing. Indices survive
+     * the trip intact, and the session applies them to the items it holds, which
+     * never lost anything.
+     */
+    private fun applyOrder(player: Player, from: Int, order: List<Int>) {
+        if (order.isEmpty()) return
+        if (player is MediaController) {
+            player.sendCustomCommand(
+                SessionCommand(ACTION_REORDER_QUEUE, Bundle.EMPTY),
+                bundleOf(
+                    EXTRA_REORDER_FROM to from,
+                    EXTRA_REORDER_ORDER to order.toIntArray(),
+                ),
+            )
+        } else {
+            reorder(player, from, order.toIntArray())
+        }
+    }
+
+    /** [applyOrder] as it arrives at the session — see [ACTION_REORDER_QUEUE]. */
+    fun reorderFromCommand(player: Player, args: Bundle) {
+        val from = args.getInt(EXTRA_REORDER_FROM, -1)
+        val order = args.getIntArray(EXTRA_REORDER_ORDER) ?: return
+        if (from >= 0) reorder(player, from, order)
+    }
+
+    /**
+     * Refused outright, rather than applied as far as it goes, when the queue no
+     * longer has room for it: the order was worked out against the queue as it
+     * stood a moment ago, and a queue that has since lost tracks — AutoPlay
+     * switched off, say — would have to be rearranged into fewer slots than the
+     * permutation names. Dropping the tail of it would drop those tracks from
+     * the queue, which is not what shuffling asked for.
+     */
+    private fun reorder(player: Player, from: Int, order: IntArray) {
+        if (order.isEmpty() || from + order.size > player.mediaItemCount) return
+        val target = List(order.size) { player.getMediaItemAt(from + order[it]) }
+        player.replaceMediaItems(from, from + order.size, target)
+    }
+
+    private fun Player.queueItems(): List<MediaItem> =
+        List(mediaItemCount) { getMediaItemAt(it) }
 }

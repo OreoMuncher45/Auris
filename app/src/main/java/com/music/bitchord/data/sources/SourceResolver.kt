@@ -168,7 +168,8 @@ object SourceResolver {
         }
 
         if (pinned != null) {
-            attempt(pinned) { pinned.stream(trackId, request) }?.let { return it }
+            attempt(pinned) { pinned.stream(trackId, request) }
+                ?.let { return it.copy(sourceConfigId = pinned.configId) }
         }
 
         // Last resort. A track whose own source is down is still a track the
@@ -309,10 +310,17 @@ object SourceResolver {
      *   can be judged against it rather than against the request. Null means
      *   unknown, and an unknown floor is treated as one nothing lossy clears:
      *   a swap that might be a downgrade is worse than no swap at all.
+     * @param servedBy the [MusicSource.configId] already serving the track, if
+     *   known. Asking it again is wasted: the same source, asked the same
+     *   query at the same tier, is deterministic and can only reproduce the
+     *   stream already playing — which [worthSwapping] would reject anyway,
+     *   but not before spending a search and a stream call on it. See the
+     *   'isn't worth swapping ... off' log line this was written to stop.
      */
     suspend fun upgradeFor(
         target: TrackMatcher.Target,
         playing: StreamFormat? = null,
+        servedBy: String? = null,
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
@@ -347,7 +355,7 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            rankedAbove(youtube.configId, active),
+            rankedAbove(youtube.configId, active).filterNot { it.configId == servedBy },
             target,
             request,
             waitForAll = true,
@@ -919,7 +927,10 @@ object SourceResolver {
             // The row this URL came from knows how long the recording is; the
             // URL itself doesn't. Carried along so a caller swapping this into
             // a track already playing can check it — see [SourceStream.durationSec].
-            val stream = opened.copy(durationSec = TrackMatcher.secondsOf(match.durationText))
+            val stream = opened.copy(
+                durationSec = TrackMatcher.secondsOf(match.durationText),
+                sourceConfigId = source.configId,
+            )
             val served = stream.format
             if (!wantsLossless || served.isLossless == true || served.isDolbyAtmos || served.statesNothingLossy) {
                 TrackLog.d(

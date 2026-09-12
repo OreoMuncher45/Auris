@@ -17,15 +17,21 @@ enum class LyricsSource(
 ) {
     // Declaration order is the default priority — [AppSettings.lyricsSourceOrder]
     // and [AppSettings.lyricsSources] both fall back to [LyricsSource.entries]
-    // verbatim, so this list *is* the out-of-the-box experience.
-    LYRICS_PLUS(
-        label = "LyricsPlus",
-        detail = "Syllable by syllable, on community mirrors",
-        wordSynced = true,
-    ),
-    PAXSENIX(
-        label = "PaxSenix",
-        detail = "Apple Music timings again, on a second host",
+    // verbatim, so this list *is* the out-of-the-box experience. Stored by
+    // name rather than position, so this can be rearranged without disturbing
+    // an order somebody has already chosen for themselves.
+    //
+    // The three Apple hosts lead, because they carry the same catalogue and
+    // that catalogue is the one with the voices in it. [BINI_LYRICS] goes
+    // first of the three: it is the only one that will answer to a recording
+    // rather than to a name, and it is where the ISRC the others use comes
+    // from. [LYRICS_PLUS] has the finest timing of the lot and the least
+    // reliable hosting — behind them rather than in front, so a track does not
+    // wait on a mirror that is down to be told what three other hosts already
+    // had.
+    BINI_LYRICS(
+        label = "BiniLyrics",
+        detail = "The same Apple timings, matched on the recording itself",
         wordSynced = true,
     ),
     BETTER_LYRICS(
@@ -33,9 +39,24 @@ enum class LyricsSource(
         detail = "Apple Music timings, word by word",
         wordSynced = true,
     ),
+    PAXSENIX(
+        label = "PaxSenix",
+        detail = "Apple Music timings again, on a second host",
+        wordSynced = true,
+    ),
+    LYRICS_PLUS(
+        label = "LyricsPlus",
+        detail = "Syllable by syllable, on community mirrors",
+        wordSynced = true,
+    ),
     SIMP_MUSIC(
         label = "SimpMusic",
         detail = "Matched on the video, so never the wrong edit",
+        wordSynced = true,
+    ),
+    UNISON(
+        label = "Unison",
+        detail = "Contributed by listeners, so it has what nobody licensed",
         wordSynced = true,
     ),
     KUGOU(

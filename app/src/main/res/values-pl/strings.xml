@@ -217,7 +217,6 @@
     <string name="dark">Ciemny</string>
     <string name="full_screen_cover_art_subtitle">Wyświetla okładkę na całym ekranie odtwarzacza zamiast kwadratowej okładki</string>
     <string name="animated_cover_art_subtitle">Odtwarza animowaną okładkę dostępną w niektórych wydaniach zamiast statycznej</string>
-    <string name="miscellaneous_footer">Po włączeniu, zamknięcie aplikacji z listy ostatnio używanych aplikacji zatrzyma odtwarzanie muzyki.</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay nie zaproponuje utworu, który został już odtworzony lub zaproponowany w tej sesji</string>
     <string name="download_quality_subtitle">%1$s na utwór, niezależnie od połączenia</string>
     <string name="filter_non_music_audio">Filtruj dźwięk inny niż muzyka</string>
@@ -252,6 +251,12 @@
     <string name="buttons">Przyciski</string>
     <string name="clear_name">Wyczyść nazwę</string>
     <string name="close_lyrics">Zamknij teksty</string>
+    <string name="translate_lyrics">Przetłumacz tekst</string>
+    <string name="show_original_lyrics">Pokaż oryginalny tekst</string>
+    <string name="translating_lyrics_to">Tłumaczenie na %1$s…</string>
+    <string name="lyrics_translated_to">Przetłumaczono na %1$s</string>
+    <string name="lyrics_already_in_language">Ten tekst jest już w języku %1$s</string>
+    <string name="lyrics_translation_unavailable">Tłumaczenie jest teraz niedostępne</string>
     <string name="connect_account_first">Najpierw połącz konto</string>
     <string name="connected_presence_off">Połączono, obecność wyłączona</string>
     <string name="copy_log">Kopiuj log</string>

@@ -274,6 +274,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val key = videoId to sources
         if (lyricsFor == key) return
+        // The duration lands a beat after the track, and a database match needs
+        // it. Turned away here rather than inside the job below: claiming the
+        // lookup first and giving it up asynchronously means the very re-trigger
+        // that carries the duration can arrive while the claim still stands, be
+        // dropped as a duplicate, and leave the track marked as being looked up
+        // by nobody — which is what left a paused track loading for ever, since
+        // pausing is when the duration is most likely to arrive a frame late.
+        if (localUri == null && durationMs <= 0L) return
         lyricsFor = key
         _lyrics.value = null
         _lyricsSource.value = null
@@ -1813,7 +1821,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * Maximum number of live media results shown in the typeahead dropdown.
          * Enough to give variety without making the list unscrollable.
          */
-        const val TYPEAHEAD_MAX_RESULTS = 6
+        const val TYPEAHEAD_MAX_RESULTS = 5
 
         const val SEARCH_CACHE_ENTRIES = 100
 

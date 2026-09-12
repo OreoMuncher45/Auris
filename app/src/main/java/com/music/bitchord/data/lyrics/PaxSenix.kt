@@ -23,6 +23,7 @@ import kotlin.math.abs
  */
 object PaxSenix {
 
+    private const val NAME = "PaxSenix"
     private const val PROXY = "https://lyrics.paxsenix.org"
     private const val APPLE_SEARCH = "https://amp-api.music.apple.com/v1/catalog/us/search"
     private const val DURATION_TOLERANCE_SECONDS = 10
@@ -93,6 +94,10 @@ object PaxSenix {
         val response = runCatching { lyricsJson.decodeFromString<LyricsResponse>(body) }.getOrNull()
             ?: return null
 
+        // Tried in descending order of what the document carries: only the
+        // TTML has the voices, so a track that comes back as enhanced LRC is
+        // drawn down one side however much of a duet it is. That is a fact
+        // about the document rather than a bug to go looking for in the panel.
         response.ttmlContent?.takeIf { it.isNotBlank() }?.let { ttml ->
             TtmlLyrics.parse(ttml).takeIf { it.isNotEmpty() }?.let { return it }
         }

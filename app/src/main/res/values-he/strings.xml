@@ -221,7 +221,6 @@
     <string name="dark">כהה</string>
     <string name="full_screen_cover_art_subtitle">מותח את העטיפה עד לקצוות הנגן במקום עטיפה מרובעת</string>
     <string name="animated_cover_art_subtitle">מנגן את סרטון הלופ שמגיע עם חלק מההוצאות במקום עטיפה סטטית</string>
-    <string name="miscellaneous_footer">כשמופעל, סגירת האפליקציה ממסך האפליקציות האחרונות תעצור גם את השמעת המוזיקה.</string>
     <string name="dont_repeat_songs_subtitle">ההשמעה האוטומטית לא תציע שיר שכבר הושמע או הוצע בהפעלה הנוכחית</string>
     <string name="download_quality_subtitle">%1$s לרצועה, ללא קשר לחיבור</string>
     <string name="filter_non_music_audio">סנן שמע שאינו מוזיקה</string>
@@ -256,6 +255,12 @@
     <string name="buttons">כפתורים</string>
     <string name="clear_name">נקה שם</string>
     <string name="close_lyrics">סגור מילים</string>
+    <string name="translate_lyrics">תרגם מילים</string>
+    <string name="show_original_lyrics">הצג מילים מקוריות</string>
+    <string name="translating_lyrics_to">מתרגם ל%1$s…</string>
+    <string name="lyrics_translated_to">תורגם ל%1$s</string>
+    <string name="lyrics_already_in_language">המילים כבר ב%1$s</string>
+    <string name="lyrics_translation_unavailable">התרגום אינו זמין כרגע</string>
     <string name="connect_account_first">חבר חשבון תחילה</string>
     <string name="connected_presence_off">מחובר, נוכחות כבויה</string>
     <string name="copy_log">העתק יומן</string>

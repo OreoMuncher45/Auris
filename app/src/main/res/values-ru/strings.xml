@@ -229,7 +229,6 @@
     <string name="dark">Тёмная</string>
     <string name="full_screen_cover_art_subtitle">Растягивает обложку до краёв плеера вместо квадратного варианта</string>
     <string name="animated_cover_art_subtitle">Воспроизводит зацикленное видео, которое есть у некоторых релизов вместо неподвижной обложки</string>
-    <string name="miscellaneous_footer">При включении закрытие приложения из недавних также останавливает воспроизведение музыки.</string>
     <string name="dont_repeat_songs_subtitle">Автовоспроизведение не будет предлагать уже сыгранную или предложенную в этой сессии песню</string>
     <string name="download_quality_subtitle">%1$s за трек, независимо от соединения</string>
     <string name="filter_non_music_audio">Фильтровать немузыкальное аудио</string>
@@ -264,6 +263,12 @@
     <string name="buttons">Кнопки</string>
     <string name="clear_name">Очистить имя</string>
     <string name="close_lyrics">Закрыть текст песни</string>
+    <string name="translate_lyrics">Перевести текст</string>
+    <string name="show_original_lyrics">Показать оригинал</string>
+    <string name="translating_lyrics_to">Перевод на %1$s…</string>
+    <string name="lyrics_translated_to">Переведено на %1$s</string>
+    <string name="lyrics_already_in_language">Текст уже на языке %1$s</string>
+    <string name="lyrics_translation_unavailable">Перевод сейчас недоступен</string>
     <string name="connect_account_first">Сначала подключите аккаунт</string>
     <string name="connected_presence_off">Подключено, Presence отключён</string>
     <string name="copy_log">Скопировать журнал</string>

@@ -245,7 +245,6 @@
     <string name="dark">Scuro</string>
     <string name="full_screen_cover_art_subtitle">Estende la copertina fino ai bordi del player invece di un quadrato</string>
     <string name="animated_cover_art_subtitle">Riproduce il video in loop fornito da alcune release invece di una copertina statica</string>
-    <string name="miscellaneous_footer">Quando attivo, chiudere l\'app dalla schermata delle app recenti interrompe anche la riproduzione musicale.</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay non suggerirà un brano già riprodotto o suggerito in questa sessione</string>
     <string name="download_quality_subtitle">%1$s per brano, indipendentemente dalla connessione</string>
     <string name="filter_non_music_audio">Filtra audio non musicale</string>
@@ -280,6 +279,12 @@
     <string name="buttons">Pulsanti</string>
     <string name="clear_name">Cancella nome</string>
     <string name="close_lyrics">Chiudi testi</string>
+    <string name="translate_lyrics">Traduci testo</string>
+    <string name="show_original_lyrics">Mostra testo originale</string>
+    <string name="translating_lyrics_to">Traduzione in %1$s…</string>
+    <string name="lyrics_translated_to">Tradotto in %1$s</string>
+    <string name="lyrics_already_in_language">Questo testo è già in %1$s</string>
+    <string name="lyrics_translation_unavailable">La traduzione non è disponibile al momento</string>
     <string name="connect_account_first">Collega prima un account</string>
     <string name="connected_presence_off">Connesso, presenza disattivata</string>
     <string name="copy_log">Copia log</string>

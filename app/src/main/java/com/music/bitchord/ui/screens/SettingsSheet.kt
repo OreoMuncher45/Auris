@@ -50,6 +50,7 @@ import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicOff
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.rounded.Wifi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
+import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -157,8 +159,10 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
+    onEqualizer: () -> Unit,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
+    onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
     onSpotifyCanvasAuth: () -> Unit,
     onAppLanguage: () -> Unit,
@@ -192,7 +196,7 @@ fun SettingsScreen(
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
-    val showLyricsLogs by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
+    val translationLanguage by AppSettings.translationLanguage.collectAsStateWithLifecycle()
     val theme by AppSettings.themeMode.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
@@ -547,8 +551,12 @@ fun SettingsScreen(
                 icon = Icons.Rounded.Tune,
                 title = stringResource(R.string.equalizer),
                 subtitle = stringResource(R.string.equalizer_subtitle),
-                onClick = { openEqualizer(context, sessionId) },
+                onClick = onEqualizer,
             )
+            // The system panel is not listed here as well. A device with a
+            // Dolby or Dirac panel has something BitChord cannot reproduce and
+            // keeps its row — but one level in, at the foot of the equaliser
+            // screen, rather than as a second equaliser entry alongside ours.
         }
 
         SettingsGroup(header = stringResource(R.string.appearance)) {
@@ -753,6 +761,21 @@ fun SettingsScreen(
                     trailing = { Chevron() },
                     onClick = onLyricsSources,
                 )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Translate,
+                    title = stringResource(R.string.translation_language),
+                    subtitle = if (translationLanguage.isBlank()) {
+                        stringResource(R.string.translation_language_subtitle)
+                    } else {
+                        translationLanguageName(
+                            translationLanguage,
+                            AppCompatDelegate.getApplicationLocales().get(0) ?: Locale.getDefault(),
+                        )
+                    },
+                    trailing = { Chevron() },
+                    onClick = onTranslationLanguage,
+                )
             }
         }
 
@@ -935,10 +958,9 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(
-            header = stringResource(R.string.miscellaneous),
-            footer = stringResource(R.string.miscellaneous_footer),
-        ) {
+        // No footer: it only restated the stop-on-close row's own subtitle,
+        // which sits four rows above it and says the same thing in fewer words.
+        SettingsGroup(header = stringResource(R.string.miscellaneous)) {
             SettingsRow(
                 icon = Icons.Rounded.PlaylistPlay,
                 title = stringResource(R.string.play_next_on_swipe),
@@ -1039,23 +1061,6 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setShowNerdStats(!nerdStats) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.History,
-                title = "Lyrics Debug Logs",
-                subtitle = "Show live API queries and scraper activity in the lyrics panel",
-                trailing = {
-                    Switch(
-                        checked = showLyricsLogs,
-                        onCheckedChange = AppSettings::setShowLyricsLogs,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setShowLyricsLogs(!showLyricsLogs) },
             )
         }
 
@@ -1392,7 +1397,13 @@ private fun AutomixPerformanceMode.localizedLabel(): String = stringResource(
     },
 )
 
-private fun openEqualizer(context: Context, sessionId: Int) {
+/**
+ * Hands the device's own effect panel this app's audio session.
+ *
+ * Shared with [EqualizerScreen], which offers the same escape hatch a second
+ * time next to the equaliser it might be an alternative to.
+ */
+internal fun openEqualizer(context: Context, sessionId: Int) {
     val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
         putExtra(AudioEffect.EXTRA_AUDIO_SESSION, sessionId)
         putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
@@ -1743,6 +1754,8 @@ internal val TEXT_INSET = ROW_INSET + ICON_SIZE + ICON_GAP
 internal fun SettingsGroup(
     header: String? = null,
     footer: String? = null,
+    /** Room above the card, where there is no [header] to provide it. */
+    topSpacing: Dp = 26.dp,
     content: @Composable () -> Unit,
 ) {
     if (header != null) {
@@ -1758,7 +1771,7 @@ internal fun SettingsGroup(
             ),
         )
     } else {
-        Spacer(Modifier.height(26.dp))
+        Spacer(Modifier.height(topSpacing))
     }
     Column(
         modifier = Modifier
@@ -2020,11 +2033,15 @@ internal fun SliderRow(
 
 /** Sign out: centered, accent-coloured, no glyph — the shape of a real one. */
 @Composable
-internal fun DestructiveRow(label: String, onClick: () -> Unit) {
+internal fun DestructiveRow(
+    label: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -2038,11 +2055,12 @@ internal fun DestructiveRow(label: String, onClick: () -> Unit) {
 
 /** Sliding pill selector, for the handful of settings with two or three states. */
 @Composable
-private fun SegmentedControl(
+internal fun SegmentedControl(
     options: List<String>,
     selectedIndex: Int,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val haptics = LocalHapticFeedback.current
     Row(
@@ -2050,7 +2068,11 @@ private fun SegmentedControl(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.outline)
-            .padding(2.dp),
+            // Enough of a margin for the track to read as a track. At 2dp the
+            // selected pill sat all but flush against the container's own edge,
+            // so the two rounded rectangles merged into one shape and the
+            // control stopped looking like something with a position in it.
+            .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         options.forEachIndexed { index, label ->
@@ -2078,7 +2100,7 @@ private fun SegmentedControl(
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(pill)
-                    .clickable {
+                    .clickable(enabled = enabled) {
                         if (!chosen) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSelect(index)

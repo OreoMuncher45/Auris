@@ -221,7 +221,6 @@
     <string name="dark">Dunkel</string>
     <string name="full_screen_cover_art_subtitle">Zieht das Cover bis an die Ränder des Players statt es quadratisch darzustellen</string>
     <string name="animated_cover_art_subtitle">Spielt das Endlosvideo ab, das manche Veröffentlichungen anstelle eines Standbilds mitbringen</string>
-    <string name="miscellaneous_footer">Wenn aktiviert, stoppt das Schließen der App aus den letzten Apps auch die Musikwiedergabe.</string>
     <string name="dont_repeat_songs_subtitle">Die automatische Wiedergabe schlägt in dieser Sitzung keinen bereits gespielten oder vorgeschlagenen Song erneut vor</string>
     <string name="download_quality_subtitle">%1$s pro Track, unabhängig von der Verbindung</string>
     <string name="filter_non_music_audio">Nicht-Musik-Audio filtern</string>
@@ -256,6 +255,12 @@
     <string name="buttons">Schaltflächen</string>
     <string name="clear_name">Namen löschen</string>
     <string name="close_lyrics">Songtexte schließen</string>
+    <string name="translate_lyrics">Songtext übersetzen</string>
+    <string name="show_original_lyrics">Originaltext anzeigen</string>
+    <string name="translating_lyrics_to">Wird ins %1$s übersetzt…</string>
+    <string name="lyrics_translated_to">Ins %1$s übersetzt</string>
+    <string name="lyrics_already_in_language">Dieser Songtext ist bereits auf %1$s</string>
+    <string name="lyrics_translation_unavailable">Die Übersetzung ist derzeit nicht verfügbar</string>
     <string name="connect_account_first">Verbinde zuerst ein Konto</string>
     <string name="connected_presence_off">Verbunden, Presence aus</string>
     <string name="copy_log">Protokoll kopieren</string>

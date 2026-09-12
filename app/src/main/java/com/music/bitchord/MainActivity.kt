@@ -1,8 +1,10 @@
 package com.music.bitchord
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -123,6 +125,7 @@ import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
+import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
@@ -181,6 +184,7 @@ import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
+import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -391,6 +395,7 @@ private fun BitChordApp(
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
     var showSources by remember { mutableStateOf(false) }
+    var showEqualizer by remember { mutableStateOf(false) }
     var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
     
     // Hosted here rather than inside SourcesScreen so its frosted card has
@@ -406,6 +411,7 @@ private fun BitChordApp(
     var librarySortMenuOpen by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showAppLanguage by remember { mutableStateOf(false) }
+    var showTranslationLanguage by remember { mutableStateOf(false) }
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
@@ -620,7 +626,12 @@ private fun BitChordApp(
                 it.videoId,
                 it.title,
                 it.artist,
-                player.durationMs,
+                // The player's own length, and the catalogue's where it has
+                // none yet. Paused, ExoPlayer never finishes preparing the
+                // track it was skipped to, so it reports no duration at all —
+                // and a lookup that waits for one waits for ever, which left
+                // the lyrics of a paused track loading until it was played.
+                player.durationMs.takeIf { ms -> ms > 0L } ?: it.durationMillis(),
                 it.albumName,
                 it.localUri,
             )
@@ -729,8 +740,7 @@ private fun BitChordApp(
         activeRadioSeed = null
         scope.launch {
             controller?.playSongs(songs, index)
-            // Nothing to raise where the player is already open beside the page.
-            if (!playerDocked) showNowPlaying = true
+            // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
     LaunchedEffect(player.song?.videoId) {
@@ -754,7 +764,7 @@ private fun BitChordApp(
         activeRadioSeed = null
         scope.launch {
             controller?.playSongs(listOf(song), 0)
-            if (!playerDocked) showNowPlaying = true
+            // Start radio in the mini-player; the user opens the full view by tapping it.
         }
     }
 
@@ -830,7 +840,6 @@ private fun BitChordApp(
                     context.getString(R.string.radio_started, song.title),
                     Toast.LENGTH_SHORT,
                 ).show()
-                if (!playerDocked) showNowPlaying = true
             }
         }
     }
@@ -1594,7 +1603,7 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources &&
-                !showReplay,
+                !showEqualizer && !showReplay,
         ) { viewModel.closeDetail() }
         BackHandler(enabled = selectedMoodGenre != null && detail == null && !showSettings && !showReplay) {
             viewModel.closeMoodGenre()
@@ -1608,10 +1617,13 @@ private fun BitChordApp(
         BackHandler(enabled = showSources) {
             showSources = false
         }
+        BackHandler(enabled = showEqualizer) {
+            showEqualizer = false
+        }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources) {
+        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources && !showEqualizer) {
             showSettings = false
             // Only when Settings was the whole of what was on screen. Opened
             // over Replay or over a release page, closing it reveals that again
@@ -1620,7 +1632,8 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling &&
-                !showSources && !showReplay && selectedMoodGenre == null && selectedTab != TAB_HOME,
+                !showSources && !showEqualizer && !showReplay && selectedMoodGenre == null &&
+                selectedTab != TAB_HOME,
         ) {
             selectedTab = TAB_HOME
         }
@@ -1655,6 +1668,7 @@ private fun BitChordApp(
                         libraryShowAll != null && detail == null -> "library_show_all"
                         showAccountScrobbling -> "account_scrobbling"
                         showSources -> "sources"
+                        showEqualizer -> "equalizer"
                         // Above Replay, not below it. The top bar's account
                         // button sets `showSettings` from every page including
                         // this one, so with Replay winning the tie the button
@@ -1826,6 +1840,8 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
                         )
+                    } else if (key == "equalizer") {
+                        EqualizerScreen(contentPadding = listPadding)
                     } else if (key == "settings") {
                         SettingsScreen(
                             windowWidth = windowWidth,
@@ -1837,11 +1853,13 @@ private fun BitChordApp(
                             },
                             onSignOut = { viewModel.signOut() },
                             onAccountScrobbling = { showAccountScrobbling = true },
+                            onEqualizer = { showEqualizer = true },
                             onOpenReplay = {
                                 showSettings = false
                                 showReplay = true
                             },
                             onLyricsSources = { showLyricsSources = true },
+                            onTranslationLanguage = { showTranslationLanguage = true },
                             onSources = { showSources = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
@@ -2164,89 +2182,96 @@ private fun BitChordApp(
                 // Hidden on the Search tab: the search field itself becomes the
                 // top element, sitting cleanly under the status bar inset.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
-                    !showAccountScrobbling && !showSources && !showReplay
-                val isSearchTab = selectedTab == TAB_SEARCH && !showSettings &&
-                    !showAccountScrobbling && !showSources && !showDiscord &&
-                    !showHistory && detail == null && libraryShowAll == null &&
-                    selectedMoodGenre == null && !showReplay
-                if (!isSearchTab) {
-                    TopFadeBlur(
-                        hazeState = hazeState,
-                        // Replay paints its own full-bleed black backdrop up under the
-                        // status bar, exactly as a release page's artwork does.
-                        pageColor = when {
-                            showReplay -> Color.Black
-                            isDetailVisible -> detailPalette.wash
-                            else -> MaterialTheme.colorScheme.background
-                        },
-                        scrimColor = when {
-                            showReplay -> Color.Black
-                            isDetailVisible -> detailPalette.background
-                            else -> MaterialTheme.colorScheme.background
-                        },
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    )
+                    !showAccountScrobbling && !showSources && !showEqualizer && !showReplay
+                // Search is the one page that doesn't get the fade. Its field sits
+                // directly under the bar rather than a page's worth of content, so
+                // the strip's 32dp run past the bar lands on the field itself and
+                // reads as a smear over the thing being typed into — a blur with
+                // nothing behind it to blur. The same conditions as the page key in
+                // [AnimatedContent] above, since anything stacked over the tab is a
+                // page that does want the fade.
+                val isSearchVisible = selectedTab == TAB_SEARCH && detail == null &&
+                    !showSettings && !showAccountScrobbling && !showSources && !showEqualizer &&
+                    !showReplay && !showDiscord && !showHistory && libraryShowAll == null
+                if (!isSearchVisible) TopFadeBlur(
+                    hazeState = hazeState,
+                    // Replay paints its own full-bleed black backdrop up under the
+                    // status bar, exactly as a release page's artwork does.
+                    pageColor = when {
+                        showReplay -> Color.Black
+                        isDetailVisible -> detailPalette.wash
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    scrimColor = when {
+                        showReplay -> Color.Black
+                        isDetailVisible -> detailPalette.background
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
 
-                    FrostedTopBar(
-                        title = when {
-                            showDiscord -> "Discord"
-                            showHistory -> stringResource(R.string.history)
-                            libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
-                            showAccountScrobbling -> stringResource(R.string.account_scrobbling)
-                            showSources -> stringResource(R.string.sources)
-                            showSettings -> stringResource(R.string.settings)
-                            showReplay -> stringResource(R.string.replay)
-                            detail != null -> detail.title
-                            selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                            else -> tabs[selectedTab].let {
-                                if (it.label == "Play") stringResource(R.string.listen_now) else it.label
-                            }
-                        },
-                        // Search has no large in-list header to hand the title back to —
-                        // the field takes that space — so its bar title is always up.
-                        scrolled = when {
-                            showSettings || showAccountScrobbling || showSources || showDiscord || showHistory ||
-                                (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
-                            // The page leads with its own large "Replay", so the bar
-                            // stays out of the way until that has been scrolled off.
-                            showReplay -> replayScrolled
-                            detail != null -> detailScrolled
-                            else -> scrolled || selectedTab == TAB_SEARCH
-                        },
-                        refreshing = currentFeed != null && currentFeed in refreshing,
-                        pullFraction = { currentPull?.distanceFraction ?: 0f },
-                        onBack = when {
-                            showDiscord -> ({ showDiscord = false })
-                            showHistory -> ({ showHistory = false })
-                            libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
-                            showAccountScrobbling -> ({ showAccountScrobbling = false })
-                            showSources -> ({ showSources = false })
-                            showSettings -> ({ showSettings = false })
-                            showReplay -> ({ showReplay = false })
-                            detail != null -> ({ viewModel.closeDetail(); Unit })
-                            selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
-                            else -> null
-                        },
-                        modifier = Modifier.align(Alignment.TopCenter),
-                        actions = {
-                            // Only worth surfacing where there's room for it and it won't
-                            // be mistaken for a per-page action — Home, at rest.
-                            if (!showSettings && !showAccountScrobbling && !showSources && detail == null && selectedTab == TAB_HOME) {
-                                updateNotice?.let { update ->
-                                    IconButton(onClick = { showUpdateDialog = true }) {
-                                        Icon(
-                                            // An arrow rising out of a bar, not the
-                                            // little phone-with-an-arrow: at 24dp the
-                                            // handset outline is mush, and the glyph
-                                            // has to read as "newer version" rather
-                                            // than as "something about your device".
-                                            Icons.Rounded.Upgrade,
-                                            contentDescription = stringResource(R.string.update_available, update.version),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                }
-                            }
+                FrostedTopBar(
+                    title = when {
+                        showDiscord -> "Discord"
+                        showHistory -> stringResource(R.string.history)
+                        libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
+                        showAccountScrobbling -> stringResource(R.string.account_scrobbling)
+                        showSources -> stringResource(R.string.sources)
+                        showEqualizer -> stringResource(R.string.equalizer)
+                        showSettings -> stringResource(R.string.settings)
+                        showReplay -> stringResource(R.string.replay)
+                        detail != null -> detail.title
+                        selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
+                        else -> tabs[selectedTab].let {
+                            if (it.label == "Play") stringResource(R.string.listen_now) else it.label
+                        }
+                    },
+                    // Search has no large in-list header to hand the title back to —
+                    // the field takes that space — so its bar title is always up.
+                    scrolled = when {
+                        showSettings || showAccountScrobbling || showSources || showEqualizer ||
+                            showDiscord || showHistory ||
+                            (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
+                        // The page leads with its own large "Replay", so the bar
+                        // stays out of the way until that has been scrolled off.
+                        showReplay -> replayScrolled
+                        detail != null -> detailScrolled
+                        else -> scrolled || selectedTab == TAB_SEARCH
+                    },
+                    refreshing = currentFeed != null && currentFeed in refreshing,
+                    pullFraction = { currentPull?.distanceFraction ?: 0f },
+                    onBack = when {
+                        showDiscord -> ({ showDiscord = false })
+                        showHistory -> ({ showHistory = false })
+                        libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
+                        showAccountScrobbling -> ({ showAccountScrobbling = false })
+                        showSources -> ({ showSources = false })
+                        showEqualizer -> ({ showEqualizer = false })
+                        showSettings -> ({ showSettings = false })
+                        showReplay -> ({ showReplay = false })
+                        detail != null -> ({ viewModel.closeDetail(); Unit })
+                        selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
+                        else -> null
+                    },
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    actions = {
+                        // Only worth surfacing where there's room for it and it won't
+                        // be mistaken for a per-page action — Home, at rest.
+                        if (!showSettings && !showAccountScrobbling && !showSources && !showEqualizer &&
+                            detail == null && selectedTab == TAB_HOME
+                        ) {
+                            updateNotice?.let { update ->
+                                IconButton(onClick = { showUpdateDialog = true }) {
+                                    Icon(
+                                        // An arrow rising out of a bar, not the
+                                        // little phone-with-an-arrow: at 24dp the
+                                        // handset outline is mush, and the glyph
+                                        // has to read as "newer version" rather
+                                        // than as "something about your device".
+                                        Icons.Rounded.Upgrade,
+                                        contentDescription = stringResource(R.string.update_available, update.version),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
                             if (!showSettings && !showAccountScrobbling) {
                                 // Left of the account photo, and only on Library itself:
                                 // a history is a record of what was played, which reads
@@ -2378,6 +2403,7 @@ private fun BitChordApp(
                         showSettings = false
                         showAccountScrobbling = false
                         showSources = false
+                        showEqualizer = false
                         showReplay = false
                         showHistory = false
                         libraryShowAll = null
@@ -3017,6 +3043,14 @@ private fun BitChordApp(
             AppLanguageDialog(
                 hazeState = hazeState,
                 onDismiss = { showAppLanguage = false },
+            )
+        }
+
+        if (showTranslationLanguage) {
+            BackHandler { showTranslationLanguage = false }
+            TranslationLanguageDialog(
+                hazeState = hazeState,
+                onDismiss = { showTranslationLanguage = false },
             )
         }
 
