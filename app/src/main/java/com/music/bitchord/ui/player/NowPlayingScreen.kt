@@ -1474,6 +1474,12 @@ fun NowPlayingScreen(
     // and a banner that answered only to that would collapse behind the user's
     // back and blow itself out again in front of them on the way in.
     var heroSettled by remember { mutableStateOf(false) }
+    // Success from the banner's own painter, rather than from the separate
+    // sleeve painter. Sharing one ImageRequest lets Coil share its cached
+    // bitmap, but it does not make two AsyncImage painters enter Success in
+    // the same frame. The sleeve must not hand over to a banner which is still
+    // empty just because its own painter finished first.
+    var heroArtLoaded by remember(artUrl, artAttempt, heroMode) { mutableStateOf(false) }
     LaunchedEffect(artLoaded, canvasRendered) {
         if (artLoaded || canvasRendered) heroSettled = true
     }
@@ -1617,6 +1623,13 @@ fun NowPlayingScreen(
             if (heroMode && !(stillCovered && heroClip != null) &&
                 (p < 0.5f || heroVisible > 0.001f)
             ) {
+                // Dropping this painter (once the canvas is opaque, or while a
+                // panel is open) also drops the proof that this particular
+                // destination can draw. If it is mounted again, keep the
+                // sleeve visible until the new painter reports Success.
+                DisposableEffect(artRequest) {
+                    onDispose { heroArtLoaded = false }
+                }
                 AsyncImage(
                     // Decoded at the same size the sleeve asks for, so the two
                     // share one entry in Coil's cache and one bitmap: the pair
@@ -1630,6 +1643,7 @@ fun NowPlayingScreen(
                     model = artRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
+                    onState = { heroArtLoaded = it is AsyncImagePainter.State.Success },
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .fillMaxWidth()
@@ -2099,21 +2113,31 @@ fun NowPlayingScreen(
                     // the banner can dissolve the card — shadow, corners, tile
                     // and all — without taking the stats line with it.
                     //
-                    // Held fully opaque until this track's own art is in,
+                    // Held fully opaque until the destination banner has
+                    // artwork of its own,
                     // regardless of [heroT]: the banner is sticky across skips
-                    // by design (see [heroSettled]), but its still image is not
-                    // — a new track's cover has to come from somewhere while
-                    // the banner waits on Coil, and the sleeve underneath,
-                    // with its loading icon, is that somewhere. Once
-                    // [artLoaded] catches up the two are showing the same
-                    // bitmap, so hiding one behind the other is invisible.
+                    // by design (see [heroSettled]), but its content is not — a
+                    // new track's cover has to come from somewhere while the
+                    // banner waits on Coil or the clip's first frame, and the
+                    // sleeve underneath, with its loading icon, is that
+                    // somewhere. Once either destination source catches up,
+                    // hiding the sleeve behind the banner is invisible.
+                    // [artLoaded] alone is not enough: the sleeve and banner
+                    // use separate painters, and the banner can still be empty
+                    // for a frame after the sleeve reports Success.
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             // The compact sleeve is the source while full
                             // bleed artwork is off, including its Canvas.
                             .hazeSource(playerHaze)
-                            .graphicsLayer { alpha = if (artLoaded) 1f - heroVisible else 1f }
+                            .graphicsLayer {
+                                alpha = if (heroArtLoaded || canvasRendered) {
+                                    1f - heroVisible
+                                } else {
+                                    1f
+                                }
+                            }
                             // A drop shadow grounds a photo; on the flat
                             // placeholder tile it has nothing to sit behind, so
                             // it just reads as a second, darker square ringing
@@ -2162,6 +2186,7 @@ fun NowPlayingScreen(
                                 // effect, and clearing it from a Loading state
                                 // here would cancel that effect's wait every time
                                 // the painter passed back through Loading.
+                                if (it is AsyncImagePainter.State.Success) artFailed = false
                                 if (it is AsyncImagePainter.State.Error) artFailed = true
                             },
                             // TextureView-backed canvas frames can arrive

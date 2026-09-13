@@ -53,8 +53,10 @@ object Downloader {
      *
      * @param maxKbps the ceiling [stream] was resolved under, needed again for
      *   the re-resolve below. Resolving at a different one would pick a
-     *   different rung of the AAC ladder, and the length check that guards the
+     *   different rung of the selected audio ladder, and the length check that guards the
      *   resume would then fail a retry that had nothing wrong with it.
+     * @param requireM4a whether a re-resolve must remain AAC-in-MP4 for an
+     *   exported Music-folder destination.
      * @param onProgress called as bytes land, with the running total and the
      *   full size. Never called with a total of zero.
      * @return how many bytes were written.
@@ -63,6 +65,7 @@ object Downloader {
         videoId: String,
         stream: StreamResolver.Stream,
         maxKbps: Int,
+        requireM4a: Boolean,
         sink: OutputStream,
         onProgress: (written: Long, total: Long) -> Unit,
     ): Long = withContext(Dispatchers.IO) {
@@ -96,7 +99,7 @@ object Downloader {
                 if (reresolved) error("Download refused after ${position}B (HTTP ${response.code})")
                 reresolved = true
                 Log.w(TAG, "re-resolving $videoId after HTTP ${response.code} at $position")
-                url = StreamResolver.resolveForDownload(videoId, maxKbps).url
+                url = StreamResolver.resolveForDownload(videoId, maxKbps, requireM4a).url
                 // Resolving again re-runs the whole client walk, and a
                 // different client can answer with a different format. Resuming
                 // one stream into the middle of another produces a file that is

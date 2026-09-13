@@ -507,6 +507,19 @@ object Downloads {
      */
     private fun remember(asked: Song, fetched: Song, uri: Uri, downloadFormat: String? = null) {
         val ids = setOf(asked.videoId, fetched.videoId)
+        // MediaStore supplies this for exported downloads, but app-private and
+        // legacy file:// downloads never pass through that index. Keep the
+        // creation time in our own record so "Date added" remains stable if a
+        // file is subsequently retagged or otherwise modified. An adopted file
+        // predating this field falls back to its last-modified time.
+        val fileModifiedMillis = uri.takeIf { it.scheme == "file" }
+            ?.path
+            ?.let(::File)
+            ?.lastModified()
+            ?.takeIf { it > 0 }
+        val existingAdded = ids.firstNotNullOfOrNull { _savedMetadata.value[it]?.dateAddedSeconds }
+        val dateAddedSeconds = resolvedDownloadDates(existingAdded, fileModifiedMillis).first
+            ?: System.currentTimeMillis() / 1_000
         // HLS packages cannot carry MP4 tags. Point the app's own metadata at
         // the cover saved beside their playlist so Downloads remains fully
         // offline even though another player cannot open that package.
@@ -529,6 +542,7 @@ object Downloads {
             albumName = album,
             uri = uri.toString(),
             downloadFormat = downloadFormat,
+            dateAddedSeconds = dateAddedSeconds,
         )
         val metaFetched = SavedSongMetadata(
             videoId = fetched.videoId,
@@ -539,6 +553,7 @@ object Downloads {
             albumName = album,
             uri = uri.toString(),
             downloadFormat = downloadFormat,
+            dateAddedSeconds = dateAddedSeconds,
         )
         record(
             saved = { it + ids.associateWith { id -> uri.toString() } },
@@ -580,11 +595,24 @@ object Downloads {
         val metaMap = _savedMetadata.value
         val result = mutableListOf<Song>()
         val seenUris = mutableSetOf<String>()
+        val migratedAddedByUri = mutableMapOf<String, Long>()
 
         for ((videoId, meta) in metaMap) {
             val uri = meta.uri.toUri()
             if (DownloadStore.exists(context, uri)) {
                 if (seenUris.add(meta.uri)) {
+                    val fileModifiedMillis = uri.takeIf { it.scheme == "file" }
+                        ?.path
+                        ?.let(::File)
+                        ?.lastModified()
+                        ?.takeIf { it > 0 }
+                    val (dateAddedSeconds, dateModifiedSeconds) = resolvedDownloadDates(
+                        persistedAddedSeconds = meta.dateAddedSeconds,
+                        fileModifiedMillis = fileModifiedMillis,
+                    )
+                    if (meta.dateAddedSeconds == null && dateAddedSeconds != null) {
+                        migratedAddedByUri[meta.uri] = dateAddedSeconds
+                    }
                     result.add(
                         Song(
                             videoId = meta.videoId,
@@ -595,12 +623,29 @@ object Downloads {
                             albumName = meta.albumName,
                             localUri = meta.uri,
                             downloadFormat = meta.downloadFormat,
+                            localDateAddedSeconds = dateAddedSeconds,
+                            localDateModifiedSeconds = dateModifiedSeconds,
                         )
                     )
                 }
             } else {
                 forget(videoId)
             }
+        }
+        if (migratedAddedByUri.isNotEmpty()) {
+            record(
+                saved = { it },
+                meta = { current ->
+                    current.mapValues { (_, saved) ->
+                        val migrated = migratedAddedByUri[saved.uri]
+                        if (saved.dateAddedSeconds == null && migrated != null) {
+                            saved.copy(dateAddedSeconds = migrated)
+                        } else {
+                            saved
+                        }
+                    }
+                },
+            )
         }
         result
     }
@@ -977,13 +1022,17 @@ object Downloads {
                 },
             )
         }
-        val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps)
+        // MediaStore.Audio refuses audio/webm on affected Android versions.
+        // Keep Opus for app-private downloads, but pin exported downloads to
+        // AAC-in-MP4 for both the initial resolve and any mid-transfer retry.
+        val requireM4a = AppSettings.exportDownloads.value
+        val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps, requireM4a)
         return Route(
             extension = stream.downloadExtension,
             mimeType = stream.downloadMimeType,
             describe = "${stream.kbps}kbps ${stream.mimeType}",
             write = { sink, onProgress ->
-                Downloader.fetch(track.videoId, stream, quality.maxKbps, sink, onProgress)
+                Downloader.fetch(track.videoId, stream, quality.maxKbps, requireM4a, sink, onProgress)
             },
         )
     }
@@ -1170,7 +1219,24 @@ internal data class SavedSongMetadata(
     val albumName: String? = null,
     val uri: String,
     val downloadFormat: String? = null,
+    /** Stable creation time for downloads that MediaStore does not index. */
+    val dateAddedSeconds: Long? = null,
 )
+
+/**
+ * Dates for a downloaded file-backed row.
+ *
+ * Old metadata has no persisted creation time, so the file timestamp is the
+ * only honest migration value. From then on the persisted value stays fixed,
+ * while modified time continues to follow the file on disk.
+ */
+internal fun resolvedDownloadDates(
+    persistedAddedSeconds: Long?,
+    fileModifiedMillis: Long?,
+): Pair<Long?, Long?> {
+    val modifiedSeconds = fileModifiedMillis?.takeIf { it > 0 }?.div(1_000)
+    return (persistedAddedSeconds ?: modifiedSeconds) to modifiedSeconds
+}
 
 /** Labels intentionally only distinguish premium formats, not ordinary AAC/Opus downloads. */
 private fun StreamFormat.downloadBadge(): String? = when {

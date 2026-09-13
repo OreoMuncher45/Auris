@@ -633,30 +633,28 @@ object StreamResolver {
 
     /**
      * As [resolve], but for a file being kept rather than a stream being heard:
-     * the best Opus the *download* setting allows, and no connection has a say.
+     * the best format the *download* setting allows, and no connection has a
+     * say. Opus-in-WebM is preferred for app-private downloads; exported files
+     * require AAC-in-MP4 because Android's Music collection rejects WebM.
      *
-     * The format is not a preference here, it is the only option. Every
-     * adaptive audio format YouTube offers is either AAC in MP4 or Opus (or
-     * Vorbis) in WebM, and Android's media store will not mint a row in the
-     * audio collection for `audio/webm` — measured on-device as
+     * Every adaptive audio format YouTube offers is either AAC in MP4 or Opus
+     * (or Vorbis) in WebM. Android's media store will not mint an audio row for
+     * `audio/webm` — measured on-device as
      * `IllegalArgumentException: Unsupported MIME type audio/webm` out of
-     * `ContentResolver.insert`, thrown before a single byte had been fetched.
-     * So every download this app offered failed, and Opus being the better
-     * codec of the two never got to matter.
+     * `ContentResolver.insert`, thrown before a single byte has been fetched.
+     * App-private storage has no such restriction, so it keeps Opus; an export
+     * asks for MP4 from the start instead of discovering the restriction when
+     * it creates the destination.
      *
-     * Which is why there is no "best available" fallback below any more. A
-     * walk that ends by taking whatever the last client offered ends by
-     * taking WebM, and a WebM the store refuses is not a worse download, it
-     * is no download — so running out of AAC is a failure with a sentence
-     * attached rather than something to work around. It is not a common one:
-     * the AAC ladder is on essentially every track, rather more reliably than
-     * Opus was.
+     * There is no "best available" fallback below. A walk that takes another
+     * container can no longer fulfil the destination already chosen: WebM
+     * cannot be exported through the Music collection, and silently replacing
+     * a requested private Opus download with AAC changes its codec. Running out
+     * of the required ladder is therefore a failure with a sentence attached.
      *
-     * MP4 is still demanded across *every* client before any of them is
-     * allowed to give up, because a per-client walk cannot tell a client that
-     * has no MP4 from a client that has been refused the track. Player
-     * responses are shared between the passes, so the second costs the probes
-     * again but not the round trips.
+     * The required format is demanded across *every* client before any of them
+     * is allowed to give up, because a per-client walk cannot tell a client
+     * without that format from a client that has been refused the track.
      *
      * Nothing here touches [recent]. That cache exists to keep ExoPlayer's
      * re-opens off the network, and its entries are picked under the *playback*
@@ -690,17 +688,20 @@ object StreamResolver {
      *   (see [Downloader.fetch][com.music.bitchord.download.Downloader.fetch]),
      *   must not splice two different renditions into one file.
      */
-    suspend fun resolveForDownload(videoId: String, maxKbps: Int): Stream {
-        val stream = downloadStream(videoId, maxKbps)
-        // YouTube fallback is Opus-in-WebM; configured sources may still have
-        // supplied AAC-in-MP4. Both are taggable and storable audio containers.
-        check(stream.downloadExtension in setOf("m4a", "webm")) {
+    suspend fun resolveForDownload(
+        videoId: String,
+        maxKbps: Int,
+        requireM4a: Boolean = false,
+    ): Stream {
+        val stream = downloadStream(videoId, maxKbps, requireM4a)
+        val allowed = if (requireM4a) setOf("m4a") else setOf("m4a", "webm")
+        check(stream.downloadExtension in allowed) {
             "Can't save ${stream.mimeType} — try again"
         }
         return stream
     }
 
-    private suspend fun downloadStream(videoId: String, maxKbps: Int): Stream =
+    private suspend fun downloadStream(videoId: String, maxKbps: Int, requireM4a: Boolean): Stream =
         withContext(TrackLog.about(videoId)) {
             init
 
@@ -721,27 +722,37 @@ object StreamResolver {
                 val responses = mutableMapOf<PlayerClient, JsonObject>()
                 playerStream(
                     videoId,
-                    { response -> pickOpus(response, maxKbps).also { if (it.isNotEmpty()) offered = true } },
+                    { response ->
+                        val candidates = if (requireM4a) {
+                            pickAac(response, maxKbps)
+                        } else {
+                            pickOpus(response, maxKbps)
+                        }
+                        candidates.also { if (it.isNotEmpty()) offered = true }
+                    },
                     responses,
                 )?.let { return@withContext it }
             }
 
             // Not "try again later" — every client being refused at once is a state
             // that lasts hours, and it is precisely the state [resolve] extracts its
-            // way out of. Still asking for Opus, because this is still a download:
-            // the failsafe is a different route to the bytes, not a licence to
-            // fetch a container that cannot then be saved.
-            TrackLog.w(TAG, "no client minted a usable Opus URL for $videoId; extracting")
+            // way out of. The failsafe changes how the URL is found, not which
+            // container the destination can accept.
+            val format = if (requireM4a) "MP4" else "Opus"
+            TrackLog.w(TAG, "no client minted a usable $format URL for $videoId; extracting")
             runCatching {
                 newPipeStream(videoId) { candidates ->
-                    // Capped the same way [pickOpus] is, off the same setting, or
-                    // the failsafe would quietly hand back a rendition the user
-                    // said they didn't want to keep.
-                    underCeiling(candidates.filter { it.second.isWebmOpus }, maxKbps)
+                    // Capped the same way as the player-response selection, off
+                    // the same setting, or the failsafe would quietly hand back
+                    // a rendition the user said they didn't want to keep.
+                    val matching = candidates.filter {
+                        if (requireM4a) it.second.isM4a else it.second.isWebmOpus
+                    }
+                    underCeiling(matching, maxKbps)
                         ?.also { offered = true }
                 }
             }.onSuccess { return@withContext it }
-                .onFailure { TrackLog.w(TAG, "extraction found no Opus for $videoId: ${it.message}") }
+                .onFailure { TrackLog.w(TAG, "extraction found no $format for $videoId: ${it.message}") }
 
             if (offered) error("Couldn't reach a downloadable copy just now — try again")
             error("No downloadable audio for this track")
@@ -1033,12 +1044,8 @@ object StreamResolver {
     }
 
     /**
-     * What a download wants: the best AAC at or under the download setting's
-     * own ceiling.
-     *
-     * MP4 rather than the better codec because it is the only container the
-     * media store will accept for the audio collection — see
-     * [resolveForDownload].
+     * What an app-private download wants: Opus at the download setting's own
+     * ceiling. Exported downloads use [pickAac] instead.
      *
      * The ceiling comes in as an argument rather than being read here, and it is
      * a different setting from the one [rankForPlayback] reads. The quality
@@ -1051,6 +1058,10 @@ object StreamResolver {
      */
     private fun pickOpus(response: JsonObject, maxKbps: Int): List<Audio> =
         rankByQuality(audioFormats(response).filter { it.isOpus }, maxKbps)
+
+    /** AAC-in-MP4 is required when a download is exported through MediaStore.Audio. */
+    private fun pickAac(response: JsonObject, maxKbps: Int): List<Audio> =
+        rankByQuality(audioFormats(response).filter { it.isAac }, maxKbps)
 
     private fun JsonObject.str(key: String): String? = this[key]?.jsonPrimitive?.content
 
