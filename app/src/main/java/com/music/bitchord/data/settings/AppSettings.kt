@@ -161,6 +161,7 @@ enum class SongSort {
     DEFAULT,
     TITLE_ASC,
     TITLE_DESC,
+    DATE_ADDED_ASC,
     DATE_ADDED_DESC,
 }
 

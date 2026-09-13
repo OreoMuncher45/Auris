@@ -838,6 +838,13 @@ private fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort)
     // and reversed that puts the most recent addition on top. Rows that do
     // carry a MediaStore timestamp — device tracks, downloads — are dated
     // properly, with the position order left to break the ties.
+    SongSort.DATE_ADDED_ASC -> withIndex()
+        .sortedWith(
+            compareBy<IndexedValue<Song>> { (_, song) ->
+                song.localDateAddedSeconds ?: Long.MAX_VALUE
+            }.thenBy { (position, _) -> position },
+        )
+        .map { it.value }
     SongSort.DATE_ADDED_DESC -> withIndex()
         .sortedWith(
             compareByDescending<IndexedValue<Song>> { (_, song) ->
