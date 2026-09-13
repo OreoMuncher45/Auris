@@ -37,9 +37,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -2982,6 +2984,20 @@ private fun BitChordApp(
                     detail?.browseId?.let { AppSettings.setDetailSongSort(it, option) }
                     songSortMenuOpen = false
                 },
+                // Flipping the date direction deliberately leaves the menu up:
+                // closing it here would cut the arrow's rotation animation off
+                // before it played, and the open menu lets the direction flip
+                // read against the list reordering behind the frost.
+                onFlipDateDirection = {
+                    detail?.browseId?.let { browseId ->
+                        val next = when (songSort) {
+                            SongSort.DATE_ADDED_DESC -> SongSort.DATE_ADDED_ASC
+                            SongSort.DATE_ADDED_ASC -> SongSort.DATE_ADDED_DESC
+                            else -> SongSort.DATE_ADDED_DESC
+                        }
+                        AppSettings.setDetailSongSort(browseId, next)
+                    }
+                },
                 onDismiss = { songSortMenuOpen = false },
             )
         }
@@ -3165,6 +3181,7 @@ private fun FrostedSortMenu(
     hazeState: HazeState,
     selected: SongSort,
     onSelect: (SongSort) -> Unit,
+    onFlipDateDirection: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -3182,7 +3199,7 @@ private fun FrostedSortMenu(
             shape = shape,
             modifier = Modifier
                 .padding(top = 56.dp, end = 20.dp)
-                .widthIn(min = 240.dp)
+                .width(IntrinsicSize.Max)
                 .clip(shape)
                 .then(
                     if (reduceDynamicBlur) {
@@ -3212,17 +3229,9 @@ private fun FrostedSortMenu(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 44.dp)
-                        .clickable(role = Role.Button) {
-                            onSelect(
-                                when (selected) {
-                                    SongSort.DATE_ADDED_DESC -> SongSort.DATE_ADDED_ASC
-                                    SongSort.DATE_ADDED_ASC -> SongSort.DATE_ADDED_DESC
-                                    else -> SongSort.DATE_ADDED_DESC
-                                },
-                            )
-                        }
-                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                        .heightIn(min = 48.dp)
+                        .clickable(role = Role.Button) { onFlipDateDirection() }
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
