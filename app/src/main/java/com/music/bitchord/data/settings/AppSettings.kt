@@ -466,8 +466,12 @@ object AppSettings {
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
 
-    /** The track-list order on album and playlist pages — kept across visits. */
-    val detailSongSort = MutableStateFlow(SongSort.DEFAULT)
+    /**
+     * Each album/playlist page's track-list order, keyed by browse id —
+     * Spotify-style, every page keeps its own. A page never touched reads as
+     * [SongSort.DEFAULT].
+     */
+    val detailSongSorts = MutableStateFlow<Map<String, SongSort>>(emptyMap())
 
     /** Empty means every MediaStore folder; otherwise this is a persisted SAF tree URI. */
     val localMusicFolderUri = MutableStateFlow("")
@@ -711,9 +715,7 @@ object AppSettings {
         librarySort.value = prefs.getString(KEY_LIBRARY_SORT, null)
             ?.let { saved -> LibrarySort.entries.firstOrNull { it.name == saved } }
             ?: LibrarySort.DEFAULT
-        detailSongSort.value = prefs.getString(KEY_DETAIL_SONG_SORT, null)
-            ?.let { saved -> SongSort.entries.firstOrNull { it.name == saved } }
-            ?: SongSort.DEFAULT
+        detailSongSorts.value = readDetailSongSorts()
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
@@ -1265,9 +1267,12 @@ object AppSettings {
         prefs.edit().putString(KEY_LIBRARY_SORT, value.name).apply()
     }
 
-    fun setDetailSongSort(value: SongSort) {
-        detailSongSort.value = value
-        prefs.edit().putString(KEY_DETAIL_SONG_SORT, value.name).apply()
+    fun setDetailSongSort(browseId: String, value: SongSort) {
+        detailSongSorts.value = detailSongSorts.value + (browseId to value)
+        prefs.edit().putString(
+            KEY_DETAIL_SONG_SORTS,
+            detailSongSorts.value.entries.joinToString(",") { (id, sort) -> "$id=${sort.name}" },
+        ).apply()
     }
 
     fun setLocalMusicViewType(value: LibraryViewType) {
@@ -1314,6 +1319,17 @@ object AppSettings {
         prefs.edit().putString(KEY_PINNED_PLAYLISTS, updated.joinToString(",")).apply()
         return browseId in updated
     }
+
+    private fun readDetailSongSorts(): Map<String, SongSort> =
+        prefs.getString(KEY_DETAIL_SONG_SORTS, null)
+            ?.split(",")
+            ?.mapNotNull { entry ->
+                val id = entry.substringBefore('=', "")
+                val sort = SongSort.entries.firstOrNull { it.name == entry.substringAfter('=', "") }
+                if (id.isBlank() || sort == null) null else id to sort
+            }
+            ?.toMap()
+            ?: emptyMap()
 
     private fun readPinnedPlaylists(): List<String> {
         val stored = prefs.getString(KEY_PINNED_PLAYLISTS, null) ?: return emptyList()
@@ -1465,7 +1481,7 @@ object AppSettings {
     private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
     private const val KEY_DOWNLOADED_MUSIC_SORT = "downloaded_music_sort"
     private const val KEY_LIBRARY_SORT = "library_sort"
-    private const val KEY_DETAIL_SONG_SORT = "detail_song_sort"
+    private const val KEY_DETAIL_SONG_SORTS = "detail_song_sorts"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"

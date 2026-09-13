@@ -532,10 +532,12 @@ private fun BitChordApp(
     // has a cover and a track list, so it takes the bar every other release page
     // takes. Hence the folder question rather than the prefix.
     val isLocalDetail = detail?.browseId.isDeviceFolder()
-    // Not keyed on the browse id and not remembered here: the choice lives in
-    // AppSettings, so it survives closing and reopening the page — the point
-    // of the control is to keep a playlist the way the user left it.
-    val songSort by AppSettings.detailSongSort.collectAsStateWithLifecycle()
+    // Not keyed on the browse id and not remembered here: each page's choice
+    // lives in AppSettings keyed by that page — Spotify-style, one playlist's
+    // order never imposes itself on another, and every page keeps its own
+    // across visits.
+    val detailSongSorts by AppSettings.detailSongSorts.collectAsStateWithLifecycle()
+    val songSort = detail?.browseId?.let { detailSongSorts[it] } ?: SongSort.DEFAULT
     var songSortMenuOpen by remember { mutableStateOf(false) }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     // Which tracks are being held on YouTube's own upload, so the player's menu
@@ -2315,7 +2317,9 @@ private fun BitChordApp(
                                                     { Icon(Icons.Rounded.Check, contentDescription = null) }
                                                 } else null,
                                                 onClick = {
-                                                    AppSettings.setDetailSongSort(option)
+                                                    detail?.browseId?.let {
+                                                        AppSettings.setDetailSongSort(it, option)
+                                                    }
                                                     songSortMenuOpen = false
                                                 },
                                             )
