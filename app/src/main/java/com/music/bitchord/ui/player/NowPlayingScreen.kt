@@ -1718,7 +1718,8 @@ fun NowPlayingScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .pointerInput(Unit) {
+                .pointerInput(showAudioPipeline) {
+                    if (showAudioPipeline) return@pointerInput
                     var total = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { total = 0f },
@@ -1818,7 +1819,8 @@ fun NowPlayingScreen(
                     // half second lying across a list the finger was already
                     // scrolling.
                     .onGloballyPositioned { dismissBandSpace = it }
-                    .pointerInput(Unit) {
+                    .pointerInput(showAudioPipeline) {
+                        if (showAudioPipeline) return@pointerInput
                         awaitEachGesture {
                             // Unconsumed on purpose, as the blanket version was:
                             // the collapsed sleeve's own clickable — the way back
