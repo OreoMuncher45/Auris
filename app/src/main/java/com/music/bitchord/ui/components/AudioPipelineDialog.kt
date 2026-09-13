@@ -3,6 +3,8 @@ package com.music.bitchord.ui.components
 import android.media.AudioFormat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,12 +35,26 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -81,19 +97,72 @@ fun AudioPipelineDialog(
     val eqPreset by AppSettings.equalizerPreset.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
 
+    val scrollState = rememberScrollState()
+    val pipelineNestedScroll = remember(scrollState) {
+        object : NestedScrollConnection {
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource,
+            ): Offset = available
+
+            override suspend fun onPreFling(available: Velocity): Velocity {
+                val trapY = (available.y > 0f && !scrollState.canScrollBackward) ||
+                    (available.y < 0f && !scrollState.canScrollForward)
+                return if (trapY) available else Velocity.Zero
+            }
+
+            override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
+        }
+    }
+
+    var cardBoundsInRoot by remember { mutableStateOf(Rect.Zero) }
+    var scrimCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(PIPELINE_SCRIM_COLOR)
-            .clickable(
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() },
-                onClick = onDismiss,
-            ),
+            .onGloballyPositioned { scrimCoordinates = it }
+            .pointerInput(onDismiss) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val rootPos = scrimCoordinates?.localToRoot(down.position) ?: down.position
+                    if (cardBoundsInRoot != Rect.Zero && cardBoundsInRoot.contains(rootPos)) {
+                        return@awaitEachGesture
+                    }
+                    down.consume()
+                    var isTap = true
+                    val touchSlop = viewConfiguration.touchSlop
+                    var totalMoved = 0f
+
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        val delta = change.positionChange()
+                        totalMoved += delta.getDistance()
+                        if (totalMoved > touchSlop) {
+                            isTap = false
+                        }
+                        val isUp = !change.pressed && change.previousPressed
+                        change.consume()
+
+                        if (isUp) {
+                            if (isTap) {
+                                onDismiss()
+                            }
+                            break
+                        }
+                    }
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Column(
             modifier = Modifier
+                .onGloballyPositioned { coordinates ->
+                    cardBoundsInRoot = coordinates.boundsInRoot()
+                }
                 .widthIn(min = 290.dp, max = 340.dp)
                 .fillMaxWidth(0.88f)
                 .heightIn(max = 620.dp)
@@ -130,7 +199,8 @@ fun AudioPipelineDialog(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
+                    .nestedScroll(pipelineNestedScroll)
+                    .verticalScroll(scrollState),
             ) {
                 // 1. Track Info Stage
                 val sourceName = nerdStats?.sourceName ?: "—"
