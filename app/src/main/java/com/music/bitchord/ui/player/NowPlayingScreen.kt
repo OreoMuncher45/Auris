@@ -505,11 +505,6 @@ fun dockedPlayerWidth(windowWidth: Dp): Dp =
         // in windows narrow enough that there is no pane at all.
         .coerceAtMost(windowWidth - DOCKED_PAGE_MIN_WIDTH)
 
-/** Share of a lyric line's own length spent fading out, and its bounds. */
-private const val LYRIC_FADE_FRACTION = 0.28f
-private const val LYRIC_FADE_MIN_MS = 160f
-private const val LYRIC_FADE_MAX_MS = 700f
-
 /**
  * How far back the part of the playing line that hasn't been sung yet is held.
  *
@@ -4416,15 +4411,8 @@ private fun String.stripParens(): String = replace("(", "").replace(")", "").tri
 /**
  * The single lyric line above the scrubber.
  *
- * A line dims away just before its time is up and the next one arrives at full
- * strength — no fade in, so the change reads as a cut rather than a dissolve.
- * The fade is a fraction of the line's own length, so rapid-fire lines snap and
- * long held ones ebb out.
- *
- * Position is interpolated between the player's twice-a-second reports,
- * otherwise the fade would step. The alpha is applied in a graphicsLayer so
- * only the draw phase runs each frame; the text itself recomposes just once
- * per line.
+ * Transitions between lines use [AnimatedContent] with vertical slide and
+ * fade, respecting [AppSettings.reduceAnimation].
  */
 @Composable
 private fun CurrentLyricLine(
@@ -4448,19 +4436,24 @@ private fun CurrentLyricLine(
             Icon(
                 imageVector = BitChordIcons.MusicNote,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
+                tint = Color.White,
                 modifier = Modifier.size(16.dp),
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(6.dp))
             Text(
-                text = "Lyrics available • Tap to view",
-                style = MaterialTheme.typography.bodyMedium.copy(
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Medium,
-                ),
-                color = Color.White.copy(alpha = 0.85f),
+                text = stringResource(R.string.open_lyrics),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(6.dp))
+            Icon(
+                imageVector = BitChordIcons.ChevronRight,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.5f),
+                modifier = Modifier.size(14.dp),
             )
         }
         return
@@ -4535,51 +4528,27 @@ private fun CurrentLyricLine(
             },
             label = "currentLyricTransition",
             modifier = Modifier.weight(1f, fill = false),
-        ) { (itemIndex, lineItem, lineText) ->
+        ) { (_, lineItem, lineText) ->
             val itemInstrumental = lineItem == null || lineItem.isGap
-            Box(
-                // Each rendered instance — the line sliding out, the one sliding
-                // in — fades against its own timing, not whichever line is
-                // "current" right now. Sharing one alpha across both (as a
-                // modifier up on the Row) snapped the outgoing line back to full
-                // brightness the moment the next one became current, undoing its
-                // own fade mid-exit.
-                modifier = Modifier.graphicsLayer {
-                    if (itemInstrumental) {
-                        // Nothing is being sung; hold it steady rather than fading.
-                        alpha = 0.5f
-                        return@graphicsLayer
-                    }
-                    val start = lineItem?.timeMs ?: 0L
-                    val end = lines.getOrNull(itemIndex + 1)?.timeMs
-                        ?: durationMs.takeIf { it > start }
-                        ?: (start + 4_000L)
-                    val fade = ((end - start) * LYRIC_FADE_FRACTION)
-                        .coerceIn(LYRIC_FADE_MIN_MS, LYRIC_FADE_MAX_MS)
-                    val remaining = (end - clock.longValue).toFloat()
-                    alpha = 0.78f * (remaining / fade).coerceIn(0f, 1f)
-                },
-            ) {
-                val swept = lineItem?.takeIf { !itemInstrumental && it.isWordSynced }
-                if (swept != null) {
-                    SweptLyricLine(
-                        line = swept,
-                        clock = clock,
-                        style = MaterialTheme.typography.titleMedium,
-                        dimAlpha = UNSUNG_ALPHA_STRIP,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        rise = false,
-                    )
-                } else {
-                    Text(
-                        text = lineText,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
+            val swept = lineItem?.takeIf { !itemInstrumental && it.isWordSynced }
+            if (swept != null) {
+                SweptLyricLine(
+                    line = swept,
+                    clock = clock,
+                    style = MaterialTheme.typography.titleMedium,
+                    dimAlpha = UNSUNG_ALPHA_STRIP,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    rise = false,
+                )
+            } else {
+                Text(
+                    text = lineText,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (itemInstrumental) Color.White.copy(alpha = 0.5f) else Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         Spacer(Modifier.width(6.dp))
