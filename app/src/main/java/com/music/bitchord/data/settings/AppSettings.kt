@@ -148,6 +148,22 @@ enum class LibrarySort {
     TITLE_DESC,
 }
 
+/**
+ * Ordering for the track list on an album or playlist page — the same idea as
+ * the Downloads folder's sort, with a date option for the one thing a
+ * catalogue row can still be dated by: the position it sits at. A playlist's
+ * running order is the order songs were added in — YouTube Music appends each
+ * addition at the foot — so read backwards it *is* a date order, newest first.
+ * DetailScreen.kt holds the sort itself. Persisted app-wide rather than per
+ * page: one choice, kept until the user makes another.
+ */
+enum class SongSort {
+    DEFAULT,
+    TITLE_ASC,
+    TITLE_DESC,
+    DATE_ADDED_DESC,
+}
+
 /** Display mode for music lists: compact rows or grid cards. */
 enum class LibraryViewType {
     LIST,
@@ -450,6 +466,9 @@ object AppSettings {
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
 
+    /** The track-list order on album and playlist pages — kept across visits. */
+    val detailSongSort = MutableStateFlow(SongSort.DEFAULT)
+
     /** Empty means every MediaStore folder; otherwise this is a persisted SAF tree URI. */
     val localMusicFolderUri = MutableStateFlow("")
 
@@ -692,6 +711,9 @@ object AppSettings {
         librarySort.value = prefs.getString(KEY_LIBRARY_SORT, null)
             ?.let { saved -> LibrarySort.entries.firstOrNull { it.name == saved } }
             ?: LibrarySort.DEFAULT
+        detailSongSort.value = prefs.getString(KEY_DETAIL_SONG_SORT, null)
+            ?.let { saved -> SongSort.entries.firstOrNull { it.name == saved } }
+            ?: SongSort.DEFAULT
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
@@ -1243,6 +1265,11 @@ object AppSettings {
         prefs.edit().putString(KEY_LIBRARY_SORT, value.name).apply()
     }
 
+    fun setDetailSongSort(value: SongSort) {
+        detailSongSort.value = value
+        prefs.edit().putString(KEY_DETAIL_SONG_SORT, value.name).apply()
+    }
+
     fun setLocalMusicViewType(value: LibraryViewType) {
         localMusicViewType.value = value
         prefs.edit().putString(KEY_LOCAL_MUSIC_VIEW_TYPE, value.name).apply()
@@ -1438,6 +1465,7 @@ object AppSettings {
     private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
     private const val KEY_DOWNLOADED_MUSIC_SORT = "downloaded_music_sort"
     private const val KEY_LIBRARY_SORT = "library_sort"
+    private const val KEY_DETAIL_SONG_SORT = "detail_song_sort"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"

@@ -197,7 +197,7 @@ import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
 import com.music.bitchord.ui.screens.SearchScreen
-import com.music.bitchord.ui.screens.SongSort
+import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.replay.ReplayScreen
 import com.music.bitchord.ui.replay.cards
 import com.music.bitchord.ui.replay.ReplayShareSheet
@@ -532,10 +532,10 @@ private fun BitChordApp(
     // has a cover and a track list, so it takes the bar every other release page
     // takes. Hence the folder question rather than the prefix.
     val isLocalDetail = detail?.browseId.isDeviceFolder()
-    // Keyed on the browse id, like the page's own search filter, so opening a
-    // different release starts back at the release's own running order rather
-    // than carrying over whatever the last one was sorted by.
-    var songSort by remember(detail?.browseId) { mutableStateOf(SongSort.DEFAULT) }
+    // Not keyed on the browse id and not remembered here: the choice lives in
+    // AppSettings, so it survives closing and reopening the page — the point
+    // of the control is to keep a playlist the way the user left it.
+    val songSort by AppSettings.detailSongSort.collectAsStateWithLifecycle()
     var songSortMenuOpen by remember { mutableStateOf(false) }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     // Which tracks are being held on YouTube's own upload, so the player's menu
@@ -2315,7 +2315,7 @@ private fun BitChordApp(
                                                     { Icon(Icons.Rounded.Check, contentDescription = null) }
                                                 } else null,
                                                 onClick = {
-                                                    songSort = option
+                                                    AppSettings.setDetailSongSort(option)
                                                     songSortMenuOpen = false
                                                 },
                                             )
@@ -3148,6 +3148,7 @@ private fun SongSort.localizedLabel(): String = when (this) {
     SongSort.DEFAULT -> stringResource(R.string.sort_default)
     SongSort.TITLE_ASC -> stringResource(R.string.sort_title_ascending)
     SongSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
+    SongSort.DATE_ADDED_DESC -> stringResource(R.string.sort_date_added)
 }
 
 /**
