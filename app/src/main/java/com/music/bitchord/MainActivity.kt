@@ -19,6 +19,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
@@ -52,6 +54,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
@@ -85,6 +88,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -3193,29 +3197,73 @@ private fun FrostedSortMenu(
                 .clickable(onClick = {}),
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                SongSort.entries.forEach { option ->
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 44.dp)
-                            .clickable(role = Role.Button) { onSelect(option) }
-                            .padding(horizontal = 20.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            option.localizedLabel(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (option == selected) {
-                            Icon(
-                                Icons.Rounded.Check,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
+                // Date added is one row, Spotify-style: the arrow on it shows
+                // the direction — up for newest first, down for oldest — and
+                // tapping flips it, the rotation animating the flip. Up is
+                // also where a fresh activation lands, newest first being the
+                // point of the feature.
+                val dateActive = selected == SongSort.DATE_ADDED_ASC ||
+                    selected == SongSort.DATE_ADDED_DESC
+                val arrowRotation by animateFloatAsState(
+                    targetValue = if (selected == SongSort.DATE_ADDED_ASC) 180f else 0f,
+                    animationSpec = tween(durationMillis = 200),
+                    label = "dateAddedArrow",
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 44.dp)
+                        .clickable(role = Role.Button) {
+                            onSelect(
+                                when (selected) {
+                                    SongSort.DATE_ADDED_DESC -> SongSort.DATE_ADDED_ASC
+                                    SongSort.DATE_ADDED_ASC -> SongSort.DATE_ADDED_DESC
+                                    else -> SongSort.DATE_ADDED_DESC
+                                },
                             )
                         }
+                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.sort_date_added_toggle),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (dateActive) {
+                        Icon(
+                            Icons.Rounded.ArrowUpward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.rotate(arrowRotation),
+                        )
                     }
                 }
+                SongSort.entries
+                    .filter { it != SongSort.DATE_ADDED_ASC && it != SongSort.DATE_ADDED_DESC }
+                    .forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
+                                .clickable(role = Role.Button) { onSelect(option) }
+                                .padding(horizontal = 20.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                option.localizedLabel(),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (option == selected) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
             }
         }
     }
