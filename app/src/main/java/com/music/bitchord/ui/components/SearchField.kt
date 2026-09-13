@@ -48,6 +48,8 @@ fun SearchField(
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     focusRequester: FocusRequester = remember { FocusRequester() },
+    /** What the empty field says it is for — the one part that changes per screen. */
+    placeholder: String = stringResource(R.string.search_hint),
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -87,7 +89,7 @@ fun SearchField(
         Box(Modifier.weight(1f)) {
             if (query.isEmpty()) {
                 Text(
-                    text = stringResource(R.string.search_hint),
+                    text = placeholder,
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

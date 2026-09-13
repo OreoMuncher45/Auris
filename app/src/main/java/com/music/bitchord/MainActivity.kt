@@ -127,6 +127,7 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
+import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
@@ -395,6 +396,7 @@ private fun BitChordApp(
     var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showAccountScrobbling by remember { mutableStateOf(false) }
     var showSources by remember { mutableStateOf(false) }
+    var showListenTogether by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
     var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
     
@@ -1602,7 +1604,7 @@ private fun BitChordApp(
             showReplay = false
         }
         BackHandler(
-            enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources &&
+            enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources && !showListenTogether &&
                 !showEqualizer && !showReplay,
         ) { viewModel.closeDetail() }
         BackHandler(enabled = selectedMoodGenre != null && detail == null && !showSettings && !showReplay) {
@@ -1617,13 +1619,16 @@ private fun BitChordApp(
         BackHandler(enabled = showSources) {
             showSources = false
         }
+        BackHandler(enabled = showListenTogether) {
+            showListenTogether = false
+        }
         BackHandler(enabled = showEqualizer) {
             showEqualizer = false
         }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources && !showEqualizer) {
+        BackHandler(enabled = showSettings && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer) {
             showSettings = false
             // Only when Settings was the whole of what was on screen. Opened
             // over Replay or over a release page, closing it reveals that again
@@ -1632,7 +1637,7 @@ private fun BitChordApp(
         }
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling &&
-                !showSources && !showEqualizer && !showReplay && selectedMoodGenre == null &&
+                !showSources && !showListenTogether && !showEqualizer && !showReplay && selectedMoodGenre == null &&
                 selectedTab != TAB_HOME,
         ) {
             selectedTab = TAB_HOME
@@ -1668,6 +1673,7 @@ private fun BitChordApp(
                         libraryShowAll != null && detail == null -> "library_show_all"
                         showAccountScrobbling -> "account_scrobbling"
                         showSources -> "sources"
+                        showListenTogether -> "listen_together"
                         showEqualizer -> "equalizer"
                         // Above Replay, not below it. The top bar's account
                         // button sets `showSettings` from every page including
@@ -1840,6 +1846,16 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
                         )
+                    } else if (key == "listen_together") {
+                        ListenTogetherScreen(
+                            signedIn = signedIn,
+                            onSignIn = {
+                                showListenTogether = false
+                                showSettings = false
+                                webSession = WebSessionMode.SIGN_IN
+                            },
+                            contentPadding = listPadding,
+                        )
                     } else if (key == "equalizer") {
                         EqualizerScreen(contentPadding = listPadding)
                     } else if (key == "settings") {
@@ -1861,6 +1877,7 @@ private fun BitChordApp(
                             onLyricsSources = { showLyricsSources = true },
                             onTranslationLanguage = { showTranslationLanguage = true },
                             onSources = { showSources = true },
+                            onListenTogether = { showListenTogether = true },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
                             contentPadding = listPadding,
@@ -2182,7 +2199,7 @@ private fun BitChordApp(
                 // Hidden on the Search tab: the search field itself becomes the
                 // top element, sitting cleanly under the status bar inset.
                 val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
-                    !showAccountScrobbling && !showSources && !showEqualizer && !showReplay
+                    !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay
                 // Search is the one page that doesn't get the fade. Its field sits
                 // directly under the bar rather than a page's worth of content, so
                 // the strip's 32dp run past the bar lands on the field itself and
@@ -2191,7 +2208,7 @@ private fun BitChordApp(
                 // [AnimatedContent] above, since anything stacked over the tab is a
                 // page that does want the fade.
                 val isSearchVisible = selectedTab == TAB_SEARCH && detail == null &&
-                    !showSettings && !showAccountScrobbling && !showSources && !showEqualizer &&
+                    !showSettings && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer &&
                     !showReplay && !showDiscord && !showHistory && libraryShowAll == null
                 if (!isSearchVisible) TopFadeBlur(
                     hazeState = hazeState,
@@ -2217,6 +2234,7 @@ private fun BitChordApp(
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> stringResource(R.string.account_scrobbling)
                         showSources -> stringResource(R.string.sources)
+                        showListenTogether -> stringResource(R.string.listen_together)
                         showEqualizer -> stringResource(R.string.equalizer)
                         showSettings -> stringResource(R.string.settings)
                         showReplay -> stringResource(R.string.replay)
@@ -2229,7 +2247,8 @@ private fun BitChordApp(
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
-                        showSettings || showAccountScrobbling || showSources || showEqualizer ||
+                        showSettings || showAccountScrobbling || showSources || showListenTogether ||
+                            showEqualizer ||
                             showDiscord || showHistory ||
                             (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
                         // The page leads with its own large "Replay", so the bar
@@ -2246,6 +2265,7 @@ private fun BitChordApp(
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({ showAccountScrobbling = false })
                         showSources -> ({ showSources = false })
+                        showListenTogether -> ({ showListenTogether = false })
                         showEqualizer -> ({ showEqualizer = false })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
@@ -2257,7 +2277,7 @@ private fun BitChordApp(
                     actions = {
                         // Only worth surfacing where there's room for it and it won't
                         // be mistaken for a per-page action — Home, at rest.
-                        if (!showSettings && !showAccountScrobbling && !showSources && !showEqualizer &&
+                        if (!showSettings && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer &&
                             detail == null && selectedTab == TAB_HOME
                         ) {
                             updateNotice?.let { update ->
@@ -2405,6 +2425,7 @@ private fun BitChordApp(
                         showSettings = false
                         showAccountScrobbling = false
                         showSources = false
+                        showListenTogether = false
                         showEqualizer = false
                         showReplay = false
                         showHistory = false

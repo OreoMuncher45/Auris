@@ -65,6 +65,8 @@
     <string name="recent_searches">Recent searches</string>
     <string name="clear">Clear</string>
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_search_empty">No settings match “%1$s”</string>
     <string name="recent_search_edit">Edit “%1$s”</string>
     <string name="recent_search_remove">Remove “%1$s” from recent searches</string>
     <string name="storage_required_save">Storage access is needed to save songs</string>
@@ -786,4 +788,34 @@
     <string name="audio_output">Audio output</string>
     <string name="personal_phone">%1$s’s Phone</string>
     <string name="this_phone">This phone</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">Listen together</string>
+    <string name="listen_together_subtitle">Share a code and play the same music, in time</string>
+    <string name="listen_together_in_party">In a party · %1$s</string>
+    <string name="listen_together_sign_in_footer">Listening together needs an account, so everyone in the party can see who else is in it.</string>
+    <string name="listen_together_server">Party server</string>
+    <string name="listen_together_server_footer">The address of your own Listen Together server. Everyone in a party has to be pointed at the same one.</string>
+    <string name="listen_together_create">Create a party</string>
+    <string name="listen_together_create_subtitle">Get a code to share with friends</string>
+    <string name="listen_together_create_footer">You get a six-character code. Anyone who has it can join, up to five devices including yours.</string>
+    <string name="listen_together_join">Join a party</string>
+    <string name="listen_together_join_action">Join</string>
+    <string name="listen_together_code_hint">Six letters or digits</string>
+    <string name="listen_together_code">Party code</string>
+    <string name="listen_together_code_footer">Read it out or send it. O and I aren’t used, so an “oh” is always a zero.</string>
+    <string name="copy_code">Copy code</string>
+    <string name="listen_together_share_text">Listen with me on BitChord — party code %1$s</string>
+    <string name="listen_together_now_playing">Now playing</string>
+    <string name="listen_together_nothing_playing">Nothing playing yet</string>
+    <string name="listen_together_listening">Listening · %1$d of %2$d</string>
+    <string name="listen_together_members_footer">A party holds %1$d devices. Anyone in it can control the music.</string>
+    <string name="listen_together_you">You</string>
+    <string name="listen_together_host">Host</string>
+    <string name="listen_together_away">Away — their slot is held</string>
+    <string name="listen_together_leave">Leave the party</string>
+    <string name="listen_together_leave_subtitle">The others carry on listening</string>
+    <string name="listen_together_reconnecting">Reconnecting…</string>
+    <string name="listen_together_syncing_clock">Measuring the clock…</string>
+    <string name="listen_together_in_sync">In sync · %1$d ms round trip</string>
 </resources>

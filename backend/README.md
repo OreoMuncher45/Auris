@@ -1,0 +1,214 @@
+# BitChord — Listen Together
+
+The party server behind **Listen together**: create a six-character code, share
+it, and up to five signed-in devices listen to the same thing at the same time.
+Anyone in the party can control the music.
+
+FastAPI + a WebSocket per device, no database, deployed as a single Render web
+service.
+
+```bash
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload
+pytest
+```
+
+---
+
+## How devices stay in time
+
+This is the part worth reading before changing anything. Nothing here is
+synchronised by broadcasting "play now" — a frame that arrives 40 ms late on one
+phone and 300 ms late on another would start them a quarter of a second apart,
+and re-sending it more often would not fix that, only re-spread it.
+
+Instead the server holds **a position and the server time that position was true
+at**:
+
+```jsonc
+{
+  "positionMs": 42000,          // where the party was...
+  "anchorMs": 1757630001234,    // ...at this instant on the server's clock
+  "isPlaying": true
+}
+```
+
+Each device knows its own offset from that clock, so it can answer "where should
+I be *right now*" locally, whenever it likes, without another round trip:
+
+```
+serverNow   = deviceNow + clockOffset
+playhead    = positionMs + max(0, serverNow - anchorMs)      // while playing
+playhead    = positionMs                                      // while paused
+```
+
+A delayed frame carries an anchor that is correspondingly further in the past,
+so it still lands the device in exactly the right place. That is the whole
+trick, and four things protect it:
+
+1. **The clock offset is measured, not assumed.** Each device sends
+   `{"type":"ping","clientMs":…}`; the server replies with that stamp untouched
+   plus its own. Offset is `serverMs - (t0 + t1) / 2`, error is bounded by half
+   the round trip, and keeping the sample with the *smallest* round trip is what
+   makes this accurate over mobile data. Same idea as NTP. `GET /api/time` gives
+   a client a first estimate before it has a socket.
+2. **The server clock never jumps.** `app/clock.py` reads the wall clock once
+   and advances it monotonically after that, so an NTP step on the host cannot
+   rewrite the anchor under a room full of phones at once.
+3. **Resuming is scheduled slightly ahead.** Play and seek anchor
+   `JAM_PLAY_LEAD_MS` (default 350 ms) into the future, so every device aims at
+   one common instant and has time to buffer, instead of each starting whenever
+   its own packet landed. Before that instant, `position_at` holds at the
+   position rather than running backwards.
+4. **The truth is re-stated on a timer.** Every `JAM_STATE_HEARTBEAT_MS`
+   (default 5 s) each party is told again where it is, unprompted. Lost frames,
+   a phone coming back from doze, an offset that has wandered — none of those
+   announce themselves, so correctness must not depend on anyone asking.
+
+The server's state is the truth. Devices *report* their real playhead
+(`{"type":"report"}`), but that is only logged — a party is never averaged
+towards a straggler on a bad connection.
+
+## Identity, and what it is worth
+
+Creating or joining requires `userId`, `deviceId` and `displayName`, which the
+app takes from the signed-in Google/YouTube profile. That is what puts real
+names and avatars in the member list on every device.
+
+**The server cannot verify that claim**, and is written on the assumption it
+never will: it holds no Google credential, and an Innertube round trip per join
+would be both slow and another way to get rate-limited. What *is* server-held is
+the **token** minted on join — unguessable, returned exactly once, and required
+on every call afterwards. So a member can lie about who they are; they cannot
+act as a member they are not, or join a party whose code they were not given.
+
+If that trade ever stops being acceptable, the place to change it is
+`Party.join`: have the client send a short-lived proof from the account layer and
+verify it there. Nothing above that function would need to move.
+
+## Capacity and lifecycle
+
+- **Five devices** (`JAM_MAX_MEMBERS`), counted per device rather than per
+  account — the same person on a phone and a tablet is two streams.
+- **Rejoining reclaims a slot.** Reinstall, force-stop, a socket the grace
+  period outlived: all come back through the same path, so a party of five does
+  not fill with ghosts of the same five devices.
+- **A dropped socket is not a departure.** The membership survives
+  `JAM_DISCONNECT_GRACE_MS` (default 45 s), which is what makes a tunnel or a
+  screen-off invisible to everyone else.
+- **The host is not privileged.** Anyone may control the music; the role only
+  decides who inherits it, and it passes on when the host leaves rather than
+  ending the party.
+- Parties are swept when nobody has been connected for
+  `JAM_EMPTY_PARTY_TTL_MS`, and unconditionally after `JAM_PARTY_MAX_AGE_MS`.
+
+## API
+
+All bodies and frames are camelCase — the only client is the Android app, and
+matching Kotlin's naming keeps `@SerialName` off every field.
+
+### REST
+
+| | |
+|---|---|
+| `GET /healthz` | Render's health check. |
+| `GET /api/time` | `{"serverMs":…}` — a clock sample before the socket exists. |
+| `POST /api/parties` | Create a party and join it as host. Body: `userId`, `deviceId`, `displayName`, `avatarUrl?`. → `201` with `code`, `token`, `you`, `party`. |
+| `POST /api/parties/{code}/join` | Same body. `404` unknown code, `409` full, `422` no identity. The code is normalised first, so lower case, spaces, and `O`/`I`/`L` typed for `0`/`1` all work. |
+| `GET /api/parties/{code}` | Full snapshot. Needs `Authorization: Bearer <token>`. |
+| `POST /api/parties/{code}/leave` | Give up the slot. Needs the bearer token. |
+
+### WebSocket — `/ws/parties/{code}?token=…`
+
+Client → server:
+
+```jsonc
+{"type": "ping",    "clientMs": 1757630000000}
+{"type": "sync"}                                   // re-send me the state
+{"type": "report",  "positionMs": 42210, "isPlaying": true}
+{"type": "control", "action": "play",     "positionMs": 42000}
+{"type": "control", "action": "pause",    "positionMs": 42000}   // positionMs optional
+{"type": "control", "action": "seek",     "positionMs": 90000}   // required
+{"type": "control", "action": "setTrack", "track": {…}, "positionMs": 0, "isPlaying": true}
+{"type": "control", "action": "setQueue", "queue": [{…}], "queueIndex": 0}
+{"type": "control", "action": "next"}
+{"type": "control", "action": "previous"}
+```
+
+A `track` is `{videoId, title, artist, thumbnailUrl, durationMs}` — enough to
+identify and to *show* a song, and nothing more. Stream URLs, sources, quality
+and download state stay each device's own business, so two people in a party can
+be on different sources at different bitrates and still be in the same place.
+
+Server → client:
+
+```jsonc
+{"type": "welcome", "you": {…}, "party": {…}, "serverMs": …}
+{"type": "pong",    "clientMs": …, "serverMs": …}
+{"type": "state",   "playback": {…}, "serverMs": …}
+{"type": "members", "members": [{…}], "maxMembers": 5, "serverMs": …}
+{"type": "error",   "error": "rate_limited", "message": "…"}
+{"type": "bye",     "reason": "left"}
+```
+
+Every mutation bumps `playback.seq`. **Clients must ignore any state whose `seq`
+is not greater than the last one they applied** — that is what makes two people
+hitting pause at the same moment settle instead of oscillate. A control is
+broadcast to the sender too, so the controlling device re-anchors off the same
+frame as everyone else rather than running on a state it predicted locally.
+
+## Deploying to Render
+
+The blueprint is `render.yaml`, but Render reads blueprints from the repository
+root and this one lives in `backend/`. Either copy it up a level, or create the
+service by hand — which is one screen:
+
+- **New → Web Service**, connect this repo
+- **Root Directory** `backend`
+- **Runtime** Python 3
+- **Build** `pip install -r requirements.txt`
+- **Start** `uvicorn app.main:app --host 0.0.0.0 --port $PORT --ws websockets`
+- **Health check path** `/healthz`
+- **Instances** 1
+
+Then point the app at `https://<service>.onrender.com`.
+
+Two things about Render specifically:
+
+- **Keep it to one instance.** A party lives in the memory of the instance
+  holding its WebSockets, so a second instance is a second, disjoint set of
+  parties, and a join lands in whichever one the load balancer picked. Outgrowing
+  that is a Redis pub/sub swap behind `PartyStore` — nothing above it moves.
+- **The free plan spins down after ~15 minutes idle**, which closes every
+  WebSocket and drops every party, and the next request then waits ~30 s for a
+  cold start. Fine for development; for real use this wants the paid instance
+  type, where the process stays up.
+
+### Environment
+
+Every one of these is optional — `app/config.py` carries the same defaults.
+
+| Variable | Default | |
+|---|---|---|
+| `JAM_MAX_MEMBERS` | `5` | Devices per party. |
+| `JAM_STATE_HEARTBEAT_MS` | `5000` | How often the truth is re-stated. |
+| `JAM_PLAY_LEAD_MS` | `350` | How far ahead a resume is scheduled. |
+| `JAM_DISCONNECT_GRACE_MS` | `45000` | How long a lost socket keeps its slot. |
+| `JAM_EMPTY_PARTY_TTL_MS` | `120000` | How long an empty party survives. |
+| `JAM_PARTY_MAX_AGE_MS` | `43200000` | Hard ceiling on a party's life. |
+| `JAM_CONTROL_RATE_PER_SECOND` | `25` | Per-member control ceiling. |
+| `JAM_MAX_QUEUE_LENGTH` | `500` | Longest queue the server will hold. |
+| `JAM_ALLOWED_ORIGINS` | *(none)* | CORS, if a browser client ever exists. |
+
+## Layout
+
+```
+app/clock.py      The one clock, monotonic so anchors never jump
+app/codes.py      Six-character codes, and reading a mistyped one charitably
+app/config.py     Environment knobs
+app/party.py      Party, Member, PlaybackState — the sync rule, no I/O
+app/hub.py        Who holds a socket, and how a frame reaches everyone
+app/protocol.py   Join-request validation and the frame-type names
+app/main.py       REST routes, the socket loop, the heartbeat ticker
+tests/            The arithmetic, the capacity rules, and the protocol
+```
