@@ -8,6 +8,9 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -16,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.playback.AudioRouting
@@ -153,3 +157,37 @@ internal fun rememberAudioOutputName(accountName: String?): String {
  * after it is gone.
  */
 private val SETTLE_MS = longArrayOf(350L, 1_200L, 2_500L)
+
+/**
+ * Opens the output picker, asking for the Bluetooth permission the first time.
+ *
+ * The permission is for names, not for switching: without it the framework
+ * reports a paired headset generically, and a picker whose rows all read
+ * "Bluetooth" is worse than no picker. So a refusal keeps the drawer shut
+ * rather than opening a list that cannot say what anything is.
+ *
+ * Asked on the tap rather than at startup — nobody can judge a request for
+ * nearby devices out of the blue, and everybody can judge one that arrives the
+ * moment they ask where the music is playing.
+ *
+ * One consequence worth knowing: Android answers a permanently-denied request
+ * immediately and silently, so for somebody who has denied it twice the
+ * headphones glyph does nothing. That is this design, not a bug — the way back
+ * is the app's own settings page in Android.
+ */
+@Composable
+internal fun rememberOutputPicker(onOpen: () -> Unit): () -> Unit {
+    val context = LocalContext.current
+    val ask = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) onOpen() }
+    return {
+        if (bluetoothNamesAllowed(context)) onOpen() else ask.launch(BLUETOOTH_CONNECT)
+    }
+}
+
+private fun bluetoothNamesAllowed(context: Context): Boolean =
+    Build.VERSION.SDK_INT < 31 ||
+        ContextCompat.checkSelfPermission(context, BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+
+private const val BLUETOOTH_CONNECT = "android.permission.BLUETOOTH_CONNECT"

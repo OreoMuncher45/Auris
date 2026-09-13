@@ -627,4 +627,44 @@
         <item>Lirik mulai tersusun</item>
         <item>Hampir menemukan kata-katanya</item>
     </string-array>
+
+    <!-- Listen together -->
+    <string name="listen_together">Dengar bersama</string>
+    <string name="listen_together_subtitle">Bagikan kode dan putar musik yang sama, serempak</string>
+    <string name="listen_together_in_party">Dalam pesta · %1$s</string>
+    <string name="listen_together_sign_in_footer">Mendengar bersama butuh akun, supaya semua orang di pesta bisa lihat siapa saja yang ikut.</string>
+    <string name="listen_together_server">Server pesta</string>
+    <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_offline">Sedang tidak bisa dihubungi</string>
+    <string name="listen_together_server_checking">Memeriksa…</string>
+    <string name="listen_together_server_unknown">Ketuk untuk memeriksa</string>
+    <string name="listen_together_custom_server">Pakai server sendiri</string>
+    <string name="listen_together_custom_server_footer">Biarkan kosong untuk memakai server bawaan. Kalau kamu menjalankan salinan sendiri, semua orang di pesta harus diarahkan ke server yang sama.</string>
+    <string name="listen_together_using_builtin">Memakai server bawaan</string>
+    <string name="listen_together_create">Buat pesta</string>
+    <string name="listen_together_create_subtitle">Dapatkan kode untuk dibagikan ke teman</string>
+    <string name="listen_together_create_footer">Kamu dapat kode enam karakter. Siapa pun yang punya kodenya bisa ikut, sampai lima perangkat termasuk milikmu.</string>
+    <string name="listen_together_join">Ikut pesta</string>
+    <string name="listen_together_join_action">Ikut</string>
+    <string name="listen_together_code_hint">Enam huruf atau angka</string>
+    <string name="listen_together_code">Kode pesta</string>
+    <string name="listen_together_code_footer">Bacakan atau kirimkan. Huruf O dan I tidak dipakai, jadi “o” selalu berarti nol.</string>
+    <string name="copy_code">Salin kode</string>
+    <string name="listen_together_share_text">Dengarkan bareng aku di BitChord — kode pesta %1$s</string>
+    <string name="listen_together_now_playing">Sedang diputar</string>
+    <string name="listen_together_nothing_playing">Belum ada yang diputar</string>
+    <string name="listen_together_listening">Mendengarkan · %1$d dari %2$d</string>
+    <string name="listen_together_members_footer">Satu pesta menampung %1$d perangkat. Siapa pun di dalamnya bisa mengatur musik.</string>
+    <string name="listen_together_you">Kamu</string>
+    <string name="listen_together_host">Tuan rumah</string>
+    <string name="listen_together_away">Sedang menjauh — tempatnya ditahan</string>
+    <string name="listen_together_leave">Keluar dari pesta</string>
+    <string name="listen_together_leave_subtitle">Yang lain tetap mendengarkan</string>
+    <string name="listen_together_reconnecting">Menyambung ulang…</string>
+    <string name="listen_together_syncing_clock">Mengukur jam…</string>
+    <string name="listen_together_in_sync">Sinkron · %1$d ms bolak-balik</string>
+    <string name="listen_together_jam">Sesi %1$s</string>
+    <string name="listen_together_jam_unnamed">Mendengar bersama</string>
+    <string name="listen_together_open">Dengar bersama</string>
+    <string name="listen_together_open_count">Mendengar bersama · %1$d</string>
 </resources>

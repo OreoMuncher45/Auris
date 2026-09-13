@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -35,12 +34,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -84,7 +80,7 @@ fun ListenBrainzTokenAlert(
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
-            AlertTextField(
+            PillTextField(
                 value = tokenInput,
                 onValueChange = onTokenInputChange,
                 placeholder = stringResource(R.string.api_token),
@@ -132,7 +128,7 @@ fun LastfmLoginAlert(
                 color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
-            AlertTextField(
+            PillTextField(
                 value = usernameInput,
                 onValueChange = onUsernameInputChange,
                 placeholder = stringResource(R.string.username),
@@ -140,7 +136,7 @@ fun LastfmLoginAlert(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             )
             Spacer(Modifier.height(8.dp))
-            AlertTextField(
+            PillTextField(
                 value = passwordInput,
                 onValueChange = onPasswordInputChange,
                 placeholder = stringResource(R.string.password),
@@ -208,7 +204,7 @@ fun DiscordTokenAlert(
                 color = if (error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
-            AlertTextField(
+            PillTextField(
                 value = tokenInput,
                 onValueChange = onTokenInputChange,
                 placeholder = stringResource(R.string.token),
@@ -277,7 +273,7 @@ fun TextValueAlert(
                 color = MaterialTheme.colorScheme.onSurface,
                 textAlign = TextAlign.Center,
             )
-            AlertTextField(
+            PillTextField(
                 value = value,
                 onValueChange = onValueChange,
                 placeholder = placeholder,
@@ -367,7 +363,7 @@ fun AddonEditorAlert(
                 },
                 textAlign = TextAlign.Center,
             )
-            AlertTextField(
+            PillTextField(
                 value = urlValue,
                 onValueChange = onUrlChange,
                 placeholder = urlPlaceholder,
@@ -567,51 +563,6 @@ private fun AlertScaffold(
                     onClick = {},
                 ),
             content = content,
-        )
-    }
-}
-
-/** The narrow, pill-shaped field iOS alerts and this app's search bar both use. */
-@Composable
-private fun AlertTextField(
-    value: String,
-    onValueChange: (String) -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true,
-    isPassword: Boolean = false,
-    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
-    keyboardActions: KeyboardActions = KeyboardActions.Default,
-) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(40.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(11.dp))
-            .padding(horizontal = 12.dp),
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        if (value.isEmpty()) {
-            Text(
-                text = placeholder,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
-            enabled = enabled,
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                fontSize = 15.sp,
-                color = MaterialTheme.colorScheme.onBackground,
-            ),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = keyboardOptions,
-            keyboardActions = keyboardActions,
-            modifier = Modifier.fillMaxWidth(),
         )
     }
 }

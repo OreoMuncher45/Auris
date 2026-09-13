@@ -142,6 +142,8 @@ object LastPlayed {
         val album: String? = null,
         val explicit: Boolean? = null,
         val video: Boolean = false,
+        val radio: String? = null,
+        val source: String? = null,
     ) {
         fun toSong() = Song(
             videoId = id,
@@ -153,6 +155,8 @@ object LastPlayed {
             isExplicit = explicit,
             isVideo = video,
             fromAutoplay = auto,
+            radioName = radio,
+            playbackSource = source,
             localUri = local,
             localPath = path,
         )
@@ -170,6 +174,8 @@ object LastPlayed {
                 album = song.albumName,
                 explicit = song.isExplicit,
                 video = song.isVideo,
+                radio = song.radioName,
+                source = song.playbackSource,
             )
         }
     }

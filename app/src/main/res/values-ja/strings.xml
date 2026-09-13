@@ -627,4 +627,44 @@
         <item>歌詞がまとまりつつあります</item>
         <item>もう少しで言葉が見つかりそう</item>
     </string-array>
+
+    <!-- Listen together -->
+    <string name="listen_together">一緒に聴く</string>
+    <string name="listen_together_subtitle">コードを共有して、同じ音楽を同時に再生</string>
+    <string name="listen_together_in_party">パーティー中 · %1$s</string>
+    <string name="listen_together_sign_in_footer">一緒に聴くにはアカウントが必要です。パーティーの全員が、ほかに誰がいるかを見られるようにするためです。</string>
+    <string name="listen_together_server">パーティーサーバー</string>
+    <string name="listen_together_server_online">オンライン · %1$d ms</string>
+    <string name="listen_together_server_offline">今は接続できません</string>
+    <string name="listen_together_server_checking">確認中…</string>
+    <string name="listen_together_server_unknown">タップして確認</string>
+    <string name="listen_together_custom_server">自分のサーバーを使う</string>
+    <string name="listen_together_custom_server_footer">空のままにすると内蔵サーバーを使います。自分でコピーを動かしている場合は、パーティーの全員が同じサーバーを指している必要があります。</string>
+    <string name="listen_together_using_builtin">内蔵サーバーを使用中</string>
+    <string name="listen_together_create">パーティーを作る</string>
+    <string name="listen_together_create_subtitle">友だちに共有するコードを取得</string>
+    <string name="listen_together_create_footer">6文字のコードが発行されます。コードを知っている人は誰でも参加でき、自分を含めて5台までです。</string>
+    <string name="listen_together_join">パーティーに参加</string>
+    <string name="listen_together_join_action">参加</string>
+    <string name="listen_together_code_hint">英字か数字6文字</string>
+    <string name="listen_together_code">パーティーコード</string>
+    <string name="listen_together_code_footer">読み上げるか送ってください。O と I は使われないので、「オー」は必ずゼロです。</string>
+    <string name="copy_code">コードをコピー</string>
+    <string name="listen_together_share_text">BitChord で一緒に聴こう — パーティーコード %1$s</string>
+    <string name="listen_together_now_playing">再生中</string>
+    <string name="listen_together_nothing_playing">まだ何も再生していません</string>
+    <string name="listen_together_listening">参加中 · %1$d / %2$d</string>
+    <string name="listen_together_members_footer">パーティーには %1$d 台まで入れます。参加者は誰でも音楽を操作できます。</string>
+    <string name="listen_together_you">あなた</string>
+    <string name="listen_together_host">ホスト</string>
+    <string name="listen_together_away">離席中 — 枠は確保されています</string>
+    <string name="listen_together_leave">パーティーを出る</string>
+    <string name="listen_together_leave_subtitle">ほかの人はそのまま聴き続けます</string>
+    <string name="listen_together_reconnecting">再接続中…</string>
+    <string name="listen_together_syncing_clock">時刻を計測中…</string>
+    <string name="listen_together_in_sync">同期中 · 往復 %1$d ms</string>
+    <string name="listen_together_jam">%1$s のジャム</string>
+    <string name="listen_together_jam_unnamed">一緒に聴いています</string>
+    <string name="listen_together_open">一緒に聴く</string>
+    <string name="listen_together_open_count">一緒に聴いています · %1$d</string>
 </resources>

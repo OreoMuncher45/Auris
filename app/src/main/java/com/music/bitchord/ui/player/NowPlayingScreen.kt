@@ -432,11 +432,10 @@ private var lastControlSpread: Dp = 0.dp
 /**
  * How long the shuffle glyph ignores further taps after one lands.
  *
- * Toggling shuffle rewrites the live queue one [Player.moveMediaItem] at a time,
- * and every move runs the timeline listeners — the queue panel, the snapshot
- * save, the notification. A held-down finger can post those faster than a frame
- * takes to draw, and the whole player stutters. One tap is all a toggle can
- * usefully mean anyway, so the rest are dropped rather than queued behind it.
+ * Toggling shuffle replaces the upcoming stretch of the live queue. A second
+ * tap while that command is crossing the session boundary could otherwise ask
+ * to undo work that has not landed yet. One tap is all a toggle can usefully
+ * mean in that window, so the rest are dropped rather than queued behind it.
  */
 private const val SHUFFLE_TAP_WINDOW_MS = 400L
 /**
@@ -913,6 +912,8 @@ fun NowPlayingScreen(
     val playerHaze = remember { HazeState() }
     var showAudioPipeline by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(false) }
+    // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
+    val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -1760,33 +1761,32 @@ fun NowPlayingScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 if (!docked) {
-                    // Centred in the strip when it's the only thing there; nudged
-                    // up when the radio caption needs the room below it.
+                    // The origin caption always occupies the bottom of this strip,
+                    // so keep the handle clear of it for every kind of queue.
                     Box(
-                        (if (song.radioName != null) {
-                            Modifier.align(Alignment.TopCenter).offset(y = 6.dp)
-                        } else {
-                            Modifier.align(Alignment.Center)
-                        })
+                        Modifier.align(Alignment.TopCenter).offset(y = 6.dp)
                             .width(38.dp)
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp))
                             .background(Color.White.copy(alpha = 0.32f)),
                     )
-                    song.radioName?.let { radioName ->
-                        Text(
-                            text = stringResource(R.string.playing_radio, radioName),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.78f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
-                        )
-                    }
                 }
+                Text(
+                    text = song.radioName?.let {
+                        stringResource(R.string.playing_radio, it)
+                    } ?: stringResource(
+                        R.string.playing_from,
+                        song.playbackSource ?: song.albumName ?: stringResource(R.string.queue),
+                    ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.78f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .align(if (docked) Alignment.Center else Alignment.BottomCenter)
+                        .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
+                )
             }
 
             Column(
@@ -2874,7 +2874,7 @@ fun NowPlayingScreen(
                         }
                     } else {
                         OutputPartyPill(
-                            onOutput = { showAudioOutput = true },
+                            onOutput = openAudioOutput,
                             onParty = onListenTogether,
                         )
                     }
@@ -2899,7 +2899,7 @@ fun NowPlayingScreen(
             ) {
                 OutputCaption(
                     accountName = accountName,
-                    onOpenOutput = { showAudioOutput = true },
+                    onOpenOutput = openAudioOutput,
                     onOpenParty = onListenTogether,
                 )
             }

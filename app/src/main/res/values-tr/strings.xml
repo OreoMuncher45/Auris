@@ -693,4 +693,44 @@
     <string name="use_this_profile">Bu profili kullan</string>
     <string name="switch_profile_hint">Avatarı kullanarak değiştir, sonra bu profili kullan.</string>
     <string name="profile_unavailable">Bu sayfada henüz giriş yapılmış bir profil yok.</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">Birlikte dinle</string>
+    <string name="listen_together_subtitle">Bir kod paylaş, aynı müziği aynı anda dinleyin</string>
+    <string name="listen_together_in_party">Partide · %1$s</string>
+    <string name="listen_together_sign_in_footer">Birlikte dinlemek için hesap gerekir; böylece partideki herkes kimlerin olduğunu görür.</string>
+    <string name="listen_together_server">Parti sunucusu</string>
+    <string name="listen_together_server_online">Çevrimiçi · %1$d ms</string>
+    <string name="listen_together_server_offline">Şu anda erişilemiyor</string>
+    <string name="listen_together_server_checking">Kontrol ediliyor…</string>
+    <string name="listen_together_server_unknown">Kontrol etmek için dokun</string>
+    <string name="listen_together_custom_server">Kendi sunucunu kullan</string>
+    <string name="listen_together_custom_server_footer">Yerleşik sunucuyu kullanmak için boş bırak. Kendi kopyanı çalıştırıyorsan partideki herkesin aynı adresi göstermesi gerekir.</string>
+    <string name="listen_together_using_builtin">Yerleşik sunucu kullanılıyor</string>
+    <string name="listen_together_create">Parti oluştur</string>
+    <string name="listen_together_create_subtitle">Arkadaşlarınla paylaşacak bir kod al</string>
+    <string name="listen_together_create_footer">Altı karakterlik bir kod alırsın. Koda sahip olan herkes katılabilir; seninle birlikte en fazla beş cihaz.</string>
+    <string name="listen_together_join">Partiye katıl</string>
+    <string name="listen_together_join_action">Katıl</string>
+    <string name="listen_together_code_hint">Altı harf veya rakam</string>
+    <string name="listen_together_code">Parti kodu</string>
+    <string name="listen_together_code_footer">Yüksek sesle oku ya da gönder. O ve I harfleri kullanılmaz, yani bir “o” her zaman sıfırdır.</string>
+    <string name="copy_code">Kodu kopyala</string>
+    <string name="listen_together_share_text">BitChord’da benimle dinle — parti kodu %1$s</string>
+    <string name="listen_together_now_playing">Şu an çalıyor</string>
+    <string name="listen_together_nothing_playing">Henüz bir şey çalmıyor</string>
+    <string name="listen_together_listening">Dinliyor · %1$d / %2$d</string>
+    <string name="listen_together_members_footer">Bir parti %1$d cihaz alır. İçindeki herkes müziği kontrol edebilir.</string>
+    <string name="listen_together_you">Sen</string>
+    <string name="listen_together_host">Kurucu</string>
+    <string name="listen_together_away">Uzakta — yeri tutuluyor</string>
+    <string name="listen_together_leave">Partiden ayrıl</string>
+    <string name="listen_together_leave_subtitle">Diğerleri dinlemeye devam eder</string>
+    <string name="listen_together_reconnecting">Yeniden bağlanılıyor…</string>
+    <string name="listen_together_syncing_clock">Saat ölçülüyor…</string>
+    <string name="listen_together_in_sync">Eşzamanlı · %1$d ms gidiş dönüş</string>
+    <string name="listen_together_jam">%1$s’in Jam’ı</string>
+    <string name="listen_together_jam_unnamed">Birlikte dinleme</string>
+    <string name="listen_together_open">Birlikte dinle</string>
+    <string name="listen_together_open_count">Birlikte dinleme · %1$d</string>
 </resources>

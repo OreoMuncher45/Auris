@@ -15,6 +15,36 @@ class QueueShuffleTest {
         QueueShuffle.restoreOrder(upcoming, original).map { upcoming[it] }
 
     @Test
+    fun `a random identity is rotated so the first shuffle always moves a track`() {
+        assertEquals(
+            listOf(1, 2, 0),
+            QueueShuffle.avoidIdentityShuffle(
+                original = listOf(0, 1, 2),
+                shuffled = listOf(0, 1, 2),
+            ),
+        )
+    }
+
+    @Test
+    fun `a genuinely shuffled order is kept`() {
+        assertEquals(
+            listOf(2, 0, 1),
+            QueueShuffle.avoidIdentityShuffle(
+                original = listOf(0, 1, 2),
+                shuffled = listOf(2, 0, 1),
+            ),
+        )
+    }
+
+    @Test
+    fun `a one track section remains unchanged`() {
+        assertEquals(
+            listOf(0),
+            QueueShuffle.avoidIdentityShuffle(original = listOf(0), shuffled = listOf(0)),
+        )
+    }
+
+    @Test
     fun `the queue goes back into the order it was queued in`() {
         assertEquals(
             listOf("b", "c", "d"),

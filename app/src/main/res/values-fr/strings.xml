@@ -645,4 +645,44 @@
         <item>Les paroles prennent forme</item>
         <item>Presque trouvé les mots</item>
     </string-array>
+
+    <!-- Listen together -->
+    <string name="listen_together">Écouter ensemble</string>
+    <string name="listen_together_subtitle">Partage un code et écoutez la même musique, en même temps</string>
+    <string name="listen_together_in_party">Dans une session · %1$s</string>
+    <string name="listen_together_sign_in_footer">L’écoute commune nécessite un compte, pour que chacun puisse voir qui d’autre participe.</string>
+    <string name="listen_together_server">Serveur de session</string>
+    <string name="listen_together_server_online">En ligne · %1$d ms</string>
+    <string name="listen_together_server_offline">Injoignable pour le moment</string>
+    <string name="listen_together_server_checking">Vérification…</string>
+    <string name="listen_together_server_unknown">Appuie pour vérifier</string>
+    <string name="listen_together_custom_server">Utiliser ton propre serveur</string>
+    <string name="listen_together_custom_server_footer">Laisse ce champ vide pour utiliser le serveur intégré. Si tu héberges ta propre copie, tout le monde dans la session doit pointer vers le même.</string>
+    <string name="listen_together_using_builtin">Serveur intégré utilisé</string>
+    <string name="listen_together_create">Créer une session</string>
+    <string name="listen_together_create_subtitle">Obtiens un code à partager avec tes amis</string>
+    <string name="listen_together_create_footer">Tu reçois un code de six caractères. Quiconque l’a peut rejoindre, jusqu’à cinq appareils, le tien compris.</string>
+    <string name="listen_together_join">Rejoindre une session</string>
+    <string name="listen_together_join_action">Rejoindre</string>
+    <string name="listen_together_code_hint">Six lettres ou chiffres</string>
+    <string name="listen_together_code">Code de session</string>
+    <string name="listen_together_code_footer">Lis-le à voix haute ou envoie-le. Les lettres O et I ne sont pas utilisées, un « o » est donc toujours un zéro.</string>
+    <string name="copy_code">Copier le code</string>
+    <string name="listen_together_share_text">Écoute avec moi sur BitChord — code de session %1$s</string>
+    <string name="listen_together_now_playing">Lecture en cours</string>
+    <string name="listen_together_nothing_playing">Rien en lecture pour l’instant</string>
+    <string name="listen_together_listening">À l’écoute · %1$d sur %2$d</string>
+    <string name="listen_together_members_footer">Une session accueille %1$d appareils. Tous ceux qui y sont peuvent contrôler la musique.</string>
+    <string name="listen_together_you">Toi</string>
+    <string name="listen_together_host">Hôte</string>
+    <string name="listen_together_away">Absent — sa place est gardée</string>
+    <string name="listen_together_leave">Quitter la session</string>
+    <string name="listen_together_leave_subtitle">Les autres continuent d’écouter</string>
+    <string name="listen_together_reconnecting">Reconnexion…</string>
+    <string name="listen_together_syncing_clock">Mesure de l’horloge…</string>
+    <string name="listen_together_in_sync">Synchronisé · %1$d ms aller-retour</string>
+    <string name="listen_together_jam">Jam de %1$s</string>
+    <string name="listen_together_jam_unnamed">Écoute commune</string>
+    <string name="listen_together_open">Écouter ensemble</string>
+    <string name="listen_together_open_count">Écoute commune · %1$d</string>
 </resources>

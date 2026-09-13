@@ -120,6 +120,17 @@ fun MediaController.toggleAutoplay() {
     )
 }
 
+/**
+ * Routes Shuffle through the playback service so changing its state and
+ * reordering the service-owned queue happen as one operation.
+ */
+fun MediaController.toggleShuffle() {
+    sendCustomCommand(
+        SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY),
+        Bundle.EMPTY,
+    )
+}
+
 /** Clears the previous queue's service and restart state before starting radio. */
 suspend fun MediaController.beginRadioQueue() {
     sendCustomCommand(
@@ -280,6 +291,7 @@ fun MediaItem.toSong() = Song(
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
     fromAutoplay = this.fromAutoplay,
     radioName = mediaMetadata.extras?.getString(EXTRA_RADIO_NAME),
+    playbackSource = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE),
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
 )
@@ -297,6 +309,9 @@ private const val EXTRA_FROM_AUTOPLAY = "bitchord.fromAutoplay"
 
 /** @see Song.radioName */
 private const val EXTRA_RADIO_NAME = "bitchord.radioName"
+
+/** @see Song.playbackSource */
+private const val EXTRA_PLAYBACK_SOURCE = "bitchord.playbackSource"
 
 /**
  * The artist and album pages this track hangs under, when they are known.
@@ -508,12 +523,14 @@ fun Song.toMediaItem(): MediaItem {
             .apply {
                 if (fromAutoplay || offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
-                    isExplicit != null || isVideo || isVideoOrigin || radioName != null
+                    isExplicit != null || isVideo || isVideoOrigin || radioName != null ||
+                    playbackSource != null
                 ) {
                     setExtras(
                         bundleOf(
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
                             EXTRA_RADIO_NAME to radioName,
+                            EXTRA_PLAYBACK_SOURCE to playbackSource,
                             EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
                             EXTRA_DURATION to durationText,

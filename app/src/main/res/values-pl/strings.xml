@@ -677,4 +677,44 @@
     <string name="grid_view">Siatka</string>
     <string name="list_view">Lista</string>
     <string name="switch_to_list_view">Przełącz na widok listy</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">Słuchajcie razem</string>
+    <string name="listen_together_subtitle">Podziel się kodem i słuchajcie tej samej muzyki, równocześnie</string>
+    <string name="listen_together_in_party">W imprezie · %1$s</string>
+    <string name="listen_together_sign_in_footer">Wspólne słuchanie wymaga konta, żeby każdy w imprezie widział, kto jeszcze słucha.</string>
+    <string name="listen_together_server">Serwer imprezy</string>
+    <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_offline">Teraz nieosiągalny</string>
+    <string name="listen_together_server_checking">Sprawdzanie…</string>
+    <string name="listen_together_server_unknown">Dotknij, aby sprawdzić</string>
+    <string name="listen_together_custom_server">Użyj własnego serwera</string>
+    <string name="listen_together_custom_server_footer">Zostaw puste, aby użyć wbudowanego serwera. Jeśli prowadzisz własną kopię, wszyscy w imprezie muszą wskazywać ten sam adres.</string>
+    <string name="listen_together_using_builtin">Używany jest wbudowany serwer</string>
+    <string name="listen_together_create">Utwórz imprezę</string>
+    <string name="listen_together_create_subtitle">Odbierz kod do udostępnienia znajomym</string>
+    <string name="listen_together_create_footer">Otrzymasz sześcioznakowy kod. Każdy, kto go ma, może się dołączyć — do pięciu urządzeń, licząc twoje.</string>
+    <string name="listen_together_join">Dołącz do imprezy</string>
+    <string name="listen_together_join_action">Dołącz</string>
+    <string name="listen_together_code_hint">Sześć liter lub cyfr</string>
+    <string name="listen_together_code">Kod imprezy</string>
+    <string name="listen_together_code_footer">Przeczytaj go na głos albo wyślij. Liter O i I nie używamy, więc „o” to zawsze zero.</string>
+    <string name="copy_code">Kopiuj kod</string>
+    <string name="listen_together_share_text">Posłuchaj ze mną w BitChord — kod imprezy %1$s</string>
+    <string name="listen_together_now_playing">Teraz odtwarzane</string>
+    <string name="listen_together_nothing_playing">Jeszcze nic nie gra</string>
+    <string name="listen_together_listening">Słucha · %1$d z %2$d</string>
+    <string name="listen_together_members_footer">Impreza pomieści %1$d urządzeń. Każdy w niej może sterować muzyką.</string>
+    <string name="listen_together_you">Ty</string>
+    <string name="listen_together_host">Gospodarz</string>
+    <string name="listen_together_away">Poza zasięgiem — miejsce jest trzymane</string>
+    <string name="listen_together_leave">Opuść imprezę</string>
+    <string name="listen_together_leave_subtitle">Pozostali słuchają dalej</string>
+    <string name="listen_together_reconnecting">Ponowne łączenie…</string>
+    <string name="listen_together_syncing_clock">Mierzenie zegara…</string>
+    <string name="listen_together_in_sync">Zsynchronizowano · %1$d ms w obie strony</string>
+    <string name="listen_together_jam">Jam użytkownika %1$s</string>
+    <string name="listen_together_jam_unnamed">Wspólne słuchanie</string>
+    <string name="listen_together_open">Słuchajcie razem</string>
+    <string name="listen_together_open_count">Wspólne słuchanie · %1$d</string>
 </resources>

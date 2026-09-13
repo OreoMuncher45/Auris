@@ -70,6 +70,15 @@ data class Song(
     val sourceQuality: String? = null,
     /** Explicit-content state from the catalogue; null when that source does not say. */
     val isExplicit: Boolean? = null,
+    /**
+     * The page, collection, or feed section that put this track in the queue.
+     *
+     * This is deliberately separate from [albumName]: a song can belong to an
+     * album while it was actually played from Search, History, a playlist, or
+     * a recommendation shelf. Kept on every queue item so Now Playing can name
+     * that origin after skips and after the playback service restores a queue.
+     */
+    val playbackSource: String? = null,
 )
 
 /**

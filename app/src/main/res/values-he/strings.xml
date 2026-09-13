@@ -649,4 +649,44 @@
         <item>כמעט מצאתי את המילים</item>
     </string-array>
     <string name="hebrew">עברית</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">להאזין ביחד</string>
+    <string name="listen_together_subtitle">שתפו קוד ונגנו את אותה מוזיקה, יחד</string>
+    <string name="listen_together_in_party">במסיבה · %1$s</string>
+    <string name="listen_together_sign_in_footer">האזנה משותפת דורשת חשבון, כדי שכל מי שבמסיבה יראה מי עוד נמצא בה.</string>
+    <string name="listen_together_server">שרת המסיבה</string>
+    <string name="listen_together_server_online">מחובר · %1$d מ״ש</string>
+    <string name="listen_together_server_offline">לא ניתן להגיע אליו כרגע</string>
+    <string name="listen_together_server_checking">בבדיקה…</string>
+    <string name="listen_together_server_unknown">הקישו לבדיקה</string>
+    <string name="listen_together_custom_server">שימוש בשרת שלכם</string>
+    <string name="listen_together_custom_server_footer">השאירו ריק כדי להשתמש בשרת המובנה. אם אתם מריצים עותק משלכם, כל מי שבמסיבה צריך להפנות לאותו שרת.</string>
+    <string name="listen_together_using_builtin">נעשה שימוש בשרת המובנה</string>
+    <string name="listen_together_create">יצירת מסיבה</string>
+    <string name="listen_together_create_subtitle">קבלו קוד לשיתוף עם חברים</string>
+    <string name="listen_together_create_footer">תקבלו קוד של שישה תווים. כל מי שיש לו אותו יכול להצטרף, עד חמישה מכשירים כולל שלכם.</string>
+    <string name="listen_together_join">הצטרפות למסיבה</string>
+    <string name="listen_together_join_action">הצטרפות</string>
+    <string name="listen_together_code_hint">שש אותיות או ספרות</string>
+    <string name="listen_together_code">קוד המסיבה</string>
+    <string name="listen_together_code_footer">הקריאו אותו או שלחו אותו. האותיות O ו-I אינן בשימוש, ולכן O היא תמיד אפס.</string>
+    <string name="copy_code">העתקת הקוד</string>
+    <string name="listen_together_share_text">תאזינו איתי ב-BitChord — קוד מסיבה %1$s</string>
+    <string name="listen_together_now_playing">מתנגן כעת</string>
+    <string name="listen_together_nothing_playing">עוד לא מתנגן כלום</string>
+    <string name="listen_together_listening">מאזינים · %1$d מתוך %2$d</string>
+    <string name="listen_together_members_footer">במסיבה יש מקום ל-%1$d מכשירים. כל מי שנמצא בה יכול לשלוט במוזיקה.</string>
+    <string name="listen_together_you">אתם</string>
+    <string name="listen_together_host">מארח</string>
+    <string name="listen_together_away">מרוחק — המקום נשמר</string>
+    <string name="listen_together_leave">יציאה מהמסיבה</string>
+    <string name="listen_together_leave_subtitle">האחרים ממשיכים להאזין</string>
+    <string name="listen_together_reconnecting">מתחבר מחדש…</string>
+    <string name="listen_together_syncing_clock">מודד את השעון…</string>
+    <string name="listen_together_in_sync">מסונכרן · %1$d מ״ש הלוך ושוב</string>
+    <string name="listen_together_jam">הג׳אם של %1$s</string>
+    <string name="listen_together_jam_unnamed">מאזינים ביחד</string>
+    <string name="listen_together_open">להאזין ביחד</string>
+    <string name="listen_together_open_count">מאזינים ביחד · %1$d</string>
 </resources>

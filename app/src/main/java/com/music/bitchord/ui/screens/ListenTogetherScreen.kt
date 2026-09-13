@@ -1,7 +1,15 @@
 package com.music.bitchord.ui.screens
 
 import android.content.Intent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +24,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,10 +40,10 @@ import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -46,12 +57,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -61,6 +79,7 @@ import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyMember
+import com.music.bitchord.ui.components.PillTextField
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -210,19 +229,29 @@ fun ListenTogetherScreen(
                         modifier = Modifier.size(ICON_SIZE),
                     )
                     Spacer(Modifier.width(ICON_GAP))
-                    OutlinedTextField(
+                    PillTextField(
                         value = serverInput,
                         onValueChange = { serverInput = it },
                         // Never the built-in address, even as a hint: this box
                         // exists to take somebody else's server, and the one
                         // this build uses is not shown anywhere.
-                        placeholder = { Text(stringResource(R.string.listen_together_using_builtin)) },
-                        singleLine = true,
+                        placeholder = stringResource(R.string.listen_together_using_builtin),
+                        // Not the field's own default: the card it is sitting in
+                        // is surfaceVariant too, so the default would paint the
+                        // box in exactly the colour behind it.
+                        container = MaterialTheme.colorScheme.background,
                         // Locked while in a party: changing the address under a
                         // live membership would leave this device holding a
                         // token for a server it no longer talks to, and the
                         // party unable to say why it went quiet.
                         enabled = !state.inParty,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onDone = { ListenTogether.setCustomServerUrl(serverInput) },
+                        ),
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -307,31 +336,178 @@ private fun NotInAParty(
         )
     }
 
-    SettingsGroup(header = stringResource(R.string.listen_together_join)) {
-        Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
-            OutlinedTextField(
-                value = codeInput,
-                onValueChange = onCodeInput,
-                placeholder = { Text(stringResource(R.string.listen_together_code_hint)) },
-                singleLine = true,
+    // The hint moved out of the box and under the card. Six cells already say
+    // how many characters are wanted; what they cannot say is what may go in
+    // them, and there is no longer a placeholder line to put that on.
+    SettingsGroup(
+        header = stringResource(R.string.listen_together_join),
+        footer = stringResource(R.string.listen_together_code_hint),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = ROW_INSET, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            PartyCodeField(
+                code = codeInput,
+                onCodeChange = onCodeInput,
                 enabled = ready,
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.Characters,
-                    imeAction = ImeAction.Done,
-                ),
-                modifier = Modifier.fillMaxWidth(),
+                onSubmit = onJoin,
             )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+            // Full width and filled, because on this card it is the one thing
+            // to press: the row above it is a keyboard target rather than a
+            // control, and a text button tucked into the corner gave the
+            // section no obvious end.
+            Button(
+                onClick = onJoin,
+                enabled = ready && codeInput.length == ListenTogether.CODE_LENGTH,
+                shape = CODE_CELL_SHAPE,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
             ) {
-                TextButton(
-                    onClick = onJoin,
-                    enabled = ready && codeInput.length == ListenTogether.CODE_LENGTH,
-                ) {
-                    Text(stringResource(R.string.listen_together_join_action))
-                }
+                Text(
+                    text = stringResource(R.string.listen_together_join_action),
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
+        }
+    }
+}
+
+/** The six cells of [PartyCodeField], and the Join button under them. */
+private val CODE_CELL_SHAPE = RoundedCornerShape(12.dp)
+
+/**
+ * The party code, entered as six cells rather than one box.
+ *
+ * A code that gets read out loud and typed in by somebody else is a sequence of
+ * characters, not a word. Six cells say so without a hint line: they show how
+ * many are wanted, which one is being typed, and how far in the reading has
+ * got — see [listen_together_code_footer][R.string.listen_together_code_footer]
+ * for why the alphabet avoids O and I.
+ *
+ * One [BasicTextField] underneath, not six. Six fields means six focus targets
+ * to hand along on every keystroke and back again on every backspace, and a
+ * pasted code that lands entirely in the first one. So the real field is
+ * invisible, laid over the cells at [Modifier.matchParentSize], and the cells
+ * are only ever a picture of what it holds.
+ */
+@Composable
+private fun PartyCodeField(
+    code: String,
+    onCodeChange: (String) -> Unit,
+    enabled: Boolean,
+    onSubmit: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    // Rebuilt on every change so the selection is pinned back to the end. The
+    // field spans the whole row and shows nothing, so without this a tap
+    // anywhere along it would drop the caret into the middle of the code and
+    // the next character would appear in a cell that isn't the lit one.
+    val field = remember(code) { TextFieldValue(code, TextRange(code.length)) }
+
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            repeat(ListenTogether.CODE_LENGTH) { index ->
+                CodeCell(
+                    char = code.getOrNull(index),
+                    // Only ever one cell, and only while the keyboard is up: a
+                    // ring left lit on a field nobody is typing into reads as
+                    // something being wrong with it.
+                    active = focused && index == code.length.coerceAtMost(ListenTogether.CODE_LENGTH - 1),
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        BasicTextField(
+            value = field,
+            onValueChange = { onCodeChange(it.text) },
+            enabled = enabled,
+            singleLine = true,
+            // Both invisible: the cells are where the typing shows up, and a
+            // second caret drifting along behind them would be the giveaway
+            // that this is one field wearing a costume.
+            textStyle = TextStyle(color = Color.Transparent),
+            cursorBrush = SolidColor(Color.Transparent),
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.Characters,
+                imeAction = ImeAction.Done,
+            ),
+            keyboardActions = KeyboardActions(
+                onDone = { if (code.length == ListenTogether.CODE_LENGTH) onSubmit() },
+            ),
+            modifier = Modifier
+                .matchParentSize()
+                .onFocusChanged { focused = it.isFocused },
+        )
+    }
+}
+
+/** One character's worth of [PartyCodeField]. */
+@Composable
+private fun CodeCell(
+    char: Char?,
+    active: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    // Animated because the ring moves cell to cell as the code is typed, and a
+    // border that simply appears one box to the right on each keystroke reads
+    // as flicker rather than as travel.
+    val ring by animateColorAsState(
+        targetValue = when {
+            !enabled -> Color.Transparent
+            active -> MaterialTheme.colorScheme.primary
+            char != null -> MaterialTheme.colorScheme.outline
+            else -> Color.Transparent
+        },
+        label = "party code cell ring",
+    )
+    Box(
+        modifier = modifier
+            .height(52.dp)
+            // The page background, not surfaceVariant: the card these sit in is
+            // surfaceVariant, so six cells in that colour would be six cells
+            // nobody can see.
+            .background(MaterialTheme.colorScheme.background, CODE_CELL_SHAPE)
+            .border(1.5.dp, ring, CODE_CELL_SHAPE),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (char != null) {
+            Text(
+                text = char.toString(),
+                style = MaterialTheme.typography.titleLarge,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onBackground
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        } else if (active) {
+            // A caret, and only in the empty cell being typed into — once there
+            // is a character to show, the character already answers "where am I".
+            val blink = rememberInfiniteTransition(label = "party code caret")
+            val alpha by blink.animateFloat(
+                initialValue = 1f,
+                targetValue = 0f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(durationMillis = 600, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "party code caret alpha",
+            )
+            Box(
+                Modifier
+                    .size(width = 2.dp, height = 22.dp)
+                    .background(
+                        MaterialTheme.colorScheme.primary.copy(alpha = alpha),
+                        RoundedCornerShape(1.dp),
+                    ),
+            )
         }
     }
 }

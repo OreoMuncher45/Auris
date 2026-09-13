@@ -443,6 +443,8 @@
     <string name="starting">Starting</string>
     <string name="start_radio">Start radio</string>
     <string name="playing_radio">Playing %1$s Radio</string>
+    <string name="playing_from">Playing from %1$s</string>
+    <string name="shared_link">Shared link</string>
     <string name="radio_started">%1$s radio started</string>
     <string name="saved_to_bitchord_folder">Saved to Music/BitChord</string>
     <string name="nothing_downloading">Nothing downloading</string>

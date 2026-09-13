@@ -674,4 +674,44 @@
     <string name="use_this_profile">ใช้โปรไฟล์นี้</string>
     <string name="switch_profile_hint">สลับโดยใช้รูปโปรไฟล์ แล้วใช้โปรไฟล์นี้</string>
     <string name="profile_unavailable">ยังไม่มีโปรไฟล์ที่ลงชื่อเข้าใช้ในหน้านี้</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">ฟังด้วยกัน</string>
+    <string name="listen_together_subtitle">แชร์รหัสแล้วเล่นเพลงเดียวกันพร้อมกัน</string>
+    <string name="listen_together_in_party">อยู่ในปาร์ตี้ · %1$s</string>
+    <string name="listen_together_sign_in_footer">การฟังด้วยกันต้องมีบัญชี เพื่อให้ทุกคนในปาร์ตี้เห็นว่ามีใครอยู่ด้วย</string>
+    <string name="listen_together_server">เซิร์ฟเวอร์ปาร์ตี้</string>
+    <string name="listen_together_server_online">ออนไลน์ · %1$d มิลลิวินาที</string>
+    <string name="listen_together_server_offline">ติดต่อไม่ได้ในตอนนี้</string>
+    <string name="listen_together_server_checking">กำลังตรวจสอบ…</string>
+    <string name="listen_together_server_unknown">แตะเพื่อตรวจสอบ</string>
+    <string name="listen_together_custom_server">ใช้เซิร์ฟเวอร์ของคุณเอง</string>
+    <string name="listen_together_custom_server_footer">เว้นว่างไว้เพื่อใช้เซิร์ฟเวอร์ที่มีมาให้ ถ้าคุณรันสำเนาของตัวเอง ทุกคนในปาร์ตี้ต้องชี้ไปที่เซิร์ฟเวอร์เดียวกัน</string>
+    <string name="listen_together_using_builtin">กำลังใช้เซิร์ฟเวอร์ที่มีมาให้</string>
+    <string name="listen_together_create">สร้างปาร์ตี้</string>
+    <string name="listen_together_create_subtitle">รับรหัสไปแชร์กับเพื่อน</string>
+    <string name="listen_together_create_footer">คุณจะได้รหัสหกตัวอักษร ใครที่มีรหัสก็เข้าร่วมได้ สูงสุดห้าเครื่องรวมเครื่องของคุณ</string>
+    <string name="listen_together_join">เข้าร่วมปาร์ตี้</string>
+    <string name="listen_together_join_action">เข้าร่วม</string>
+    <string name="listen_together_code_hint">ตัวอักษรหรือตัวเลขหกตัว</string>
+    <string name="listen_together_code">รหัสปาร์ตี้</string>
+    <string name="listen_together_code_footer">อ่านออกเสียงหรือส่งให้ก็ได้ ไม่ใช้ตัว O และ I ดังนั้น “โอ” คือเลขศูนย์เสมอ</string>
+    <string name="copy_code">คัดลอกรหัส</string>
+    <string name="listen_together_share_text">มาฟังกับฉันใน BitChord — รหัสปาร์ตี้ %1$s</string>
+    <string name="listen_together_now_playing">กำลังเล่น</string>
+    <string name="listen_together_nothing_playing">ยังไม่มีอะไรเล่น</string>
+    <string name="listen_together_listening">กำลังฟัง · %1$d จาก %2$d</string>
+    <string name="listen_together_members_footer">ปาร์ตี้รับได้ %1$d เครื่อง ใครที่อยู่ในนั้นก็ควบคุมเพลงได้</string>
+    <string name="listen_together_you">คุณ</string>
+    <string name="listen_together_host">เจ้าของปาร์ตี้</string>
+    <string name="listen_together_away">ไม่อยู่ — ที่นั่งยังถูกจองไว้</string>
+    <string name="listen_together_leave">ออกจากปาร์ตี้</string>
+    <string name="listen_together_leave_subtitle">คนอื่นยังฟังต่อไป</string>
+    <string name="listen_together_reconnecting">กำลังเชื่อมต่ออีกครั้ง…</string>
+    <string name="listen_together_syncing_clock">กำลังวัดเวลา…</string>
+    <string name="listen_together_in_sync">ตรงกัน · ไปกลับ %1$d มิลลิวินาที</string>
+    <string name="listen_together_jam">แจมของ %1$s</string>
+    <string name="listen_together_jam_unnamed">กำลังฟังด้วยกัน</string>
+    <string name="listen_together_open">ฟังด้วยกัน</string>
+    <string name="listen_together_open_count">กำลังฟังด้วยกัน · %1$d</string>
 </resources>

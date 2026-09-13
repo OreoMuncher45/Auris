@@ -674,4 +674,44 @@
     <string name="use_this_profile">Usar este perfil</string>
     <string name="switch_profile_hint">Cambia con el avatar y luego usa este perfil.</string>
     <string name="profile_unavailable">Aún no hay un perfil con sesión iniciada en esta página.</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">Escuchar juntos</string>
+    <string name="listen_together_subtitle">Comparte un código para escuchar la misma música al mismo tiempo</string>
+    <string name="listen_together_in_party">En una fiesta · %1$s</string>
+    <string name="listen_together_sign_in_footer">Escuchar juntos requiere una cuenta, para que todos en la fiesta vean quién más está.</string>
+    <string name="listen_together_server">Servidor de la fiesta</string>
+    <string name="listen_together_server_online">En línea · %1$d ms</string>
+    <string name="listen_together_server_offline">Ahora mismo no responde</string>
+    <string name="listen_together_server_checking">Comprobando…</string>
+    <string name="listen_together_server_unknown">Toca para comprobar</string>
+    <string name="listen_together_custom_server">Usar tu propio servidor</string>
+    <string name="listen_together_custom_server_footer">Déjalo vacío para usar el servidor integrado. Si tienes tu propia copia, todos en la fiesta deben apuntar al mismo.</string>
+    <string name="listen_together_using_builtin">Usando el servidor integrado</string>
+    <string name="listen_together_create">Crear una fiesta</string>
+    <string name="listen_together_create_subtitle">Consigue un código para compartir con tus amigos</string>
+    <string name="listen_together_create_footer">Recibes un código de seis caracteres. Cualquiera que lo tenga puede unirse, hasta cinco dispositivos incluido el tuyo.</string>
+    <string name="listen_together_join">Unirse a una fiesta</string>
+    <string name="listen_together_join_action">Unirse</string>
+    <string name="listen_together_code_hint">Seis letras o números</string>
+    <string name="listen_together_code">Código de la fiesta</string>
+    <string name="listen_together_code_footer">Dilo en voz alta o envíalo. La O y la I no se usan, así que una «o» siempre es un cero.</string>
+    <string name="copy_code">Copiar código</string>
+    <string name="listen_together_share_text">Escucha conmigo en BitChord — código de fiesta %1$s</string>
+    <string name="listen_together_now_playing">Reproduciendo</string>
+    <string name="listen_together_nothing_playing">Todavía no suena nada</string>
+    <string name="listen_together_listening">Escuchando · %1$d de %2$d</string>
+    <string name="listen_together_members_footer">Una fiesta admite %1$d dispositivos. Cualquiera que esté en ella puede controlar la música.</string>
+    <string name="listen_together_you">Tú</string>
+    <string name="listen_together_host">Anfitrión</string>
+    <string name="listen_together_away">Ausente — su plaza está reservada</string>
+    <string name="listen_together_leave">Salir de la fiesta</string>
+    <string name="listen_together_leave_subtitle">Los demás siguen escuchando</string>
+    <string name="listen_together_reconnecting">Reconectando…</string>
+    <string name="listen_together_syncing_clock">Midiendo el reloj…</string>
+    <string name="listen_together_in_sync">Sincronizado · %1$d ms de ida y vuelta</string>
+    <string name="listen_together_jam">Jam de %1$s</string>
+    <string name="listen_together_jam_unnamed">Escuchando juntos</string>
+    <string name="listen_together_open">Escuchar juntos</string>
+    <string name="listen_together_open_count">Escuchando juntos · %1$d</string>
 </resources>

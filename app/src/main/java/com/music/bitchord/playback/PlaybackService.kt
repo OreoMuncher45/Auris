@@ -129,6 +129,10 @@ const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
 /** Session command used by the media notification's Shuffle button. */
 const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 
+/** Session actions exposed to Android Auto for the track that is playing. */
+const val ACTION_START_STATION = "com.music.bitchord.action.START_STATION"
+const val ACTION_REVERT_TO_ORIGINAL = "com.music.bitchord.action.REVERT_TO_ORIGINAL"
+
 /** Session commands bracketing an explicit radio queue replacement. */
 const val ACTION_BEGIN_RADIO_QUEUE = "com.music.bitchord.action.BEGIN_RADIO_QUEUE"
 const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QUEUE"
@@ -149,6 +153,14 @@ const val ACTION_REORDER_QUEUE = "com.music.bitchord.action.REORDER_QUEUE"
 /** Where the rearrangement starts, and where each slot's new occupant stands now. */
 const val EXTRA_REORDER_FROM = "bitchord.reorder.from"
 const val EXTRA_REORDER_ORDER = "bitchord.reorder.order"
+
+/** A full first page for an explicitly requested station. */
+private const val INITIAL_STATION_TRACKS = 24
+
+private fun Song.canStartStation(): Boolean =
+    videoId.isNotBlank() &&
+        !videoId.startsWith("content://") &&
+        !videoId.startsWith("file://")
 
 /**
  * Background playback via Media3. A [MediaLibraryService] gives us the media
@@ -435,12 +447,15 @@ class PlaybackService : MediaLibraryService() {
     private val favoriteCommand = SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY)
     private val autoplayCommand = SessionCommand(ACTION_TOGGLE_AUTOPLAY, Bundle.EMPTY)
     private val shuffleCommand = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
+    private val startStationCommand = SessionCommand(ACTION_START_STATION, Bundle.EMPTY)
+    private val revertToOriginalCommand = SessionCommand(ACTION_REVERT_TO_ORIGINAL, Bundle.EMPTY)
     private val beginRadioQueueCommand = SessionCommand(ACTION_BEGIN_RADIO_QUEUE, Bundle.EMPTY)
     private val commitRadioQueueCommand = SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY)
     private val upgradeQualityCommand = SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY)
     private val reorderQueueCommand = SessionCommand(ACTION_REORDER_QUEUE, Bundle.EMPTY)
 
     private var favoriteActionJob: Job? = null
+    private var stationActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
     private var autoplaySeed: String? = null
 
@@ -703,6 +718,11 @@ class PlaybackService : MediaLibraryService() {
                 listenBrainzSong = null
                 listenBrainzStartMs = 0L
                 listenBrainzDurationMs = null
+                // A missed/empty AutoPlay response can let the last queued
+                // track finish before anything is appended. There will be no
+                // item transition to run the ordinary refill path, so give the
+                // still-enabled empty queue another chance here.
+                refreshAutoplayIfQueueEmpty()
             }
         }
 
@@ -743,6 +763,10 @@ class PlaybackService : MediaLibraryService() {
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                 saveQueueSnapshot(exoPlayer)
                 mediaSession?.setCustomLayout(notificationButtons())
+                // Queue edits can remove AutoPlay's whole tail while leaving
+                // its old seed memoized. Detect that state at its source and
+                // make the current track eligible for a fresh load.
+                refreshAutoplayIfQueueEmpty()
             }
         }
     }
@@ -903,9 +927,9 @@ class PlaybackService : MediaLibraryService() {
                 .apply { setSmallIcon(R.drawable.ic_notification_logo) },
         )
 
-        // The player screen toggles QueueShuffle directly on its MediaController.
-        // Observe the shared state here so the notification's Shuffle icon and
-        // label follow that toggle immediately as well.
+        // Both the player screen and notification route their Shuffle command
+        // here. Observe its state so either surface's icon follows the queue
+        // edit once that single service-side transaction has completed.
         scope.launch {
             QueueShuffle.enabled
                 .collectLatest {
@@ -1291,14 +1315,29 @@ class PlaybackService : MediaLibraryService() {
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
         )
 
-    /**
-     * The one custom layout advertised to all Media3 control surfaces.
-     *
-     * AutoPlay is deliberately not here. It stays a player-screen control: the
-     * session command remains available so [toggleAutoplay] still routes through
-     * this service, it just isn't offered as a notification button.
-     */
+    /** The custom actions advertised to Android Auto and the media notification. */
     private fun notificationButtons(): List<CommandButton> {
+        val current = player?.currentMediaItem?.toSong()
+        val station = current
+            ?.takeIf { it.canStartStation() }
+            ?.let {
+                CommandButton.Builder(CommandButton.ICON_RADIO)
+                    .setSessionCommand(startStationCommand)
+                    .setDisplayName(getString(R.string.start_radio))
+                    .build()
+            }
+        val revert = current
+            ?.takeIf {
+                it.hasYouTubeOriginal() &&
+                    it.localUri == null &&
+                    !OriginalVersion.isPinned(it.videoId)
+            }
+            ?.let {
+                CommandButton.Builder(CommandButton.ICON_SYNC)
+                    .setSessionCommand(revertToOriginalCommand)
+                    .setDisplayName(getString(R.string.revert_to_original))
+                    .build()
+            }
         val favorite = CommandButton.Builder(
             if (LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE) {
                 CommandButton.ICON_HEART_FILLED
@@ -1320,10 +1359,90 @@ class PlaybackService : MediaLibraryService() {
             .setSessionCommand(shuffleCommand)
             .setDisplayName(if (shuffleEnabled) "Shuffle off" else "Shuffle on")
             .build()
-        return listOf(favorite, shuffle)
+        // Android Auto may show only the first few custom actions without an
+        // overflow affordance, so the two car-specific recovery/navigation
+        // actions lead the list. The existing notification actions remain
+        // available on surfaces with room for them.
+        return listOfNotNull(station, revert, favorite, shuffle)
     }
 
-    private fun toggleShuffleFromNotification() {
+    /**
+     * Replaces everything around the current track with its YouTube Music
+     * radio. The playing item itself is retained, so asking from Android Auto
+     * does not restart the song or lose the current position.
+     */
+    private fun startStationFromSession() {
+        val originalPlayer = player ?: return
+        val currentItem = originalPlayer.currentMediaItem ?: return
+        val seed = currentItem.toSong().takeIf { it.canStartStation() } ?: return
+        val originalManualQueue = (0 until originalPlayer.mediaItemCount)
+            .map { originalPlayer.getMediaItemAt(it) }
+            .filterNot { it.fromAutoplay }
+            .map { it.mediaId }
+
+        stationActionJob?.cancel()
+        stationActionJob = scope.launch {
+            val radioSeed = seed.copy(radioName = seed.title)
+            val related = loadAutoplayTracks(
+                existing = listOf(radioSeed),
+                seedSong = radioSeed,
+                limit = INITIAL_STATION_TRACKS,
+            ).getOrElse {
+                TrackLog.w(
+                    "BitChord",
+                    "Android Auto station failed: ${it.message}",
+                    about = seed.videoId,
+                )
+                return@launch
+            }
+            if (related.isEmpty()) return@launch
+
+            val activePlayer = player ?: return@launch
+            val activeManualQueue = (0 until activePlayer.mediaItemCount)
+                .map { activePlayer.getMediaItemAt(it) }
+                .filterNot { it.fromAutoplay }
+                .map { it.mediaId }
+            if (activePlayer.currentMediaItem?.mediaId != currentItem.mediaId ||
+                activeManualQueue != originalManualQueue
+            ) {
+                return@launch
+            }
+
+            beginRadioQueue()
+            val currentIndex = activePlayer.currentMediaItemIndex
+            if (currentIndex + 1 < activePlayer.mediaItemCount) {
+                activePlayer.removeMediaItems(currentIndex + 1, activePlayer.mediaItemCount)
+            }
+            if (currentIndex > 0) activePlayer.removeMediaItems(0, currentIndex)
+            activePlayer.addMediaItems(1, related.map { it.toMediaItem() })
+            saveQueueSnapshotImmediately(activePlayer)
+        }
+    }
+
+    /** Reopens the current song through YouTube and remembers that choice. */
+    private fun revertCurrentToOriginal() {
+        val activePlayer = player ?: return
+        val index = activePlayer.currentMediaItemIndex
+        if (index !in 0 until activePlayer.mediaItemCount) return
+        val song = activePlayer.currentMediaItem?.toSong() ?: return
+        if (!song.hasYouTubeOriginal() ||
+            song.localUri != null ||
+            OriginalVersion.isPinned(song.videoId)
+        ) {
+            return
+        }
+
+        OriginalVersion.pin(song.videoId)
+        val position = activePlayer.currentPosition
+        val wasPlaying = activePlayer.isPlaying
+        swappingMediaId = song.videoId
+        activePlayer.replaceMediaItem(index, song.toDirectYouTubeMediaItem())
+        activePlayer.seekTo(index, position)
+        if (wasPlaying) activePlayer.play()
+        mediaSession?.setCustomLayout(notificationButtons())
+    }
+
+    private fun toggleShuffleFromSession() {
         player?.let(QueueShuffle::toggle)
         mediaSession?.setCustomLayout(notificationButtons())
     }
@@ -1371,28 +1490,76 @@ class PlaybackService : MediaLibraryService() {
         if (autoplaySeed == current.videoId) return
         autoplaySeed = current.videoId
         autoplayLoadJob = scope.launch {
-            val queueSongs = (0 until exoPlayer.mediaItemCount)
-                .map { exoPlayer.getMediaItemAt(it).toSong() }
-            val existing = if (AppSettings.dontRepeatSuggestions.value) {
-                queueSongs + sessionSongHistory
-            } else {
-                queueSongs
-            }
-            loadAutoplayTracks(existing, current, needed)
-                .onSuccess { resolved ->
-                    val activePlayer = player ?: return@onSuccess
-                    if (!AppSettings.autoplay.value ||
-                        activePlayer.currentMediaItem?.mediaId != current.videoId
-                    ) {
-                        return@onSuccess
-                    }
-                    activePlayer.addMediaItems(resolved.map { it.toMediaItem() })
+            var remaining = needed
+            var emptyRefreshesRemaining = MAX_AUTOPLAY_EMPTY_REFRESHES
+            while (isActive) {
+                val activePlayer = player ?: return@launch
+                if (!AppSettings.autoplay.value ||
+                    activePlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+                    activePlayer.currentMediaItem?.mediaId != current.videoId
+                ) {
+                    return@launch
+                }
+                val queueSongs = (0 until activePlayer.mediaItemCount)
+                    .map { activePlayer.getMediaItemAt(it).toSong() }
+                val existing = if (AppSettings.dontRepeatSuggestions.value) {
+                    queueSongs + sessionSongHistory
+                } else {
+                    queueSongs
+                }
+                val result = loadAutoplayTracks(existing, current, remaining)
+                val resolved = result.getOrElse {
+                    TrackLog.w(
+                        "BitChord",
+                        "notification autoplay failed: ${it.message}",
+                        about = current.videoId,
+                    )
+                    emptyList()
+                }
+                val latestPlayer = player ?: return@launch
+                if (!AppSettings.autoplay.value ||
+                    latestPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+                    latestPlayer.currentMediaItem?.mediaId != current.videoId
+                ) {
+                    return@launch
+                }
+                if (resolved.isNotEmpty()) {
+                    latestPlayer.addMediaItems(resolved.map { it.toMediaItem() })
                     if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
+                    return@launch
                 }
-                .onFailure {
-                    TrackLog.w("BitChord", "notification autoplay failed: ${it.message}", about = current.videoId)
-                }
+
+                // Empty and failed responses used to leave [autoplaySeed]
+                // latched to this track, suppressing every later callback and
+                // leaving AutoPlay visibly on with no queue. While the current
+                // item is genuinely the end of the queue, make a delayed fresh
+                // request. Keep it bounded: a radio with no usable unique songs
+                // must not turn into a permanent background polling loop.
+                val at = latestPlayer.currentMediaItemIndex
+                if (at < 0 || at != latestPlayer.mediaItemCount - 1) return@launch
+                if (emptyRefreshesRemaining-- <= 0) return@launch
+                delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
+                remaining = MAX_QUEUED_AUTOPLAY
+            }
         }
+    }
+
+    /** Re-arms AutoPlay when an external queue edit exposes an empty tail. */
+    private fun refreshAutoplayIfQueueEmpty() {
+        val exoPlayer = player ?: return
+        if (!autoplayQueueNeedsRefresh(
+                enabled = AppSettings.autoplay.value,
+                repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
+                currentIndex = exoPlayer.currentMediaItemIndex,
+                itemCount = exoPlayer.mediaItemCount,
+                loadInProgress = autoplayLoadJob?.isActive == true,
+            )
+        ) {
+            return
+        }
+        autoplayLoadJob = null
+        autoplaySeed = null
+        loadAutoplayForCurrentTrack()
     }
 
     /**
@@ -3881,10 +4048,12 @@ class PlaybackService : MediaLibraryService() {
     private fun applySettings(player: ExoPlayer) {
         player.skipSilenceEnabled = AppSettings.skipSilence.value
         player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
-        // Restore persisted shuffle and repeat states on startup.
-        if (AppSettings.shuffleEnabled.value) {
-            QueueShuffle.setEnabled(true)
-        }
+        // Restore persisted shuffle and repeat states on startup. Assign both
+        // values: Android can destroy and recreate the service while retaining
+        // this process, so QueueShuffle's process-wide object may still hold
+        // the previous service instance's value. Only assigning `true` made a
+        // stale enabled state consume the first tap meant to enable Shuffle.
+        QueueShuffle.setEnabled(AppSettings.shuffleEnabled.value)
         player.repeatMode = AppSettings.repeatMode.value
     }
 
@@ -3896,19 +4065,18 @@ class PlaybackService : MediaLibraryService() {
     private fun applyOutputRoute() {
         val manager = audioManager ?: return
         val usb = preferredUsbDevice()
-        // Deliberately *not* how the output picker switches devices. This call
-        // moves our own AudioTrack and nothing else, while Android keeps one
-        // volume index per system route and applies whichever route it thinks
-        // media is on. Point the track at the speaker while the system still
-        // has STREAM_MUSIC on Bluetooth and the speaker plays at the headset's
-        // index — measured at 7/15 against the speaker's own 15/15 — with the
-        // volume slider writing the Bluetooth index, unable to reach it. See
-        // [AudioRouting], which now transfers the system route instead.
+        // This one call is the whole of output switching: nothing an app is
+        // allowed to do moves the *system's* routing, so what the picker moves
+        // is where our own AudioTrack renders. See [AudioRouting] for the two
+        // routing APIs that look like the answer and are not, and for why the
+        // sink handed over here must never be a Bluetooth SCO one.
         //
-        // It stays here for the USB DAC, which is a different thing: not "send
-        // the music somewhere else" but "when the music is already going to
-        // this DAC, hand it the bits directly".
-        val preferred = usb.takeIf { AppSettings.preferUsbDac.value }
+        // An explicit choice outranks the USB-DAC preference, which is a
+        // standing rule about what to do when nobody has said otherwise.
+        // Resolved against the devices connected *now*, so a headset that has
+        // since been unplugged stops being the answer on its own.
+        val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
+        val preferred = chosen ?: usb.takeIf { AppSettings.preferUsbDac.value }
         eachPlayer { it.setPreferredAudioDevice(preferred) }
         AudioOutputStatus.publish(
             manager = manager,
@@ -4813,6 +4981,8 @@ class PlaybackService : MediaLibraryService() {
                 .add(favoriteCommand)
                 .add(autoplayCommand)
                 .add(shuffleCommand)
+                .add(startStationCommand)
+                .add(revertToOriginalCommand)
                 .add(beginRadioQueueCommand)
                 .add(commitRadioQueueCommand)
                 .add(upgradeQualityCommand)
@@ -4832,7 +5002,9 @@ class PlaybackService : MediaLibraryService() {
         ): ListenableFuture<SessionResult> {
             when (customCommand.customAction) {
                 ACTION_TOGGLE_AUTOPLAY -> toggleAutoplayFromNotification()
-                ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromNotification()
+                ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromSession()
+                ACTION_START_STATION -> startStationFromSession()
+                ACTION_REVERT_TO_ORIGINAL -> revertCurrentToOriginal()
                 ACTION_BEGIN_RADIO_QUEUE -> beginRadioQueue()
                 ACTION_COMMIT_RADIO_QUEUE -> player?.let(::saveQueueSnapshotImmediately)
                 ACTION_UPGRADE_QUALITY -> upgradeQualityNow()
@@ -5765,5 +5937,11 @@ class PlaybackService : MediaLibraryService() {
          * before the same track is asked for again.
          */
         const val RECOVERY_DELAY_MS = 350L
+
+        /** Avoid hammering the radio endpoint while an empty AutoPlay queue heals. */
+        const val AUTOPLAY_EMPTY_REFRESH_DELAY_MS = 2_000L
+
+        /** One fresh request is the fallback; normal track/queue changes re-arm it. */
+        const val MAX_AUTOPLAY_EMPTY_REFRESHES = 1
     }
 }

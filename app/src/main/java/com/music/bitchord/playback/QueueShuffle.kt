@@ -84,8 +84,22 @@ object QueueShuffle {
         val from = player.currentMediaItemIndex + 1
         val upcoming = items.drop(from)
         val (mix, own) = upcoming.indices.partition { upcoming[it].fromAutoplay }
-        applyOrder(player, from, own.shuffled() + mix.shuffled())
+        applyOrder(player, from, shuffledSection(own) + shuffledSection(mix))
         _enabled.value = true
+    }
+
+    /**
+     * Randomises one queue section but never returns its unchanged order when
+     * at least two tracks can move. A mathematically valid identity shuffle is
+     * surprisingly common in short queues (one chance in two for two tracks),
+     * and reads exactly like the first tap was ignored.
+     */
+    private fun shuffledSection(indices: List<Int>): List<Int> =
+        avoidIdentityShuffle(indices, indices.shuffled())
+
+    internal fun avoidIdentityShuffle(original: List<Int>, shuffled: List<Int>): List<Int> {
+        if (original.size <= 1 || shuffled != original) return shuffled
+        return shuffled.drop(1) + shuffled.first()
     }
 
     /** Puts the tracks still to come back into the order they were queued in. */

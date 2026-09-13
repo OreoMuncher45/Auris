@@ -76,7 +76,8 @@ import com.music.bitchord.ui.player.MeshPalette
 fun HomeScreen(
     state: UiState<List<HomeShelf>>,
     listState: LazyListState,
-    onItemClick: (ShelfItem) -> Unit,
+    /** The tapped item and the recommendation shelf it came from. */
+    onItemClick: (ShelfItem, String) -> Unit,
     onRetry: () -> Unit,
     refreshing: Boolean,
     onRefresh: () -> Unit,
@@ -170,16 +171,17 @@ fun HomeScreen(
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
-    onItemClick: (ShelfItem) -> Unit,
+    onItemClick: (ShelfItem, String) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
     firstIsHero: Boolean = true,
 ) {
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
+            val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             if (index == 0 && firstIsHero) {
-                HeroShelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
+                HeroShelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
             } else {
-                Shelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
+                Shelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
             }
         }
     }

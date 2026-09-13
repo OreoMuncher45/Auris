@@ -693,4 +693,44 @@
     <string name="use_this_profile">Usa questo profilo</string>
     <string name="switch_profile_hint">Cambia usando l\'avatar, poi usa questo profilo.</string>
     <string name="profile_unavailable">Nessun profilo con accesso effettuato è ancora disponibile su questa pagina.</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">Ascoltare insieme</string>
+    <string name="listen_together_subtitle">Condividi un codice e ascoltate la stessa musica, in sincrono</string>
+    <string name="listen_together_in_party">In un party · %1$s</string>
+    <string name="listen_together_sign_in_footer">Per ascoltare insieme serve un account, così tutti nel party vedono chi altro c’è.</string>
+    <string name="listen_together_server">Server del party</string>
+    <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_offline">Non raggiungibile in questo momento</string>
+    <string name="listen_together_server_checking">Controllo…</string>
+    <string name="listen_together_server_unknown">Tocca per controllare</string>
+    <string name="listen_together_custom_server">Usa il tuo server</string>
+    <string name="listen_together_custom_server_footer">Lascia vuoto per usare il server integrato. Se ne gestisci una copia tua, tutti nel party devono puntare alla stessa.</string>
+    <string name="listen_together_using_builtin">Si usa il server integrato</string>
+    <string name="listen_together_create">Crea un party</string>
+    <string name="listen_together_create_subtitle">Ottieni un codice da condividere con gli amici</string>
+    <string name="listen_together_create_footer">Ricevi un codice di sei caratteri. Chi lo ha può entrare, fino a cinque dispositivi compreso il tuo.</string>
+    <string name="listen_together_join">Entra in un party</string>
+    <string name="listen_together_join_action">Entra</string>
+    <string name="listen_together_code_hint">Sei lettere o cifre</string>
+    <string name="listen_together_code">Codice del party</string>
+    <string name="listen_together_code_footer">Leggilo ad alta voce o invialo. O e I non vengono usate, quindi una «o» è sempre uno zero.</string>
+    <string name="copy_code">Copia codice</string>
+    <string name="listen_together_share_text">Ascolta con me su BitChord — codice party %1$s</string>
+    <string name="listen_together_now_playing">In riproduzione</string>
+    <string name="listen_together_nothing_playing">Ancora nulla in riproduzione</string>
+    <string name="listen_together_listening">In ascolto · %1$d di %2$d</string>
+    <string name="listen_together_members_footer">Un party ospita %1$d dispositivi. Chiunque ci sia dentro può controllare la musica.</string>
+    <string name="listen_together_you">Tu</string>
+    <string name="listen_together_host">Host</string>
+    <string name="listen_together_away">Assente — il posto è tenuto</string>
+    <string name="listen_together_leave">Esci dal party</string>
+    <string name="listen_together_leave_subtitle">Gli altri continuano ad ascoltare</string>
+    <string name="listen_together_reconnecting">Riconnessione…</string>
+    <string name="listen_together_syncing_clock">Misurazione dell’orologio…</string>
+    <string name="listen_together_in_sync">In sincrono · %1$d ms di andata e ritorno</string>
+    <string name="listen_together_jam">Jam di %1$s</string>
+    <string name="listen_together_jam_unnamed">Ascolto insieme</string>
+    <string name="listen_together_open">Ascolta insieme</string>
+    <string name="listen_together_open_count">Ascolto insieme · %1$d</string>
 </resources>

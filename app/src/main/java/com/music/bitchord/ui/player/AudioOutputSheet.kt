@@ -79,6 +79,7 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private val DRAWER_SHAPE = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
@@ -102,9 +103,10 @@ private val SCRIM_COLOR = Color.Black.copy(alpha = 0.5f)
  * A drawer off the bottom edge, as the rest of the app's sheets are: dark over
  * a scrim, a grab handle, grouped rows with generous radii, drag down to put it
  * away. No Material surfaces and no tonal elevation anywhere. The *arrangement*
- * is borrowed from vivi-music — active device, the others folded away behind a
- * chevron, volume underneath — because it is the right shape for the job; none
- * of its Material styling is.
+ * is borrowed from vivi-music — the outputs, then volume — because it is the
+ * right shape for the job; none of its Material styling is. Vivi folds all but
+ * the active device behind a chevron and this does not: on a phone there are
+ * usually two, so the disclosure costs a tap to reveal a single row.
  */
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
@@ -120,9 +122,6 @@ internal fun AudioOutputSheet(
     }
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val outputs = rememberAudioOutputs()
-    val active = outputs.firstOrNull { it.isActive }
-    val others = outputs.filterNot { it.isActive }
-    var expanded by remember { mutableStateOf(false) }
 
     // How far the drawer has been dragged down, in pixels. Released, it either
     // springs back or goes — see [DISMISS_DRAG_FRACTION].
@@ -246,7 +245,7 @@ internal fun AudioOutputSheet(
             }
 
             Spacer(Modifier.height(10.dp))
-            VolumeRow(manager)
+            VolumeRow(manager, routeKey = outputs)
         }
         }
     }
@@ -328,17 +327,39 @@ private fun OutputRow(
 /**
  * The phone's media volume, on the player's own slider rather than Material's.
  *
- * Tracked through a broadcast as well as written, so the hardware keys move the
- * bar while the sheet is open.
+ * Two things move it, and only one of them announces itself. The hardware keys
+ * broadcast `VOLUME_CHANGED_ACTION`, which is easy. A *route* change does not:
+ * Android keeps one media volume index per output and silently swaps which one
+ * is in force, so the number behind this bar changes with no event at all. Read
+ * once at composition, as this was, the bar went on showing the level of the
+ * device the listener had just moved away from.
+ *
+ * So [routeKey] — the outputs and the current choice — re-reads it, and re-reads
+ * it again a beat later, because the framework swaps the index a moment after
+ * the device list changes rather than in the same breath.
  */
 @Composable
-private fun VolumeRow(manager: AudioManager) {
-    val max = remember(manager) { manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1) }
+private fun VolumeRow(manager: AudioManager, routeKey: Any) {
+    var max by remember(manager) {
+        mutableIntStateOf(manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1))
+    }
     var level by remember(manager) {
         mutableFloatStateOf(manager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max)
     }
     var dragging by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
+    LaunchedEffect(routeKey) {
+        repeat(VOLUME_REREADS) {
+            // Never over a finger: the listener's own drag is the one source
+            // of truth this must not fight.
+            if (!dragging) {
+                max = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+                level = manager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / max
+            }
+            delay(VOLUME_REREAD_GAP_MS)
+        }
+    }
 
     DisposableEffect(manager) {
         val receiver = object : android.content.BroadcastReceiver() {
@@ -398,6 +419,10 @@ private fun iconFor(kind: AudioRouting.Kind): ImageVector = when (kind) {
 
 /** Not in the SDK as a constant, but this is the action AudioManager broadcasts. */
 private const val VOLUME_CHANGED_ACTION = "android.media.VOLUME_CHANGED_ACTION"
+
+/** How many times the level is re-read after a route change, and how far apart. */
+private const val VOLUME_REREADS = 4
+private const val VOLUME_REREAD_GAP_MS = 250L
 
 /**
  * How much of its own height the drawer has to be dragged before letting go

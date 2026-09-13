@@ -627,4 +627,44 @@
         <item>歌词正在拼凑完成</item>
         <item>就快找到歌词了</item>
     </string-array>
+
+    <!-- Listen together -->
+    <string name="listen_together">一起听</string>
+    <string name="listen_together_subtitle">分享一个代码，同步播放同一首音乐</string>
+    <string name="listen_together_in_party">派对中 · %1$s</string>
+    <string name="listen_together_sign_in_footer">一起听需要账号，这样派对里的每个人都能看到还有谁在。</string>
+    <string name="listen_together_server">派对服务器</string>
+    <string name="listen_together_server_online">在线 · %1$d 毫秒</string>
+    <string name="listen_together_server_offline">目前无法连接</string>
+    <string name="listen_together_server_checking">正在检查…</string>
+    <string name="listen_together_server_unknown">点按以检查</string>
+    <string name="listen_together_custom_server">使用自己的服务器</string>
+    <string name="listen_together_custom_server_footer">留空则使用内置服务器。如果你运行自己的副本，派对中的所有人都必须指向同一个。</string>
+    <string name="listen_together_using_builtin">正在使用内置服务器</string>
+    <string name="listen_together_create">创建派对</string>
+    <string name="listen_together_create_subtitle">获取代码，分享给朋友</string>
+    <string name="listen_together_create_footer">你会得到一个六位代码。拿到代码的人都能加入，包括你自己最多五台设备。</string>
+    <string name="listen_together_join">加入派对</string>
+    <string name="listen_together_join_action">加入</string>
+    <string name="listen_together_code_hint">六位字母或数字</string>
+    <string name="listen_together_code">派对代码</string>
+    <string name="listen_together_code_footer">读出来或发出去。字母 O 和 I 不会用到，所以“欧”永远是零。</string>
+    <string name="copy_code">复制代码</string>
+    <string name="listen_together_share_text">在 BitChord 上和我一起听 — 派对代码 %1$s</string>
+    <string name="listen_together_now_playing">正在播放</string>
+    <string name="listen_together_nothing_playing">还没有播放任何内容</string>
+    <string name="listen_together_listening">正在收听 · %1$d / %2$d</string>
+    <string name="listen_together_members_footer">一个派对可容纳 %1$d 台设备。其中任何人都可以控制音乐。</string>
+    <string name="listen_together_you">你</string>
+    <string name="listen_together_host">主持人</string>
+    <string name="listen_together_away">暂离 — 位置为其保留</string>
+    <string name="listen_together_leave">离开派对</string>
+    <string name="listen_together_leave_subtitle">其他人继续收听</string>
+    <string name="listen_together_reconnecting">正在重新连接…</string>
+    <string name="listen_together_syncing_clock">正在校准时钟…</string>
+    <string name="listen_together_in_sync">已同步 · 往返 %1$d 毫秒</string>
+    <string name="listen_together_jam">%1$s 的同听</string>
+    <string name="listen_together_jam_unnamed">一起听</string>
+    <string name="listen_together_open">一起听</string>
+    <string name="listen_together_open_count">一起听 · %1$d</string>
 </resources>

@@ -149,6 +149,7 @@ import com.music.bitchord.playback.toMediaItem
 import com.music.bitchord.playback.toSong
 import com.music.bitchord.playback.toDirectYouTubeMediaItem
 import com.music.bitchord.playback.toggleAutoplay
+import com.music.bitchord.playback.toggleShuffle
 import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
@@ -726,6 +727,10 @@ private fun BitChordApp(
     val exploreLabel = stringResource(R.string.explore)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
+    val historyLabel = stringResource(R.string.history)
+    val replayLabel = stringResource(R.string.replay)
+    val queueLabel = stringResource(R.string.queue)
+    val sharedLinkLabel = stringResource(R.string.shared_link)
     val tabs = remember(playLabel, exploreLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(playLabel, BitChordIcons.Play),
@@ -737,13 +742,26 @@ private fun BitChordApp(
 
     val scope = rememberCoroutineScope()
 
-    val play: (List<Song>, Int) -> Unit = { songs, index ->
+    val playFrom: (List<Song>, Int, String) -> Unit = { songs, index, source ->
         playRequestGeneration++
         activeRadioSeed = null
         scope.launch {
-            controller?.playSongs(songs, index)
+            controller?.playSongs(
+                songs.map { it.copy(playbackSource = source) },
+                index,
+            )
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
+    }
+    // Kept for entry points whose rows already carry their origin (notably a
+    // collection action fetched before this callback). The explicit wrappers
+    // below are preferred because a track's album is not necessarily where it
+    // was played from.
+    val play: (List<Song>, Int) -> Unit = { songs, index ->
+        val source = songs.getOrNull(index)?.playbackSource
+            ?: songs.getOrNull(index)?.albumName
+            ?: queueLabel
+        playFrom(songs, index, source)
     }
     LaunchedEffect(player.song?.videoId) {
         if (activeRadioSeed?.first != player.song?.videoId) activeRadioSeed = null
@@ -761,11 +779,11 @@ private fun BitChordApp(
      * remixes of the same song. Album, artist and playlist pages keep [play],
      * where the surrounding list *is* the thing the user asked for.
      */
-    val playRadio: (Song) -> Unit = { song ->
+    val playRadio: (Song, String) -> Unit = { song, source ->
         playRequestGeneration++
         activeRadioSeed = null
         scope.launch {
-            controller?.playSongs(listOf(song), 0)
+            controller?.playSongs(listOf(song.copy(playbackSource = source)), 0)
             // Start radio in the mini-player; the user opens the full view by tapping it.
         }
     }
@@ -850,7 +868,11 @@ private fun BitChordApp(
             // The end of what the user queued, not the end of the queue: a song
             // asked for by name outranks whatever AutoPlay lined up behind it.
             controller?.let {
-                val queued = song.copy(radioName = it.currentMediaItem?.toSong()?.radioName)
+                val current = it.currentMediaItem?.toSong()
+                val queued = song.copy(
+                    radioName = current?.radioName,
+                    playbackSource = song.playbackSource ?: current?.playbackSource ?: queueLabel,
+                )
                 it.addMediaItem(it.autoplaySectionStart(), queued.toMediaItem())
             }
         }
@@ -858,7 +880,11 @@ private fun BitChordApp(
     val playNext: (Song) -> Unit = { song ->
         scope.launch {
             controller?.let {
-                val queued = song.copy(radioName = it.currentMediaItem?.toSong()?.radioName)
+                val current = it.currentMediaItem?.toSong()
+                val queued = song.copy(
+                    radioName = current?.radioName,
+                    playbackSource = song.playbackSource ?: current?.playbackSource ?: queueLabel,
+                )
                 it.addMediaItem(
                     (it.currentMediaItemIndex + 1).coerceAtMost(it.mediaItemCount),
                     queued.toMediaItem(),
@@ -1005,7 +1031,7 @@ private fun BitChordApp(
                     // A link is one song named on purpose, which is exactly the
                     // case [playRadio] exists for: play it and let AutoPlay
                     // carry on, rather than queueing something around it.
-                    playRadio(song)
+                    playRadio(song, sharedLinkLabel)
                 }
             }
             is LinkRequest.Page -> {
@@ -1021,7 +1047,7 @@ private fun BitChordApp(
                 }
                 val top = songs?.firstOrNull()?.song
                 if (top != null) {
-                    playRadio(top)
+                    playRadio(top, searchLabel)
                 } else {
                     // Either the link was a search to look at, or "play X"
                     // found nothing to start — and the results are a better
@@ -1112,10 +1138,15 @@ private fun BitChordApp(
     val withBrowseSongs: (BrowseTarget, (List<Song>) -> Unit) -> Unit = { target, action ->
         val stamp: (List<Song>) -> Unit = { songs ->
             action(
-                if (target.type == BrowseType.ALBUM) {
-                    songs.map { it.copy(albumName = it.albumName ?: target.title) }
-                } else {
-                    songs
+                songs.map { song ->
+                    song.copy(
+                        albumName = if (target.type == BrowseType.ALBUM) {
+                            song.albumName ?: target.title
+                        } else {
+                            song.albumName
+                        },
+                        playbackSource = target.title,
+                    )
                 },
             )
         }
@@ -1456,7 +1487,15 @@ private fun BitChordApp(
                     convertedFromVideo = song
                     convertedAudioId = audio.videoId
                     TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
-                    c.replaceMediaItem(index, audio.copy(isVideoOrigin = true).toMediaItem())
+                    c.replaceMediaItem(
+                        index,
+                        audio.copy(
+                            isVideoOrigin = true,
+                            fromAutoplay = song.fromAutoplay,
+                            radioName = song.radioName,
+                            playbackSource = song.playbackSource,
+                        ).toMediaItem(),
+                    )
                     c.seekTo(index, position)
                     if (wasPlaying) c.play()
                 }
@@ -1517,7 +1556,10 @@ private fun BitChordApp(
             signedIn = signedIn,
             likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
             onToggleLike = { viewModel.toggleLike(song.videoId) },
-            onToggleShuffle = { controller?.let { it2 -> QueueShuffle.toggle(it2); AppSettings.setShuffleEnabled(QueueShuffle.enabled.value) } },
+            // The service owns both the queue and the Shuffle state. Keeping
+            // the toggle on that side prevents the UI from changing the icon
+            // before its asynchronous reorder command has actually landed.
+            onToggleShuffle = { controller?.toggleShuffle() },
             onCycleRepeat = {
                 controller?.let {
                     val next = when (it.repeatMode) {
@@ -1773,7 +1815,9 @@ private fun BitChordApp(
                         HistoryScreen(
                             state = historyState,
                             listState = historyListState,
-                            onSongClick = play,
+                            onSongClick = { songs, index ->
+                                playFrom(songs, index, historyLabel)
+                            },
                             onSongLongPress = { songActions = it },
                             onSongSwipe = onSongSwipe,
                             onRetry = viewModel::loadHistory,
@@ -1806,7 +1850,7 @@ private fun BitChordApp(
                             // knows they like, so it starts a station off itself
                             // rather than queueing the chart it was on — the
                             // same reading [playRadio] makes of a search hit.
-                            onPlaySong = playRadio,
+                            onPlaySong = { song -> playRadio(song, replayLabel) },
                             onOpenArtist = { id, name ->
                                 showReplay = false
                                 openByName(id, name, null, BrowseType.ARTIST)
@@ -1928,12 +1972,14 @@ private fun BitChordApp(
                                     selected.forEach { song -> Downloads.delete(context, song.videoId) }
                                 }
                             },
-                            onSongClick = play,
+                            onSongClick = { songs, index ->
+                                playFrom(songs, index, page.title)
+                            },
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
                             onShuffle = { songs ->
                                 QueueShuffle.enableForNextQueue()
-                                play(songs, songs.indices.random())
+                                playFrom(songs, songs.indices.random(), page.title)
                             },
                             emptyMessage = (localState as? com.music.bitchord.data.model.UiState.Error)
                                 ?.message,
@@ -1980,7 +2026,9 @@ private fun BitChordApp(
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
                             listState = detailListState,
-                            onSongClick = play,
+                            onSongClick = { songs, index ->
+                                playFrom(songs, index, page.title)
+                            },
                             onSongLongPress = { openSongMenu(withAlbum(it)) },
                             onSongSwipe = onSongSwipe,
                             onShuffle = { songs ->
@@ -1988,7 +2036,7 @@ private fun BitChordApp(
                                 // as it is set — the random pick here only decides
                                 // which track leads it.
                                 QueueShuffle.enableForNextQueue()
-                                play(songs, songs.indices.random())
+                                playFrom(songs, songs.indices.random(), page.title)
                             },
                             onSectionItemClick = { item ->
                                 item.browseId?.let { id ->
@@ -2051,10 +2099,10 @@ private fun BitChordApp(
                             title = stringResource(R.string.listen_now),
                             signedIn = signedIn,
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
-                            onItemClick = { item ->
+                            onItemClick = { item, shelfTitle ->
                                 val song = shelfSong(item)
                                 when {
-                                    song != null -> playRadio(song)
+                                    song != null -> playRadio(song, shelfTitle)
                                     item.browseId != null -> viewModel.openDetail(
                                         browseId = item.browseId,
                                         title = item.title,
@@ -2087,6 +2135,7 @@ private fun BitChordApp(
                                                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                                                 thumbnailUrl = item.thumbnailUrl,
                                             ),
+                                            category.title,
                                         )
                                         item.browseId != null -> viewModel.openDetail(
                                             browseId = item.browseId,
@@ -2127,14 +2176,14 @@ private fun BitChordApp(
                                     // Acting on a hit is what makes the query worth
                                     // keeping — see MainViewModel.recordSearch.
                                     viewModel.recordSearch()
-                                    playRadio(it)
+                                    playRadio(it, searchLabel)
                                 }
                             },
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
                             onTopResultPlay = { song ->
                                 viewModel.recordSearch()
-                                playRadio(song)
+                                playRadio(song, searchLabel)
                             },
                             onTopResultPlaylist = { song ->
                                 viewModel.recordSearch()

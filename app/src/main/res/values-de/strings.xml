@@ -645,4 +645,44 @@
         <item>Songtexte nehmen Form an</item>
         <item>Fast gefunden</item>
     </string-array>
+
+    <!-- Listen together -->
+    <string name="listen_together">Gemeinsam hören</string>
+    <string name="listen_together_subtitle">Teile einen Code und hört dieselbe Musik, synchron</string>
+    <string name="listen_together_in_party">In einer Party · %1$s</string>
+    <string name="listen_together_sign_in_footer">Gemeinsames Hören braucht ein Konto, damit jeder in der Party sieht, wer sonst dabei ist.</string>
+    <string name="listen_together_server">Party-Server</string>
+    <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_offline">Momentan nicht erreichbar</string>
+    <string name="listen_together_server_checking">Wird geprüft…</string>
+    <string name="listen_together_server_unknown">Zum Prüfen tippen</string>
+    <string name="listen_together_custom_server">Eigenen Server nutzen</string>
+    <string name="listen_together_custom_server_footer">Leer lassen, um den eingebauten Server zu nutzen. Wenn du eine eigene Kopie betreibst, müssen alle in der Party auf denselben Server zeigen.</string>
+    <string name="listen_together_using_builtin">Eingebauter Server wird genutzt</string>
+    <string name="listen_together_create">Party erstellen</string>
+    <string name="listen_together_create_subtitle">Code holen und mit Freunden teilen</string>
+    <string name="listen_together_create_footer">Du bekommst einen sechsstelligen Code. Jeder, der ihn hat, kann beitreten – bis zu fünf Geräte, dein eigenes eingeschlossen.</string>
+    <string name="listen_together_join">Party beitreten</string>
+    <string name="listen_together_join_action">Beitreten</string>
+    <string name="listen_together_code_hint">Sechs Buchstaben oder Zahlen</string>
+    <string name="listen_together_code">Party-Code</string>
+    <string name="listen_together_code_footer">Lies ihn vor oder schick ihn. O und I kommen nicht vor, ein „O“ ist also immer eine Null.</string>
+    <string name="copy_code">Code kopieren</string>
+    <string name="listen_together_share_text">Hör mit mir auf BitChord – Party-Code %1$s</string>
+    <string name="listen_together_now_playing">Wird wiedergegeben</string>
+    <string name="listen_together_nothing_playing">Noch nichts in Wiedergabe</string>
+    <string name="listen_together_listening">Hören · %1$d von %2$d</string>
+    <string name="listen_together_members_footer">Eine Party hat Platz für %1$d Geräte. Jeder darin kann die Musik steuern.</string>
+    <string name="listen_together_you">Du</string>
+    <string name="listen_together_host">Host</string>
+    <string name="listen_together_away">Abwesend – ihr Platz bleibt frei</string>
+    <string name="listen_together_leave">Party verlassen</string>
+    <string name="listen_together_leave_subtitle">Die anderen hören weiter</string>
+    <string name="listen_together_reconnecting">Neu verbinden…</string>
+    <string name="listen_together_syncing_clock">Uhr wird abgeglichen…</string>
+    <string name="listen_together_in_sync">Synchron · %1$d ms Umlaufzeit</string>
+    <string name="listen_together_jam">Jam von %1$s</string>
+    <string name="listen_together_jam_unnamed">Gemeinsam hören</string>
+    <string name="listen_together_open">Gemeinsam hören</string>
+    <string name="listen_together_open_count">Gemeinsam hören · %1$d</string>
 </resources>
