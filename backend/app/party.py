@@ -97,6 +97,11 @@ class PlaybackState:
     #: already passed, which is what makes two controllers pressing pause at the
     #: same moment settle rather than oscillate.
     seq: int = 0
+    #: Bumped only when the *contents* of the queue change, which [seq] cannot
+    #: distinguish because it counts pauses and seeks too. It is what lets the
+    #: queue travel separately from the state — see [to_wire] — and what lets a
+    #: client notice it has missed a queue it was never sent.
+    queue_seq: int = 0
     updated_by: str | None = None
     updated_at_ms: int = field(default_factory=now_ms)
 
@@ -187,6 +192,7 @@ class PlaybackState:
     ) -> None:
         self.queue = queue[: config.MAX_QUEUE_LENGTH]
         self.queue_index = queue_index if 0 <= queue_index < len(self.queue) else -1
+        self.queue_seq += 1
         self._touch(member_id)
 
     def step(self, member_id: str | None, delta: int) -> bool:
@@ -198,12 +204,24 @@ class PlaybackState:
         return True
 
     def to_wire(self, server_ms: int | None = None) -> dict[str, Any]:
+        """The playback state — deliberately without the queue in it.
+
+        This frame goes to every device every few seconds, forever, and the
+        queue is the one field in it that is both large and almost never
+        different. Sending a 50-track queue twelve times a minute to each member
+        was about twenty times the bytes of everything else here combined, paid
+        continuously, on phones. So it travels on its own (see [queue_to_wire])
+        and this carries only [queue_seq] — enough for a client to notice its
+        copy is stale and ask, and nothing more.
+        """
         now = server_ms if server_ms is not None else now_ms()
         return {
             "seq": self.seq,
             "track": self.track.to_wire() if self.track else None,
-            "queue": [item.to_wire() for item in self.queue],
+            "queueSeq": self.queue_seq,
             "queueIndex": self.queue_index,
+            # So a client can say "7 of 42" without holding the list.
+            "queueLength": len(self.queue),
             "isPlaying": self.is_playing,
             "positionMs": self.position_ms,
             "anchorMs": self.anchor_ms,
@@ -213,6 +231,14 @@ class PlaybackState:
             "effectivePositionMs": self.position_at(now),
             "updatedBy": self.updated_by,
             "updatedAtMs": self.updated_at_ms,
+        }
+
+    def queue_to_wire(self) -> dict[str, Any]:
+        """The queue, sent on joining and thereafter only when it changes."""
+        return {
+            "seq": self.queue_seq,
+            "index": self.queue_index,
+            "items": [item.to_wire() for item in self.queue],
         }
 
 
@@ -404,6 +430,9 @@ class Party:
             "maxMembers": config.MAX_MEMBERS,
             "members": [m.to_wire() for m in sorted(self.members.values(), key=lambda m: m.joined_at_ms)],
             "playback": self.playback.to_wire(now),
+            # A snapshot is the one place the queue always travels: it is what a
+            # device arriving has no other way to learn.
+            "queue": self.playback.queue_to_wire(),
             "serverMs": now,
         }
 

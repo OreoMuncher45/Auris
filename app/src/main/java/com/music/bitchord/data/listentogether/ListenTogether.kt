@@ -98,6 +98,12 @@ object ListenTogether {
         val members: List<PartyMember> = emptyList(),
         val maxMembers: Int = 5,
         val playback: PartyPlayback = PartyPlayback(),
+        /**
+         * Held separately from [playback] because it arrives separately: the
+         * state frame carries only a sequence number for it, and this is
+         * replaced when the server says the list has actually changed.
+         */
+        val queue: PartyQueue = PartyQueue(),
         val connection: Connection = Connection.OFFLINE,
         /** False until the first round trip; the playhead is a guess until then. */
         val clockSynced: Boolean = false,
@@ -470,6 +476,10 @@ object ListenTogether {
                     members = party.members,
                     maxMembers = party.maxMembers,
                     playback = party.playback,
+                    // A snapshot is the one message that carries the queue
+                    // unconditionally — a device that has just arrived has no
+                    // other way to learn it.
+                    queue = party.queue,
                     connection = Connection.LIVE,
                     error = null,
                 ) }
@@ -494,6 +504,22 @@ object ListenTogether {
                 // sending each other backwards.
                 if (playback.seq < _state.value.playback.seq) return
                 _state.update { it.copy(playback = playback) }
+                // The queue does not ride along with the state — only its
+                // sequence number does. Disagreeing with the copy held here
+                // means a queue frame was missed, which the heartbeat therefore
+                // heals within a few seconds rather than leaving the running
+                // order wrong until somebody happens to change it.
+                if (playback.queueSeq != _state.value.queue.seq) {
+                    send(buildJsonObject { put("type", "syncQueue") })
+                }
+            }
+
+            "queue" -> {
+                val queue = frame["queue"]?.let {
+                    runCatching { json.decodeFromJsonElement(PartyQueue.serializer(), it) }.getOrNull()
+                } ?: return
+                if (queue.seq < _state.value.queue.seq) return
+                _state.update { it.copy(queue = queue) }
             }
 
             "members" -> {

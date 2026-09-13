@@ -64,7 +64,18 @@ data class PartyPlayback(
      */
     val seq: Long = 0,
     val track: PartyTrack? = null,
-    val queue: List<PartyTrack> = emptyList(),
+    /**
+     * Bumped only when the queue's *contents* change, and deliberately the only
+     * thing about the queue that rides along with the state.
+     *
+     * The queue itself travels as [PartyQueue], separately and rarely. This
+     * frame is re-sent to every device every few seconds forever, and a queue
+     * inside it would be large, near-constant, and paid for continuously on
+     * somebody's mobile data. So all that arrives here is a number to compare
+     * against the copy already held — see [ListenTogether] for the refetch.
+     */
+    val queueSeq: Long = 0,
+    val queueLength: Int = 0,
     val queueIndex: Int = -1,
     val isPlaying: Boolean = false,
     val positionMs: Long = 0,
@@ -75,6 +86,22 @@ data class PartyPlayback(
     val updatedAtMs: Long = 0,
 )
 
+/**
+ * The party's running order, which travels on its own schedule.
+ *
+ * Sent whole when a device joins — there is no other way for it to learn the
+ * list — and after that only when it actually changes. [seq] is how a device
+ * knows its copy is stale: every state frame carries the server's current one,
+ * so a missed update is noticed on the very next heartbeat rather than lived
+ * with until somebody presses something.
+ */
+@Serializable
+data class PartyQueue(
+    val seq: Long = 0,
+    val index: Int = -1,
+    val items: List<PartyTrack> = emptyList(),
+)
+
 @Serializable
 data class PartySnapshot(
     val code: String = "",
@@ -82,6 +109,7 @@ data class PartySnapshot(
     val maxMembers: Int = 5,
     val members: List<PartyMember> = emptyList(),
     val playback: PartyPlayback = PartyPlayback(),
+    val queue: PartyQueue = PartyQueue(),
     val serverMs: Long = 0,
 )
 

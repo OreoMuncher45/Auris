@@ -210,6 +210,93 @@ def test_state_frames_carry_an_anchor_a_client_can_derive_a_playhead_from(client
     assert playback["effectivePositionMs"] == 42_000
 
 
+def test_setting_a_queue_sends_the_queue_then_the_state(client):
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()  # welcome
+        socket.send_json({
+            "type": "control",
+            "action": "setQueue",
+            "queue": [{"videoId": "v0"}, {"videoId": "v1"}, {"videoId": "v2"}],
+            "queueIndex": 1,
+        })
+        first = socket.receive_json()
+        second = socket.receive_json()
+
+    # The queue arrives first, so nobody holds a state pointing at an index in a
+    # list they have not been given.
+    assert first["type"] == "queue"
+    assert [item["videoId"] for item in first["queue"]["items"]] == ["v0", "v1", "v2"]
+    assert second["type"] == "state"
+    assert "queue" not in second["playback"]
+    assert second["playback"]["queueLength"] == 3
+    assert second["playback"]["queueSeq"] == first["queue"]["seq"]
+
+
+def test_a_heartbeat_sized_control_does_not_resend_the_queue(client):
+    """A play after a setQueue must cost the same whether the queue is 3 or 300."""
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()  # welcome
+        socket.send_json({
+            "type": "control",
+            "action": "setQueue",
+            "queue": [{"videoId": f"v{i}"} for i in range(50)],
+            "queueIndex": 0,
+        })
+        socket.receive_json()  # queue
+        socket.receive_json()  # state
+
+        socket.send_json({"type": "control", "action": "play"})
+        frame = socket.receive_json()
+
+    assert frame["type"] == "state"
+    assert "queue" not in frame["playback"]
+    assert frame["playback"]["queueLength"] == 50
+
+
+def test_a_client_can_ask_for_a_queue_it_missed(client):
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()  # welcome
+        socket.send_json({
+            "type": "control",
+            "action": "setQueue",
+            "queue": [{"videoId": "v0"}],
+            "queueIndex": 0,
+        })
+        socket.receive_json()  # queue
+        socket.receive_json()  # state
+
+        socket.send_json({"type": "syncQueue"})
+        frame = socket.receive_json()
+
+    assert frame["type"] == "queue"
+    assert [item["videoId"] for item in frame["queue"]["items"]] == ["v0"]
+
+
+def test_a_joining_device_is_given_the_whole_queue(client):
+    """The one place the queue always travels: there is no other way to learn it."""
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()
+        socket.send_json({
+            "type": "control",
+            "action": "setQueue",
+            "queue": [{"videoId": "v0"}, {"videoId": "v1"}],
+            "queueIndex": 0,
+        })
+        socket.receive_json()
+        socket.receive_json()
+
+    guest = client.post(f"/api/parties/{host['code']}/join", json=GUEST).json()
+    assert [item["videoId"] for item in guest["party"]["queue"]["items"]] == ["v0", "v1"]
+
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={guest['token']}") as socket:
+        welcome = socket.receive_json()
+    assert [item["videoId"] for item in welcome["party"]["queue"]["items"]] == ["v0", "v1"]
+
+
 def test_the_sequence_number_only_ever_climbs(client):
     host = create(client)
     with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:

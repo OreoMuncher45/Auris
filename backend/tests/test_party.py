@@ -95,6 +95,45 @@ def test_every_mutation_bumps_the_sequence(instant_start):
     assert state.updated_by == "m1"
 
 
+def test_the_state_frame_does_not_carry_the_queue(instant_start):
+    """The heartbeat's cost has to stay flat as the queue grows."""
+    state = PlaybackState()
+    state.set_queue("m1", [Track(video_id=f"v{i}") for i in range(500)], 0)
+
+    wire = state.to_wire()
+
+    assert "queue" not in wire
+    assert wire["queueLength"] == 500
+    assert wire["queueSeq"] == state.queue_seq
+    assert wire["queueIndex"] == 0
+
+
+def test_only_a_queue_change_bumps_the_queue_sequence(instant_start):
+    state = PlaybackState(track=a_track())
+    state.set_queue("m1", [Track(video_id="v0"), Track(video_id="v1")], 0)
+    after_queue = state.queue_seq
+
+    # None of these touch the contents of the queue, so none may make a client
+    # re-fetch it — which is the entire saving.
+    state.play("m1")
+    state.pause("m1")
+    state.seek("m1", 5_000)
+    state.step("m1", 1)
+    assert state.queue_seq == after_queue
+
+    state.set_queue("m1", [Track(video_id="v2")], 0)
+    assert state.queue_seq == after_queue + 1
+
+
+def test_the_queue_travels_whole_in_its_own_payload(instant_start):
+    state = PlaybackState()
+    state.set_queue("m1", [Track(video_id="v0"), Track(video_id="v1")], 1)
+    payload = state.queue_to_wire()
+    assert [item["videoId"] for item in payload["items"]] == ["v0", "v1"]
+    assert payload["index"] == 1
+    assert payload["seq"] == state.queue_seq
+
+
 def test_next_and_previous_walk_the_queue(instant_start):
     state = PlaybackState()
     queue = [Track(video_id=f"v{i}") for i in range(3)]

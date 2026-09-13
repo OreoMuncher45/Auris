@@ -125,6 +125,7 @@ Client → server:
 ```jsonc
 {"type": "ping",    "clientMs": 1757630000000}
 {"type": "sync"}                                   // re-send me the state
+{"type": "syncQueue"}                              // my queue copy is stale
 {"type": "report",  "positionMs": 42210, "isPlaying": true}
 {"type": "control", "action": "play",     "positionMs": 42000}
 {"type": "control", "action": "pause",    "positionMs": 42000}   // positionMs optional
@@ -146,6 +147,7 @@ Server → client:
 {"type": "welcome", "you": {…}, "party": {…}, "serverMs": …}
 {"type": "pong",    "clientMs": …, "serverMs": …}
 {"type": "state",   "playback": {…}, "serverMs": …}
+{"type": "queue",   "queue": {"seq": 3, "index": 1, "items": [{…}]}, "serverMs": …}
 {"type": "members", "members": [{…}], "maxMembers": 5, "serverMs": …}
 {"type": "error",   "error": "rate_limited", "message": "…"}
 {"type": "bye",     "reason": "left"}
@@ -156,6 +158,29 @@ is not greater than the last one they applied** — that is what makes two peopl
 hitting pause at the same moment settle instead of oscillate. A control is
 broadcast to the sender too, so the controlling device re-anchors off the same
 frame as everyone else rather than running on a state it predicted locally.
+
+### The queue travels separately
+
+**`state` does not contain the queue.** It carries `queueSeq`, `queueIndex` and
+`queueLength`, and that is all. The list itself arrives:
+
+- **whole, in a snapshot** — `welcome` and `GET /api/parties/{code}` both carry
+  `party.queue`, because a device that has just arrived has no other way to
+  learn it;
+- **on change** — a `setQueue` control broadcasts a `queue` frame *before* the
+  `state` frame, so nobody ever holds a state pointing at an index in a list
+  they have not been given;
+- **on request** — a client whose `queue.seq` disagrees with the `queueSeq` in a
+  state frame sends `syncQueue`. That is the self-healing half: a missed queue
+  broadcast is noticed on the very next heartbeat rather than lived with.
+
+This split is the single biggest thing keeping the service cheap. The state
+frame goes to every device every few seconds forever, and the queue is the one
+field in it that is both large and almost never different — a 50-track queue on
+the heartbeat was roughly twenty times the bytes of everything else combined,
+paid continuously, on other people's mobile data. Adding a field to `to_wire`
+that grows with the queue puts all of that straight back; put it in
+`queue_to_wire` instead.
 
 ## Deploying to Render
 

@@ -226,6 +226,10 @@ async def _handle_frame(party: Party, member: Member, frame: Any) -> None:
         await _reply(party, member, _state_frame(party))
         return
 
+    if kind == protocol.SYNC_QUEUE:
+        await _reply(party, member, _queue_frame(party))
+        return
+
     if kind == protocol.REPORT:
         # A device saying where it actually is. Nothing is done with it beyond
         # keeping the membership alive and making drift visible in the log —
@@ -246,8 +250,13 @@ async def _handle_frame(party: Party, member: Member, frame: Any) -> None:
                 "message": "Too many controls at once.",
             })
             return
+        queue_before = party.playback.queue_seq
         if _apply_control(party, member, frame):
             party.touch()
+            # The queue first, so that nobody is holding a state frame that
+            # points at an index in a list they have not been given yet.
+            if party.playback.queue_seq != queue_before:
+                await hub.broadcast(party.code, _queue_frame(party))
             # To everyone, the sender included. The device that pressed pause
             # re-anchors off the same frame as the rest, so nobody is running on
             # a locally predicted state that the server never confirmed.
@@ -328,6 +337,18 @@ def _membership_payload(party: Party, member: Member) -> dict[str, Any]:
 def _state_frame(party: Party) -> dict[str, Any]:
     now = now_ms()
     return {"type": protocol.STATE, "playback": party.playback.to_wire(now), "serverMs": now}
+
+
+def _queue_frame(party: Party) -> dict[str, Any]:
+    """Sent when the queue changes, and when a client says its copy is stale.
+
+    Never on the heartbeat — that is the whole point of it being its own frame.
+    """
+    return {
+        "type": protocol.QUEUE,
+        "queue": party.playback.queue_to_wire(),
+        "serverMs": now_ms(),
+    }
 
 
 def _members_frame(party: Party) -> dict[str, Any]:

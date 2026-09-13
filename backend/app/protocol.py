@@ -56,6 +56,7 @@ class JoinRequest(BaseModel):
 
 WELCOME = "welcome"
 STATE = "state"
+QUEUE = "queue"
 MEMBERS = "members"
 PONG = "pong"
 ERROR = "error"
@@ -66,6 +67,10 @@ BYE = "bye"
 PING = "ping"
 CONTROL = "control"
 SYNC = "sync"
+#: "my queue is stale, send it again". The self-healing half of splitting the
+#: queue out of the state frame: a client that misses a [QUEUE] broadcast sees a
+#: queueSeq it does not have on the very next heartbeat and asks.
+SYNC_QUEUE = "syncQueue"
 REPORT = "report"
 
 # -- Control actions, any of which any member may send ---------------------
