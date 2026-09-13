@@ -1576,6 +1576,16 @@ private fun BitChordApp(
             lyricsSource = lyricsSource,
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             docked = docked,
+            onListenTogether = {
+                // A phone's player is a sheet over the page, so it has to come
+                // down for the page to be read at all. A tablet's is a pane
+                // beside it: the settings page opens in the half that is
+                // already free, and taking the player away would be closing
+                // something nobody asked to close.
+                if (!docked) showNowPlaying = false
+                showSettings = true
+                showListenTogether = true
+            },
             onClearQueue = {
                 // Keep what's playing; drop everything queued after it.
                 controller?.let { c ->

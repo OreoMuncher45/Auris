@@ -1,14 +1,13 @@
 package com.music.bitchord.ui.player
 
-import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.Context
-import android.media.MediaRouter
-import android.media.MediaRoute2Info
-import android.media.MediaRouter2
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Build
-import android.widget.ArrayAdapter
-import androidx.annotation.RequiresApi
-import com.music.bitchord.R
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -16,139 +15,141 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.R
+import com.music.bitchord.playback.AudioRouting
 
 /**
- * Every [MediaRouter2] reference in this file, held in a class of its own.
+ * The outputs this phone can play music through, kept current while on screen.
  *
- * An inline `SDK_INT >= 30` guard is not enough. ART resolves the classes a
- * method names when it verifies that method — which is the first time the
- * method runs, not the first time the guarded branch is taken — so a method
- * that merely *mentions* MediaRouter2 throws NoClassDefFoundError on Android 9
- * whether or not the guard lets it through. Opening the player crashed outright
- * on API 28 for exactly this reason.
+ * Several sources, because no one of them is both early and correct:
  *
- * Behind its own class the reference is named only by methods on that class,
- * and the class is never loaded on a device that does not have the API.
+ *  - `AudioDeviceCallback` sees everything the framework knows about, but it
+ *    can arrive after the fact.
+ *  - `ACTION_AUDIO_BECOMING_NOISY` is the *earliest* notice that an output has
+ *    gone — the system sends it precisely so players can react before the sound
+ *    lands on the speaker — which is what makes a disconnect show up at once
+ *    rather than whenever the next callback happens to fire.
+ *  - The headset and HDMI plug broadcasts land sooner than the callback on some
+ *    devices, and ACL announces a Bluetooth connection before the audio device
+ *    behind it exists at all.
+ *
+ * Every one of them is followed by [SETTLE_MS] re-reads as well as an immediate
+ * one, because the event and the truth are not simultaneous: a headset is
+ * announced while its A2DP profile is still negotiating and is not in
+ * `getDevices` yet, and on the way out it lingers for a moment after the
+ * broadcast. Reading once, on the event, is what made a disconnect take so long
+ * to show — the read happened, saw the device still listed, and believed it.
  */
-@RequiresApi(30)
-private object ModernRoutes {
-    fun instance(context: Context): Any = MediaRouter2.getInstance(context)
-
-    /** The selected route names, and whether all of them are the built-in speaker. */
-    fun selected(router: Any): Pair<String, Boolean>? {
-        val routes = (router as MediaRouter2).systemController.selectedRoutes
-        if (routes.isEmpty()) return null
-        return routes.joinToString { it.name.toString() } to
-            routes.all { it.type == MediaRoute2Info.TYPE_BUILTIN_SPEAKER }
+@Composable
+internal fun rememberAudioOutputs(): List<AudioRouting.Device> {
+    val context = LocalContext.current
+    val manager = remember(context) {
+        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     }
+    // Read here as well as observed, so a device that comes back with a new id
+    // while this is on screen re-marks the active row without waiting for a
+    // broadcast that has already been and gone.
+    val selectedId by AudioRouting.selectedId.collectAsStateWithLifecycle()
+    var outputs by remember(manager) { mutableStateOf(AudioRouting.outputs(manager)) }
 
-    /** Registers [onChange] and hands back the matching unregister. */
-    fun observe(router: Any, context: Context, onChange: () -> Unit): () -> Unit {
-        val modern = router as MediaRouter2
-        val callback = object : MediaRouter2.ControllerCallback() {
-            override fun onControllerUpdated(controller: MediaRouter2.RoutingController) = onChange()
+    DisposableEffect(manager, selectedId) {
+        fun refresh() {
+            outputs = AudioRouting.outputs(manager)
         }
-        modern.registerControllerCallback(context.mainExecutor, callback)
-        return { modern.unregisterControllerCallback(callback) }
-    }
+        refresh()
 
-    @RequiresApi(34)
-    fun showSystemSwitcher(context: Context): Boolean =
-        runCatching { MediaRouter2.getInstance(context).showSystemOutputSwitcher() }.getOrDefault(false)
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        // Now, and again once the framework has caught up with itself.
+        fun refreshSoon() {
+            refresh()
+            SETTLE_MS.forEach { delay -> handler.postDelayed(::refresh, delay) }
+        }
+
+        val deviceCallback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>?) = refreshSoon()
+            override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>?) = refreshSoon()
+        }
+        manager.registerAudioDeviceCallback(deviceCallback, handler)
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) = refreshSoon()
+        }
+        val filter = IntentFilter().apply {
+            // First out of the gate when an output disappears.
+            addAction(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            addAction(AudioManager.ACTION_HEADSET_PLUG)
+            addAction(AudioManager.ACTION_HDMI_AUDIO_PLUG)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(android.bluetooth.BluetoothDevice.ACTION_ACL_DISCONNECTED)
+        }
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            context.registerReceiver(receiver, filter)
+        }
+
+        onDispose {
+            manager.unregisterAudioDeviceCallback(deviceCallback)
+            runCatching { context.unregisterReceiver(receiver) }
+            handler.removeCallbacksAndMessages(null)
+        }
+    }
+    return outputs
 }
 
-/** Let Android route the media session, including connected Bluetooth outputs. */
-@Suppress("DEPRECATION")
-internal fun openAudioOutput(context: Context) {
-    if (Build.VERSION.SDK_INT >= 34 && ModernRoutes.showSystemSwitcher(context)) return
-
-    // Older Android versions expose audio routes through the framework router.
-    // Keep the chooser live as devices connect/disconnect while it is open.
-    val router = context.getSystemService(Context.MEDIA_ROUTER_SERVICE) as MediaRouter
-    val routes = mutableListOf<MediaRouter.RouteInfo>()
-    val adapter = ArrayAdapter<String>(context, android.R.layout.simple_list_item_single_choice)
-    val dialog = AlertDialog.Builder(context)
-        .setTitle(R.string.audio_output)
-        .setSingleChoiceItems(adapter, -1) { dialog, index ->
-            routes.getOrNull(index)?.takeIf { it.isEnabled }?.let {
-                router.selectRoute(MediaRouter.ROUTE_TYPE_LIVE_AUDIO, it)
-            }
-            dialog.dismiss()
-        }
-        .setNegativeButton(android.R.string.cancel, null)
-        .create()
-    fun refresh() {
-        routes.clear()
-        routes.addAll((0 until router.routeCount).map(router::getRouteAt).filter {
-            it.supportedTypes and MediaRouter.ROUTE_TYPE_LIVE_AUDIO != 0 && it.isEnabled
-        })
-        adapter.clear()
-        adapter.addAll(routes.map { it.name.toString() })
-        val selected = routes.indexOf(router.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_AUDIO))
-        dialog.listView?.setItemChecked(selected, true)
+/**
+ * What to call an output on screen.
+ *
+ * Bluetooth and USB devices carry their own name and keep it. The phone's own
+ * speaker and a pair of wired headphones do not — `productName` gives the
+ * *phone's* model for both, which is why the caption used to read "SM-S911B"
+ * — so those get a label from here instead.
+ */
+@Composable
+internal fun outputLabel(device: AudioRouting.Device, accountName: String?): String {
+    val context = LocalContext.current
+    val firstName = accountName?.trim()?.split(Regex("\\s+"))?.firstOrNull()?.takeIf { it.isNotBlank() }
+    return when {
+        device.name.isNotBlank() -> device.name
+        device.kind == AudioRouting.Kind.WIRED -> stringResource(R.string.wired_headphones)
+        device.kind == AudioRouting.Kind.USB -> stringResource(R.string.usb_audio)
+        device.kind == AudioRouting.Kind.HDMI -> stringResource(R.string.hdmi_output)
+        firstName != null -> context.getString(R.string.personal_phone, firstName)
+        else -> stringResource(R.string.this_phone)
     }
-    val callback = object : MediaRouter.SimpleCallback() {
-        override fun onRouteAdded(router: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
-        override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
-        override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) = refresh()
-        override fun onRouteSelected(router: MediaRouter, type: Int, route: MediaRouter.RouteInfo) = refresh()
-    }
-    dialog.setOnDismissListener { router.removeCallback(callback) }
-    router.addCallback(MediaRouter.ROUTE_TYPE_LIVE_AUDIO, callback)
-    dialog.show()
-    refresh()
 }
 
-/** Observe the selected route, rather than guessing from the list of connected devices. */
-@Suppress("DEPRECATION")
+/**
+ * The name of whatever is playing the music, for the line under the transport.
+ *
+ * Derived from the same list the picker shows, so the two can never disagree —
+ * which they did constantly when this read [android.media.MediaRouter]'s
+ * selected route and the picker read the audio devices.
+ */
 @Composable
 internal fun rememberAudioOutputName(accountName: String?): String {
-    val context = LocalContext.current
-    val router = remember(context) {
-        context.getSystemService(Context.MEDIA_ROUTER_SERVICE) as MediaRouter
-    }
-    // Held as Any so this composable's own body never names the class either;
-    // see [ModernRoutes].
-    val modernRouter: Any? = remember(context) {
-        if (Build.VERSION.SDK_INT >= 30) ModernRoutes.instance(context) else null
-    }
-    fun selectedOutput(): Pair<String, Boolean> {
-        if (Build.VERSION.SDK_INT >= 30 && modernRouter != null) {
-            ModernRoutes.selected(modernRouter)?.let { return it }
-        }
-        val route = router.getSelectedRoute(MediaRouter.ROUTE_TYPE_LIVE_AUDIO)
-        return route.name.toString() to
-            (route == router.defaultRoute && route.deviceType == MediaRouter.RouteInfo.DEVICE_TYPE_SPEAKER)
-    }
-    var output by remember(router) { mutableStateOf(selectedOutput()) }
-    DisposableEffect(router) {
-        val callback = object : MediaRouter.SimpleCallback() {
-            override fun onRouteSelected(router: MediaRouter, type: Int, route: MediaRouter.RouteInfo) {
-                output = selectedOutput()
-            }
-            override fun onRouteChanged(router: MediaRouter, route: MediaRouter.RouteInfo) {
-                output = selectedOutput()
-            }
-            override fun onRouteRemoved(router: MediaRouter, route: MediaRouter.RouteInfo) {
-                output = selectedOutput()
-            }
-        }
-        router.addCallback(MediaRouter.ROUTE_TYPE_LIVE_AUDIO, callback)
-        output = selectedOutput()
-        onDispose { router.removeCallback(callback) }
-    }
-    DisposableEffect(modernRouter) {
-        if (Build.VERSION.SDK_INT >= 30 && modernRouter != null) {
-            val stop = ModernRoutes.observe(modernRouter, context) { output = selectedOutput() }
-            output = selectedOutput()
-            onDispose { stop() }
+    val outputs = rememberAudioOutputs()
+    val active = outputs.firstOrNull { it.isActive }
+        ?: return if (accountName.isNullOrBlank()) {
+            stringResource(R.string.this_phone)
         } else {
-            onDispose { }
+            LocalContext.current.getString(
+                R.string.personal_phone,
+                accountName.trim().split(Regex("\\s+")).first(),
+            )
         }
-    }
-    val firstName = accountName?.trim()?.split(Regex("\\s+"))?.firstOrNull()?.takeIf { it.isNotBlank() }
-    return if (output.second) {
-        if (firstName != null) context.getString(R.string.personal_phone, firstName)
-        else context.getString(R.string.this_phone)
-    } else output.first
+    return outputLabel(active, accountName)
 }
+
+/**
+ * When to look again after something changed, in milliseconds.
+ *
+ * Three reads rather than one: the first catches the common case immediately,
+ * and the later two cover a Bluetooth profile that is still negotiating — a
+ * headset is announced before it can be played to and is listed for a moment
+ * after it is gone.
+ */
+private val SETTLE_MS = longArrayOf(350L, 1_200L, 2_500L)

@@ -63,6 +63,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
@@ -106,6 +107,7 @@ import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -135,7 +137,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -219,6 +223,8 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
@@ -862,6 +868,15 @@ fun NowPlayingScreen(
     onOpenMenu: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
+    /**
+     * Open Listen Together, from the party half of the output capsule.
+     *
+     * The player does not decide whether it has to get out of the way first:
+     * the settings page it opens is drawn *under* a phone's player sheet and
+     * *beside* a tablet's docked pane, and only the caller knows which of the
+     * two it mounted — see [docked].
+     */
+    onListenTogether: () -> Unit,
     lyrics: List<LyricLine>?,
     lyricsSource: LyricsSource?,
     lyricsUnavailable: Boolean,
@@ -897,6 +912,7 @@ fun NowPlayingScreen(
     // the bottom navigation pill.
     val playerHaze = remember { HazeState() }
     var showAudioPipeline by remember { mutableStateOf(false) }
+    var showAudioOutput by remember { mutableStateOf(false) }
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
@@ -1175,6 +1191,21 @@ fun NowPlayingScreen(
         DisposableEffect(view, showAudioPipeline) {
             val callback = if (showAudioPipeline) {
                 OverlayBack.register(view) { showAudioPipeline = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
+    // Same again for the output drawer, so back puts it away rather than
+    // taking the whole player down from under it.
+    BackHandler(enabled = showAudioOutput) { showAudioOutput = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, showAudioOutput) {
+            val callback = if (showAudioOutput) {
+                OverlayBack.register(view) { showAudioOutput = false }
             } else {
                 null
             }
@@ -2756,87 +2787,98 @@ fun NowPlayingScreen(
                 Spacer(Modifier.height(6.dp))
             }
 
-            // The queue owns playback modes; the player owns lyrics and output.
+            // Lyrics and queue are the two things that are true of the player in
+            // both states, so they are simply always here. Only the capsule
+            // between them swaps: output and party while the artwork is showing,
+            // the three playback modes once the queue is.
             BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // Preserve the four-button row's outer gaps in both states. SpaceBetween
-            // redistributes only the interior gaps, leaving Queue at the same edge.
-            val edgeInset = ((maxWidth - BOTTOM_ACTION_SIZE * 4) / 5).coerceAtLeast(0.dp)
-            AnimatedContent(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
-                targetState = queueOpen,
-                transitionSpec = {
-                    fadeIn(tween(180, delayMillis = 140)) togetherWith fadeOut(tween(140))
-                },
-                label = "playerBottomActions",
-            ) { showQueueModes ->
+            // Sized for the wider of the two capsules — the three-up one — in
+            // both states. Computed for whichever was on screen it would change
+            // as they swap, and the lyrics and queue glyphs would slide with it.
+            val widestRow = BOTTOM_ACTION_SIZE * 2 + pillWidth(3)
+            val edgeInset = ((maxWidth - widestRow) / 4).coerceAtLeast(0.dp)
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (showQueueModes) {
                 BottomGlyph(
-                    icon = BitChordIcons.Shuffle,
-                    contentDescription = stringResource(
-                        if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
-                    ),
-                    onClick = onToggleShuffle,
-                    highlighted = shuffleEnabled,
-                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
-                )
-                BottomGlyph(
-                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
-                    label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
-                    contentDescription = when (repeatMode) {
-                        Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
-                        Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
-                        else -> stringResource(R.string.repeat_off)
+                    icon = BitChordIcons.LyricsQuote,
+                    contentDescription = stringResource(if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics),
+                    // Lyrics and the queue are two things to put over the
+                    // sleeve and there is only one sleeve, so opening either
+                    // closes the other. Queue has always done this; lyrics did
+                    // not have to until it stopped being hidden while the queue
+                    // was up, at which point both could be lit at once.
+                    onClick = {
+                        lyricsOpen = !lyricsOpen
+                        if (lyricsOpen) queueOpen = false
                     },
-                    onClick = onCycleRepeat,
-                    highlighted = repeatMode != Player.REPEAT_MODE_OFF,
-                    // Three states, so the buzz tracks the edges of the cycle:
-                    // leaving off rises, returning to off falls, and the step
-                    // between the two repeat modes is just a selection.
-                    haptic = when (repeatMode) {
-                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
-                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
-                        else -> Haptic.Select
+                    highlighted = lyricsOpen,
+                )
+                AnimatedContent(
+                    targetState = queueOpen,
+                    transitionSpec = {
+                        (fadeIn(tween(180, delayMillis = 140)) togetherWith fadeOut(tween(140)))
+                            // Unclipped: the capsule's own rounded ends are what
+                            // the eye follows through the width change, and the
+                            // default clip cuts them square while it happens.
+                            .using(SizeTransform(clip = false) { _, _ -> tween(220) })
                     },
-                )
-                BottomGlyph(
-                    icon = BitChordIcons.Infinity,
-                    contentDescription = stringResource(
-                        if (autoplayEnabled) R.string.autoplay_on else R.string.autoplay_off,
-                    ),
-                    onClick = onToggleAutoplay,
-                    highlighted = autoplayEnabled,
-                    haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                    tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
-                )
-                } else {
-                    BottomGlyph(
-                        icon = BitChordIcons.LyricsQuote,
-                        contentDescription = stringResource(if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics),
-                        onClick = {
-                            lyricsOpen = !lyricsOpen
-                        },
-                        highlighted = lyricsOpen,
-                    )
-                    BottomGlyph(
-                        icon = Icons.Rounded.Headphones,
-                        contentDescription = stringResource(R.string.audio_output),
-                        onClick = { openAudioOutput(context) },
-                    )
+                    label = "playerBottomPill",
+                ) { showQueueModes ->
+                    if (showQueueModes) {
+                        Pill {
+                            PillSegment(
+                                icon = BitChordIcons.Shuffle,
+                                contentDescription = stringResource(
+                                    if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
+                                ),
+                                onClick = onToggleShuffle,
+                                highlighted = shuffleEnabled,
+                                haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                                tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                            )
+                            PillDivider()
+                            PillSegment(
+                                icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
+                                label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
+                                contentDescription = when (repeatMode) {
+                                    Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
+                                    Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
+                                    else -> stringResource(R.string.repeat_off)
+                                },
+                                onClick = onCycleRepeat,
+                                highlighted = repeatMode != Player.REPEAT_MODE_OFF,
+                                // Three states, so the buzz tracks the edges of
+                                // the cycle: leaving off rises, returning to off
+                                // falls, and the step between the two repeat
+                                // modes is just a selection.
+                                haptic = when (repeatMode) {
+                                    Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
+                                    Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
+                                    else -> Haptic.Select
+                                },
+                            )
+                            PillDivider()
+                            PillSegment(
+                                icon = BitChordIcons.Infinity,
+                                contentDescription = stringResource(
+                                    if (autoplayEnabled) R.string.autoplay_on else R.string.autoplay_off,
+                                ),
+                                onClick = onToggleAutoplay,
+                                highlighted = autoplayEnabled,
+                                haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                                tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
+                            )
+                        }
+                    } else {
+                        OutputPartyPill(
+                            onOutput = { showAudioOutput = true },
+                            onParty = onListenTogether,
+                        )
+                    }
                 }
-                Spacer(Modifier.size(BOTTOM_ACTION_SIZE))
-            }
-
-            }
-            // Queue remains mounted and opaque while only the other actions fade.
-            Box(
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = edgeInset),
-            ) {
                 BottomGlyph(
                     icon = BitChordIcons.Queue,
                     contentDescription = stringResource(R.string.up_next),
@@ -2851,22 +2893,15 @@ fun NowPlayingScreen(
             }
             // Keep the current output caption visible in both player and queue modes.
             Spacer(Modifier.height(18.dp))
-            val outputName = rememberAudioOutputName(accountName)
             Box(
                 modifier = Modifier.fillMaxWidth().height(20.dp),
                 contentAlignment = Alignment.TopCenter,
             ) {
-                    Text(
-                        text = outputName,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                        color = Color.White.copy(alpha = 0.55f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth(0.65f)
-                            .clickable { openAudioOutput(context) },
-                    )
+                OutputCaption(
+                    accountName = accountName,
+                    onOpenOutput = { showAudioOutput = true },
+                    onOpenParty = onListenTogether,
+                )
             }
             Spacer(Modifier.height(18.dp))
             }
@@ -2878,6 +2913,13 @@ fun NowPlayingScreen(
             AudioPipelineDialog(
                 hazeState = playerHaze,
                 onDismiss = { showAudioPipeline = false },
+            )
+        }
+        if (showAudioOutput) {
+            AudioOutputSheet(
+                hazeState = playerHaze,
+                accountName = accountName,
+                onDismiss = { showAudioOutput = false },
             )
         }
     }
@@ -4782,6 +4824,241 @@ private fun TransportGlyph(
 }
 
 private val BOTTOM_ACTION_SIZE = 44.dp
+
+/**
+ * One half of the output capsule — wider than it is tall, so the capsule reads
+ * as a capsule rather than as two circles that have been pushed together.
+ */
+private val PILL_SEGMENT_WIDTH = 54.dp
+
+/**
+ * Optical sizes, not equal ones.
+ *
+ * Headphones is a tall, narrow glyph and Person a taller, narrower one, so
+ * drawn at the same nominal size the second reads as the bigger of the two.
+ * These are the numbers at which they look like a matched pair.
+ */
+private val PILL_HEADPHONES_SIZE = 23.dp
+private val PILL_PARTY_SIZE = 22.dp
+
+/** What a segment's glyph is drawn at when it has no optical quirk to correct. */
+private val PILL_ICON_SIZE = 24.dp
+
+/** How wide a capsule of [segments] comes out, dividers included. */
+private fun pillWidth(segments: Int): Dp =
+    PILL_SEGMENT_WIDTH * segments + 1.dp * (segments - 1)
+
+/**
+ * A row of controls joined into one capsule.
+ *
+ * The join is a hairline rather than a gap, which is what makes several
+ * controls read as a single object — the shape the player uses for a set of
+ * choices that all answer the same question. There are two: where the sound is
+ * going, and how the queue is played.
+ */
+@Composable
+private fun Pill(content: @Composable RowScope.() -> Unit) {
+    Row(
+        modifier = Modifier
+            .height(BOTTOM_ACTION_SIZE)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = 0.12f)),
+        verticalAlignment = Alignment.CenterVertically,
+        content = content,
+    )
+}
+
+@Composable
+private fun PillDivider() {
+    Box(
+        Modifier
+            .width(1.dp)
+            .height(20.dp)
+            .background(Color.White.copy(alpha = 0.20f)),
+    )
+}
+
+/**
+ * The two ends of "where is this playing": the output capsule.
+ *
+ * Both halves answer the same question and so belong to one control rather than
+ * two glyphs that happen to sit side by side — headphones for which speaker the
+ * sound leaves by, the party for which *people* it reaches.
+ *
+ * The halves are the same width in every state, party or no party, so the
+ * capsule never resizes under the finger. How many people are in the party is a
+ * fact for the page the right half opens, and for screen readers, rather than a
+ * number living down here.
+ *
+ * Collects the party itself instead of taking it as a parameter: the state
+ * carries a playhead and lands on every heartbeat, and read any higher up it
+ * would recompose the whole player five seconds at a time over a field that has
+ * not changed. [rememberPartyBadge] narrows it to what is drawn here first.
+ */
+@Composable
+private fun OutputPartyPill(
+    onOutput: () -> Unit,
+    onParty: () -> Unit,
+) {
+    val badge = rememberPartyBadge()
+    Pill {
+        PillSegment(
+            icon = Icons.Rounded.Headphones,
+            iconSize = PILL_HEADPHONES_SIZE,
+            contentDescription = stringResource(R.string.audio_output),
+            onClick = onOutput,
+        )
+        PillDivider()
+        PillSegment(
+            // Person rather than Groups: the three-person glyph is drawn half
+            // the height of Headphones and wider than the segment holding it,
+            // so the two halves of the capsule never looked like a pair.
+            icon = Icons.Rounded.Person,
+            iconSize = PILL_PARTY_SIZE,
+            // The count is here and nowhere else: spoken, it is the whole
+            // point of the control; drawn, it would cost the capsule its
+            // symmetry for something the caption below already implies.
+            contentDescription = if (badge.inParty) {
+                stringResource(R.string.listen_together_open_count, badge.members)
+            } else {
+                stringResource(R.string.listen_together_open)
+            },
+            onClick = onParty,
+            highlighted = badge.inParty,
+        )
+    }
+}
+
+/**
+ * One control inside a [Pill] — [BottomGlyph]'s twin, squared off.
+ *
+ * Same behaviour down to the tap window, and deliberately not the same
+ * composable: a glyph's highlight is a circle sized to itself, and a segment's
+ * has to fill its share of the capsule edge to edge or the join stops reading
+ * as one.
+ */
+@Composable
+private fun PillSegment(
+    contentDescription: String,
+    onClick: () -> Unit,
+    icon: ImageVector? = null,
+    iconSize: Dp = PILL_ICON_SIZE,
+    label: String? = null,
+    highlighted: Boolean = false,
+    haptic: Haptic = Haptic.Tap,
+    /** See [BottomGlyph], where the same window means the same thing. */
+    tapWindowMs: Long = 0L,
+) {
+    val haptics = rememberHaptics()
+    val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
+    Box(
+        modifier = Modifier
+            .width(PILL_SEGMENT_WIDTH)
+            .height(BOTTOM_ACTION_SIZE)
+            .background(if (highlighted) Color.White.copy(alpha = 0.14f) else Color.Transparent)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastTap.longValue >= tapWindowMs) {
+                    lastTap.longValue = now
+                    haptics.play(haptic)
+                    onClick()
+                }
+            }
+            .semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        val tint = Color.White.copy(alpha = if (highlighted) 1f else 0.75f)
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(iconSize),
+            )
+        } else if (label != null) {
+            Text(
+                text = label,
+                color = tint,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
+/**
+ * The line under the transport: normally the output, and the party's name
+ * whenever there is one.
+ *
+ * A party overrides the output rather than sitting beside it because the two
+ * are not the same kind of fact. "Kushagra's Phone" answers which speaker in
+ * this room; once there are four devices playing the same song, the room is no
+ * longer what the listener is checking. The tap follows the label — whichever
+ * one is on screen is the thing it opens.
+ */
+@Composable
+private fun OutputCaption(
+    accountName: String?,
+    onOpenOutput: () -> Unit,
+    onOpenParty: () -> Unit,
+) {
+    val badge = rememberPartyBadge()
+    val outputName = rememberAudioOutputName(accountName)
+    // The host's first name, exactly as the output line already shortens the
+    // account's — "Kushagra's Jam" alongside "Kushagra's Phone".
+    val jamName = badge.hostFirstName
+        ?.let { stringResource(R.string.listen_together_jam, it) }
+        ?: stringResource(R.string.listen_together_jam_unnamed)
+    Text(
+        text = if (badge.inParty) jamName else outputName,
+        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+        color = Color.White.copy(alpha = 0.55f),
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth(0.65f)
+            .clickable { if (badge.inParty) onOpenParty() else onOpenOutput() },
+    )
+}
+
+/** The three fields of a party the player draws — see [OutputPartyPill]. */
+private data class PartyBadge(
+    val inParty: Boolean,
+    val members: Int,
+    val hostFirstName: String?,
+)
+
+private fun ListenTogether.State.badge(): PartyBadge = PartyBadge(
+    inParty = inParty,
+    members = members.size,
+    hostFirstName = members.firstOrNull(PartyMember::isHost)
+        ?.displayName
+        ?.trim()
+        ?.split(Regex("\\s+"))
+        ?.firstOrNull()
+        ?.takeIf { it.isNotBlank() },
+)
+
+/**
+ * [PartyBadge] as it changes, and only when it actually does.
+ *
+ * `distinctUntilChanged` is the point of this: the party's own state is
+ * replaced on every heartbeat and every position report, none of which move any
+ * of these three fields.
+ */
+@Composable
+private fun rememberPartyBadge(): PartyBadge {
+    val badges = remember {
+        ListenTogether.state.map { it.badge() }.distinctUntilChanged()
+    }
+    return badges
+        .collectAsStateWithLifecycle(initialValue = ListenTogether.state.value.badge())
+        .value
+}
 
 @Composable
 private fun BottomGlyph(

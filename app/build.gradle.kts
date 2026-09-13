@@ -34,6 +34,24 @@ val lastfmSecret: String = (
         ?: ""
     ).trim()
 
+/*
+ * Where Listen Together's party server lives. Not a credential — it is a public
+ * URL, and every device in a party has to be pointed at the same one — but it is
+ * deployment-specific rather than a property of the source, which is what puts
+ * it here beside the others instead of in a constant.
+ *
+ * Empty is a supported state, not a broken build: the field below is only the
+ * *default* the address box on the Listen Together screen starts with, and
+ * anything typed there wins and persists. So a fresh checkout without this line
+ * builds and runs, and simply asks for an address the first time somebody opens
+ * the screen. See ListenTogether.DEFAULT_SERVER.
+ */
+val listenTogetherServer: String = (
+    localProps.getProperty("LISTEN_TOGETHER_SERVER")
+        ?: System.getenv("LISTEN_TOGETHER_SERVER")
+        ?: ""
+    ).trim().trimEnd('/')
+
 android {
     namespace = "com.music.bitchord"
     compileSdk = 36
@@ -52,6 +70,11 @@ android {
         // Last.fm credentials are supplied locally and never committed.
         buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "LASTFM_SECRET", "\"${lastfmSecret.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField(
+            "String",
+            "LISTEN_TOGETHER_SERVER",
+            "\"${listenTogetherServer.replace("\\", "\\\\").replace("\"", "\\\"")}\"",
+        )
     }
 
     splits {

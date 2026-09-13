@@ -196,7 +196,19 @@ service by hand — which is one screen:
 - **Health check path** `/healthz`
 - **Instances** 1
 
-Then point the app at `https://<service>.onrender.com`.
+Then point the app at `https://<service>.onrender.com`, by adding this to
+`local.properties` at the repository root:
+
+```properties
+LISTEN_TOGETHER_SERVER=https://<service>.onrender.com
+```
+
+That becomes `BuildConfig.LISTEN_TOGETHER_SERVER` and seeds the address box on
+the Listen Together screen. It is only a default — anything typed into that box
+wins and persists, so running your own copy of this server never means editing
+the build. `local.properties` is gitignored, so a fresh checkout builds with an
+empty default and simply asks for an address the first time the screen is
+opened.
 
 Two things about Render specifically:
 

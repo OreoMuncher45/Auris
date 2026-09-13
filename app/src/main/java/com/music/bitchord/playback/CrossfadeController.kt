@@ -9,6 +9,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TrackAnalysisState
@@ -440,6 +441,14 @@ class CrossfadeController(
     private fun considerAutoTransition() {
         val player = active()
         if (!player.isPlaying) return
+        // Not while listening together. A blend starts the next track early, by
+        // a length this device decides for itself from its own copy of the
+        // audio — so in a party every member would begin the next song at a
+        // different moment, and each would then be dragged back by a correcting
+        // seek. The transition a party shares is the plain one: whoever reaches
+        // the end first publishes the change and everybody moves together. See
+        // [PartySync].
+        if (ListenTogether.state.value.inParty) return
         // Nothing to transition *into*, so any analysis state left over from the
         // previous pair is stale — the last track of a queue should not still be
         // claiming both songs are measured.

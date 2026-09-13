@@ -19,6 +19,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudDone
+import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.GroupAdd
@@ -89,9 +92,10 @@ fun ListenTogetherScreen(
     val scope = rememberCoroutineScope()
 
     val state by ListenTogether.state.collectAsStateWithLifecycle()
-    val serverUrl by ListenTogether.serverUrl.collectAsStateWithLifecycle()
+    val customServer by ListenTogether.customServerUrl.collectAsStateWithLifecycle()
+    val serverStatus by ListenTogether.serverStatus.collectAsStateWithLifecycle()
 
-    var serverInput by remember(serverUrl) { mutableStateOf(serverUrl) }
+    var serverInput by remember(customServer) { mutableStateOf(customServer) }
     var codeInput by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -100,6 +104,9 @@ fun ListenTogetherScreen(
     // the screen is looked at — rather than on every cold start — is what keeps
     // a feature nobody is currently using off the radio.
     LaunchedEffect(Unit) { ListenTogether.ensureConnected() }
+    // Re-checked whenever the address changes, so switching to your own server
+    // says whether it answers rather than waiting for a create to fail.
+    LaunchedEffect(customServer) { ListenTogether.refreshServerHealth() }
 
     Column(
         modifier = modifier
@@ -125,49 +132,12 @@ fun ListenTogetherScreen(
             }
         }
 
-        SettingsGroup(
-            header = stringResource(R.string.listen_together_server),
-            footer = stringResource(R.string.listen_together_server_footer),
-        ) {
-            Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.Dns,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(ICON_SIZE),
-                    )
-                    Spacer(Modifier.width(ICON_GAP))
-                    OutlinedTextField(
-                        value = serverInput,
-                        onValueChange = { serverInput = it },
-                        placeholder = { Text("bitchord-listen-together.onrender.com") },
-                        singleLine = true,
-                        // Locked while in a party: changing the address under a
-                        // live membership would leave this device holding a
-                        // token for a server it no longer talks to, and the
-                        // party unable to say why it went quiet.
-                        enabled = !state.inParty,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                if (serverInput.trim() != serverUrl) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
-                        TextButton(onClick = { ListenTogether.setServerUrl(serverInput) }) {
-                            Text(stringResource(R.string.save))
-                        }
-                    }
-                }
-            }
-        }
+        ServerHealthRow(status = serverStatus, onRecheck = ListenTogether::refreshServerHealth)
 
         if (!state.inParty) {
             NotInAParty(
                 signedIn = signedIn,
-                hasServer = serverUrl.isNotBlank(),
+                hasServer = ListenTogether.hasServer,
                 codeInput = codeInput,
                 onCodeInput = { typed ->
                     codeInput = typed.filter(Char::isLetterOrDigit)
@@ -223,7 +193,94 @@ fun ListenTogetherScreen(
             )
         }
 
+        // Last, and empty by default. Nobody setting up a party needs to think
+        // about an address — there is one built in — so this is where somebody
+        // running their own server comes looking, rather than the first thing
+        // everybody else has to read past.
+        SettingsGroup(
+            header = stringResource(R.string.listen_together_custom_server),
+            footer = stringResource(R.string.listen_together_custom_server_footer),
+        ) {
+            Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.Dns,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(ICON_SIZE),
+                    )
+                    Spacer(Modifier.width(ICON_GAP))
+                    OutlinedTextField(
+                        value = serverInput,
+                        onValueChange = { serverInput = it },
+                        // Never the built-in address, even as a hint: this box
+                        // exists to take somebody else's server, and the one
+                        // this build uses is not shown anywhere.
+                        placeholder = { Text(stringResource(R.string.listen_together_using_builtin)) },
+                        singleLine = true,
+                        // Locked while in a party: changing the address under a
+                        // live membership would leave this device holding a
+                        // token for a server it no longer talks to, and the
+                        // party unable to say why it went quiet.
+                        enabled = !state.inParty,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                if (serverInput.trim().trimEnd('/') != customServer) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { ListenTogether.setCustomServerUrl(serverInput) }) {
+                            Text(stringResource(R.string.save))
+                        }
+                    }
+                }
+            }
+        }
+
         Spacer(Modifier.height(32.dp))
+    }
+}
+
+/**
+ * Whether the party server is answering, before anything else on the screen.
+ *
+ * Every other failure in this feature looks the same from the outside — a code
+ * that will not create, a join that sits there — and most of the time the
+ * answer is simply that the server is asleep or unreachable. Saying so up front
+ * is the difference between a feature that looks broken and one that is waiting.
+ *
+ * Deliberately says nothing about *where* the server is. The address this build
+ * uses is not shown here, on the row below, or in any log — see
+ * [ListenTogether.customServerUrl].
+ */
+@Composable
+private fun ServerHealthRow(
+    status: ListenTogether.ServerStatus,
+    onRecheck: () -> Unit,
+) {
+    SettingsGroup {
+        SettingsRow(
+            icon = when (status.health) {
+                ListenTogether.Health.ONLINE -> Icons.Rounded.CloudDone
+                ListenTogether.Health.OFFLINE -> Icons.Rounded.CloudOff
+                else -> Icons.Rounded.Cloud
+            },
+            title = stringResource(R.string.listen_together_server),
+            subtitle = when (status.health) {
+                ListenTogether.Health.ONLINE ->
+                    stringResource(R.string.listen_together_server_online, status.latencyMs)
+                ListenTogether.Health.OFFLINE ->
+                    stringResource(R.string.listen_together_server_offline)
+                ListenTogether.Health.CHECKING ->
+                    stringResource(R.string.listen_together_server_checking)
+                ListenTogether.Health.UNKNOWN ->
+                    stringResource(R.string.listen_together_server_unknown)
+            },
+            trailing = if (status.health == ListenTogether.Health.CHECKING) ({ Spinner() }) else null,
+            onClick = onRecheck,
+        )
     }
 }
 

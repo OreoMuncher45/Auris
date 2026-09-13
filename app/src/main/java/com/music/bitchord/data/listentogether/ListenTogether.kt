@@ -3,14 +3,18 @@ package com.music.bitchord.data.listentogether
 import android.content.Context
 import android.content.SharedPreferences
 import com.music.bitchord.BitChordApplication
+import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.DebugLog as Log
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -51,9 +55,18 @@ import java.util.concurrent.TimeUnit
  * This object is the whole client half of the feature — membership, the socket,
  * the clock, and the controls any member may send. It does **not** touch the
  * player. What it publishes instead is [partyPositionMs]: where this device
- * ought to be, right now, on its own clock. Binding that to Media3 is the next
- * piece of work and is deliberately not done here, because everything above
- * that line is testable and everything below it is not.
+ * ought to be, right now, on its own clock.
+ * [PartySync][com.music.bitchord.playback.PartySync] is what binds that to
+ * Media3, and it lives in the playback service rather than here, because
+ * everything above that line is testable and everything below it is not.
+ *
+ * ## A party lasts as long as the app is open
+ *
+ * Backgrounding, the screen going off, a tunnel, a handover — none of those end
+ * a party; that is most of what listening together looks like and the whole
+ * reconnect loop below exists for it. Closing the app does end it. The slot is
+ * given back at the next launch (see [init]) rather than kept warm, because a
+ * party nobody is in is a party of five that only holds four.
  *
  * ## How it stays in time
  *
@@ -139,6 +152,11 @@ object ListenTogether {
             }
         }
         install(ContentNegotiation) { json(json) }
+        // Installed with no defaults so it changes nothing on its own — the
+        // socket in particular must stay open indefinitely. It exists so the
+        // health check can set a bound of its own; every other request is
+        // left to OkHttp's connect timeout above.
+        install(HttpTimeout)
         install(WebSockets)
         // Off, so a 409 "party full" can be read out of the body and shown as
         // itself rather than arriving as a transport exception.
@@ -151,8 +169,67 @@ object ListenTogether {
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
-    private val _serverUrl = MutableStateFlow("")
-    val serverUrl: StateFlow<String> = _serverUrl.asStateFlow()
+    /**
+     * A server the user has pointed this install at instead of the built-in one.
+     *
+     * Blank means "the one this build ships with", and that address is
+     * deliberately never published — not through this flow, not on screen, and
+     * not in a log. See [redact]. So this is the only server address the app
+     * will ever show back, because it is the only one the user typed.
+     */
+    private val _customServer = MutableStateFlow("")
+    val customServerUrl: StateFlow<String> = _customServer.asStateFlow()
+
+    /** Whether a party can be reached at all — a built-in or a custom address. */
+    val hasServer: Boolean get() = httpBase().isNotBlank()
+
+    enum class Health { UNKNOWN, CHECKING, ONLINE, OFFLINE }
+
+    /**
+     * What `/healthz` last said, and how long it took to say it.
+     *
+     * Worth showing before anything else on the screen, because every other
+     * failure here looks the same to a listener — a code that will not create, a
+     * join that hangs — and most of the time the answer is simply that the
+     * server is asleep. A free instance spins down when idle and takes the best
+     * part of a minute to come back, which is why [refreshServerHealth] waits so
+     * patiently rather than calling that a failure.
+     */
+    data class ServerStatus(val health: Health = Health.UNKNOWN, val latencyMs: Long = 0)
+
+    private val _serverStatus = MutableStateFlow(ServerStatus())
+    val serverStatus: StateFlow<ServerStatus> = _serverStatus.asStateFlow()
+
+    private var healthJob: Job? = null
+
+    fun refreshServerHealth() {
+        if (healthJob?.isActive == true) return
+        healthJob = scope.launch {
+            val base = httpBase()
+            if (base.isBlank()) {
+                _serverStatus.value = ServerStatus(Health.OFFLINE)
+                return@launch
+            }
+            _serverStatus.value = ServerStatus(Health.CHECKING)
+            val startedAt = ServerClock.localNowMs()
+            val ok = runCatching {
+                http.get("$base/healthz") {
+                    // Generous on purpose: a sleeping free instance answers in
+                    // about thirty seconds, and reporting that as "offline"
+                    // would be wrong in the one case somebody most needs the
+                    // truth — they are waiting for it to wake up.
+                    timeout { requestTimeoutMillis = HEALTH_TIMEOUT_MS }
+                }.status.isSuccess()
+            }.getOrElse {
+                Log.w(TAG, "health check failed: ${redact(it.message)}")
+                false
+            }
+            _serverStatus.value = ServerStatus(
+                health = if (ok) Health.ONLINE else Health.OFFLINE,
+                latencyMs = ServerClock.localNowMs() - startedAt,
+            )
+        }
+    }
 
     private lateinit var prefs: SharedPreferences
     private var token: String? = null
@@ -163,21 +240,55 @@ object ListenTogether {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        _serverUrl.value = prefs.getString(KEY_SERVER, DEFAULT_SERVER).orEmpty()
-        // A membership survives the process. The socket does not, and neither
-        // does the clock offset — both are re-established on the next connect,
-        // which is cheap and is the only way to be sure they are current.
+        // Only ever an override. Blank is the normal state and means the
+        // built-in server, which is resolved at the point of use in [httpBase]
+        // rather than copied in here — so there is no moment at which the
+        // address this build ships with is sitting in a flow the UI can read.
+        _customServer.value = prefs.getString(KEY_SERVER, null)?.trim().orEmpty()
+        // A membership does not survive the app being closed. Anything still on
+        // disk here belongs to a process that is gone, so this launch starts out
+        // of the party rather than silently back in one — which is what the
+        // stored token used to do, and it surprised people: reopening the app
+        // days later put music back on four other devices.
+        //
+        // Cleared before the release is attempted, not after. The slot is worth
+        // handing back promptly, but a launch must not depend on a network call
+        // to a server that may well be asleep: fail that and this device is
+        // stranded in a party its own screen says it has left.
         val code = prefs.getString(KEY_CODE, null)
         val saved = prefs.getString(KEY_TOKEN, null)
+        prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
         if (!code.isNullOrBlank() && !saved.isNullOrBlank()) {
-            token = saved
-            _state.value = State(code = code)
+            releaseStaleSlot(code, saved)
         }
     }
 
-    fun setServerUrl(value: String) {
-        val cleaned = value.trim()
-        _serverUrl.value = cleaned
+    /**
+     * Hands a previous process's slot back, so the others see them leave now
+     * rather than when the server's disconnect grace sweeps it.
+     *
+     * Entirely best-effort and deliberately unobserved: nothing on this device
+     * is waiting on the answer, and there is no state left for it to change.
+     * The party is five devices wide, so the difference between giving a slot
+     * up immediately and forty-five seconds later is the difference between a
+     * friend being able to join and being told the party is full.
+     */
+    private fun releaseStaleSlot(code: String, held: String) {
+        scope.launch {
+            runCatching {
+                http.post("${httpBase()}/api/parties/$code/leave") {
+                    header("Authorization", "Bearer $held")
+                }
+            }.onFailure { failure ->
+                Log.i(TAG, "stale party slot left to the server's grace: ${redact(failure.message)}")
+            }
+        }
+    }
+
+    /** Points this install at another server, or back at the built-in one if blank. */
+    fun setCustomServerUrl(value: String) {
+        val cleaned = value.trim().trimEnd('/')
+        _customServer.value = cleaned
         prefs.edit().putString(KEY_SERVER, cleaned).apply()
     }
 
@@ -242,8 +353,8 @@ object ListenTogether {
                     connect()
                 }
                 .onFailure { failure ->
-                    Log.w(TAG, "could not enter a party: ${failure.message}")
-                    _state.update { it.copy(error = failure.message) }
+                    Log.w(TAG, "could not enter a party: ${redact(failure.message)}")
+                    _state.update { it.copy(error = failure.displayMessage()) }
                 }
                 .map { it.code }
         }
@@ -312,7 +423,7 @@ object ListenTogether {
         val live = session ?: return
         scope.launch {
             runCatching { live.send(Frame.Text(frame.toString())) }
-                .onFailure { Log.w(TAG, "control not sent: ${it.message}") }
+                .onFailure { Log.w(TAG, "control not sent: ${redact(it.message)}") }
         }
     }
 
@@ -390,7 +501,7 @@ object ListenTogether {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                Log.w(TAG, "party socket dropped: ${failure.message}")
+                Log.w(TAG, "party socket dropped: ${redact(failure.message)}")
             } finally {
                 session = null
             }
@@ -537,7 +648,7 @@ object ListenTogether {
             "error" -> {
                 val reason = frame["error"]?.jsonPrimitive?.content
                 val message = frame["message"]?.jsonPrimitive?.content
-                Log.w(TAG, "party server refused a frame: $reason $message")
+                Log.w(TAG, "party server refused a frame: $reason ${redact(message)}")
                 _state.update { it.copy(error = message) }
                 // These two are terminal, and the reconnect loop cannot learn
                 // that on its own — it would keep dialling a party that no
@@ -634,11 +745,53 @@ object ListenTogether {
         )
     }
 
-    /** Trims a pasted address down to a scheme and a host the client can use. */
+    /**
+     * The address requests actually go to: the user's override, or the built-in
+     * one. Private, and the only place the built-in address is read.
+     */
     private fun httpBase(): String {
-        val raw = _serverUrl.value.trim().trimEnd('/')
+        val raw = _customServer.value.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
         if (raw.isBlank()) return ""
         return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
+    }
+
+    /**
+     * A message with every server address taken out of it.
+     *
+     * Failures from the HTTP and WebSocket layers name the host they were
+     * talking to — that is what they are for — and those messages end up in two
+     * places that must not carry it: logcat, and the error line on the Listen
+     * Together screen. So nothing from below this class reaches either without
+     * passing through here.
+     *
+     * Belt and braces on purpose. The known addresses are replaced by name, and
+     * then *any* remaining absolute URL is replaced too, because the thing being
+     * guarded against is precisely a message shaped in a way this code did not
+     * anticipate — a redirect, a proxy, a DNS error naming a CDN hostname.
+     */
+    private fun redact(text: String?): String {
+        var out = text.orEmpty()
+        if (out.isEmpty()) return out
+        listOf(DEFAULT_SERVER, _customServer.value)
+            .filter { it.isNotBlank() }
+            .flatMap { listOf(it, it.substringAfter("://")) }
+            .sortedByDescending(String::length)
+            .forEach { out = out.replace(it, SERVER_PLACEHOLDER, ignoreCase = true) }
+        return out.replace(ABSOLUTE_URL, SERVER_PLACEHOLDER)
+    }
+
+    /**
+     * What the listener is told when the transport fails.
+     *
+     * Deliberately not the exception's own words even after redaction: a
+     * connection failure's message is written for whoever wrote the networking
+     * library, and "Failed to connect to <server>/34.x.x.x:443" tells a listener
+     * nothing they can act on while still handing out an address. Refusals the
+     * server itself issued are ours, already phrased for a person, and kept.
+     */
+    private fun Throwable.displayMessage(): String = when (this) {
+        is PartyException -> message ?: UNREACHABLE
+        else -> UNREACHABLE
     }
 
     private fun wsBase(): String = httpBase()
@@ -654,10 +807,29 @@ object ListenTogether {
     private const val TAG = "ListenTogether"
     private const val PREFS = "bitchord_listen_together"
     private const val KEY_SERVER = "server_url"
+
+    /** What a redacted address reads as. Not a hostname, so it cannot be resolved back. */
+    private const val SERVER_PLACEHOLDER = "<party server>"
+
+    private const val UNREACHABLE = "Couldn’t reach the party server."
+
+    private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
     private const val KEY_CODE = "party_code"
     private const val KEY_TOKEN = "party_token"
     private const val KEY_DEVICE = "device_id"
-    private const val DEFAULT_SERVER = ""
+
+    /**
+     * The party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
+     * in `local.properties` (see app/build.gradle.kts).
+     *
+     * Only a default. It seeds the address box on the Listen Together screen and
+     * is then overridden by anything typed there, which persists — so somebody
+     * running their own copy of `backend/` is never fighting this value. Empty
+     * is a supported state: a checkout without that line builds fine and simply
+     * asks for an address.
+     */
+    private val DEFAULT_SERVER: String = BuildConfig.LISTEN_TOGETHER_SERVER
     private const val PING_INTERVAL_MS = 15_000L
     private const val REPORT_INTERVAL_MS = 10_000L
+    private const val HEALTH_TIMEOUT_MS = 45_000L
 }

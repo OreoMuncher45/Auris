@@ -786,6 +786,10 @@
     <string name="profile_unavailable">No signed-in profile is available on this page yet.</string>
     <string name="open_lyrics">Lyrics</string>
     <string name="audio_output">Audio output</string>
+    <string name="audio_output_playing">Playing here</string>
+    <string name="wired_headphones">Wired headphones</string>
+    <string name="usb_audio">USB audio</string>
+    <string name="hdmi_output">HDMI</string>
     <string name="personal_phone">%1$s’s Phone</string>
     <string name="this_phone">This phone</string>
 
@@ -795,7 +799,13 @@
     <string name="listen_together_in_party">In a party · %1$s</string>
     <string name="listen_together_sign_in_footer">Listening together needs an account, so everyone in the party can see who else is in it.</string>
     <string name="listen_together_server">Party server</string>
-    <string name="listen_together_server_footer">The address of your own Listen Together server. Everyone in a party has to be pointed at the same one.</string>
+    <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_offline">Can’t be reached right now</string>
+    <string name="listen_together_server_checking">Checking…</string>
+    <string name="listen_together_server_unknown">Tap to check</string>
+    <string name="listen_together_custom_server">Use your own server</string>
+    <string name="listen_together_custom_server_footer">Leave this empty to use the built-in server. If you run your own copy, everyone in the party has to be pointed at the same one.</string>
+    <string name="listen_together_using_builtin">Using the built-in server</string>
     <string name="listen_together_create">Create a party</string>
     <string name="listen_together_create_subtitle">Get a code to share with friends</string>
     <string name="listen_together_create_footer">You get a six-character code. Anyone who has it can join, up to five devices including yours.</string>
@@ -818,4 +828,8 @@
     <string name="listen_together_reconnecting">Reconnecting…</string>
     <string name="listen_together_syncing_clock">Measuring the clock…</string>
     <string name="listen_together_in_sync">In sync · %1$d ms round trip</string>
+    <string name="listen_together_jam">%1$s’s Jam</string>
+    <string name="listen_together_jam_unnamed">Listening together</string>
+    <string name="listen_together_open">Listen together</string>
+    <string name="listen_together_open_count">Listening together · %1$d</string>
 </resources>

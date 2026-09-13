@@ -286,8 +286,25 @@ class PlaybackService : MediaLibraryService() {
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val outputDeviceCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
-        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+            // Plugging something in moves the music to it. Always — a choice
+            // made an hour ago about the speaker is not a standing instruction
+            // to ignore the headphones now going in, and there is no row in the
+            // picker for "go back to following the system", so a stuck choice
+            // would be a picker that had quietly broken the obvious behaviour.
+            AudioRouting.forget()
+            requestOutputReconfiguration()
+        }
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+            // A chosen output that has been unplugged is no longer a choice.
+            // Left set, its id matches nothing — and ids are reused, so it
+            // would eventually match whatever device the framework hands that
+            // number to next. See [AudioRouting].
+            if (removedDevices.any { it.id == AudioRouting.selectedId.value }) {
+                AudioRouting.forget()
+            }
+            requestOutputReconfiguration()
+        }
     }
 
     /**
@@ -405,6 +422,14 @@ class PlaybackService : MediaLibraryService() {
     private var discordPresenceUp = false
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    /**
+     * Binds playback to a Listen Together party, when there is one.
+     *
+     * Here rather than in the UI because a party has to outlive the app
+     * being backgrounded and the screen going off — see [PartySync].
+     */
+    private var partySync: PartySync? = null
 
     /** Commands exposed as the secondary buttons on the media notification. */
     private val favoriteCommand = SessionCommand(ACTION_TOGGLE_FAVORITE, Bundle.EMPTY)
@@ -562,6 +587,10 @@ class PlaybackService : MediaLibraryService() {
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             publishWidgetState(playing = playWhenReady)
+            // The only place the *reason* can be read. A party has to tell a
+            // pause the listener asked for from one another app imposed, and
+            // [Player] does not keep the answer around to be asked later.
+            partySync?.onPlayWhenReadyChanged(playWhenReady, reason)
         }
 
         /**
@@ -615,6 +644,14 @@ class PlaybackService : MediaLibraryService() {
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
                 reason = reason,
             )
+            // The queue moving on by itself. Nobody pressed anything, but it
+            // is still this device deciding what the party plays next, and no
+            // other path reports it: an automatic advance never passes through
+            // the session wrapper. A skip does pass through it, and is reported
+            // there; publishing is debounced, so being told twice costs nothing.
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO) {
+                partySync?.onLocalIntent()
+            }
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
             autoplaySeed = null
@@ -1195,6 +1232,9 @@ class PlaybackService : MediaLibraryService() {
         // playback starts and when the queue moves on while already playing.
         lastRepeatMode = exoPlayer.repeatMode
         exoPlayer.addListener(playbackListener)
+        // After the player exists and before the session is built: the
+        // session's wrapper reports the user's actions to it.
+        partySync = PartySync(scope) { player }.also { it.start() }
         loadAutoplayForCurrentTrack()
 
         // Only the analytics listener reports the format the audio renderer was
@@ -1211,7 +1251,12 @@ class PlaybackService : MediaLibraryService() {
 
         mediaSession = MediaLibrarySession.Builder(
             this,
-            SessionPlayer(exoPlayer, controller) { lastPublishedSubtitle },
+            SessionPlayer(
+                exoPlayer,
+                controller,
+                onUserIntent = { partySync?.onLocalIntent() },
+            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+            ) { lastPublishedSubtitle },
             MediaLibraryCallback(),
         )
             .setId(SESSION_ID)
@@ -1487,7 +1532,12 @@ class PlaybackService : MediaLibraryService() {
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
 
-        mediaSession?.player = SessionPlayer(incoming, requireNotNull(crossfade)) { lastPublishedSubtitle }
+        mediaSession?.player = SessionPlayer(
+            incoming,
+            requireNotNull(crossfade),
+            onUserIntent = { partySync?.onLocalIntent() },
+            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+        ) { lastPublishedSubtitle }
 
         // The queue moving on used to arrive here as an item transition on the
         // one player that owned the queue. It cannot any more — the incoming
@@ -3846,6 +3896,18 @@ class PlaybackService : MediaLibraryService() {
     private fun applyOutputRoute() {
         val manager = audioManager ?: return
         val usb = preferredUsbDevice()
+        // Deliberately *not* how the output picker switches devices. This call
+        // moves our own AudioTrack and nothing else, while Android keeps one
+        // volume index per system route and applies whichever route it thinks
+        // media is on. Point the track at the speaker while the system still
+        // has STREAM_MUSIC on Bluetooth and the speaker plays at the headset's
+        // index — measured at 7/15 against the speaker's own 15/15 — with the
+        // volume slider writing the Bluetooth index, unable to reach it. See
+        // [AudioRouting], which now transfers the system route instead.
+        //
+        // It stays here for the USB DAC, which is a different thing: not "send
+        // the music somewhere else" but "when the music is already going to
+        // this DAC, hand it the bits directly".
         val preferred = usb.takeIf { AppSettings.preferUsbDac.value }
         eachPlayer { it.setPreferredAudioDevice(preferred) }
         AudioOutputStatus.publish(
@@ -3924,7 +3986,12 @@ class PlaybackService : MediaLibraryService() {
         val newCrossfade = createCrossfadeController()
         crossfade = newCrossfade
         newCrossfade.start()
-        mediaSession?.player = SessionPlayer(newActive, newCrossfade) { lastPublishedSubtitle }
+        mediaSession?.player = SessionPlayer(
+            newActive,
+            newCrossfade,
+            onUserIntent = { partySync?.onLocalIntent() },
+            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+        ) { lastPublishedSubtitle }
         applyOutputRoute()
         if (items.isNotEmpty()) newActive.prepare()
         newActive.playWhenReady = playWhenReady
@@ -3967,6 +4034,14 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
+            // Just the route, not a reconfiguration: picking an output moves
+            // where the AudioTrack renders, and tearing the renderers down for
+            // it would put a gap in the music at the moment the listener is
+            // watching for one. The float/PCM decision is a property of the USB
+            // DAC preference, which has its own collector above.
+            AudioRouting.selectedId.drop(1).collect { applyOutputRoute() }
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
@@ -4373,6 +4448,8 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
+        partySync?.stop()
+        partySync = null
         player?.let(::savePlaybackState)
         // And to leave the widgets showing a play button. Nothing else reports a
         // swipe-away, so a widget left on the home screen would sit there with a
@@ -4575,8 +4652,106 @@ class PlaybackService : MediaLibraryService() {
     private class SessionPlayer(
         player: Player,
         private val crossfade: CrossfadeController,
+        /**
+         * Reports that what just came through here was the *user's* doing.
+         *
+         * This wrapper is the door every external surface knocks on — the
+         * app, the notification, a headset button, Android Auto — while the
+         * service's own programmatic moves go straight to the ExoPlayer
+         * underneath it. That asymmetry is the whole reason a party can tell
+         * a listener's action from its own corrections. See [PartySync].
+         */
+        private val onUserIntent: () -> Unit,
+        /** @see PartySync.shouldDeferPlay */
+        private val deferPlayToParty: () -> Boolean,
         private val getSubtitle: () -> String?,
     ) : ForwardingPlayer(player) {
+
+        override fun play() {
+            onUserIntent()
+            // Held back only when a party will schedule the start for everyone
+            // at once — see [PartySync.shouldDeferPlay], which starts the player
+            // itself on the party's instant, and starts it anyway if the party
+            // never answers. Outside a party this is an ordinary play().
+            if (deferPlayToParty()) return
+            super.play()
+        }
+        override fun pause() { onUserIntent(); super.pause() }
+        override fun stop() { onUserIntent(); super.stop() }
+
+        override fun setPlayWhenReady(playWhenReady: Boolean) {
+            onUserIntent()
+            if (playWhenReady && deferPlayToParty()) return
+            super.setPlayWhenReady(playWhenReady)
+        }
+
+        override fun seekTo(positionMs: Long) { onUserIntent(); super.seekTo(positionMs) }
+        override fun seekBack() { onUserIntent(); super.seekBack() }
+        override fun seekForward() { onUserIntent(); super.seekForward() }
+        override fun seekToPrevious() { onUserIntent(); super.seekToPrevious() }
+        override fun seekToDefaultPosition() { onUserIntent(); super.seekToDefaultPosition() }
+
+        override fun seekToDefaultPosition(mediaItemIndex: Int) {
+            onUserIntent()
+            super.seekToDefaultPosition(mediaItemIndex)
+        }
+
+        override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
+            onUserIntent()
+            super.setMediaItems(mediaItems, resetPosition)
+        }
+
+        override fun setMediaItems(
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+            startPositionMs: Long,
+        ) {
+            onUserIntent()
+            super.setMediaItems(mediaItems, startIndex, startPositionMs)
+        }
+
+        // Every other way the running order can change from outside: Play next,
+        // Add to queue, removing a row, dragging one. None of these move the
+        // playhead, so before they were reported the party's copy of the queue
+        // silently went stale and only caught up at the next track change.
+        override fun addMediaItems(index: Int, mediaItems: List<MediaItem>) {
+            onUserIntent()
+            super.addMediaItems(index, mediaItems)
+        }
+
+        override fun addMediaItems(mediaItems: List<MediaItem>) {
+            onUserIntent()
+            super.addMediaItems(mediaItems)
+        }
+
+        override fun removeMediaItem(index: Int) {
+            onUserIntent()
+            super.removeMediaItem(index)
+        }
+
+        override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
+            onUserIntent()
+            super.removeMediaItems(fromIndex, toIndex)
+        }
+
+        override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
+            onUserIntent()
+            super.moveMediaItems(fromIndex, toIndex, newIndex)
+        }
+
+        override fun replaceMediaItems(
+            fromIndex: Int,
+            toIndex: Int,
+            mediaItems: List<MediaItem>,
+        ) {
+            onUserIntent()
+            super.replaceMediaItems(fromIndex, toIndex, mediaItems)
+        }
+
+        override fun clearMediaItems() {
+            onUserIntent()
+            super.clearMediaItems()
+        }
 
         override fun getMediaMetadata(): MediaMetadata {
             val base = wrappedPlayer.mediaMetadata
@@ -4589,6 +4764,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            onUserIntent()
             crossfade.onSkipRequested()
             val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
             if (skipped == null) {
@@ -4605,16 +4781,19 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun seekToPreviousMediaItem() {
+            onUserIntent()
             crossfade.onSkipRequested()
             wrappedPlayer.seekToPrevious()
         }
 
         override fun seekToNextMediaItem() {
+            onUserIntent()
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNextMediaItem()
         }
 
         override fun seekToNext() {
+            onUserIntent()
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNext()
         }
