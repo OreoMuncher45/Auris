@@ -427,6 +427,22 @@ object ListenTogether {
         put("queueIndex", index)
     }
 
+    fun queueAdd(tracks: List<PartyTrack>, playNext: Boolean = false) = control("queueAdd") {
+        put("tracks", json.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(PartyTrack.serializer()), tracks))
+        put("playNext", playNext)
+    }
+
+    fun queueRemove(videoId: String) = control("queueRemove") {
+        put("videoId", videoId)
+    }
+
+    fun queueClear() = control("queueClear") {}
+
+    fun queueMove(fromIndex: Int, toIndex: Int) = control("queueMove") {
+        put("fromIndex", fromIndex)
+        put("toIndex", toIndex)
+    }
+
     private fun control(action: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
         val frame = buildJsonObject {
             put("type", "control")

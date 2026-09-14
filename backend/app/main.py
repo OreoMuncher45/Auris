@@ -251,7 +251,8 @@ async def _handle_frame(party: Party, member: Member, frame: Any) -> None:
             })
             return
         queue_before = party.playback.queue_seq
-        if _apply_control(party, member, frame):
+        success, err_code, err_msg = _apply_control(party, member, frame)
+        if success:
             party.touch()
             # The queue first, so that nobody is holding a state frame that
             # points at an index in a list they have not been given yet.
@@ -264,12 +265,12 @@ async def _handle_frame(party: Party, member: Member, frame: Any) -> None:
         else:
             await _reply(party, member, {
                 "type": protocol.ERROR,
-                "error": "bad_control",
-                "message": f"Unsupported control: {frame.get('action')!r}",
+                "error": err_code or "bad_control",
+                "message": err_msg or f"Unsupported control: {frame.get('action')!r}",
             })
 
 
-def _apply_control(party: Party, member: Member, frame: dict[str, Any]) -> bool:
+def _apply_control(party: Party, member: Member, frame: dict[str, Any]) -> tuple[bool, str | None, str | None]:
     """Any member may send any of these. There is no host privilege here.
 
     "Anyone can control the music" is a product decision, and this function is
@@ -282,16 +283,16 @@ def _apply_control(party: Party, member: Member, frame: dict[str, Any]) -> bool:
 
     if action == protocol.ACTION_PLAY:
         playback.play(who, _as_int(frame.get("positionMs")))
-        return True
+        return True, None, None
     if action == protocol.ACTION_PAUSE:
         playback.pause(who, _as_int(frame.get("positionMs")))
-        return True
+        return True, None, None
     if action == protocol.ACTION_SEEK:
         position = _as_int(frame.get("positionMs"))
         if position is None:
-            return False
+            return False, "bad_position", "Missing positionMs for seek."
         playback.seek(who, position)
-        return True
+        return True, None, None
     if action == protocol.ACTION_SET_TRACK:
         track = Track.from_wire(frame.get("track"))
         playback.set_track(
@@ -302,21 +303,54 @@ def _apply_control(party: Party, member: Member, frame: dict[str, Any]) -> bool:
             queue_index=_as_int(frame.get("queueIndex")),
             member_name=member.display_name,
         )
-        return True
+        return True, None, None
     if action == protocol.ACTION_SET_QUEUE:
         raw = frame.get("queue")
         if not isinstance(raw, list):
-            return False
+            return False, "bad_queue", "Queue must be a list."
         queue = [track for track in (Track.from_wire(item) for item in raw) if track is not None]
         playback.set_queue(who, queue, _as_int(frame.get("queueIndex")) if frame.get("queueIndex") is not None else -1)
-        return True
+        return True, None, None
+    if action == protocol.ACTION_QUEUE_ADD:
+        raw_tracks = frame.get("tracks")
+        if raw_tracks is None and frame.get("track") is not None:
+            raw_tracks = [frame.get("track")]
+        if not isinstance(raw_tracks, list):
+            return False, "bad_tracks", "Tracks must be a list."
+        tracks = [track for track in (Track.from_wire(item) for item in raw_tracks) if track is not None]
+        if not tracks:
+            return False, "no_tracks", "No valid tracks provided."
+        play_next = bool(frame.get("playNext", False))
+        ok, err = playback.add_to_queue(who, tracks, play_next=play_next)
+        if not ok:
+            return False, err or "queue_full", "Queue is full (max 25 songs in party)." if err == "queue_full" else "Failed to add to queue."
+        return True, None, None
+    if action == protocol.ACTION_QUEUE_REMOVE:
+        video_id = str(frame.get("videoId") or "").strip()
+        if not video_id:
+            return False, "bad_video_id", "Missing videoId to remove."
+        if not playback.remove_from_queue(who, video_id):
+            return False, "not_in_queue", "Track not in upcoming queue."
+        return True, None, None
+    if action == protocol.ACTION_QUEUE_CLEAR:
+        if not playback.clear_upcoming(who):
+            return False, "nothing_to_clear", "Upcoming queue is already empty."
+        return True, None, None
+    if action == protocol.ACTION_QUEUE_MOVE:
+        from_idx = _as_int(frame.get("fromIndex"))
+        to_idx = _as_int(frame.get("toIndex"))
+        if from_idx is None or to_idx is None:
+            return False, "bad_indices", "Invalid fromIndex or toIndex."
+        if not playback.move_in_queue(who, from_idx, to_idx):
+            return False, "invalid_move", "Cannot move queue row."
+        return True, None, None
     if action == protocol.ACTION_NEXT:
         playback.step(who, 1, member.display_name)
-        return True
+        return True, None, None
     if action == protocol.ACTION_PREVIOUS:
         playback.step(who, -1, member.display_name)
-        return True
-    return False
+        return True, None, None
+    return False, "bad_control", f"Unsupported control: {action!r}"
 
 
 # -------------------------------------------------------------- shared ----

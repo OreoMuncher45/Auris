@@ -117,9 +117,64 @@ def test_the_state_frame_does_not_carry_the_queue(instant_start):
     wire = state.to_wire()
 
     assert "queue" not in wire
-    assert wire["queueLength"] == 500
+    # Clamped to 1 current + MAX_UPCOMING_QUEUE (25) = 26
+    assert wire["queueLength"] == 26
     assert wire["queueSeq"] == state.queue_seq
     assert wire["queueIndex"] == 0
+
+
+def test_delta_add_to_queue_and_limit_enforcement(instant_start):
+    state = PlaybackState(track=a_track())
+    state.set_queue("m1", [Track(video_id="v0")], 0)
+    assert len(state.queue) == 1
+
+    # Add 10 tracks
+    ok, err = state.add_to_queue("m1", [Track(video_id=f"song_{i}") for i in range(10)])
+    assert ok is True
+    assert err is None
+    assert len(state.queue) == 11
+    assert state.queue_seq == 2
+
+    # Add 15 more tracks -> total upcoming = 25 (max reached)
+    ok, err = state.add_to_queue("m1", [Track(video_id=f"more_{i}") for i in range(15)])
+    assert ok is True
+    assert len(state.queue) == 26
+
+    # Attempt to add another track -> rejected as queue_full
+    ok, err = state.add_to_queue("m1", [Track(video_id="overflow")])
+    assert ok is False
+    assert err == "queue_full"
+    assert len(state.queue) == 26
+
+
+def test_delta_add_play_next(instant_start):
+    state = PlaybackState(track=a_track())
+    state.set_queue("m1", [Track(video_id="current"), Track(video_id="upcoming_1")], 0)
+    ok, err = state.add_to_queue("m1", [Track(video_id="next_song")], play_next=True)
+    assert ok is True
+    assert [t.video_id for t in state.queue] == ["current", "next_song", "upcoming_1"]
+
+
+def test_delta_remove_and_clear_upcoming(instant_start):
+    state = PlaybackState(track=a_track())
+    state.set_queue("m1", [Track(video_id="v0"), Track(video_id="v1"), Track(video_id="v2")], 0)
+    assert state.remove_from_queue("m1", "v1") is True
+    assert [t.video_id for t in state.queue] == ["v0", "v2"]
+    # Cannot remove currently playing track
+    assert state.remove_from_queue("m1", "v0") is False
+
+    # Clear upcoming
+    assert state.clear_upcoming("m1") is True
+    assert [t.video_id for t in state.queue] == ["v0"]
+
+
+def test_set_queue_preserves_active_track_index(instant_start):
+    active_track = Track(video_id="v_playing")
+    state = PlaybackState(track=active_track)
+    # New queue sent from a client whose index is 0, but the track is at index 2
+    state.set_queue("m1", [Track(video_id="v_prev1"), Track(video_id="v_prev2"), active_track, Track(video_id="v_up")], 0)
+    assert state.queue_index == 2
+    assert state.queue[state.queue_index].video_id == "v_playing"
 
 
 def test_only_a_queue_change_bumps_the_queue_sequence(instant_start):

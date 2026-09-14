@@ -50,8 +50,10 @@ PARTY_MAX_AGE_MS = _int("JAM_PARTY_MAX_AGE_MS", 12 * 60 * 60 * 1000)
 CONTROL_RATE_PER_SECOND = _int("JAM_CONTROL_RATE_PER_SECOND", 25)
 
 # Bounded so one member cannot hand the server an unbounded queue to hold and
-# then rebroadcast to everyone else.
-MAX_QUEUE_LENGTH = _int("JAM_MAX_QUEUE_LENGTH", 500)
+# then rebroadcast to everyone else. The max queue size is 25 excluding the one
+# currently being played.
+MAX_UPCOMING_QUEUE = _int("JAM_MAX_UPCOMING_QUEUE", 25)
+MAX_QUEUE_LENGTH = _int("JAM_MAX_QUEUE_LENGTH", 1 + MAX_UPCOMING_QUEUE)
 
 # Browsers are not a client of this service today, so the default is closed;
 # set JAM_ALLOWED_ORIGINS if a web player is ever pointed at it.

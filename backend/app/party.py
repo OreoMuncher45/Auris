@@ -197,10 +197,81 @@ class PlaybackState:
         queue: list[Track],
         queue_index: int,
     ) -> None:
-        self.queue = queue[: config.MAX_QUEUE_LENGTH]
-        self.queue_index = queue_index if 0 <= queue_index < len(self.queue) else -1
+        if self.track is not None:
+            match = next((i for i, item in enumerate(queue) if item.video_id == self.track.video_id), -1)
+            if match != -1:
+                queue_index = match
+        if 0 <= queue_index < len(queue):
+            past_and_current = queue[: queue_index + 1]
+            upcoming = queue[queue_index + 1 : queue_index + 1 + config.MAX_UPCOMING_QUEUE]
+            self.queue = past_and_current + upcoming
+            self.queue_index = queue_index
+        else:
+            self.queue = queue[: config.MAX_QUEUE_LENGTH]
+            self.queue_index = queue_index if 0 <= queue_index < len(self.queue) else -1
         self.queue_seq += 1
         self._touch(member_id)
+
+    def add_to_queue(
+        self,
+        member_id: str | None,
+        tracks: list[Track],
+        play_next: bool = False,
+    ) -> tuple[bool, str | None]:
+        """Atomically append or insert tracks into upcoming queue up to MAX_UPCOMING_QUEUE."""
+        current_upcoming = max(0, len(self.queue) - 1 - self.queue_index) if self.queue_index >= 0 else len(self.queue)
+        slots_left = max(0, config.MAX_UPCOMING_QUEUE - current_upcoming)
+        if slots_left <= 0:
+            return False, "queue_full"
+        to_add = tracks[:slots_left]
+        if not to_add:
+            return False, "no_tracks"
+        if play_next and 0 <= self.queue_index < len(self.queue):
+            insert_at = self.queue_index + 1
+            self.queue[insert_at:insert_at] = to_add
+        else:
+            self.queue.extend(to_add)
+        self.queue_seq += 1
+        self._touch(member_id)
+        return True, None
+
+    def remove_from_queue(self, member_id: str | None, video_id: str) -> bool:
+        """Remove a track by videoId from upcoming queue."""
+        match = next((i for i, item in enumerate(self.queue) if item.video_id == video_id), -1)
+        if match == -1 or match == self.queue_index:
+            return False
+        self.queue.pop(match)
+        if self.queue_index > match:
+            self.queue_index -= 1
+        self.queue_seq += 1
+        self._touch(member_id)
+        return True
+
+    def clear_upcoming(self, member_id: str | None) -> bool:
+        """Clear all upcoming tracks after the current track."""
+        if self.queue_index >= 0:
+            if len(self.queue) <= self.queue_index + 1:
+                return False
+            self.queue = self.queue[: self.queue_index + 1]
+        else:
+            if not self.queue:
+                return False
+            self.queue.clear()
+        self.queue_seq += 1
+        self._touch(member_id)
+        return True
+
+    def move_in_queue(self, member_id: str | None, from_idx: int, to_idx: int) -> bool:
+        """Reorder upcoming tracks."""
+        if not (0 <= from_idx < len(self.queue) and 0 <= to_idx < len(self.queue)):
+            return False
+        if from_idx <= self.queue_index or to_idx <= self.queue_index:
+            return False
+        item = self.queue.pop(from_idx)
+        self.queue.insert(to_idx, item)
+        self.queue_seq += 1
+        self._touch(member_id)
+        return True
 
     def step(self, member_id: str | None, delta: int, member_name: str | None = None) -> bool:
         """Next/previous. False when the queue has nowhere to go."""

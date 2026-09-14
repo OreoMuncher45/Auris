@@ -254,7 +254,77 @@ def test_a_heartbeat_sized_control_does_not_resend_the_queue(client):
 
     assert frame["type"] == "state"
     assert "queue" not in frame["playback"]
-    assert frame["playback"]["queueLength"] == 50
+    # Clamped to 1 current + 25 upcoming = 26
+    assert frame["playback"]["queueLength"] == 26
+
+
+def test_delta_queue_add_via_websocket(client):
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()  # welcome
+        socket.send_json({
+            "type": "control",
+            "action": "queueAdd",
+            "tracks": [{"videoId": "song1"}, {"videoId": "song2"}],
+        })
+        first = socket.receive_json()  # queue frame
+        second = socket.receive_json()  # state frame
+
+    assert first["type"] == "queue"
+    assert [t["videoId"] for t in first["queue"]["items"]] == ["song1", "song2"]
+    assert second["type"] == "state"
+    assert second["playback"]["queueLength"] == 2
+
+
+def test_delta_queue_remove_via_websocket(client):
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()  # welcome
+        socket.send_json({
+            "type": "control",
+            "action": "setQueue",
+            "queue": [{"videoId": "song0"}, {"videoId": "song1"}],
+            "queueIndex": 0,
+        })
+        socket.receive_json()  # queue
+        socket.receive_json()  # state
+
+        socket.send_json({
+            "type": "control",
+            "action": "queueRemove",
+            "videoId": "song1",
+        })
+        q_frame = socket.receive_json()
+        s_frame = socket.receive_json()
+
+    assert [t["videoId"] for t in q_frame["queue"]["items"]] == ["song0"]
+    assert s_frame["playback"]["queueLength"] == 1
+
+
+def test_delta_queue_add_exceeding_25_is_rejected(client):
+    host = create(client)
+    with client.websocket_connect(f"/ws/parties/{host['code']}?token={host['token']}") as socket:
+        socket.receive_json()  # welcome
+        # Fill up 25 slots
+        socket.send_json({
+            "type": "control",
+            "action": "setQueue",
+            "queue": [{"videoId": "current"}] + [{"videoId": f"up_{i}"} for i in range(25)],
+            "queueIndex": 0,
+        })
+        socket.receive_json()  # queue
+        socket.receive_json()  # state
+
+        # Try to add another song
+        socket.send_json({
+            "type": "control",
+            "action": "queueAdd",
+            "tracks": [{"videoId": "overflow_song"}],
+        })
+        err_frame = socket.receive_json()
+
+    assert err_frame["type"] == "error"
+    assert err_frame["error"] == "queue_full"
 
 
 def test_a_client_can_ask_for_a_queue_it_missed(client):
