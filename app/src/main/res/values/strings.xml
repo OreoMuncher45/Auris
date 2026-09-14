@@ -604,6 +604,8 @@
     <string name="sort_title_ascending">Alphabetical (A to Z)</string>
     <string name="sort_title_descending">Alphabetical (Z to A)</string>
     <string name="sort_date_added">Date added (newest first)</string>
+    <string name="sort_date_added_oldest">Date added (oldest first)</string>
+    <string name="sort_date_added_toggle">Date added</string>
     <string name="sort_date_modified">Date modified (newest first)</string>
     <string name="sort_default">Default order</string>
     <string name="sort_library">Sort</string>

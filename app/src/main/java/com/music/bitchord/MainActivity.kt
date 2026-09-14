@@ -19,6 +19,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
@@ -35,8 +37,11 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -51,6 +56,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.History
@@ -82,7 +88,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -178,6 +186,7 @@ import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopBarDownloadButton
+import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
@@ -197,7 +206,7 @@ import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
 import com.music.bitchord.ui.screens.SearchScreen
-import com.music.bitchord.ui.screens.SongSort
+import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.replay.ReplayScreen
 import com.music.bitchord.ui.replay.cards
 import com.music.bitchord.ui.replay.ReplayShareSheet
@@ -211,6 +220,8 @@ import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -532,10 +543,12 @@ private fun BitChordApp(
     // has a cover and a track list, so it takes the bar every other release page
     // takes. Hence the folder question rather than the prefix.
     val isLocalDetail = detail?.browseId.isDeviceFolder()
-    // Keyed on the browse id, like the page's own search filter, so opening a
-    // different release starts back at the release's own running order rather
-    // than carrying over whatever the last one was sorted by.
-    var songSort by remember(detail?.browseId) { mutableStateOf(SongSort.DEFAULT) }
+    // Not keyed on the browse id and not remembered here: each page's choice
+    // lives in AppSettings keyed by that page — Spotify-style, one playlist's
+    // order never imposes itself on another, and every page keeps its own
+    // across visits.
+    val detailSongSorts by AppSettings.detailSongSorts.collectAsStateWithLifecycle()
+    val songSort = detail?.browseId?.let { detailSongSorts[it] } ?: SongSort.DEFAULT
     var songSortMenuOpen by remember { mutableStateOf(false) }
     val likeStatuses by viewModel.likeStatuses.collectAsStateWithLifecycle()
     // Which tracks are being held on YouTube's own upload, so the player's menu
@@ -2296,31 +2309,16 @@ private fun BitChordApp(
                             // carry this same control themselves (see
                             // `LocalSearchField`).
                             if (detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST) {
-                                Box {
-                                    IconButton(onClick = { songSortMenuOpen = true }) {
-                                        Icon(
-                                            Icons.Rounded.Sort,
-                                            contentDescription = stringResource(R.string.sort_songs),
-                                            tint = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                    DropdownMenu(
-                                        expanded = songSortMenuOpen,
-                                        onDismissRequest = { songSortMenuOpen = false },
-                                    ) {
-                                        SongSort.entries.forEach { option ->
-                                            DropdownMenuItem(
-                                                text = { Text(option.localizedLabel()) },
-                                                trailingIcon = if (option == songSort) {
-                                                    { Icon(Icons.Rounded.Check, contentDescription = null) }
-                                                } else null,
-                                                onClick = {
-                                                    songSort = option
-                                                    songSortMenuOpen = false
-                                                },
-                                            )
-                                        }
-                                    }
+                                // The menu itself is [FrostedSortMenu], composed
+                                // with the app's other frosted overlays further
+                                // down — in the main hierarchy, where the haze
+                                // can see the content it blurs.
+                                IconButton(onClick = { songSortMenuOpen = true }) {
+                                    Icon(
+                                        Icons.Rounded.Sort,
+                                        contentDescription = stringResource(R.string.sort_songs),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
                             }
                             // Left of the account photo, and only there while
@@ -2977,6 +2975,33 @@ private fun BitChordApp(
             )
         }
 
+        if (songSortMenuOpen) {
+            BackHandler { songSortMenuOpen = false }
+            FrostedSortMenu(
+                hazeState = hazeState,
+                selected = songSort,
+                onSelect = { option ->
+                    detail?.browseId?.let { AppSettings.setDetailSongSort(it, option) }
+                    songSortMenuOpen = false
+                },
+                // Flipping the date direction deliberately leaves the menu up:
+                // closing it here would cut the arrow's rotation animation off
+                // before it played, and the open menu lets the direction flip
+                // read against the list reordering behind the frost.
+                onFlipDateDirection = {
+                    detail?.browseId?.let { browseId ->
+                        val next = when (songSort) {
+                            SongSort.DATE_ADDED_DESC -> SongSort.DATE_ADDED_ASC
+                            SongSort.DATE_ADDED_ASC -> SongSort.DATE_ADDED_DESC
+                            else -> SongSort.DATE_ADDED_DESC
+                        }
+                        AppSettings.setDetailSongSort(browseId, next)
+                    }
+                },
+                onDismiss = { songSortMenuOpen = false },
+            )
+        }
+
         if (showAccountSelector) {
             BackHandler { showAccountSelector = false }
             AccountProfileSelector(
@@ -3143,11 +3168,123 @@ private fun LibrarySort.localizedLabel(): String = when (this) {
     LibrarySort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
 }
 
+/**
+ * The track-list sort menu, styled after the account switcher: a full-screen
+ * scrim to catch the dismissal tap, and the options on a frosted panel that
+ * blurs the page behind it. Composed here in the main hierarchy rather than
+ * as a popup window — which is exactly what lets the haze see the content it
+ * is blurring.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun FrostedSortMenu(
+    hazeState: HazeState,
+    selected: SongSort,
+    onSelect: (SongSort) -> Unit,
+    onFlipDateDirection: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val shape = MaterialTheme.shapes.extraLarge
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.scrim.copy(alpha = .48f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        Surface(
+            color = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            shape = shape,
+            modifier = Modifier
+                .padding(top = 56.dp, end = 20.dp)
+                .width(IntrinsicSize.Max)
+                .clip(shape)
+                .then(
+                    if (reduceDynamicBlur) {
+                        Modifier.background(MaterialTheme.colorScheme.surface)
+                    } else {
+                        Modifier.optimizedHazeEffect(
+                            state = hazeState,
+                            style = HazeMaterials.thin(MaterialTheme.colorScheme.surface),
+                        )
+                    },
+                )
+                .clickable(onClick = {}),
+        ) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                // Date added is one row, Spotify-style: the arrow on it shows
+                // the direction — up for newest first, down for oldest — and
+                // tapping flips it, the rotation animating the flip. Up is
+                // also where a fresh activation lands, newest first being the
+                // point of the feature.
+                val dateActive = selected == SongSort.DATE_ADDED_ASC ||
+                    selected == SongSort.DATE_ADDED_DESC
+                val arrowRotation by animateFloatAsState(
+                    targetValue = if (selected == SongSort.DATE_ADDED_ASC) 180f else 0f,
+                    animationSpec = tween(durationMillis = 200),
+                    label = "dateAddedArrow",
+                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable(role = Role.Button) { onFlipDateDirection() }
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        stringResource(R.string.sort_date_added_toggle),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (dateActive) {
+                        Icon(
+                            Icons.Rounded.ArrowUpward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.rotate(arrowRotation),
+                        )
+                    }
+                }
+                SongSort.entries
+                    .filter { it != SongSort.DATE_ADDED_ASC && it != SongSort.DATE_ADDED_DESC }
+                    .forEach { option ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp)
+                                .clickable(role = Role.Button) { onSelect(option) }
+                                .padding(horizontal = 20.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                option.localizedLabel(),
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (option == selected) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SongSort.localizedLabel(): String = when (this) {
     SongSort.DEFAULT -> stringResource(R.string.sort_default)
     SongSort.TITLE_ASC -> stringResource(R.string.sort_title_ascending)
     SongSort.TITLE_DESC -> stringResource(R.string.sort_title_descending)
+    SongSort.DATE_ADDED_ASC -> stringResource(R.string.sort_date_added_oldest)
+    SongSort.DATE_ADDED_DESC -> stringResource(R.string.sort_date_added)
 }
 
 /**
