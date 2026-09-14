@@ -105,6 +105,7 @@ import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.detailSkeleton
 import com.music.bitchord.ui.components.topBarContentPadding
+import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
@@ -465,20 +466,23 @@ fun DetailScreen(
                     item {
                         val top = state.data.take(MAX_ARTIST_SONGS)
                         SectionHeading(stringResource(R.string.top_songs), palette)
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            items(top.chunked(SONGS_PER_COLUMN)) { column ->
-                                Column(Modifier.fillParentMaxWidth(0.88f)) {
-                                    column.forEach { song ->
-                                        CompactSongRow(
-                                            song = song,
-                                            palette = palette,
-                                            onClick = { onSongClick(top, top.indexOf(song)) },
-                                            onLongPress = { onSongLongPress(song) },
-                                            downloadedTint = downloadedTint,
-                                        )
+                        BoxWithConstraints {
+                            val columnWidth = trackColumnWidth(maxWidth)
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                items(top.chunked(SONGS_PER_COLUMN)) { column ->
+                                    Column(Modifier.width(columnWidth)) {
+                                        column.forEach { song ->
+                                            CompactSongRow(
+                                                song = song,
+                                                palette = palette,
+                                                onClick = { onSongClick(top, top.indexOf(song)) },
+                                                onLongPress = { onSongLongPress(song) },
+                                                downloadedTint = downloadedTint,
+                                            )
+                                        }
                                     }
                                 }
                             }

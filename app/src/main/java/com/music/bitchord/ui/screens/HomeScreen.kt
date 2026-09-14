@@ -74,6 +74,7 @@ import com.music.bitchord.ui.components.feedSkeleton
 import com.music.bitchord.ui.components.recentlyPlayedSkeleton
 import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
 
@@ -247,18 +248,21 @@ private fun RecentShelf(
             onViewTypeToggle = onViewTypeToggle,
         )
         if (viewType == LibraryViewType.LIST) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
-                    Column(Modifier.fillParentMaxWidth(0.88f)) {
-                        column.forEach { item ->
-                            RecentTrackRow(
-                                item = item,
-                                onClick = { onItemClick(item) },
-                                onLongPress = onItemLongPress?.let { { it(item) } },
-                            )
+            BoxWithConstraints {
+                val columnWidth = trackColumnWidth(maxWidth)
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                        Column(Modifier.width(columnWidth)) {
+                            column.forEach { item ->
+                                RecentTrackRow(
+                                    item = item,
+                                    onClick = { onItemClick(item) },
+                                    onLongPress = onItemLongPress?.let { { it(item) } },
+                                )
+                            }
                         }
                     }
                 }

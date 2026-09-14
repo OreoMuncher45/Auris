@@ -190,6 +190,33 @@ const val HERO_CARD_RATIO = 0.92f
  */
 fun heroCardWidth(available: Dp): Dp = minOf(available * HERO_CARD_FRACTION, HERO_CARD_MAX_WIDTH)
 
+/** Share of the row a page of tracks takes, so the next page peeks in past it. */
+private const val TRACK_COLUMN_FRACTION = 0.88f
+
+/**
+ * How wide a sideways-paging column of track rows is ever allowed to get.
+ *
+ * Same trap [HERO_CARD_MAX_WIDTH] answers, and worse for a list: a track row is
+ * artwork, a title and a subtitle, none of which have any use for more room. At
+ * 88% of a tablet the row's contents stay their own size and the space all lands
+ * between the title and the overflow button, so four songs eat the width of the
+ * screen and read as a page half-filled rather than a shelf.
+ *
+ * 400dp clears what the widest phone asks for (0.88 of 448dp is 394dp), so every
+ * phone keeps the width the fraction gives it and only a tablet is held back —
+ * to a column near a phone's own width, which is the size these rows were drawn
+ * at, with the next page showing beside it.
+ */
+private val TRACK_COLUMN_MAX_WIDTH = 400.dp
+
+/**
+ * How wide a column of track rows should be in a row [available] wide — shared
+ * by Home's Recents, an artist's Top songs, and the skeletons that stand in for
+ * them, which have to agree to the pixel or the page jumps when the data lands.
+ */
+fun trackColumnWidth(available: Dp): Dp =
+    minOf(available * TRACK_COLUMN_FRACTION, TRACK_COLUMN_MAX_WIDTH)
+
 /** How many cards sit across a library grid row, and how wide each lands. */
 data class LibraryGridSpec(val columns: Int, val cardWidth: Dp)
 

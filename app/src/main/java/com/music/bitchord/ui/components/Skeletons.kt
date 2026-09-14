@@ -179,14 +179,17 @@ fun LazyListScope.recentlyPlayedSkeleton(listLayout: Boolean) {
         Column(Modifier.padding(bottom = 26.dp)) {
             RecentsHeaderSkeleton()
             if (listLayout) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    userScrollEnabled = false,
-                ) {
-                    item {
-                        Column(Modifier.fillParentMaxWidth(0.88f)) {
-                            repeat(4) { index -> CompactSongRowSkeleton(index) }
+                BoxWithConstraints {
+                    val columnWidth = trackColumnWidth(maxWidth)
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        userScrollEnabled = false,
+                    ) {
+                        item {
+                            Column(Modifier.width(columnWidth)) {
+                                repeat(4) { index -> CompactSongRowSkeleton(index) }
+                            }
                         }
                     }
                 }
@@ -314,15 +317,19 @@ fun LazyListScope.detailSkeleton(isArtist: Boolean) {
         item(key = "skeleton:detail:top") {
             Column(Modifier.graphicsLayer { alpha = 0.4f }) {
                 SectionHeaderSkeleton()
-                // Top songs page four at a time, in columns 88% of the width.
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    userScrollEnabled = false,
-                ) {
-                    item {
-                        Column(Modifier.fillParentMaxWidth(0.88f)) {
-                            repeat(4) { index -> CompactSongRowSkeleton(index) }
+                // Top songs page four at a time — see [trackColumnWidth] for how
+                // wide a page lands.
+                BoxWithConstraints {
+                    val columnWidth = trackColumnWidth(maxWidth)
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        userScrollEnabled = false,
+                    ) {
+                        item {
+                            Column(Modifier.width(columnWidth)) {
+                                repeat(4) { index -> CompactSongRowSkeleton(index) }
+                            }
                         }
                     }
                 }

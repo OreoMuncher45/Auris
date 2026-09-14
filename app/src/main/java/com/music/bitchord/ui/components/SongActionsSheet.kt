@@ -44,6 +44,7 @@ import androidx.compose.material.icons.rounded.PlaylistRemove
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
+import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -151,6 +152,8 @@ fun SongActionsSheet(
      * except the player, where "this track" means something.
      */
     onCopyLog: (() -> Unit)? = null,
+    /** Opens the timing control offered only by the main player's menu. */
+    onLyricsOffset: (() -> Unit)? = null,
     /**
      * True while a lookup for this track's album/artist ids is still in
      * flight, so it isn't yet known whether "Open album" and "Open artist"
@@ -296,6 +299,18 @@ fun SongActionsSheet(
                 value = sleepTimerStatus(),
                 accent = palette.accent,
             ) { pickingSleepTimer = true }
+        }
+        // Deliberately outside the online-only block below. Local files and
+        // completed downloads use the same player lyric clock (including
+        // embedded synced lyrics), so they need this control just as much as
+        // streamed songs do.
+        onLyricsOffset?.let {
+            ActionRow(
+                icon = Icons.Rounded.Tune,
+                label = stringResource(R.string.lyrics_offset),
+                accent = palette.accent,
+                onClick = it,
+            )
         }
         if (!isOffline) {
             onShare?.let {

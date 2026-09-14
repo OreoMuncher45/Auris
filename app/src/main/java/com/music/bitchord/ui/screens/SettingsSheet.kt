@@ -215,6 +215,7 @@ fun SettingsScreen(
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
+    val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -510,6 +511,25 @@ fun SettingsScreen(
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.playback)) {
+            val preferMusicOnlyTitle = stringResource(R.string.prefer_music_only)
+            row(preferMusicOnlyTitle, "video", "audio", "music video") {
+                SettingsRow(
+                    icon = Icons.Rounded.SmartDisplay,
+                    title = preferMusicOnlyTitle,
+                    subtitle = stringResource(R.string.prefer_music_only_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = preferMusicOnly,
+                            onCheckedChange = AppSettings::setPreferMusicOnly,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
+                )
+            }
             val outputPrecisionTitle = "Output precision"
             row(outputPrecisionTitle, "pcm", "bit depth", "sample rate", "dac") {
                 SettingsRow(

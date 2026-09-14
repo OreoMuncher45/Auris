@@ -565,6 +565,10 @@ class PlaybackService : MediaLibraryService() {
     private var favoriteActionJob: Job? = null
     private var stationActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
+    /** Catalogue lookup that decides which rendition of the next video to warm. */
+    private var preferredPrefetchJob: Job? = null
+    /** Logical queue request, before a video id is replaced by its audio counterpart. */
+    private var preferredPrefetchRequest: Pair<Boolean, List<String>>? = null
     private var autoplaySeed: String? = null
 
     /** Index in the live queue represented by entry zero of the persisted window. */
@@ -652,7 +656,7 @@ class PlaybackService : MediaLibraryService() {
             if (isPlaying) registerCurrentPlay()
             // Nothing to read ahead for while paused, and a pause is often
             // the last thing that happens before the process goes idle.
-            if (isPlaying) prefetchAround(exoPlayer) else AudioCache.cancel()
+            if (isPlaying) prefetchAround(exoPlayer) else cancelPrefetch()
             if (isPlaying) lookForBetterCopy(exoPlayer)
             savePlaybackState(exoPlayer)
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
@@ -3932,25 +3936,65 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun prefetchAround(player: ExoPlayer) {
         val nextIndex = player.nextMediaItemIndex
-        val upcoming = if (nextIndex != C.INDEX_UNSET) {
+        val upcomingSongs = if (nextIndex != C.INDEX_UNSET) {
             val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
-            (nextIndex..end).map { index ->
-                val item = player.getMediaItemAt(index)
-                // The title, artist and runtime the item was built with — see
-                // [Song.toMediaItem]. Read here, on the player's own thread,
-                // because read-ahead runs off the queue rather than off the
-                // session and has no other way to reach the track's metadata.
-                AudioCache.Upcoming(
-                    mediaId = item.mediaId,
-                    target = item.localConfiguration?.uri
-                        ?.let(SourceResolver::targetIn)
-                        ?: TrackMatcher.Target("", ""),
-                )
-            }
+            (nextIndex..end).map { index -> player.getMediaItemAt(index).toSong() }
         } else {
             emptyList()
         }
-        AudioCache.prefetchQueue(upcoming)
+        val preferAudio = AppSettings.preferMusicOnly.value
+        val request = preferAudio to upcomingSongs.map { it.videoId }
+        if (request == preferredPrefetchRequest) return
+        preferredPrefetchRequest = request
+        preferredPrefetchJob?.cancel()
+
+        fun warm(songs: List<Song>) {
+            AudioCache.prefetchQueue(
+                songs.map { song ->
+                    // The title, artist and runtime the item was built with —
+                    // see [Song.toMediaItem]. Read from the queued item because
+                    // read-ahead has no other way to reach this metadata.
+                    AudioCache.Upcoming(
+                        mediaId = song.videoId,
+                        target = TrackMatcher.targetOf(song),
+                    )
+                },
+            )
+        }
+
+        val next = upcomingSongs.firstOrNull()
+        if (!preferAudio || next?.isVideo != true) {
+            preferredPrefetchJob = null
+            warm(upcomingSongs)
+            return
+        }
+
+        // Do not warm the video's bytes while its catalogue lookup is in
+        // flight: if that lookup succeeds, playback will ask for a different
+        // media id and every byte spent on the video would be wasted. An
+        // unchanged result is the fallback and is warmed on the same path.
+        AudioCache.cancel()
+        preferredPrefetchJob = scope.launch {
+            val preferred = runCatching { YtMusicRepository.resolveAudio(next) }
+                .onFailure {
+                    TrackLog.d(
+                        "BitChord",
+                        "music-only queue warm-up fell back to video: ${it.message}",
+                        about = next.videoId,
+                    )
+                }
+                .getOrDefault(next)
+            if (preferredPrefetchRequest != request) return@launch
+            warm(listOf(preferred) + upcomingSongs.drop(1))
+        }
+    }
+
+    /** Stops both rendition selection and byte read-ahead, and makes resume retry. */
+    private fun cancelPrefetch() {
+        preferredPrefetchRequest = null
+        preferredPrefetchJob?.cancel()
+        preferredPrefetchJob = null
+        AudioCache.cancel()
     }
 
     /**
@@ -4307,6 +4351,14 @@ class PlaybackService : MediaLibraryService() {
     private fun observeSettings() {
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
+        }
+        scope.launch {
+            // Re-evaluate the already queued next track immediately when this
+            // preference changes, instead of waiting for another timeline event.
+            AppSettings.preferMusicOnly.drop(1).collect {
+                cancelPrefetch()
+                player?.takeIf { it.isPlaying }?.let(::prefetchAround)
+            }
         }
         scope.launch {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
@@ -4736,7 +4788,7 @@ class PlaybackService : MediaLibraryService() {
         serviceLyricsJob?.cancel()
         serviceLyricsJob = null
         serviceLyrics = null
-        AudioCache.cancel()
+        cancelPrefetch()
         trackAnalyzer.release()
         // The YouTube Music history entry for whatever was playing, closed out
         // on the same terms as the ListenBrainz submit below: a swipe-away never

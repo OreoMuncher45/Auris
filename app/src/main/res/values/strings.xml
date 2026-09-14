@@ -32,6 +32,11 @@
     <string name="retry">Retry</string>
     <string name="shuffle">Shuffle</string>
     <string name="more">More</string>
+    <string name="lyrics_offset">Lyrics offset</string>
+    <string name="lyrics_offset_description">Positive values show lyrics later</string>
+    <string name="lyrics_offset_reset">Reset</string>
+    <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
+    <string name="increase_lyrics_offset">Increase lyrics offset</string>
     <string name="auto_quick_picks">Quick picks</string>
     <string name="auto_recents">Recent</string>
     <string name="auto_liked">Liked songs</string>
@@ -235,6 +240,8 @@
     <string name="automix_mode_performance_subtitle">4 threads · fastest analysis · higher heat and battery use</string>
     <string name="skip_silence">Skip silence</string>
     <string name="skip_silence_subtitle">Trim gaps longer than a second</string>
+    <string name="prefer_music_only">Prefer music-only version</string>
+    <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>

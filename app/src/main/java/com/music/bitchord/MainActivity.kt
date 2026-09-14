@@ -470,6 +470,7 @@ private fun BitChordApp(
     var showDiscordLogin by remember { mutableStateOf(false) }
     var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
+    var showLyricsOffset by remember { mutableStateOf(false) }
     /**
      * Whether the track menu that is up was opened from the player.
      *
@@ -678,6 +679,7 @@ private fun BitChordApp(
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
+    val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
     // A conversion is deliberately scoped to the current listening session.
     // Keeping the complete original row here lets Revert restore the exact
     // video upload, including its title and playlist identity, rather than
@@ -685,6 +687,10 @@ private fun BitChordApp(
     var convertedFromVideo by remember { mutableStateOf<Song?>(null) }
     var convertedAudioId by remember { mutableStateOf<String?>(null) }
     var switchingAudioVersion by remember { mutableStateOf(false) }
+    // Revert is an explicit choice for this occurrence of the track. Without
+    // remembering it, the automatic preference would see the restored video
+    // as a fresh item and immediately convert it again.
+    var keepVideoId by remember { mutableStateOf<String?>(null) }
 
     // Lyrics follow whatever is playing; duration lands a beat after the track.
     // Keyed on the lyric settings too, so turning a source on or off applies to
@@ -810,6 +816,68 @@ private fun BitChordApp(
 
     val scope = rememberCoroutineScope()
 
+    /**
+     * Resolve and apply the catalogue release without replacing the video row
+     * up front. That makes the video's title/artwork visible immediately and
+     * leaves it in place as the fallback if matching fails.
+     *
+     * Automatic requests temporarily hold playback because the music-only
+     * preference is the version the listener asked to hear. Manual requests
+     * preserve the old behaviour and let the video keep playing meanwhile.
+     */
+    suspend fun switchToMusicOnly(song: Song, pauseWhileResolving: Boolean) {
+        val c = controller ?: return
+        val index = c.currentMediaItemIndex
+        if (index !in 0 until c.mediaItemCount ||
+            c.currentMediaItem?.mediaId != song.videoId ||
+            !song.isVideo || switchingAudioVersion
+        ) return
+
+        val resumeAfterResolution = pauseWhileResolving && c.playWhenReady
+        switchingAudioVersion = true
+        keepVideoId = null
+        if (pauseWhileResolving) c.pause()
+        try {
+            TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
+            val audio = runCatching { YtMusicRepository.resolveAudio(song) }.getOrNull()
+            val stillCurrent = c.currentMediaItemIndex == index &&
+                c.currentMediaItem?.mediaId == song.videoId
+
+            // The original MediaItem was never removed, so failure only needs
+            // to release the loading state and resume it immediately.
+            if (audio == null || audio.videoId == song.videoId) {
+                TrackLog.w("Player", "audio switch found no distinct official song", song.videoId)
+                if (stillCurrent && resumeAfterResolution) c.play()
+                return
+            }
+            if (!stillCurrent) {
+                TrackLog.d("Player", "audio switch discarded; listener changed track", song.videoId)
+                return
+            }
+
+            val position = c.currentPosition
+            val shouldPlay = if (pauseWhileResolving) resumeAfterResolution else c.playWhenReady
+            convertedFromVideo = song
+            convertedAudioId = audio.videoId
+            TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
+            c.replaceMediaItem(
+                index,
+                audio.copy(
+                    isVideoOrigin = true,
+                    fromAutoplay = song.fromAutoplay,
+                    radioName = song.radioName,
+                    playbackSource = song.playbackSource,
+                    playbackSourceType = song.playbackSourceType,
+                    playbackSourceId = song.playbackSourceId,
+                ).toMediaItem(),
+            )
+            c.seekTo(index, position)
+            if (shouldPlay) c.play()
+        } finally {
+            switchingAudioVersion = false
+        }
+    }
+
     val playFrom: (List<Song>, Int, QueueSource) -> Unit = { songs, index, source ->
         playRequestGeneration++
         activeRadioSeed = null
@@ -842,10 +910,21 @@ private fun BitChordApp(
     }
     LaunchedEffect(player.song?.videoId) {
         if (activeRadioSeed?.first != player.song?.videoId) activeRadioSeed = null
+        if (keepVideoId != player.song?.videoId) keepVideoId = null
         if (player.song?.videoId != convertedAudioId) {
             convertedFromVideo = null
             convertedAudioId = null
             switchingAudioVersion = false
+        }
+    }
+
+    // Start with the video MediaItem so the main player is populated at once,
+    // then resolve its catalogue counterpart behind the loading indicators.
+    // A failed/identical match simply resumes this untouched video.
+    LaunchedEffect(player.song?.videoId, preferMusicOnly) {
+        val song = player.song ?: return@LaunchedEffect
+        if (preferMusicOnly && song.isVideo && song.videoId != keepVideoId) {
+            switchToMusicOnly(song, pauseWhileResolving = true)
         }
     }
 
@@ -1590,6 +1669,7 @@ private fun BitChordApp(
                 if (original != null && convertedAudioId == song.videoId) {
                     val position = c.currentPosition
                     val wasPlaying = c.isPlaying
+                    keepVideoId = original.videoId
                     c.replaceMediaItem(index, original.toMediaItem())
                     c.seekTo(index, position)
                     if (wasPlaying) c.play()
@@ -1599,38 +1679,7 @@ private fun BitChordApp(
                 }
                 if (!song.isVideo || switchingAudioVersion) return@audioVersion
                 scope.launch {
-                    switchingAudioVersion = true
-                    TrackLog.d("Player", "audio switch requested for '${song.title}'", song.videoId)
-                    val audio = runCatching { YtMusicRepository.resolveAudio(song) }.getOrNull()
-                    switchingAudioVersion = false
-                    // A match can be absent or the listener may have skipped
-                    // while it was being found. Neither should change a queue.
-                    if (audio == null || audio.videoId == song.videoId) {
-                        TrackLog.w("Player", "audio switch found no distinct official song", song.videoId)
-                        return@launch
-                    }
-                    if (c.currentMediaItemIndex != index || c.currentMediaItem?.mediaId != song.videoId) {
-                        TrackLog.d("Player", "audio switch discarded; listener changed track", song.videoId)
-                        return@launch
-                    }
-                    val position = c.currentPosition
-                    val wasPlaying = c.isPlaying
-                    convertedFromVideo = song
-                    convertedAudioId = audio.videoId
-                    TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
-                    c.replaceMediaItem(
-                        index,
-                        audio.copy(
-                            isVideoOrigin = true,
-                            fromAutoplay = song.fromAutoplay,
-                            radioName = song.radioName,
-                            playbackSource = song.playbackSource,
-                            playbackSourceType = song.playbackSourceType,
-                            playbackSourceId = song.playbackSourceId,
-                        ).toMediaItem(),
-                    )
-                    c.seekTo(index, position)
-                    if (wasPlaying) c.play()
+                    switchToMusicOnly(song, pauseWhileResolving = false)
                 }
             },
             onPlayPause = {
@@ -1801,6 +1850,8 @@ private fun BitChordApp(
             lyrics = lyrics,
             lyricsSource = lyricsSource,
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
+            lyricsOffsetOpen = showLyricsOffset,
+            onDismissLyricsOffset = { showLyricsOffset = false },
             docked = docked,
             onListenTogether = {
                 // A phone's player is a sheet over the page, so it has to come
@@ -3015,6 +3066,14 @@ private fun BitChordApp(
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
+                        }
+                    } else {
+                        null
+                    },
+                    onLyricsOffset = if (fromPlayer) {
+                        {
+                            songActions = null
+                            showLyricsOffset = true
                         }
                     } else {
                         null

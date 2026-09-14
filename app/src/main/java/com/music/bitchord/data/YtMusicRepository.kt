@@ -36,6 +36,11 @@ object YtMusicRepository {
 
     private const val TAG = "BitChord"
     private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
+    // Includes unchanged video fallbacks as well as successful matches. The
+    // queue prefetcher asks before a track becomes current; remembering its
+    // answer makes the eventual player switch use the exact rendition whose
+    // bytes were warmed, without repeating a 10–30 second catalogue search.
+    private val audioVersionCache = ConcurrentHashMap<String, Song>()
 
     /**
      * The core personalised feed. It stays deliberately independent from the
@@ -353,6 +358,7 @@ object YtMusicRepository {
      */
     suspend fun resolveAudio(song: Song): Song {
         if (!song.isVideo) return song
+        audioVersionCache[song.videoId]?.let { return it }
         val target = TrackMatcher.targetOf(song)
         for (query in TrackMatcher.queries(target)) {
             val candidates = search(query, SearchFilter.SONGS)
@@ -362,6 +368,7 @@ object YtMusicRepository {
                 .orEmpty()
             TrackMatcher.best(candidates, target)?.let { match ->
                 Log.d(TAG, "audio switch: '${song.title}' -> '${match.title}' ($query)")
+                audioVersionCache[song.videoId] = match
                 return match
             }
             // Music-video timing is visual timing, not the audio release's
@@ -369,10 +376,12 @@ object YtMusicRepository {
             // song/artist match even when the video has a long intro or outro.
             TrackMatcher.bestOfficialAudioForVideo(candidates, target)?.let { match ->
                 Log.d(TAG, "audio switch: accepted video/runtime drift '${song.title}' -> '${match.title}' ($query)")
+                audioVersionCache[song.videoId] = match
                 return match
             }
         }
         Log.w(TAG, "audio switch: no official song match for '${song.title}' by '${song.artist}'")
+        audioVersionCache[song.videoId] = song
         return song
     }
 

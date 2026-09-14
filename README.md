@@ -100,6 +100,10 @@ BitChord is free and always will be — if it's earned a spot in your rotation, 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/kushagrasinghx)
 [![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/kuxhagrasingh)
 
+<br/>
+<br/>
+<img src="upi_support.jpg" alt="UPI Support" width="250" />
+
 </div>
 
 ---

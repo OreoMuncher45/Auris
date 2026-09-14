@@ -996,6 +996,8 @@ fun NowPlayingScreen(
     lyrics: List<LyricLine>?,
     lyricsSource: LyricsSource?,
     lyricsUnavailable: Boolean,
+    lyricsOffsetOpen: Boolean,
+    onDismissLyricsOffset: () -> Unit,
     /** The width of the window the player is in — see [fullBleedArtworkAvailable]. */
     windowWidth: Dp,
     /**
@@ -1040,6 +1042,11 @@ fun NowPlayingScreen(
     val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
+    val lyricsOffsetMs by AppSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
+    val lyricsPositionMs = adjustedLyricsPosition(positionMs, lyricsOffsetMs)
+    val seekToLyric: (Long) -> Unit = { lineTimeMs ->
+        onSeek(adjustedLyricsSeekTarget(lineTimeMs, lyricsOffsetMs))
+    }
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
 
     // Animated cover art: the looping video some labels publish alongside a
@@ -1336,6 +1343,19 @@ fun NowPlayingScreen(
         DisposableEffect(view, showAudioOutput) {
             val callback = if (showAudioOutput) {
                 OverlayBack.register(view) { showAudioOutput = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
+    BackHandler(enabled = lyricsOffsetOpen) { onDismissLyricsOffset() }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, lyricsOffsetOpen) {
+            val callback = if (lyricsOffsetOpen) {
+                OverlayBack.register(view, onDismissLyricsOffset)
             } else {
                 null
             }
@@ -1763,10 +1783,10 @@ fun NowPlayingScreen(
                     LyricsPanel(
                         lines = displayedLyrics,
                         trackKey = song.videoId,
-                        positionMs = positionMs,
+                        positionMs = lyricsPositionMs,
                         looking = !lyricsUnavailable,
                         isPlaying = isPlaying,
-                        onSeekToLine = onSeek,
+                        onSeekToLine = seekToLyric,
                         controlsOpen = true,
                         onRevealControls = {},
                         onHideControls = {},
@@ -1895,7 +1915,7 @@ fun NowPlayingScreen(
                         CurrentLyricLine(
                             lines = displayedLyrics,
                             trackKey = song.videoId,
-                            positionMs = positionMs,
+                            positionMs = lyricsPositionMs,
                             isPlaying = isPlaying,
                             durationMs = durationMs,
                             onClick = {
@@ -1941,7 +1961,7 @@ fun NowPlayingScreen(
         WidePlayerControls(
             song = song,
             isPlaying = isPlaying,
-            isLoading = isLoading,
+            isLoading = isLoading || audioVersionSwitching,
             positionMs = positionMs,
             durationMs = durationMs,
             hasPrevious = hasPrevious,
@@ -2010,6 +2030,12 @@ fun NowPlayingScreen(
                 hazeState = playerHaze,
                 accountName = accountName,
                 onDismiss = { showAudioOutput = false },
+            )
+        }
+        if (lyricsOffsetOpen) {
+            LyricsOffsetSheet(
+                hazeState = playerHaze,
+                onDismiss = onDismissLyricsOffset,
             )
         }
         }
@@ -2913,10 +2939,10 @@ fun NowPlayingScreen(
                             LyricsPanel(
                                 lines = displayedLyrics,
                                 trackKey = song.videoId,
-                                positionMs = positionMs,
+                                positionMs = lyricsPositionMs,
                                 looking = !lyricsUnavailable,
                                 isPlaying = isPlaying,
-                                onSeekToLine = onSeek,
+                                onSeekToLine = seekToLyric,
                                 controlsOpen = lyricsControlsOpen,
                                 onRevealControls = { lyricsControlsOpen = true },
                                 onHideControls = { lyricsControlsOpen = false },
@@ -3039,7 +3065,7 @@ fun NowPlayingScreen(
                         CurrentLyricLine(
                             lines = displayedLyrics,
                             trackKey = song.videoId,
-                            positionMs = positionMs,
+                            positionMs = lyricsPositionMs,
                             isPlaying = isPlaying,
                             durationMs = durationMs,
                             // Still visible over the queue, so still a valid way
@@ -3200,7 +3226,7 @@ fun NowPlayingScreen(
                 )
                 // While the stream URL resolves and buffers, the play glyph
                 // would be a lie — show progress instead.
-                if (isLoading) {
+                if (isLoading || audioVersionSwitching) {
                     // Same footprint as TransportGlyph(62.dp) — a smaller box
                     // here would shunt everything below it on every load.
                     Box(Modifier.size(74.dp), contentAlignment = Alignment.Center) {
@@ -3416,8 +3442,20 @@ fun NowPlayingScreen(
                 onDismiss = { showAudioOutput = false },
             )
         }
+        if (lyricsOffsetOpen) {
+            LyricsOffsetSheet(
+                hazeState = playerHaze,
+                onDismiss = onDismissLyricsOffset,
+            )
+        }
     }
 }
+
+internal fun adjustedLyricsPosition(positionMs: Long, offsetMs: Int): Long =
+    (positionMs - offsetMs.toLong()).coerceAtLeast(0L)
+
+internal fun adjustedLyricsSeekTarget(lineTimeMs: Long, offsetMs: Int): Long =
+    (lineTimeMs + offsetMs.toLong()).coerceAtLeast(0L)
 
 /**
  * The upward half of the sleeve's vertical gesture: dragged up, the artwork
