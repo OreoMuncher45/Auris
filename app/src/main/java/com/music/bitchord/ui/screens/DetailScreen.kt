@@ -88,6 +88,7 @@ import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
@@ -115,18 +116,6 @@ import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlin.math.roundToInt
 import java.util.Locale
-
-/**
- * Ordering for the track list on an album or playlist page — the same idea as
- * the Downloads folder's sort, but without a date: a catalogue row carries
- * none, so [DEFAULT] (the release's own running order) is the only option
- * that isn't alphabetical.
- */
-enum class SongSort {
-    DEFAULT,
-    TITLE_ASC,
-    TITLE_DESC,
-}
 
 private const val MAX_ARTIST_SONGS = 20
 private const val SONGS_PER_COLUMN = 4
@@ -860,6 +849,25 @@ private fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort)
     SongSort.DEFAULT -> this
     SongSort.TITLE_ASC -> sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.title })
     SongSort.TITLE_DESC -> sortedWith(compareByDescending(String.CASE_INSENSITIVE_ORDER) { it.title })
+    // A catalogue row carries no added date, so its place in the running
+    // order stands in for one: a playlist is appended to as songs are added,
+    // and reversed that puts the most recent addition on top. Rows that do
+    // carry a MediaStore timestamp — device tracks, downloads — are dated
+    // properly, with the position order left to break the ties.
+    SongSort.DATE_ADDED_ASC -> withIndex()
+        .sortedWith(
+            compareBy<IndexedValue<Song>> { (_, song) ->
+                song.localDateAddedSeconds ?: Long.MAX_VALUE
+            }.thenBy { (position, _) -> position },
+        )
+        .map { it.value }
+    SongSort.DATE_ADDED_DESC -> withIndex()
+        .sortedWith(
+            compareByDescending<IndexedValue<Song>> { (_, song) ->
+                song.localDateAddedSeconds ?: Long.MIN_VALUE
+            }.thenByDescending { (position, _) -> position },
+        )
+        .map { it.value }
 }
 
 /**
