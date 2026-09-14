@@ -844,6 +844,9 @@ private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
  */
 private val CONTROLS_SCROLL_SLOP = 20.dp
 
+/** How long the player stands under the lyrics untouched before standing down. */
+private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
+
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
 private const val LIGHT_ARTWORK_LUMINANCE_THRESHOLD = 0.45f
@@ -1449,6 +1452,23 @@ fun NowPlayingScreen(
         )
     }
     var volumeDragging by remember { mutableStateOf(false) }
+    // Present when you arrive, out of the way once you are actually reading.
+    //
+    // The panel opens with the player under it so the scrubber and transport
+    // are there to be reached, and this is the other half of that bargain: left
+    // alone for [LYRICS_CONTROLS_IDLE_MS] it stands down and gives the words the
+    // whole screen. Scrolling up brings it back and restarts the wait, since
+    // that write to [lyricsControlsOpen] re-keys this effect.
+    //
+    // Never while a finger is on the scrubber or the volume bar: those are the
+    // two controls that are *being used* while nothing else on screen moves,
+    // and timing out underneath them would take the thing away mid-gesture.
+    LaunchedEffect(lyricsOpen, lyricsControlsOpen, scrubbing, volumeDragging) {
+        if (lyricsOpen && lyricsControlsOpen && !scrubbing && !volumeDragging) {
+            delay(LYRICS_CONTROLS_IDLE_MS)
+            lyricsControlsOpen = false
+        }
+    }
     var systemVolume by remember { mutableFloatStateOf(volume.value) }
 
     // Glide to the level the system reports, but never fight the finger — a
