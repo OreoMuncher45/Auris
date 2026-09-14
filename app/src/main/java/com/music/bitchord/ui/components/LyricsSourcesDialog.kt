@@ -24,8 +24,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -41,6 +44,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -79,6 +86,8 @@ fun LyricsSourcesDialog(
     val selected by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val savedOrder by AppSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
     val prioritizeSyllableSync by AppSettings.prioritizeSyllableSync.collectAsStateWithLifecycle()
+    val paxSenixApiKey by AppSettings.paxSenixApiKey.collectAsStateWithLifecycle()
+    var showPaxSenixKeyDialog by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(ALERT_CORNER)
 
     Box(
@@ -171,6 +180,15 @@ fun LyricsSourcesDialog(
             }
 
             AlertRule()
+            AlertAction(
+                label = stringResource(
+                    if (paxSenixApiKey.isBlank()) R.string.paxsenix_api_key_missing
+                    else R.string.paxsenix_api_key_configured,
+                ),
+                emphasised = false,
+                onClick = { showPaxSenixKeyDialog = true },
+            )
+            AlertRule()
             SyllableSyncToggle(
                 checked = prioritizeSyllableSync,
                 onToggle = { AppSettings.setPrioritizeSyllableSync(!prioritizeSyllableSync) },
@@ -185,6 +203,38 @@ fun LyricsSourcesDialog(
             AlertRule()
             AlertAction(label = stringResource(R.string.done), emphasised = true, onClick = onDismiss)
         }
+    }
+
+    if (showPaxSenixKeyDialog) {
+        var input by remember(paxSenixApiKey) { mutableStateOf(paxSenixApiKey) }
+        AlertDialog(
+            onDismissRequest = { showPaxSenixKeyDialog = false },
+            title = { Text(stringResource(R.string.paxsenix_api_key)) },
+            text = {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = ImeAction.Done,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    AppSettings.setPaxSenixApiKey(input)
+                    showPaxSenixKeyDialog = false
+                }) { Text(stringResource(R.string.save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPaxSenixKeyDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 }
 

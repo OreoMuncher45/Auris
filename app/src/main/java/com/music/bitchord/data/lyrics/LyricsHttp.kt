@@ -40,6 +40,19 @@ internal fun lyricsGet(url: String): String? = runCatching {
     }
 }.getOrNull()
 
+/** Body of an authenticated provider GET without service-specific browser headers. */
+internal fun lyricsGetBearer(url: String, bearer: String): String? = runCatching {
+    if (bearer.isBlank()) return null
+    val request = Request.Builder().url(url)
+        .header("User-Agent", LYRICS_AGENT)
+        .header("Accept", "application/json, text/plain, */*")
+        .header("Authorization", "Bearer $bearer")
+        .build()
+    client.newCall(request).execute().use { response ->
+        if (response.isSuccessful) response.body?.string() else null
+    }
+}.getOrNull()
+
 /**
  * [lyricsGet], with a bearer token and the headers Apple's own web player
  * sends alongside one — `amp-api.music.apple.com` answers a token with no

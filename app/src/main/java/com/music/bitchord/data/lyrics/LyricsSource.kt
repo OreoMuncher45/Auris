@@ -39,9 +39,24 @@ enum class LyricsSource(
         detail = "Apple Music timings, word by word",
         wordSynced = true,
     ),
+    BETTER_LYRICS_PORTATO(
+        label = "BetterLyrics Portato",
+        detail = "QQ Music karaoke timings through BetterLyrics",
+        wordSynced = true,
+    ),
     PAXSENIX(
         label = "PaxSenix",
-        detail = "Apple Music timings again, on a second host",
+        detail = "Apple Music timings through PaxSenix; API key required",
+        wordSynced = true,
+    ),
+    PAXSENIX_SPOTIFY(
+        label = "PaxSenix: Spotify",
+        detail = "Spotify lyrics through PaxSenix; API key required",
+        wordSynced = false,
+    ),
+    PAXSENIX_MUSIXMATCH(
+        label = "PaxSenix: Musixmatch",
+        detail = "Musixmatch timings through PaxSenix; API key required",
         wordSynced = true,
     ),
     LYRICS_PLUS(
@@ -58,6 +73,21 @@ enum class LyricsSource(
         label = "Unison",
         detail = "Contributed by listeners, so it has what nobody licensed",
         wordSynced = true,
+    ),
+    YOUTUBE_TRANSCRIPT(
+        label = "YouTube captions",
+        detail = "Timed captions matched to the exact playing video",
+        wordSynced = false,
+    ),
+    YOUTUBE_MUSIC(
+        label = "YouTube Music",
+        detail = "Plain lyrics from the playing video's Lyrics tab",
+        wordSynced = false,
+    ),
+    MEGALOBIZ(
+        label = "Megalobiz",
+        detail = "Community-made, whole-line LRC",
+        wordSynced = false,
     ),
     KUGOU(
         label = "KuGou",

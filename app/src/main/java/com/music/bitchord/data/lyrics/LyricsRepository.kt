@@ -10,7 +10,7 @@ import java.util.Collections
 /**
  * Where the player gets its lyrics.
  *
- * Ten sources, tried in [order] — the user's own priority list in Settings,
+ * Sixteen sources, tried in [order] — the user's own priority list in Settings,
  * defaulting to [LyricsSource.entries]:
  *
  *  - [BetterLyrics], [PaxSenix] and [BiniLyrics] — Apple Music TTML,
@@ -152,6 +152,7 @@ object LyricsRepository {
     ): List<LyricLine>? {
         val found = when (source) {
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
+            LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)
             LyricsSource.LYRICS_PLUS -> LyricsPlus.lyrics(title, artist, durationMs, album, isrc)
             LyricsSource.BINI_LYRICS ->
                 (hit?.let { BiniLyrics.lyricsFor(it) }
@@ -160,10 +161,15 @@ object LyricsRepository {
                     ?.lines
             LyricsSource.UNISON -> Unison.lyrics(title, artist, durationMs, album)
             LyricsSource.SIMP_MUSIC -> SimpMusicLyrics.lyrics(videoId, durationMs)
+            LyricsSource.YOUTUBE_TRANSCRIPT -> YouTubeTranscriptLyrics.lyrics(videoId)
+            LyricsSource.YOUTUBE_MUSIC -> YouTubeMusicLyrics.lyrics(videoId)
             LyricsSource.LRCLIB -> LrcLib.lyrics(title, artist, durationMs)
             LyricsSource.MUSIXMATCH -> Musixmatch.lyrics(title, artist, durationMs)
             LyricsSource.PAXSENIX -> PaxSenix.lyrics(title, artist, durationMs, album)
+            LyricsSource.PAXSENIX_SPOTIFY -> PaxSenix.spotifyLyrics(title, artist, durationMs)
+            LyricsSource.PAXSENIX_MUSIXMATCH -> PaxSenix.musixmatchLyrics(title, artist, durationMs)
             LyricsSource.KUGOU -> KuGou.lyrics(title, artist, durationMs, album)
+            LyricsSource.MEGALOBIZ -> Megalobiz.lyrics(title, artist)
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
         }
         return found

@@ -87,10 +87,12 @@
             android:resource="@xml/automotive_app_desc" />
 
         <!--
-          Not portrait-locked any more — the player has landscape and wide
-          layouts of its own now (see [wideLyricsLayoutAvailable] in
-          NowPlayingScreen.kt), which is exactly the rotation this used to
-          refuse.
+          No android:screenOrientation here, and that is deliberate rather than
+          an omission: this attribute takes a constant, so setting it would
+          lock every device and leaving it off would free every device, and
+          neither is what this app wants. Tablets rotate, phones do not — a
+          question only a resource can answer, so MainActivity.onCreate asks
+          R.bool.allow_rotation and sets requestedOrientation from it.
 
           [android:configChanges] is the other half of that: without it, a
           rotation the system now allows is still a full Activity restart,

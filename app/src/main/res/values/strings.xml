@@ -523,10 +523,12 @@
         <item quantity="one">%1$d song will play next</item>
         <item quantity="other">%1$d songs will play next</item>
     </plurals>
+    <string name="song_will_play_next">Song will play next</string>
     <plurals name="songs_added_to_queue">
         <item quantity="one">Added %1$d song to the queue</item>
         <item quantity="other">Added %1$d songs to the queue</item>
     </plurals>
+    <string name="song_added_to_queue">Song added to queue</string>
     <plurals name="log_copied_line_count">
         <item quantity="one">Log copied · %1$d line</item>
         <item quantity="other">Log copied · %1$d lines</item>
@@ -545,6 +547,9 @@
     <string name="listening_history">Listening history</string>
     <string name="lyrics_not_available">Lyrics not available</string>
     <string name="lyrics_sources_order">Sources are tried in this order. Drag to reorder them. The first source with lyrics wins unless syllable lyrics are prioritized.</string>
+    <string name="paxsenix_api_key">PaxSenix API key</string>
+    <string name="paxsenix_api_key_configured">PaxSenix API key — configured</string>
+    <string name="paxsenix_api_key_missing">PaxSenix API key — required</string>
     <string name="max_delay">Maximum delay</string>
     <string name="max_delay_subtitle">Maximum scrobble delay in seconds</string>
     <string name="min_song_duration">Minimum song duration</string>

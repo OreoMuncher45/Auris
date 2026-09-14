@@ -3,6 +3,7 @@ package com.music.bitchord
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
@@ -192,6 +193,8 @@ import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.ui.components.ListenBrainzTokenAlert
 import com.music.bitchord.ui.components.MiniPlayer
+import com.music.bitchord.ui.components.QueueActionNotice
+import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.optimizedHazeEffect
@@ -232,6 +235,7 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.util.Locale
 
 /** A full first screen of a native YouTube Music radio before AutoPlay tops it up. */
@@ -247,6 +251,22 @@ private data class QueueSource(
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Portrait on a phone, free on a tablet — see R.bool.allow_rotation.
+        //
+        // Asked for here rather than declared in the manifest because the
+        // manifest cannot ask a question: android:screenOrientation takes a
+        // constant, so locking there locks every device, and leaving it off
+        // frees every device. The answer is a resource, and the shortest-width
+        // qualifier picks it — which is the same mechanism deciding it for any
+        // other tablet-versus-phone difference in the app.
+        //
+        // Set before [enableEdgeToEdge] and the composition, so a phone is
+        // already pinned by the time there is a first frame to draw sideways.
+        requestedOrientation = if (resources.getBoolean(R.bool.allow_rotation)) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
         enableEdgeToEdge()
         // Before the composition, so a cold launch from a widget's artwork has
         // the request already standing by the time BitChordApp first reads it.
@@ -691,6 +711,17 @@ private fun BitChordApp(
 
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
+    var queueNotice by remember { mutableStateOf<QueueActionNotice?>(null) }
+    var queueNoticeId by remember { mutableIntStateOf(0) }
+    val showQueueNotice: (String) -> Unit = { message ->
+        queueNoticeId += 1
+        queueNotice = QueueActionNotice(queueNoticeId, message)
+    }
+    LaunchedEffect(queueNotice?.id) {
+        val shown = queueNotice ?: return@LaunchedEffect
+        delay(3_000)
+        if (queueNotice?.id == shown.id) queueNotice = null
+    }
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
     // A conversion is deliberately scoped to the current listening session.
@@ -1059,6 +1090,7 @@ private fun BitChordApp(
                     playbackSourceId = current?.playbackSourceId,
                 )
                 it.addMediaItem(it.autoplaySectionStart(), queued.toMediaItem())
+                showQueueNotice(context.getString(R.string.song_added_to_queue))
             }
         }
     }
@@ -1076,6 +1108,7 @@ private fun BitChordApp(
                     (it.currentMediaItemIndex + 1).coerceAtMost(it.mediaItemCount),
                     queued.toMediaItem(),
                 )
+                showQueueNotice(context.getString(R.string.song_will_play_next))
             }
         }
     }
@@ -1190,7 +1223,7 @@ private fun BitChordApp(
                         songs.size,
                         songs.size,
                     )
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    showQueueNotice(message)
                 }
             }
         }
@@ -2753,7 +2786,13 @@ private fun BitChordApp(
                     }
                 }
 
-                if (glassActive) {
+                if (glassActive) Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .widthIn(max = FLOATING_BAR_MAX_WIDTH)
+                        .fillMaxWidth(),
+                ) {
+                    QueueActionNoticeHost(queueNotice)
                     // Liquid glass replaces the two stacked bars with the single
                     // component they are stacked to imitate: the now playing
                     // controls dock into the tab bar rather than riding above it,
@@ -2772,10 +2811,7 @@ private fun BitChordApp(
                         onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
                         onExpand = { showNowPlaying = true },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                            .fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 } else Column(
                     modifier = Modifier
@@ -2789,8 +2825,8 @@ private fun BitChordApp(
                         .widthIn(max = FLOATING_BAR_MAX_WIDTH)
                         .fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    QueueActionNoticeHost(queueNotice)
                     // Only where the player isn't already open beside the page:
                     // a bar whose whole job is to stand in for the player, next
                     // to the player, is a second copy of what is already there.
@@ -2808,6 +2844,7 @@ private fun BitChordApp(
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        Spacer(Modifier.height(8.dp))
                     }
                     FloatingBottomBar(
                         tabs = tabs,

@@ -41,6 +41,7 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.Base64
 import java.util.Locale
 
 /**
@@ -586,6 +587,13 @@ object Innertube {
         put("videoId", videoId)
         put("playlistId", "RDAMVM$videoId")
         put("isAudioOnly", true)
+    }
+
+    /** Timed caption transcript used as a last-resort lyrics source. */
+    suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
+        // get_transcript expects a tiny protobuf: field 1, length, video id.
+        val bytes = byteArrayOf(10, videoId.toByteArray().size.toByte()) + videoId.toByteArray()
+        put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
     suspend fun search(query: String, params: String? = null): JsonObject =

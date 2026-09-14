@@ -17,7 +17,7 @@
 
 <br/>
 
-[**Download**](#download) · [**Features**](#features) · [**Support**](#support) · [**Disclaimer**](#disclaimer)
+[**Download**](#download) · [**Features**](#features) · [**Contributing**](#contributing) · [**Support**](#support) · [**Disclaimer**](#disclaimer)
 
 <br/>
 
@@ -86,6 +86,16 @@
 <h1><a id="download"></a>Download</h1>
 
 Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx/BitChord/releases) page. Sideloading requires enabling "Install unknown apps" for whichever app you download it with.
+
+</div>
+
+---
+
+<div align="center">
+
+<h1><a id="contributing"></a>Contributing</h1>
+
+We welcome contributions to BitChord! When submitting a Pull Request, please ensure you make your PR against the **`latest`** branch, not the `main` branch.
 
 </div>
 
