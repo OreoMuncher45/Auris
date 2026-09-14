@@ -834,6 +834,16 @@ private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
     return gap.coerceIn(SCROLL_LEAD_MIN_MS, SCROLL_LEAD_MAX_MS)
 }
 
+/**
+ * How far a finger has to carry the lyric list before the player below it
+ * gets out of the way — or comes back.
+ *
+ * Roughly a line of body text. Below that a scroll is a nudge to see one more
+ * line rather than a decision to go reading, and answering every nudge put the
+ * controls in and out on the same gesture.
+ */
+private val CONTROLS_SCROLL_SLOP = 20.dp
+
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
 private const val LIGHT_ARTWORK_LUMINANCE_THRESHOLD = 0.45f
@@ -1104,7 +1114,12 @@ fun NowPlayingScreen(
     var queueOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
     var lyricsControlsOpen by remember { mutableStateOf(false) }
-    LaunchedEffect(lyricsOpen) { lyricsControlsOpen = false }
+    // The panel opens with the player still under it. It used to open with the
+    // controls hidden and a tap as the only way back to them, which left the
+    // most-used half of the screen — the scrubber and the transport — behind a
+    // gesture nobody was told about. Reading the words and working the player
+    // are not modes to be in one at a time.
+    LaunchedEffect(lyricsOpen) { lyricsControlsOpen = lyricsOpen }
     val reduceTranslationMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val configuredLocale = AppCompatDelegate.getApplicationLocales().get(0)?.toLanguageTag()
         ?.takeIf { it.isNotBlank() }
@@ -1434,12 +1449,6 @@ fun NowPlayingScreen(
         )
     }
     var volumeDragging by remember { mutableStateOf(false) }
-    LaunchedEffect(lyricsOpen, lyricsControlsOpen, scrubbing, volumeDragging) {
-        if (lyricsOpen && lyricsControlsOpen && !scrubbing && !volumeDragging) {
-            delay(5_000)
-            lyricsControlsOpen = false
-        }
-    }
     var systemVolume by remember { mutableFloatStateOf(volume.value) }
 
     // Glide to the level the system reports, but never fight the finger — a
@@ -4964,11 +4973,51 @@ private fun LyricsPanel(
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
 
     val hideControls by rememberUpdatedState(onHideControls)
+    val revealControls by rememberUpdatedState(onRevealControls)
     LaunchedEffect(listState) {
         listState.interactionSource.interactions.collect { interaction ->
             if (interaction is DragInteraction.Start) {
+                // Suspends the panel's own following, and nothing more. Which
+                // way the drag is going is what decides the controls now — see
+                // [controlsOnScroll] — and hiding them here as well meant a
+                // scroll *up*, the gesture that is supposed to bring them back,
+                // put them away first and then returned them.
                 browsing = true
-                hideControls()
+            }
+        }
+    }
+
+    // Reading on hides the player; coming back up brings it out again.
+    //
+    // The direction is taken from the drag itself rather than from where the
+    // list ends up, so it answers on the gesture rather than after it. Deltas
+    // arrive a couple of pixels at a time, so they are accumulated and the
+    // total is what crosses [CONTROLS_SCROLL_SLOP] — and the total resets the
+    // moment the finger changes its mind, so a scroll that wanders does not
+    // bank its way to the wrong answer.
+    //
+    // [NestedScrollSource.UserInput] is the whole guard against the panel
+    // hiding the controls by itself: this list scrolls on its own every time a
+    // line lands, and that is not somebody reading on.
+    val controlsSlopPx = with(LocalDensity.current) { CONTROLS_SCROLL_SLOP.toPx() }
+    val controlsOnScroll = remember(listState, controlsSlopPx) {
+        object : NestedScrollConnection {
+            private var travel = 0f
+
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                    if (travel != 0f && (travel > 0f) != (available.y > 0f)) travel = 0f
+                    travel += available.y
+                    // Finger travelling up is the list going forward: reading on.
+                    if (travel <= -controlsSlopPx) {
+                        travel = 0f
+                        hideControls()
+                    } else if (travel >= controlsSlopPx) {
+                        travel = 0f
+                        revealControls()
+                    }
+                }
+                return Offset.Zero
             }
         }
     }
@@ -5011,9 +5060,12 @@ private fun LyricsPanel(
     // every line while the reader's place in the song is unchanged, and a reset
     // here would snap the panel back to the top mid-read.
     var placed by remember(trackKey) { mutableStateOf(false) }
-    LaunchedEffect(controlsOpen) {
-        if (controlsOpen) browsing = false
-    }
+    // Nothing resets [browsing] off [controlsOpen] any more. It used to, so
+    // that tapping the controls back resumed following — but the controls now
+    // also come back by scrolling up, and clearing the flag there handed the
+    // panel straight back to the song mid-gesture, scrolling the reader away
+    // from the line they had gone looking for. The two timers below end a
+    // browse on their own terms.
     // A newer line replaces an unfinished automatic scroll. Only a user's
     // browsing gesture should suspend following, not our own animation.
     LaunchedEffect(focusLine, browsing, controlsOpen) {
@@ -5053,7 +5105,7 @@ private fun LyricsPanel(
     }
 
     if (lines.isEmpty()) {
-        val empty = modifier.revealLyricsControlsOnTap(!controlsOpen && !browsing, onBottomHalfTap)
+        val empty = modifier.revealLyricsControlsOnTap(!controlsOpen, onBottomHalfTap)
         // "None" is a finding, and it is only worth reporting once the lookup
         // has actually come back with it.
         if (looking) {
@@ -5074,9 +5126,10 @@ private fun LyricsPanel(
         state = listState,
         modifier = modifier
             .bleedHorizontally(PLAYER_GUTTER)
+            .nestedScroll(controlsOnScroll)
             .nestedScroll(keepScroll)
             // Browsing leaves taps to each lyric row's seek action throughout the list.
-            .revealLyricsControlsOnTap(!controlsOpen && !browsing, onBottomHalfTap)
+            .revealLyricsControlsOnTap(!controlsOpen, onBottomHalfTap)
             .fadingEdges(),
         // Each row carries GLOW_ROOM of its own inset for the halo, so the
         // list hands that much back — otherwise the lines would sit a glow's
