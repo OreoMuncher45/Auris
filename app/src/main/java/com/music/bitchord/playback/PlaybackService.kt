@@ -67,6 +67,7 @@ import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceRegistry
@@ -180,6 +181,7 @@ class PlaybackService : MediaLibraryService() {
 
     private var mediaSession: MediaLibrarySession? = null
     private val searchResults = ConcurrentHashMap<String, List<Song>>()
+    private val searchBrowseResults = ConcurrentHashMap<String, List<BrowseItem>>()
     private val songCache = ConcurrentHashMap<String, Song>()
 
     /**
@@ -249,11 +251,20 @@ class PlaybackService : MediaLibraryService() {
      * [YtMusicRepository.browseSongs] for Liked Music cached for Android Auto's browse tree.
      */
     private var cachedLiked: Pair<Long, List<Song>>? = null
+    private var cachedLikedCookie: String? = null
     private val likedMutex = Mutex()
     private val LIKED_CACHE_TTL_MS = 60_000L
 
     private suspend fun cachedLikedSongs(): List<Song> = likedMutex.withLock {
-        if (com.music.bitchord.data.innertube.Innertube.cookie == null) return emptyList()
+        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
+        if (cookie == null) {
+            cachedLiked = null
+            cachedLikedCookie = null
+            return emptyList()
+        }
+        if (cachedLikedCookie != null && cachedLikedCookie != cookie) {
+            cachedLiked = null
+        }
         cachedLiked?.let { (at, songs) ->
             if (SystemClock.elapsedRealtime() - at < LIKED_CACHE_TTL_MS && songs.isNotEmpty()) return songs
         }
@@ -277,6 +288,7 @@ class PlaybackService : MediaLibraryService() {
         }
         if (songs.isNotEmpty()) {
             cachedLiked = SystemClock.elapsedRealtime() to songs
+            cachedLikedCookie = cookie
             songs.forEach { songCache[it.videoId] = it }
             LikeState.seedLiked(songs.mapTo(HashSet()) { it.videoId })
         }
@@ -286,14 +298,110 @@ class PlaybackService : MediaLibraryService() {
     private var cachedHome: Pair<Long, com.music.bitchord.data.model.HomeFeed>? = null
     private val homeMutex = Mutex()
     private val HOME_CACHE_TTL_MS = 60_000L
+    private val HOME_NETWORK_TIMEOUT_MS = 2_500L
 
     private suspend fun cachedHomeFeed(): com.music.bitchord.data.model.HomeFeed? = homeMutex.withLock {
         cachedHome?.let { (at, feed) ->
             if (SystemClock.elapsedRealtime() - at < HOME_CACHE_TTL_MS) return feed
         }
-        val feed = YtMusicRepository.home().getOrNull() ?: return null
+        val feed = try {
+            withTimeoutOrNull(HOME_NETWORK_TIMEOUT_MS) {
+                YtMusicRepository.home().getOrNull()
+            }
+        } catch (_: Exception) {
+            null
+        } ?: return null
         cachedHome = SystemClock.elapsedRealtime() to feed
         feed
+    }
+
+    private var cachedPlaylistCards: Pair<Long, List<ShelfItem>>? = null
+    private var cachedPlaylistCookie: String? = null
+    private val playlistsMutex = Mutex()
+    private val PLAYLISTS_CACHE_TTL_MS = 60_000L
+
+    private suspend fun fetchPlaylistCards(): List<ShelfItem> = try {
+        withTimeoutOrNull(3_000L) {
+            YtMusicRepository.libraryPlaylists().getOrNull()
+                ?: YtMusicRepository.userPlaylists().getOrNull()?.map {
+                    ShelfItem(
+                        title = it.title,
+                        subtitle = it.subtitle,
+                        thumbnailUrl = it.thumbnailUrl,
+                        videoId = null,
+                        browseId = "VL${it.playlistId}",
+                    )
+                }
+        } ?: emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private suspend fun cachedPlaylistCards(): List<ShelfItem> = playlistsMutex.withLock {
+        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
+        if (cookie == null) {
+            cachedPlaylistCards = null
+            cachedPlaylistCookie = null
+            return emptyList()
+        }
+        if (cachedPlaylistCookie != null && cachedPlaylistCookie != cookie) {
+            cachedPlaylistCards = null
+        }
+        cachedPlaylistCards?.let { (at, cards) ->
+            if (SystemClock.elapsedRealtime() - at < PLAYLISTS_CACHE_TTL_MS && cards.isNotEmpty()) return cards
+        }
+        val cards = fetchPlaylistCards()
+        if (cards.isNotEmpty()) {
+            cachedPlaylistCards = SystemClock.elapsedRealtime() to cards
+            cachedPlaylistCookie = cookie
+        }
+        cards
+    }
+
+    private fun snapshotRecents(): List<Song> = cachedRecents?.second.orEmpty()
+    private fun snapshotQuickPicks(): List<Song> = cachedQuickPicks?.second.orEmpty()
+    private fun snapshotLiked(): List<Song> {
+        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
+        return if (cookie != null && cookie == cachedLikedCookie) cachedLiked?.second.orEmpty() else emptyList()
+    }
+    private fun snapshotPlaylistCards(): List<ShelfItem> {
+        val cookie = com.music.bitchord.data.innertube.Innertube.cookie
+        return if (cookie != null && cookie == cachedPlaylistCookie) cachedPlaylistCards?.second.orEmpty() else emptyList()
+    }
+    private fun snapshotHome(): com.music.bitchord.data.model.HomeFeed? = cachedHome?.second
+
+    private fun isFresh(at: Long, ttlMs: Long): Boolean =
+        SystemClock.elapsedRealtime() - at < ttlMs
+
+    private fun isRecentsFresh(): Boolean =
+        cachedRecents?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, RECENTS_CACHE_TTL_MS) } ?: false
+
+    private fun isQuickPicksFresh(): Boolean =
+        cachedQuickPicks?.let { (at, songs) -> songs.isNotEmpty() && isFresh(at, QUICK_PICKS_CACHE_TTL_MS) } ?: false
+
+    private fun isLikedFresh(): Boolean =
+        snapshotLiked().isNotEmpty() && cachedLiked?.let { (at, _) -> isFresh(at, LIKED_CACHE_TTL_MS) } == true
+
+    private fun isPlaylistsFresh(): Boolean =
+        snapshotPlaylistCards().isNotEmpty() && cachedPlaylistCards?.let { (at, _) -> isFresh(at, PLAYLISTS_CACHE_TTL_MS) } == true
+
+    private fun refreshFolderInBackground(
+        session: MediaLibrarySession,
+        browser: MediaSession.ControllerInfo,
+        parentId: String,
+        params: LibraryParams?,
+        fetch: suspend () -> Int,
+    ) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val freshCount = fetch()
+                if (freshCount > 0) {
+                    session.notifyChildrenChanged(browser, parentId, freshCount, params)
+                }
+            } catch (_: Exception) {
+                // The existing snapshot remains usable when revalidation fails.
+            }
+        }
     }
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
@@ -5031,20 +5139,10 @@ class PlaybackService : MediaLibraryService() {
                 params?.extras?.getBoolean("androidx.media.MediaBrowserCompat.EXTRA_RECENT") == true
 
             val rootId = if (isRecent) MEDIA_RECENTS_ID else MEDIA_ROOT_ID
-            val rootExtras = Bundle().apply {
-                putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED, true)
-                putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED_AX, true)
-                putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_AX, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_AX, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_LEGACY, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_LEGACY, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt("android.media.extras.CONTENT_STYLE_BROWSABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt("android.media.extras.CONTENT_STYLE_PLAYABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-            }
+            val rootExtras = buildContentStyleBundle(
+                CONTENT_STYLE_GRID_ITEM_HINT_VALUE,
+                CONTENT_STYLE_LIST_ITEM_HINT_VALUE,
+            )
             val rootItem = MediaItem.Builder()
                 .setMediaId(rootId)
                 .setMediaMetadata(
@@ -5077,103 +5175,140 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
-            val isGridFolder = parentId == MEDIA_RECENTS_ID || parentId == MEDIA_QUICK_PICKS_ID
+            val isGridFolder = parentId == MEDIA_ROOT_ID || parentId == MEDIA_PLAYLISTS_ID
             val items: List<MediaItem> = when (parentId) {
                 MEDIA_ROOT_ID -> listOf(
-                    createFolderItem(MEDIA_RECENTS_ID, "Recents", folderType = MediaMetadata.FOLDER_TYPE_ALBUMS, isGrid = true),
-                    createFolderItem(MEDIA_QUICK_PICKS_ID, "Quick Picks", folderType = MediaMetadata.FOLDER_TYPE_ALBUMS, isGrid = true),
-                    createFolderItem(MEDIA_PLAYLISTS_ID, "Playlists", folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
-                    createFolderItem(MEDIA_MORE_ID, "More", folderType = MediaMetadata.FOLDER_TYPE_MIXED),
+                    createFolderItem(MEDIA_QUICK_PICKS_ID, getString(R.string.auto_quick_picks), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
+                    createFolderItem(MEDIA_RECENTS_ID, getString(R.string.auto_recents), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
+                    createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS, isGrid = true),
+                    createFolderItem(MEDIA_LIKED_ID, getString(R.string.auto_liked), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
+                    createFolderItem(MEDIA_MORE_ID, getString(R.string.more), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
                 )
                 MEDIA_MORE_ID -> listOf(
-                    createFolderItem(MEDIA_LIKED_ID, "Liked Music", folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
-                    createFolderItem(MEDIA_DOWNLOADS_ID, "Downloads", folderType = MediaMetadata.FOLDER_TYPE_MIXED),
-                    createFolderItem(MEDIA_LOCAL_MUSIC_ID, "Local Music", folderType = MediaMetadata.FOLDER_TYPE_MIXED),
+                    createFolderItem(MEDIA_DOWNLOADS_ID, getString(R.string.downloads), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
+                    createFolderItem(MEDIA_LOCAL_MUSIC_ID, getString(R.string.local_music), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
                 )
                 MEDIA_RECENTS_ID -> {
-                    val songs = cachedRecentsSongs()
-                    val resultItems = if (songs.isNotEmpty()) {
-                        songs.map { it.toMediaItem().withGridStyle() }
-                    } else if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
-                        listOf(createLoginPromptItem().withGridStyle())
+                    val snapshot = snapshotRecents()
+                    val songs = if (snapshot.isNotEmpty()) {
+                        if (!isRecentsFresh()) {
+                            refreshFolderInBackground(session, browser, parentId, params) {
+                                cachedRecentsSongs().size
+                            }
+                        }
+                        snapshot
                     } else {
-                        emptyList()
+                        cachedRecentsSongs()
                     }
-                    resultItems
+                    songs.forEach { songCache[it.videoId] = it }
+                    if (songs.isNotEmpty()) songs.map { it.toMediaItem() } else listOf(
+                        createInfoItem(
+                            "msg:empty_recents",
+                            getString(R.string.auto_empty_recents_title),
+                            getString(R.string.auto_empty_recents_subtitle),
+                        ),
+                    )
                 }
                 MEDIA_QUICK_PICKS_ID -> {
-                    val songs = cachedQuickPicksSongs()
-                    val resultItems = if (songs.isNotEmpty()) {
-                        songs.map { it.toMediaItem().withGridStyle() }
+                    val snapshot = snapshotQuickPicks()
+                    val songs = if (snapshot.isNotEmpty()) {
+                        if (!isQuickPicksFresh()) {
+                            refreshFolderInBackground(session, browser, parentId, params) {
+                                cachedQuickPicksSongs().size
+                            }
+                        }
+                        snapshot
                     } else {
-                        val home = cachedHomeFeed()
-                        val qpItems = home?.shelves?.flatMap { it.items }?.mapNotNull { it.toMediaItemOrNull() }
-                        if (!qpItems.isNullOrEmpty()) {
-                            qpItems.map { it.withGridStyle() }
-                        } else if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
-                            listOf(createLoginPromptItem().withGridStyle())
-                        } else {
-                            emptyList()
+                        cachedQuickPicksSongs().ifEmpty {
+                            snapshotHome()?.shelves?.flatMap { it.items }
+                                ?.mapNotNull { it.toSongOrNull() }
+                                ?.distinctBy { it.videoId }
+                                .orEmpty()
                         }
                     }
-                    resultItems
+                    songs.forEach { songCache[it.videoId] = it }
+                    if (songs.isNotEmpty()) songs.map { it.toMediaItem() } else listOf(
+                        createInfoItem(
+                            "msg:empty_quick_picks",
+                            getString(R.string.auto_empty_quick_picks_title),
+                            getString(R.string.auto_empty_quick_picks_subtitle),
+                        ),
+                    )
                 }
                 MEDIA_LIKED_ID -> {
                     if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
                         listOf(createLoginPromptItem())
                     } else {
-                        val songs = cachedLikedSongs()
+                        val snapshot = snapshotLiked()
+                        val songs = if (snapshot.isNotEmpty()) {
+                            if (!isLikedFresh()) {
+                                refreshFolderInBackground(session, browser, parentId, params) {
+                                    cachedLikedSongs().size
+                                }
+                            }
+                            snapshot
+                        } else {
+                            cachedLikedSongs()
+                        }
+                        songs.forEach { songCache[it.videoId] = it }
                         if (songs.isNotEmpty()) {
                             songs.map { it.toMediaItem() }
                         } else {
-                            listOf(createLoginPromptItem())
+                            listOf(
+                                createInfoItem(
+                                    "msg:empty_liked",
+                                    getString(R.string.auto_empty_liked_title),
+                                    getString(R.string.auto_empty_liked_subtitle),
+                                ),
+                            )
                         }
                     }
                 }
                 MEDIA_DOWNLOADS_ID -> {
                     val downloaded = Downloads.getDownloadedSongs(this@PlaybackService)
                     downloaded.forEach { songCache[it.videoId] = it }
-                    downloaded.map { it.toMediaItem() }
+                    if (downloaded.isNotEmpty()) downloaded.map { it.toMediaItem() } else listOf(
+                        createInfoItem(
+                            "msg:empty_downloads",
+                            getString(R.string.auto_empty_offline_title),
+                            getString(R.string.auto_empty_offline_subtitle),
+                        ),
+                    )
                 }
                 MEDIA_PLAYLISTS_ID -> {
-                    val playlists = try {
-                        withTimeoutOrNull(3000L) {
-                            YtMusicRepository.libraryPlaylists().getOrNull()
-                                ?: YtMusicRepository.userPlaylists().getOrNull()?.map {
-                                    ShelfItem(
-                                        title = it.title,
-                                        subtitle = it.subtitle,
-                                        thumbnailUrl = it.thumbnailUrl,
-                                        videoId = null,
-                                        browseId = "VL${it.playlistId}",
-                                    )
+                    if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
+                        listOf(createLoginPromptItem())
+                    } else {
+                        val snapshot = snapshotPlaylistCards()
+                        val playlists = if (snapshot.isNotEmpty()) {
+                            if (!isPlaylistsFresh()) {
+                                refreshFolderInBackground(session, browser, parentId, params) {
+                                    cachedPlaylistCards().size
                                 }
-                        } ?: emptyList()
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                    playlists.map { playlist ->
-                        val browseId = playlist.browseId ?: "VL${playlist.videoId}"
-                        val mediaId = if (browseId.startsWith("VL")) "playlist:${browseId.removePrefix("VL")}" else "browse:$browseId"
-                        MediaItem.Builder()
-                            .setMediaId(mediaId)
-                            .setMediaMetadata(
-                                MediaMetadata.Builder()
-                                    .setTitle(playlist.title)
-                                    .setSubtitle(playlist.subtitle)
-                                    .setArtworkUri(playlist.thumbnailUrl?.artworkAt(NOTIFICATION_ART_PX)?.let { Uri.parse(it) })
-                                    .setIsBrowsable(true)
-                                    .setIsPlayable(true)
-                                    .setFolderType(MediaMetadata.FOLDER_TYPE_PLAYLISTS)
-                                    .build(),
-                            )
-                            .build()
+                            }
+                            snapshot
+                        } else {
+                            cachedPlaylistCards()
+                        }
+                        if (playlists.isNotEmpty()) playlists.map(::shelfToGridPlaylistItem) else listOf(
+                            createInfoItem(
+                                "msg:empty_playlists",
+                                getString(R.string.auto_empty_playlists_title),
+                                getString(R.string.auto_empty_playlists_subtitle),
+                            ),
+                        )
                     }
                 }
                 MEDIA_LOCAL_MUSIC_ID -> {
                     val local = LocalMediaRepository.getLocalMusic(this@PlaybackService)
                     local.forEach { songCache[it.videoId] = it }
-                    local.map { it.toMediaItem() }
+                    if (local.isNotEmpty()) local.map { it.toMediaItem() } else listOf(
+                        createInfoItem(
+                            "msg:empty_local",
+                            getString(R.string.auto_empty_offline_title),
+                            getString(R.string.auto_empty_offline_subtitle),
+                        ),
+                    )
                 }
                 else -> {
                     when {
@@ -5213,25 +5348,13 @@ class PlaybackService : MediaLibraryService() {
                     }
                 }
             }
-            val returnParams = if (isGridFolder) {
-                LibraryParams.Builder().setExtras(Bundle().apply {
-                    putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_AX, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_AX, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_LEGACY, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_LEGACY, CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt("android.media.extras.CONTENT_STYLE_BROWSABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt("android.media.extras.CONTENT_STYLE_PLAYABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", CONTENT_STYLE_GRID_ITEM_HINT_VALUE)
-                    putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED, true)
-                    putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED_AX, true)
-                }).build()
-            } else {
-                params
-            }
-            LibraryResult.ofItemList(ImmutableList.copyOf(items), returnParams)
+            val returnParams = LibraryParams.Builder().setExtras(
+                buildContentStyleBundle(
+                    if (isGridFolder) CONTENT_STYLE_GRID_ITEM_HINT_VALUE else CONTENT_STYLE_LIST_ITEM_HINT_VALUE,
+                    CONTENT_STYLE_LIST_ITEM_HINT_VALUE,
+                ),
+            ).build()
+            LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), returnParams)
         }
 
         override fun onGetItem(
@@ -5250,34 +5373,37 @@ class PlaybackService : MediaLibraryService() {
                             .setFolderType(MediaMetadata.FOLDER_TYPE_MIXED)
                             .build(),
                     ).build()
-                MEDIA_RECENTS_ID -> createFolderItem(MEDIA_RECENTS_ID, "Recents", folderType = MediaMetadata.FOLDER_TYPE_ALBUMS, isGrid = true)
-                MEDIA_QUICK_PICKS_ID -> createFolderItem(MEDIA_QUICK_PICKS_ID, "Quick Picks", folderType = MediaMetadata.FOLDER_TYPE_ALBUMS, isGrid = true)
-                MEDIA_PLAYLISTS_ID -> createFolderItem(MEDIA_PLAYLISTS_ID, "Playlists", folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
-                MEDIA_MORE_ID -> createFolderItem(MEDIA_MORE_ID, "More", folderType = MediaMetadata.FOLDER_TYPE_MIXED)
-                MEDIA_LIKED_ID -> createFolderItem(MEDIA_LIKED_ID, "Liked Music", folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
-                MEDIA_DOWNLOADS_ID -> createFolderItem(MEDIA_DOWNLOADS_ID, "Downloads")
-                MEDIA_LOCAL_MUSIC_ID -> createFolderItem(MEDIA_LOCAL_MUSIC_ID, "Local Music")
+                MEDIA_RECENTS_ID -> createFolderItem(MEDIA_RECENTS_ID, getString(R.string.auto_recents), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
+                MEDIA_QUICK_PICKS_ID -> createFolderItem(MEDIA_QUICK_PICKS_ID, getString(R.string.auto_quick_picks), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
+                MEDIA_PLAYLISTS_ID -> createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS, isGrid = true)
+                MEDIA_MORE_ID -> createFolderItem(MEDIA_MORE_ID, getString(R.string.more), folderType = MediaMetadata.FOLDER_TYPE_MIXED)
+                MEDIA_LIKED_ID -> createFolderItem(MEDIA_LIKED_ID, getString(R.string.auto_liked), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
+                MEDIA_DOWNLOADS_ID -> createFolderItem(MEDIA_DOWNLOADS_ID, getString(R.string.downloads))
+                MEDIA_LOCAL_MUSIC_ID -> createFolderItem(MEDIA_LOCAL_MUSIC_ID, getString(R.string.local_music))
                 "msg:login_required" -> createLoginPromptItem()
                 else -> {
                     if (mediaId.startsWith("msg:")) {
-                        createLoginPromptItem()
+                        createInfoItem(
+                            mediaId,
+                            getString(R.string.auto_unavailable_title),
+                            getString(R.string.auto_unavailable_subtitle),
+                        )
                     } else {
                         val cached = songCache[mediaId]
                         if (cached != null) {
                             cached.toMediaItem()
                         } else if (mediaId.startsWith("playlist:") || mediaId.startsWith("browse:")) {
-                            MediaItem.Builder()
-                                .setMediaId(mediaId)
-                                .setMediaMetadata(
-                                    MediaMetadata.Builder()
-                                        .setTitle("Playlist")
-                                        .setIsBrowsable(true)
-                                        .setIsPlayable(true)
-                                        .setFolderType(MediaMetadata.FOLDER_TYPE_PLAYLISTS)
-                                        .build(),
-                                ).build()
+                            createGridPlaylistItem(
+                                mediaId = mediaId,
+                                title = if (mediaId.contains("MPREb_")) "Album" else getString(R.string.playlists),
+                                folderType = if (mediaId.contains("MPREb_")) MediaMetadata.FOLDER_TYPE_ALBUMS else MediaMetadata.FOLDER_TYPE_PLAYLISTS,
+                            )
                         } else {
-                            Song(videoId = mediaId, title = "Track", artist = "Artist", thumbnailUrl = null).toMediaItem()
+                            createInfoItem(
+                                "msg:unavailable|$mediaId",
+                                getString(R.string.auto_unavailable_title),
+                                getString(R.string.auto_unavailable_subtitle),
+                            )
                         }
                     }
                 }
@@ -5358,17 +5484,9 @@ class PlaybackService : MediaLibraryService() {
             query: String,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<Void>> = scope.future(Dispatchers.IO) {
-            val results = try {
-                withTimeoutOrNull(3000L) {
-                    YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
-                } ?: emptyList()
-            } catch (_: Exception) {
-                emptyList()
-            }
-            val songs = results.mapNotNull { if (it is SearchResult.Track) it.song else null }
-            searchResults[query] = songs
-            songs.forEach { songCache[it.videoId] = it }
-            session.notifySearchResultChanged(browser, query, songs.size, params)
+            val (songs, browses) = searchAll(query)
+            storeSearchResults(query, songs, browses)
+            session.notifySearchResultChanged(browser, query, songs.size + browses.size, params)
             LibraryResult.ofVoid(params)
         }
 
@@ -5380,20 +5498,16 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> = scope.future(Dispatchers.IO) {
-            val songs = searchResults[query] ?: try {
-                withTimeoutOrNull(3000L) {
-                    YtMusicRepository.search(query, SearchFilter.SONGS).getOrNull()
-                        ?.mapNotNull { if (it is SearchResult.Track) it.song else null }
-                } ?: emptyList()
-            } catch (_: Exception) {
-                emptyList()
+            val cachedSongs = searchResults[query]
+            val cachedBrowses = searchBrowseResults[query]
+            val (songs, browses) = if (cachedSongs != null || cachedBrowses != null) {
+                cachedSongs.orEmpty() to cachedBrowses.orEmpty()
+            } else {
+                searchAll(query).also { storeSearchResults(query, it.first, it.second) }
             }
             songs.forEach { songCache[it.videoId] = it }
-            val fromIndex = (page * pageSize).coerceAtMost(songs.size)
-            val toIndex = ((page + 1) * pageSize).coerceAtMost(songs.size)
-            val paged = if (fromIndex < toIndex) songs.subList(fromIndex, toIndex) else songs
-            val items = paged.map { it.toMediaItem() }
-            LibraryResult.ofItemList(ImmutableList.copyOf(items), params)
+            val items = songs.map { it.toMediaItem() } + browses.map(::browseItemToGridItem)
+            LibraryResult.ofItemList(ImmutableList.copyOf(paginate(items, page, pageSize)), params)
         }
 
         override fun onSetMediaItems(
@@ -5545,6 +5659,105 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private fun buildContentStyleBundle(browsableHint: Int, playableHint: Int): Bundle =
+        Bundle().apply {
+            putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, browsableHint)
+            putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT, playableHint)
+            putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_AX, browsableHint)
+            putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_AX, playableHint)
+            putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_LEGACY, browsableHint)
+            putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_LEGACY, playableHint)
+            putInt("android.media.extras.CONTENT_STYLE_BROWSABLE_HINT", browsableHint)
+            putInt("android.media.extras.CONTENT_STYLE_PLAYABLE_HINT", playableHint)
+            putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", browsableHint)
+            putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", playableHint)
+            putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED, true)
+            putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED_AX, true)
+        }
+
+    private fun <T> paginate(items: List<T>, page: Int, pageSize: Int): List<T> {
+        if (page < 0 || pageSize <= 0 || items.isEmpty()) return emptyList()
+        val safePageSize = pageSize.coerceAtMost(MAX_AUTO_PAGE_SIZE)
+        val fromLong = page.toLong() * safePageSize.toLong()
+        if (fromLong >= items.size.toLong()) return emptyList()
+        val from = fromLong.toInt()
+        val to = (fromLong + safePageSize).coerceAtMost(items.size.toLong()).toInt()
+        return items.subList(from, to)
+    }
+
+    private fun createGridPlaylistItem(
+        mediaId: String,
+        title: String,
+        subtitle: String? = null,
+        artworkUrl: String? = null,
+        folderType: Int = MediaMetadata.FOLDER_TYPE_PLAYLISTS,
+    ): MediaItem = MediaItem.Builder()
+        .setMediaId(mediaId)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(title)
+                .setSubtitle(subtitle)
+                .setArtworkUri(artworkUrl?.artworkAt(NOTIFICATION_ART_PX)?.let(Uri::parse))
+                .setIsBrowsable(true)
+                .setIsPlayable(false)
+                .setFolderType(folderType)
+                .setExtras(buildContentStyleBundle(CONTENT_STYLE_GRID_ITEM_HINT_VALUE, CONTENT_STYLE_LIST_ITEM_HINT_VALUE))
+                .build(),
+        )
+        .build()
+
+    private fun shelfToGridPlaylistItem(playlist: ShelfItem): MediaItem {
+        val browseId = playlist.browseId ?: "VL${playlist.videoId}"
+        val mediaId = if (browseId.startsWith("VL")) "playlist:${browseId.removePrefix("VL")}" else "browse:$browseId"
+        return createGridPlaylistItem(
+            mediaId = mediaId,
+            title = playlist.title,
+            subtitle = playlist.subtitle,
+            artworkUrl = playlist.thumbnailUrl,
+        )
+    }
+
+    private suspend fun searchAll(query: String): Pair<List<Song>, List<BrowseItem>> {
+        val safeQuery = query.trim().take(MAX_AUTO_SEARCH_QUERY_CHARS)
+        if (safeQuery.isEmpty()) return emptyList<Song>() to emptyList()
+        val results = try {
+            withTimeoutOrNull(3_500L) {
+                YtMusicRepository.search(safeQuery, SearchFilter.ALL).getOrNull()
+            } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val songs = results.mapNotNull {
+            when (it) {
+                is SearchResult.Track -> it.song
+                is SearchResult.TopTrack -> it.song
+                else -> null
+            }
+        }.distinctBy { it.videoId }
+        val browses = results.mapNotNull { (it as? SearchResult.Browse)?.item }
+            .distinctBy { it.browseId }
+        return songs to browses
+    }
+
+    private fun storeSearchResults(query: String, songs: List<Song>, browses: List<BrowseItem>) {
+        while (searchResults.size >= MAX_AUTO_SEARCH_CACHE_ENTRIES) {
+            val key = searchResults.keys.firstOrNull() ?: break
+            searchResults.remove(key)
+            searchBrowseResults.remove(key)
+        }
+        searchResults[query] = songs
+        searchBrowseResults[query] = browses
+        songs.forEach { songCache[it.videoId] = it }
+    }
+
+    private fun browseItemToGridItem(item: BrowseItem): MediaItem = createGridPlaylistItem(
+        mediaId = "browse:${item.browseId}",
+        title = item.title,
+        subtitle = item.subtitle,
+        artworkUrl = item.thumbnailUrl,
+        folderType = if (item.browseId.startsWith("MPREb_")) MediaMetadata.FOLDER_TYPE_ALBUMS else MediaMetadata.FOLDER_TYPE_PLAYLISTS,
+    )
+
     private fun createFolderItem(
         mediaId: String,
         title: String,
@@ -5553,20 +5766,7 @@ class PlaybackService : MediaLibraryService() {
         isGrid: Boolean = false,
     ): MediaItem {
         val style = if (isGrid) CONTENT_STYLE_GRID_ITEM_HINT_VALUE else CONTENT_STYLE_LIST_ITEM_HINT_VALUE
-        val extras = Bundle().apply {
-            putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT, style)
-            putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT, style)
-            putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_AX, style)
-            putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_AX, style)
-            putInt(EXTRA_CONTENT_STYLE_BROWSABLE_HINT_LEGACY, style)
-            putInt(EXTRA_CONTENT_STYLE_PLAYABLE_HINT_LEGACY, style)
-            putInt("android.media.extras.CONTENT_STYLE_BROWSABLE_HINT", style)
-            putInt("android.media.extras.CONTENT_STYLE_PLAYABLE_HINT", style)
-            putInt("android.media.browse.CONTENT_STYLE_BROWSABLE_HINT", style)
-            putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", style)
-            putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED, true)
-            putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED_AX, true)
-        }
+        val extras = buildContentStyleBundle(style, CONTENT_STYLE_LIST_ITEM_HINT_VALUE)
         return MediaItem.Builder()
             .setMediaId(mediaId)
             .setMediaMetadata(
@@ -5641,15 +5841,39 @@ class PlaybackService : MediaLibraryService() {
         return null
     }
 
+    private fun ShelfItem.toSongOrNull(): Song? {
+        val id = videoId ?: return null
+        return Song(
+            videoId = id,
+            title = title,
+            artist = subtitle,
+            thumbnailUrl = thumbnailUrl,
+        )
+    }
+
     private fun createLoginPromptItem(): MediaItem =
         MediaItem.Builder()
             .setMediaId("msg:login_required")
             .setMediaMetadata(
                 MediaMetadata.Builder()
-                    .setTitle("Login with Youtube on your phone")
-                    .setSubtitle("Open BitChord on phone to sign in")
+                    .setTitle(getString(R.string.auto_login_title))
+                    .setSubtitle(getString(R.string.auto_login_subtitle))
                     .setIsBrowsable(false)
                     .setIsPlayable(false)
+                    .build(),
+            )
+            .build()
+
+    private fun createInfoItem(mediaId: String, title: String, subtitle: String? = null): MediaItem =
+        MediaItem.Builder()
+            .setMediaId(mediaId)
+            .setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(title)
+                    .setSubtitle(subtitle)
+                    .setIsBrowsable(false)
+                    .setIsPlayable(false)
+                    .setExtras(buildContentStyleBundle(CONTENT_STYLE_LIST_ITEM_HINT_VALUE, CONTENT_STYLE_LIST_ITEM_HINT_VALUE))
                     .build(),
             )
             .build()
@@ -5663,6 +5887,17 @@ class PlaybackService : MediaLibraryService() {
         const val MEDIA_LIKED_ID = "liked"
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
+        const val MAX_AUTO_PAGE_SIZE = 50
+        const val MAX_AUTO_SEARCH_QUERY_CHARS = 200
+        const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
+
+        val ROOT_CHILDREN: List<String> = listOf(
+            MEDIA_QUICK_PICKS_ID,
+            MEDIA_RECENTS_ID,
+            MEDIA_PLAYLISTS_ID,
+            MEDIA_LIKED_ID,
+            MEDIA_MORE_ID,
+        )
 
         // Android Auto Content Style Hints
         const val EXTRA_CONTENT_STYLE_SUPPORTED = "android.media.browse.extra.CONTENT_STYLE_SUPPORTED"
