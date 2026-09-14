@@ -315,12 +315,29 @@ object ListenTogether {
         post("${httpBase()}/api/parties", JoinRequest(who.userId, who.deviceId, who.name, who.avatar))
     }
 
-    suspend fun joinParty(code: String): Result<String> = enter { who ->
-        val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
-        if (cleaned.length != CODE_LENGTH) {
-            throw PartyException("bad_code", "A party code is six letters or digits.")
+    suspend fun joinParty(code: String): Result<String> {
+        val previousCode = _state.value.code
+        val previousToken = token
+        val result = enter { who ->
+            val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
+            if (cleaned.length != CODE_LENGTH) {
+                throw PartyException("bad_code", "A party code is six letters or digits.")
+            }
+            post("${httpBase()}/api/parties/$cleaned/join", JoinRequest(who.userId, who.deviceId, who.name, who.avatar))
         }
-        post("${httpBase()}/api/parties/$cleaned/join", JoinRequest(who.userId, who.deviceId, who.name, who.avatar))
+        // A deep link can arrive while this device is already jamming. Join the
+        // new party first so a bad/full/expired invite does not eject it from
+        // the old one, then give the old slot back after the switch succeeds.
+        val joinedCode = result.getOrNull()
+        if (
+            joinedCode != null &&
+            previousCode != null &&
+            previousToken != null &&
+            !previousCode.equals(joinedCode, ignoreCase = true)
+        ) {
+            releaseStaleSlot(previousCode, previousToken)
+        }
+        return result
     }
 
     private suspend fun enter(request: suspend (Identity) -> PartyMembership): Result<String> =

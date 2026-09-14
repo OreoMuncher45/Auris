@@ -300,6 +300,7 @@ def _apply_control(party: Party, member: Member, frame: dict[str, Any]) -> bool:
             position_ms=_as_int(frame.get("positionMs")) or 0,
             is_playing=bool(frame.get("isPlaying", True)),
             queue_index=_as_int(frame.get("queueIndex")),
+            member_name=member.display_name,
         )
         return True
     if action == protocol.ACTION_SET_QUEUE:
@@ -310,10 +311,10 @@ def _apply_control(party: Party, member: Member, frame: dict[str, Any]) -> bool:
         playback.set_queue(who, queue, _as_int(frame.get("queueIndex")) if frame.get("queueIndex") is not None else -1)
         return True
     if action == protocol.ACTION_NEXT:
-        playback.step(who, 1)
+        playback.step(who, 1, member.display_name)
         return True
     if action == protocol.ACTION_PREVIOUS:
-        playback.step(who, -1)
+        playback.step(who, -1, member.display_name)
         return True
     return False
 

@@ -95,6 +95,20 @@ def test_every_mutation_bumps_the_sequence(instant_start):
     assert state.updated_by == "m1"
 
 
+def test_track_starter_survives_other_members_controls(instant_start):
+    state = PlaybackState()
+    state.set_track("m1", a_track(), member_name="Kushagra")
+
+    state.pause("m2")
+    state.seek("m2", 1_000)
+    state.play("m2")
+
+    wire = state.to_wire()
+    assert wire["updatedBy"] == "m2"
+    assert wire["startedBy"] == "m1"
+    assert wire["startedByName"] == "Kushagra"
+
+
 def test_the_state_frame_does_not_carry_the_queue(instant_start):
     """The heartbeat's cost has to stay flat as the queue grows."""
     state = PlaybackState()

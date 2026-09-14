@@ -24,6 +24,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
+import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceRegistry
@@ -292,6 +293,9 @@ fun MediaItem.toSong() = Song(
     fromAutoplay = this.fromAutoplay,
     radioName = mediaMetadata.extras?.getString(EXTRA_RADIO_NAME),
     playbackSource = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE),
+    playbackSourceType = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE_TYPE)
+        ?.let { runCatching { PlaybackSourceType.valueOf(it) }.getOrNull() },
+    playbackSourceId = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE_ID),
     localUri = mediaMetadata.extras?.getString(EXTRA_LOCAL_URI),
     localPath = mediaMetadata.extras?.getString(EXTRA_LOCAL_PATH),
 )
@@ -312,6 +316,8 @@ private const val EXTRA_RADIO_NAME = "bitchord.radioName"
 
 /** @see Song.playbackSource */
 private const val EXTRA_PLAYBACK_SOURCE = "bitchord.playbackSource"
+private const val EXTRA_PLAYBACK_SOURCE_TYPE = "bitchord.playbackSourceType"
+private const val EXTRA_PLAYBACK_SOURCE_ID = "bitchord.playbackSourceId"
 
 /**
  * The artist and album pages this track hangs under, when they are known.
@@ -524,13 +530,15 @@ fun Song.toMediaItem(): MediaItem {
                 if (fromAutoplay || offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
                     isExplicit != null || isVideo || isVideoOrigin || radioName != null ||
-                    playbackSource != null
+                    playbackSource != null || playbackSourceType != null || playbackSourceId != null
                 ) {
                     setExtras(
                         bundleOf(
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
                             EXTRA_RADIO_NAME to radioName,
                             EXTRA_PLAYBACK_SOURCE to playbackSource,
+                            EXTRA_PLAYBACK_SOURCE_TYPE to playbackSourceType?.name,
+                            EXTRA_PLAYBACK_SOURCE_ID to playbackSourceId,
                             EXTRA_LOCAL_URI to offlineUri,
                             EXTRA_LOCAL_PATH to localPath,
                             EXTRA_DURATION to durationText,

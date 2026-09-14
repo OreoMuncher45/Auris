@@ -67,6 +67,8 @@ suspend fun loadAutoplayTracks(
             fromAutoplay = true,
             radioName = seedSong.radioName,
             playbackSource = seedSong.playbackSource,
+            playbackSourceType = seedSong.playbackSourceType,
+            playbackSourceId = seedSong.playbackSourceId,
         )
     })
 }

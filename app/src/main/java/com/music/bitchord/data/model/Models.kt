@@ -79,6 +79,10 @@ data class Song(
      * that origin after skips and after the playback service restores a queue.
      */
     val playbackSource: String? = null,
+    /** Where tapping [playbackSource] should return in the app. */
+    val playbackSourceType: PlaybackSourceType? = null,
+    /** Browse id for an album, playlist, or other source page. */
+    val playbackSourceId: String? = null,
 )
 
 /**
@@ -189,6 +193,18 @@ const val NOTIFICATION_ART_PX = 544
 const val PLAYER_ART_PX = 1200
 
 enum class BrowseType { ALBUM, ARTIST, PLAYLIST, OTHER }
+
+/** A queue-level origin shown above Now Playing, in the style of Spotify. */
+enum class PlaybackSourceType {
+    HOME,
+    SEARCH,
+    HISTORY,
+    REPLAY,
+    EXPLORE,
+    BROWSE,
+    SHARED_LINK,
+    QUEUE,
+}
 
 /** A non-track search result: album, artist or playlist. */
 data class BrowseItem(

@@ -239,6 +239,7 @@ import com.music.bitchord.data.lyrics.translationLanguageName
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -814,6 +815,8 @@ private data class TranslationParticle(
 @Composable
 fun NowPlayingScreen(
     song: Song,
+    /** Who selected this track in the active Listen Together session. */
+    playedBy: String? = null,
     isPlaying: Boolean,
     isLoading: Boolean,
     positionMs: Long,
@@ -862,6 +865,8 @@ fun NowPlayingScreen(
     onOpenMenu: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
+    /** Return to the queue-level page named by the caption above the player. */
+    onOpenPlaybackSource: () -> Unit,
     /**
      * Open Listen Together, from the party half of the output capsule.
      *
@@ -1782,7 +1787,9 @@ fun NowPlayingScreen(
                     )
                 }
                 Text(
-                    text = song.radioName?.let {
+                    text = playedBy?.let {
+                        stringResource(R.string.played_by, it)
+                    } ?: song.radioName?.let {
                         stringResource(R.string.playing_radio, it)
                     } ?: stringResource(
                         R.string.playing_from,
@@ -1795,6 +1802,16 @@ fun NowPlayingScreen(
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .align(if (docked) Alignment.Center else Alignment.BottomCenter)
+                        .clickable {
+                            if (playedBy != null) {
+                                onListenTogether()
+                            } else if (song.playbackSourceType == PlaybackSourceType.QUEUE) {
+                                queueOpen = true
+                                lyricsOpen = false
+                            } else {
+                                onOpenPlaybackSource()
+                            }
+                        }
                         .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
                 )
             }

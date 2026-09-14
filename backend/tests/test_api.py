@@ -185,6 +185,8 @@ def test_a_guests_control_reaches_the_host(client):
     assert state["playback"]["track"]["videoId"] == "dQw4w9WgXcQ"
     assert state["playback"]["isPlaying"] is True
     assert state["playback"]["updatedBy"] == guest["you"]["memberId"]
+    assert state["playback"]["startedBy"] == guest["you"]["memberId"]
+    assert state["playback"]["startedByName"] == GUEST["displayName"]
     # The controller re-anchors off the same frame as everybody else rather
     # than running on a state it predicted locally.
     assert echo["playback"]["seq"] == state["playback"]["seq"]

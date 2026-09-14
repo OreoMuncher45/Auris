@@ -141,6 +141,12 @@ identify and to *show* a song, and nothing more. Stream URLs, sources, quality
 and download state stay each device's own business, so two people in a party can
 be on different sources at different bitrates and still be in the same place.
 
+Playback state also carries `startedBy` and `startedByName`, identifying the
+member who selected the current track. They change only with the track;
+`updatedBy` continues to identify the most recent play, pause, seek, or track
+control. Keeping the name in the state preserves the attribution if that member
+leaves before the song ends.
+
 Server → client:
 
 ```jsonc

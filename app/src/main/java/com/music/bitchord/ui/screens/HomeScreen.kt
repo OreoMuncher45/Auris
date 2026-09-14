@@ -23,12 +23,14 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,15 +50,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MoreVert
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.R
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -70,6 +76,9 @@ import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
+
+private const val RECENTS_TITLE = "Recents"
+private const val RECENT_TRACKS_PER_COLUMN = 4
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,6 +108,8 @@ fun HomeScreen(
     loadingMore: Boolean = false,
     recentlyPlayedLoading: Boolean = false,
 ) {
+    val recentsViewType by AppSettings.homeRecentsViewType.collectAsStateWithLifecycle()
+
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -124,12 +135,24 @@ fun HomeScreen(
                 }
             }
             when (state) {
-                is UiState.Loading -> feedSkeleton()
+                is UiState.Loading -> {
+                    if (recentlyPlayedLoading) {
+                        recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
+                        // Recents owns the leading layout while its request is
+                        // pending, so the feed behind it starts with ordinary
+                        // shelf placeholders rather than another hero card.
+                        feedSkeleton(firstIsHero = false)
+                    } else {
+                        feedSkeleton()
+                    }
+                }
                 is UiState.Error -> item {
                     MessageState(state.message, actionLabel = stringResource(R.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
-                    if (recentlyPlayedLoading) recentlyPlayedSkeleton()
+                    if (recentlyPlayedLoading) {
+                        recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
+                    }
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
                     // compact-card layout instead of briefly becoming a hero.
@@ -138,6 +161,16 @@ fun HomeScreen(
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
                         firstIsHero = !recentlyPlayedLoading,
+                        recentsViewType = recentsViewType,
+                        onRecentsViewTypeToggle = {
+                            AppSettings.setHomeRecentsViewType(
+                                if (recentsViewType == LibraryViewType.LIST) {
+                                    LibraryViewType.GRID
+                                } else {
+                                    LibraryViewType.LIST
+                                },
+                            )
+                        },
                     )
                     if (loadingMore) feedMoreSkeleton()
                 }
@@ -166,22 +199,205 @@ fun HomeScreen(
 }
 
 /**
- * The lead shelf gets Apple's full-bleed treatment — near-page-width cards that
- * page sideways — and the rest fall back to the compact grid of square cards.
+ * Recents mirrors the artist page's top-tracks pager. Any other lead shelf keeps
+ * Apple's full-bleed treatment, while the remaining shelves use square cards.
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
     onItemClick: (ShelfItem, String) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
     firstIsHero: Boolean = true,
+    recentsViewType: LibraryViewType,
+    onRecentsViewTypeToggle: () -> Unit,
 ) {
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
-            if (index == 0 && firstIsHero) {
+            if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
+                RecentShelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                    viewType = recentsViewType,
+                    onViewTypeToggle = onRecentsViewTypeToggle,
+                )
+            } else if (index == 0 && firstIsHero) {
                 HeroShelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
             } else {
                 Shelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
+            }
+        }
+    }
+}
+
+/** The same four-rows-per-page treatment used by an artist's Top songs. */
+@Composable
+private fun RecentShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+    viewType: LibraryViewType,
+    onViewTypeToggle: () -> Unit,
+) {
+    Column(Modifier.padding(bottom = 26.dp)) {
+        RecentSectionHeader(
+            title = shelf.title,
+            subtitle = shelf.subtitle,
+            viewType = viewType,
+            onViewTypeToggle = onViewTypeToggle,
+        )
+        if (viewType == LibraryViewType.LIST) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                    Column(Modifier.fillParentMaxWidth(0.88f)) {
+                        column.forEach { item ->
+                            RecentTrackRow(
+                                item = item,
+                                onClick = { onItemClick(item) },
+                                onLongPress = onItemLongPress?.let { { it(item) } },
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            BoxWithConstraints {
+                val cardWidth = heroCardWidth(maxWidth)
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    items(shelf.items) { item ->
+                        HeroCard(
+                            item = item,
+                            onClick = { onItemClick(item) },
+                            onLongPress = onItemLongPress?.let { { it(item) } },
+                            modifier = Modifier.width(cardWidth),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentSectionHeader(
+    title: String,
+    subtitle: String,
+    viewType: LibraryViewType,
+    onViewTypeToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (subtitle.isNotBlank()) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onViewTypeToggle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (viewType == LibraryViewType.LIST) {
+                    BitChordIcons.GridView
+                } else {
+                    BitChordIcons.ListView
+                },
+                contentDescription = stringResource(
+                    if (viewType == LibraryViewType.LIST) {
+                        R.string.switch_to_grid_view
+                    } else {
+                        R.string.switch_to_list_view
+                    },
+                ),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecentTrackRow(
+    item: ShelfItem,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .thumbnailBorder(RoundedCornerShape(7.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (onLongPress != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onLongPress),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = stringResource(R.string.more),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

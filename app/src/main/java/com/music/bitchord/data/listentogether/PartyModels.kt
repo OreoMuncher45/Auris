@@ -83,6 +83,10 @@ data class PartyPlayback(
     /** The server's own reading of [positionMs] at the instant it sent the frame. */
     val effectivePositionMs: Long = 0,
     val updatedBy: String? = null,
+    /** Member who selected this track; stable across pause, play, and seek controls. */
+    val startedBy: String? = null,
+    /** Snapshot of their name so attribution survives that member leaving. */
+    val startedByName: String? = null,
     val updatedAtMs: Long = 0,
 )
 

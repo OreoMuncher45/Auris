@@ -461,6 +461,7 @@
     <string name="start_radio">Start radio</string>
     <string name="playing_radio">Playing %1$s Radio</string>
     <string name="playing_from">Playing from %1$s</string>
+    <string name="played_by">Played by %1$s</string>
     <string name="shared_link">Shared link</string>
     <string name="radio_started">%1$s radio started</string>
     <string name="saved_to_bitchord_folder">Saved to Music/BitChord</string>

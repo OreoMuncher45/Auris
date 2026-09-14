@@ -77,6 +77,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
+import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.ui.components.PillTextField
@@ -102,6 +103,8 @@ import kotlinx.coroutines.launch
 @Composable
 fun ListenTogetherScreen(
     signedIn: Boolean,
+    inviteCode: String? = null,
+    onInviteJoined: () -> Unit = {},
     onSignIn: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -115,7 +118,7 @@ fun ListenTogetherScreen(
     val serverStatus by ListenTogether.serverStatus.collectAsStateWithLifecycle()
 
     var serverInput by remember(customServer) { mutableStateOf(customServer) }
-    var codeInput by remember { mutableStateOf("") }
+    var codeInput by remember(inviteCode) { mutableStateOf(inviteCode.orEmpty()) }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
 
@@ -126,6 +129,28 @@ fun ListenTogetherScreen(
     // Re-checked whenever the address changes, so switching to your own server
     // says whether it answers rather than waiting for a create to fail.
     LaunchedEffect(customServer) { ListenTogether.refreshServerHealth() }
+
+    // A link tap is already an explicit request to join. Signed-out users keep
+    // the populated code while the sign-in page is open. joinParty switches an
+    // existing membership without dropping it first if the invite is invalid.
+    LaunchedEffect(inviteCode, signedIn) {
+        val code = inviteCode ?: return@LaunchedEffect
+        if (!signedIn) return@LaunchedEffect
+        if (state.code.equals(code, ignoreCase = true)) {
+            onInviteJoined()
+            return@LaunchedEffect
+        }
+
+        busy = true
+        failure = null
+        val result = ListenTogether.joinParty(code)
+        failure = result.exceptionOrNull()?.message
+        if (result.isSuccess) {
+            codeInput = ""
+            onInviteJoined()
+        }
+        busy = false
+    }
 
     Column(
         modifier = modifier
@@ -188,7 +213,8 @@ fun ListenTogetherScreen(
                 onCopy = { clipboard.setText(AnnotatedString(state.code.orEmpty())) },
                 onShare = {
                     val code = state.code ?: return@InAParty
-                    val message = context.getString(R.string.listen_together_share_text, code)
+                    val link = JamInviteLink.url(code)
+                    val message = "$link\n\n${context.getString(R.string.listen_together_share_text, code)}"
                     context.startActivity(
                         Intent.createChooser(
                             Intent(Intent.ACTION_SEND).apply {

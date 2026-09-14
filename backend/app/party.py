@@ -104,6 +104,10 @@ class PlaybackState:
     queue_seq: int = 0
     updated_by: str | None = None
     updated_at_ms: int = field(default_factory=now_ms)
+    #: The member who selected the current track. Unlike ``updated_by``, this
+    #: does not change when somebody pauses, resumes, or seeks.
+    started_by: str | None = None
+    started_by_name: str | None = None
 
     def position_at(self, server_ms: int) -> int:
         """The playhead this state implies at a given server time."""
@@ -169,6 +173,7 @@ class PlaybackState:
         position_ms: int = 0,
         is_playing: bool = True,
         queue_index: int | None = None,
+        member_name: str | None = None,
     ) -> None:
         self.track = track
         self.position_ms = max(0, position_ms)
@@ -182,6 +187,8 @@ class PlaybackState:
                 -1,
             )
             self.queue_index = match
+        self.started_by = member_id
+        self.started_by_name = member_name
         self._touch(member_id)
 
     def set_queue(
@@ -195,12 +202,18 @@ class PlaybackState:
         self.queue_seq += 1
         self._touch(member_id)
 
-    def step(self, member_id: str | None, delta: int) -> bool:
+    def step(self, member_id: str | None, delta: int, member_name: str | None = None) -> bool:
         """Next/previous. False when the queue has nowhere to go."""
         target = self.queue_index + delta
         if not (0 <= target < len(self.queue)):
             return False
-        self.set_track(member_id, self.queue[target], position_ms=0, queue_index=target)
+        self.set_track(
+            member_id,
+            self.queue[target],
+            position_ms=0,
+            queue_index=target,
+            member_name=member_name,
+        )
         return True
 
     def to_wire(self, server_ms: int | None = None) -> dict[str, Any]:
@@ -230,6 +243,8 @@ class PlaybackState:
             # tell "everyone is at 1:03" from "everyone agrees on the formula".
             "effectivePositionMs": self.position_at(now),
             "updatedBy": self.updated_by,
+            "startedBy": self.started_by,
+            "startedByName": self.started_by_name,
             "updatedAtMs": self.updated_at_ms,
         }
 
