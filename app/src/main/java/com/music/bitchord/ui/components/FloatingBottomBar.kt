@@ -101,7 +101,7 @@ internal val TAB_ICON_LABEL_GAP = 2.dp
  * Stiffness 320 puts the whole movement at roughly a third of a second, quick
  * enough that the tap and the arrival feel like one event.
  */
-private val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
+internal val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
 
 /**
  * How far the indicator elongates along its travel, at full stride.
@@ -117,7 +117,7 @@ private val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
  * Sixteen percent is enough to be felt and not enough to be caught at: past
  * about a fifth the pill starts reading as a stretched image of itself.
  */
-private const val STRETCH = 0.16f
+internal const val STRETCH = 0.16f
 
 /**
  * How much of the stretch is taken back out of the indicator's height.
@@ -128,7 +128,7 @@ private const val STRETCH = 0.16f
  * than drawn. Half keeps the sense of something with a volume to redistribute
  * while leaving the glyph its ground.
  */
-private const val SQUASH = 0.5f
+internal const val SQUASH = 0.5f
 
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
