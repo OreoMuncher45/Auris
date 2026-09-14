@@ -92,6 +92,7 @@ fun GlassNavBar(
     isLoading: Boolean,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    onPrevious: () -> Unit,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -139,6 +140,7 @@ fun GlassNavBar(
                     contentColor = contentColor,
                     onPlayPause = onPlayPause,
                     onNext = onNext,
+                    onPrevious = onPrevious,
                     onExpand = onExpand,
                     modifier = accessoryModifier.then(glassSurface()),
                 )
@@ -154,6 +156,7 @@ fun GlassNavBar(
                     contentColor = contentColor,
                     onPlayPause = onPlayPause,
                     onNext = onNext,
+                    onPrevious = onPrevious,
                     onExpand = onExpand,
                     modifier = accessoryModifier.fillMaxWidth().then(glassSurface()),
                 )
@@ -265,6 +268,7 @@ private fun GlassNowPlaying(
     contentColor: Color,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
+    onPrevious: () -> Unit,
     onExpand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -305,6 +309,16 @@ private fun GlassNowPlaying(
                     interactionSource = pressSource,
                     indication = null,
                     onClick = onExpand,
+                )
+                .miniPlayerTrackSwipe(
+                    onNext = {
+                        haptics.play(Haptic.SkipNext)
+                        onNext()
+                    },
+                    onPrevious = {
+                        haptics.play(Haptic.SkipPrevious)
+                        onPrevious()
+                    },
                 )
                 .padding(
                     horizontal = if (isInline) 8.dp else 12.dp,

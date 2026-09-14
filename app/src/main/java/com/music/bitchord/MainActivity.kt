@@ -2721,6 +2721,7 @@ private fun BitChordApp(
                             controller?.let { if (it.isPlaying) it.pause() else it.play() }
                         },
                         onNext = { controller?.seekToNextMediaItem() },
+                        onPrevious = { controller?.seekToPrevious() },
                         onExpand = { showNowPlaying = true },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -2754,6 +2755,7 @@ private fun BitChordApp(
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             },
                             onNext = { controller?.seekToNextMediaItem() },
+                            onPrevious = { controller?.seekToPrevious() },
                             onExpand = { showNowPlaying = true },
                             modifier = Modifier.fillMaxWidth(),
                         )

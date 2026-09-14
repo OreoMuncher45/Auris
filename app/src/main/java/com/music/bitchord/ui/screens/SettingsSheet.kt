@@ -504,7 +504,7 @@ fun SettingsScreen(
                     title = exportDownloadsTitle,
                     checked = exportDownloads,
                     onCheckedChange = AppSettings::setExportDownloads,
-                    badge = "Music/BitChord".takeIf { exportDownloads },
+                    subtitle = "Music/BitChord".takeIf { exportDownloads },
                 )
             }
         }
@@ -910,7 +910,6 @@ fun SettingsScreen(
                     } else {
                         stringResource(R.string.high_performance_subtitle)
                     },
-                    badge = stringResource(R.string.beta),
                     trailing = {
                         Switch(
                             checked = highPerformanceMode,
@@ -2167,6 +2166,7 @@ internal fun SettingsSubRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     badge: String? = null,
+    subtitle: String? = null,
 ) {
     Row(
         modifier = Modifier
@@ -2175,17 +2175,27 @@ internal fun SettingsSubRow(
             .padding(start = ROW_INSET, end = ROW_INSET, top = 0.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (badge != null) {
-                Spacer(Modifier.width(8.dp))
-                Badge(badge)
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (badge != null) {
+                    Spacer(Modifier.width(8.dp))
+                    Badge(badge)
+                }
+            }
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 5,
+                )
             }
         }
         Switch(

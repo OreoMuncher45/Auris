@@ -26,7 +26,7 @@
 
 </div>
 
-> [!WARNING]
+> [!IMPORTANT]
 > BitChord is not affiliated with, endorsed by, or connected to YouTube or Google in any way. Use it at your own discretion.
 
 ---
@@ -49,6 +49,7 @@
 - **Offline downloads** — save tracks with embedded metadata.
 - **Local music library** integration.
 - **Background playback** via a proper foreground media session.
+- **Apple-like lyrics animation** — credit to [binimum](https://github.com/binimum/am-lyrics).
 
 #### Experience
 - **Animated album canvas** — motion artwork on the now-playing screen.
