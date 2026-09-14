@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -83,6 +84,20 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 private val DRAWER_SHAPE = RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp)
+
+/**
+ * The widest the drawer itself gets, however wide the window behind it is.
+ *
+ * Full-bleed it is fine on a phone and wrong on a tablet: the rows inside are a
+ * label and a radio mark, so stretched across a landscape window each one is a
+ * word at the far left, a mark at the far right and a hand's width of nothing
+ * between them. Matches Material's own [BottomSheetDefaults.SheetMaxWidth], so
+ * this drawer and the sheets the rest of the app puts up at the M3 default
+ * settle at the same width instead of at two.
+ *
+ * No effect on a phone, which is narrower than this everywhere it runs.
+ */
+private val DRAWER_MAX_WIDTH = 640.dp
 private val ROW_SHAPE = RoundedCornerShape(16.dp)
 private val SCRIM_COLOR = Color.Black.copy(alpha = 0.5f)
 
@@ -162,6 +177,10 @@ internal fun AudioOutputSheet(
                 // Capped so a phone full of outputs scrolls inside the drawer
                 // rather than growing one into a full-screen page.
                 .heightIn(max = 560.dp)
+                // Capped before the fill, so [Modifier.fillMaxWidth] fills to
+                // the cap rather than to the window. Centred by the parent's
+                // own BottomCenter alignment once it is narrower.
+                .widthIn(max = DRAWER_MAX_WIDTH)
                 .fillMaxWidth()
                 .onSizeChanged { height = it.height }
                 .offset { IntOffset(0, offset.roundToInt()) }

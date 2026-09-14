@@ -293,7 +293,12 @@ class MainActivity : AppCompatActivity() {
                 // A measured constraint cannot be stale — it is the very width
                 // the split is about to be laid out in.
                 BoxWithConstraints(Modifier.fillMaxSize()) {
-                    BitChordApp(darkTheme = darkTheme, windowWidth = maxWidth, appBackdrop = appBackdrop)
+                    BitChordApp(
+                        darkTheme = darkTheme,
+                        windowWidth = maxWidth,
+                        windowHeight = maxHeight,
+                        appBackdrop = appBackdrop,
+                    )
                 }
                 }
             }
@@ -342,6 +347,16 @@ private fun BitChordApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
+    /**
+     * The window's height, measured the same way and for the same reason as
+     * [windowWidth] — and needed alongside it for exactly one thing: telling
+     * a wide *portrait* tablet apart from a landscape one. Width alone
+     * can't; a big tablet's portrait width comfortably clears the same
+     * threshold its landscape width does, so the wide-lyrics split (see
+     * [wideLyricsLayoutAvailable]) would fire in portrait too if it only
+     * ever asked about width.
+     */
+    windowHeight: Dp,
     appBackdrop: LayerBackdrop,
     viewModel: MainViewModel = viewModel(),
 ) {
@@ -369,7 +384,16 @@ private fun BitChordApp(
     // page does about the player is really about which of the two it is: no mini
     // player standing in for one that is already there, no sheet to raise, and
     // the bottom inset the mini player was holding handed back to the page.
-    val playerDocked = dockedPlayerAvailable(windowWidth)
+    // Docking the player beside the page — reachable via [dockedPlayerAvailable]
+    // — is switched off. The reference this app is matching keeps the player as
+    // a full-screen take-over on every window size, tablet landscape included,
+    // with the library staying full-screen behind a mini player and the ordinary
+    // bottom tabs rather than losing a lane to a permanent pane.
+    // [dockedPlayerWidth] and the pane it feeds ([DockedPlayer], below) stay in
+    // place rather than being deleted, in case docking comes back as an explicit
+    // choice later — this is the one line that turns it off.
+    @Suppress("KotlinConstantConditions")
+    val playerDocked = false
     /**
      * Whether the player's *sheet* is up.
      *
@@ -1550,6 +1574,7 @@ private fun BitChordApp(
             playedBy = playedBy,
             accountName = account?.name,
             windowWidth = windowWidth,
+            windowHeight = windowHeight,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
@@ -2767,6 +2792,15 @@ private fun BitChordApp(
                 containerColor = Color.Transparent,
                 dragHandle = null,
                 contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+                // M3 caps a bottom sheet at [BottomSheetDefaults.SheetMaxWidth]
+                // (640.dp) and centres it once the window is wider than that —
+                // built for a sheet that's meant to look like a sheet next to
+                // visible content either side. This one is the whole player;
+                // capped at 640dp on a tablet it renders as a narrow card with
+                // the page it's supposed to be covering visible down both
+                // sides. Unspecified opts out of the cap entirely, so the
+                // sheet always spans the full window this app draws it for.
+                sheetMaxWidth = Dp.Unspecified,
             ) {
                 nowPlaying(playerSong, false)
             }
