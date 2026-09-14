@@ -13,6 +13,7 @@ services:
     name: bitchord-listen-together
     runtime: python
     plan: free
+    region: singapore
     rootDir: backend
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --ws websockets
