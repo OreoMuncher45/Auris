@@ -1240,7 +1240,7 @@ object AppSettings {
     }
 
     fun setPaxSenixApiKey(value: String) {
-        val normalized = value.trim()
+        val normalized = com.music.bitchord.data.lyrics.normalizePaxSenixApiKey(value)
         paxSenixApiKey.value = normalized
         prefs.edit().putString(KEY_PAXSENIX_API_KEY, normalized).apply()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(normalized)

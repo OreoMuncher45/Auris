@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.KaraokeLrc
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.ProviderLyrics
 import com.music.bitchord.data.lyrics.PaxSenix
+import com.music.bitchord.data.lyrics.normalizePaxSenixApiKey
 import com.music.bitchord.data.lyrics.youtubeStrings
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -72,6 +73,13 @@ class ProviderLyricsTest {
         assertEquals("sing along", lines.first().text)
         assertEquals(1_400L, lines.first().words[1].startMs)
         assertEquals(2_200L, lines.first().words[1].endMs)
+    }
+
+    @Test
+    fun `PaxSenix accepts bare and bearer-prefixed API keys`() {
+        assertEquals("secret", normalizePaxSenixApiKey(" secret "))
+        assertEquals("secret", normalizePaxSenixApiKey("Bearer secret"))
+        assertEquals("secret", normalizePaxSenixApiKey("bearer   secret "))
     }
 
     @Test

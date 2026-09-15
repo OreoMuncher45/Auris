@@ -46,7 +46,7 @@ enum class LyricsSource(
     ),
     PAXSENIX(
         label = "PaxSenix",
-        detail = "Apple Music timings through PaxSenix; API key required",
+        detail = "Apple Music timings through the original keyless provider",
         wordSynced = true,
     ),
     PAXSENIX_SPOTIFY(
