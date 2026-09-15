@@ -3276,6 +3276,10 @@ class PlaybackService : MediaLibraryService() {
         class Rejected(val why: String) : Audition
     }
 
+    /** User-selected duration tolerance, exposed in seconds and applied here in milliseconds. */
+    private val upgradeLengthSlackMs: Long
+        get() = AppSettings.upgradeLengthSlackSeconds.value * 1_000L
+
     /**
      * Main thread. Everything that has to be true before the audio is cut,
      * asked of the audition player rather than of the catalogue that made the
@@ -3300,7 +3304,7 @@ class PlaybackService : MediaLibraryService() {
         if (audition.playbackState != Player.STATE_READY) return Audition.Waiting
         val length = audition.duration
         if (length <= 0) return Audition.Waiting
-        if (previousDuration > 0 && abs(length - previousDuration) > UPGRADE_LENGTH_SLACK_MS) {
+        if (previousDuration > 0 && abs(length - previousDuration) > upgradeLengthSlackMs) {
             return Audition.Rejected("replacement is ${length}ms against ${previousDuration}ms")
         }
         // What the decoder was actually configured with, against what the
@@ -3404,7 +3408,7 @@ class PlaybackService : MediaLibraryService() {
                     val current = player?.takeIf { it.currentMediaItem?.mediaId == mediaId }
                         ?: return@withTimeoutOrNull false
                     val now = current.duration
-                    if (now > 0) return@withTimeoutOrNull abs(now - previousDuration) <= UPGRADE_LENGTH_SLACK_MS
+                    if (now > 0) return@withTimeoutOrNull abs(now - previousDuration) <= upgradeLengthSlackMs
                     // The failure this whole check exists for, caught when it
                     // happens rather than at the ceiling: a replacement that
                     // came up short does not raise an error, it reaches the
@@ -6212,13 +6216,6 @@ class PlaybackService : MediaLibraryService() {
          * spends is patience rather than silence.
          */
         const val DURATION_SETTLE_MS = 8_000L
-
-        /**
-         * How far the replacement's length may sit from the length already
-         * known for this track. Anything past this is a different file, or a
-         * broken one, and either way not what is being listened to.
-         */
-        const val UPGRADE_LENGTH_SLACK_MS = 3_000L
 
         /** How many times one track is picked up off the floor — see [recoverFrom]. */
         const val MAX_RECOVERIES = 2

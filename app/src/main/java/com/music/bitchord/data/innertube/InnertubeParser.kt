@@ -325,8 +325,27 @@ object InnertubeParser {
                 val items = carousel.a("contents").orEmpty().mapNotNull {
                     parseTwoRowItem(it.o("musicTwoRowItemRenderer"))
                 }.filter { it.browseId != null }
+                val moreEndpoint = header.o("title").a("runs")?.firstNotNullOfOrNull {
+                    it.o("navigationEndpoint").o("browseEndpoint")
+                }
+                    ?: header.o("moreContentButton").o("buttonRenderer")
+                        .o("navigationEndpoint").o("browseEndpoint")
+                    ?: header.o("moreContentButton").o("musicMoreContentButtonRenderer")
+                        .o("navigationEndpoint").o("browseEndpoint")
+                    ?: header.a("endIcons")?.firstNotNullOfOrNull {
+                        it.o("musicNavigationButtonRenderer").o("clickCommand").o("browseEndpoint")
+                            ?: it.o("musicNavigationButtonRenderer").o("navigationEndpoint").o("browseEndpoint")
+                    }
+                    ?: header.o("navigationEndpoint").o("browseEndpoint")
+                val moreBrowseId = moreEndpoint.s("browseId")
+                val moreParams = moreEndpoint.s("params")
                 if (title.isNotBlank() && items.isNotEmpty()) {
-                    shelves += HomeShelf(title, items)
+                    shelves += HomeShelf(
+                        title = title,
+                        items = items,
+                        moreBrowseId = moreBrowseId,
+                        moreParams = moreParams,
+                    )
                 }
             }
         }
@@ -1239,6 +1258,10 @@ object InnertubeParser {
         // A plain track card is exempt: a song can legitimately be titled
         // "Video Games" without being a music-video upload.
         if (resolvedBrowseId != null &&
+            !resolvedBrowseId.startsWith("VL") &&
+            !resolvedBrowseId.startsWith("PL") &&
+            !resolvedBrowseId.startsWith("MPRE") &&
+            !resolvedBrowseId.startsWith("UC") &&
             (VIDEO_WORD.containsMatchIn(title) || VIDEO_WORD.containsMatchIn(subtitle))
         ) {
             return null

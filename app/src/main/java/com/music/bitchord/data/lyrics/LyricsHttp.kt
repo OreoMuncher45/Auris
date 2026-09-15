@@ -29,6 +29,17 @@ private val client by lazy {
         .build()
 }
 
+// PaxSenix's authenticated routes often have to query an upstream catalogue
+// before answering. Keep the fast deadline for the ordinary providers, but
+// match PaxSenix's own client timeout here so valid requests are not discarded
+// while its backend is still resolving a track.
+private val authenticatedClient by lazy {
+    client.newBuilder()
+        .callTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .build()
+}
+
 /** Body of a successful GET, or null for any failure at all. */
 internal fun lyricsGet(url: String): String? = runCatching {
     val request = Request.Builder().url(url)
@@ -48,7 +59,7 @@ internal fun lyricsGetBearer(url: String, bearer: String): String? = runCatching
         .header("Accept", "application/json, text/plain, */*")
         .header("Authorization", "Bearer $bearer")
         .build()
-    client.newCall(request).execute().use { response ->
+    authenticatedClient.newCall(request).execute().use { response ->
         if (response.isSuccessful) response.body?.string() else null
     }
 }.getOrNull()

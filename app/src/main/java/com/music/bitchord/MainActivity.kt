@@ -478,6 +478,7 @@ private fun BitChordApp(
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
     var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
+    var detailActiveShelf by remember { mutableStateOf<HomeShelf?>(null) }
     var librarySortMenuOpen by remember { mutableStateOf(false) }
     var showLyricsSources by remember { mutableStateOf(false) }
     var showAppLanguage by remember { mutableStateOf(false) }
@@ -659,6 +660,7 @@ private fun BitChordApp(
     // selected. A pushed album/artist page (from the player, search, etc.)
     // should surface above it rather than being hidden behind it.
     LaunchedEffect(detail) { if (detail != null) showSettings = false }
+    LaunchedEffect(detail?.browseId) { detailActiveShelf = null }
     LaunchedEffect(showSettings) {
         if (!showSettings) {
             showAccountScrobbling = false
@@ -2010,6 +2012,7 @@ private fun BitChordApp(
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
         BackHandler(enabled = libraryShowAll != null && detail == null) { libraryShowAll = null }
+        BackHandler(enabled = detailActiveShelf != null) { detailActiveShelf = null }
 
         // On a tablet the page and the player stand side by side rather than
         // one over the other: everything a phone stacks in a single column —
@@ -2344,6 +2347,8 @@ private fun BitChordApp(
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
                             listState = detailListState,
+                            activeShelf = detailActiveShelf,
+                            onActiveShelfChange = { detailActiveShelf = it },
                             onSongClick = { songs, index ->
                                 playFrom(
                                     songs,
@@ -2630,19 +2635,23 @@ private fun BitChordApp(
                         showEqualizer -> stringResource(R.string.equalizer)
                         showSettings -> stringResource(R.string.settings)
                         showReplay -> stringResource(R.string.replay)
+                        detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
                         detail != null -> detail.title
                         selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
                         else -> tabs[selectedTab].let {
                             if (it.label == "Play") stringResource(R.string.listen_now) else it.label
                         }
                     },
+                    trailingTitle = if (detail != null && detailActiveShelf != null) detail.title else null,
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.
                     scrolled = when {
                         showSettings || showAccountScrobbling || showSources || showListenTogether ||
                             showEqualizer ||
                             showDiscord || showHistory ||
-                            (libraryShowAll != null && detail == null) || selectedMoodGenre != null -> true
+                            (libraryShowAll != null && detail == null) ||
+                            (detail != null && detailActiveShelf != null) ||
+                            selectedMoodGenre != null -> true
                         // The page leads with its own large "Replay", so the bar
                         // stays out of the way until that has been scrolled off.
                         showReplay -> replayScrolled
@@ -2661,6 +2670,7 @@ private fun BitChordApp(
                         showEqualizer -> ({ showEqualizer = false })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
+                        detailActiveShelf != null -> ({ detailActiveShelf = null })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
                         selectedMoodGenre != null -> ({ viewModel.closeMoodGenre(); Unit })
                         else -> null

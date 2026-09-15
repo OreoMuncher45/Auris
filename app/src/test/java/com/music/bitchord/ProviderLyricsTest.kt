@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.KaraokeLrc
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.ProviderLyrics
 import com.music.bitchord.data.lyrics.PaxSenix
+import com.music.bitchord.data.lyrics.normalizePaxSenixApiKey
 import com.music.bitchord.data.lyrics.youtubeStrings
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -72,6 +73,48 @@ class ProviderLyricsTest {
         assertEquals("sing along", lines.first().text)
         assertEquals(1_400L, lines.first().words[1].startMs)
         assertEquals(2_200L, lines.first().words[1].endMs)
+    }
+
+    @Test
+    fun `PaxSenix accepts bare and bearer-prefixed API keys`() {
+        assertEquals("secret", normalizePaxSenixApiKey(" secret "))
+        assertEquals("secret", normalizePaxSenixApiKey("Bearer secret"))
+        assertEquals("secret", normalizePaxSenixApiKey("bearer   secret "))
+    }
+
+    @Test
+    fun `PaxSenix general fallback selects one candidate instead of repeating all`() {
+        val raw = """
+            {"lyrics":[
+              {"id":"wrong","trackName":"Out of Touch","artistName":"Other","duration":201,
+               "syncedLyrics":"[00:01.00]wrong line\n[00:02.00]wrong again"},
+              {"id":"right","trackName":"Out of Time","artistName":"The Weeknd","duration":201,
+               "syncedLyrics":"[00:01.00]first line\n[00:02.00]second line"},
+              {"id":"duplicate","trackName":"Out of Time (Remix)","artistName":"The Weeknd","duration":240,
+               "syncedLyrics":"[00:01.00]first line\n[00:02.00]second line"}
+            ]}
+        """.trimIndent()
+
+        val lines = PaxSenix.parseLrcGet(raw, "Out of Time", "The Weeknd", 201_000L)!!
+            .filterNot { it.isGap }
+        assertEquals(listOf("first line", "second line"), lines.map { it.text })
+        assertEquals(listOf(1_000L, 2_000L), lines.map { it.timeMs })
+    }
+
+    @Test
+    fun `PaxSenix general fallback treats string array entries as separate LRC documents`() {
+        val raw = """
+            {"lyrics":[
+              "[00:01.00]wrong first\n[00:40.00]wrong last",
+              "[00:01.00]right first\n[03:19.00]right last",
+              "[00:01.00]right first\n[03:19.00]right last"
+            ]}
+        """.trimIndent()
+
+        val lines = PaxSenix.parseLrcGet(raw, "Song", "Artist", 200_000L)!!
+            .filterNot { it.isGap }
+        assertEquals(listOf("right first", "right last"), lines.map { it.text })
+        assertEquals(listOf(1_000L, 199_000L), lines.map { it.timeMs })
     }
 
     @Test
