@@ -55,12 +55,10 @@ object PaxSenix {
         durationMs: Long,
     ): List<LyricLine>? = withContext(Dispatchers.IO) {
         val id = searchTrackId("spotify/search", title, artist, durationMs)
-            ?: return@withContext null
-        authenticatedBody(
-            apiUrl("lyrics/spotify").addQueryParameter("id", id).build(),
-            publicUrl("spotify/lyrics").addQueryParameter("id", id).build(),
-        )
-            ?.let(::parseResponse)
+        id?.let {
+            apiBody(apiUrl("lyrics/spotify").addQueryParameter("id", it).build())
+                ?.let(::parseResponse)
+        } ?: genericAuthenticatedLyrics(title, artist, durationMs)
     }
 
     suspend fun musixmatchLyrics(
@@ -73,10 +71,9 @@ object PaxSenix {
             addQueryParameter("a", artist)
             addQueryParameter("d", (durationMs / 1000).toString())
         }
-        authenticatedBody(
-            apiUrl("lyrics/musixmatch").apply(query).build(),
-            publicUrl("musixmatch/lyrics").apply(query).build(),
-        )?.let(::parseResponse)
+        apiBody(apiUrl("lyrics/musixmatch").apply(query).build())
+            ?.let(::parseResponse)
+            ?: genericAuthenticatedLyrics(title, artist, durationMs)
     }
 
     private suspend fun searchPublicAppleTrackId(
@@ -117,12 +114,79 @@ object PaxSenix {
         val query: HttpUrl.Builder.() -> Unit = {
             addQueryParameter("q", "$title $artist")
         }
-        val root = authenticatedBody(
-            apiUrl(path).apply(query).build(),
-            publicUrl(path).apply(query).build(),
-        )?.let { runCatching { lyricsJson.parseToJsonElement(it) }.getOrNull() }
+        val root = apiBody(apiUrl(path).apply(query).build())
+            ?.let { runCatching { lyricsJson.parseToJsonElement(it) }.getOrNull() }
             ?: return null
         return bestCandidate(root, title, artist, durationMs)?.id
+    }
+
+    private fun genericAuthenticatedLyrics(
+        title: String,
+        artist: String,
+        durationMs: Long,
+    ): List<LyricLine>? {
+        val url = apiUrl("lyrics/lrcget")
+            .addQueryParameter("q", "$title $artist")
+            .build()
+        return apiBody(url)?.let { parseLrcGet(it, title, artist, durationMs) }
+    }
+
+    /**
+     * The general endpoint returns search candidates, not lyric lines. Parsing
+     * its array as one document concatenates every candidate and makes each
+     * song's timestamps restart at zero, which appears as repeated lines that
+     * cannot stay in sync. Select one recording before parsing its lyrics.
+     */
+    internal fun parseLrcGet(
+        raw: String,
+        title: String,
+        artist: String,
+        durationMs: Long,
+    ): List<LyricLine>? {
+        val root = runCatching { lyricsJson.parseToJsonElement(raw) }.getOrNull()
+            ?: return null
+        val payload = (root as? JsonObject)?.get("lyrics")
+        val documents = (payload as? JsonArray).orEmpty()
+        if (documents.isEmpty()) return parseResponse(raw)
+
+        return documents.mapNotNull { document ->
+            val lines = parseResponse(document.toString()) ?: return@mapNotNull null
+            val metadataScore = (document as? JsonObject)
+                ?.lyricCandidateScore(title, artist, durationMs) ?: 0
+            ParsedDocument(lines, metadataScore, durationDistance(lines, durationMs))
+        }.maxWithOrNull(
+            compareBy<ParsedDocument> { it.metadataScore }
+                .thenBy { -it.durationDistanceMs }
+                .thenBy { document -> document.lines.count { it.timeMs > 0L } }
+                .thenBy { document -> document.lines.count { it.isWordSynced } },
+        )?.lines
+    }
+
+    private fun durationDistance(lines: List<LyricLine>, durationMs: Long): Long {
+        if (durationMs <= 0L) return 0L
+        val lastTimestamp = lines.maxOfOrNull { line ->
+            maxOf(
+                line.timeMs,
+                line.sungUntilMs ?: 0L,
+                line.words.maxOfOrNull(LyricWord::endMs) ?: 0L,
+            )
+        } ?: return Long.MAX_VALUE
+        return abs(lastTimestamp - durationMs)
+    }
+
+    private fun JsonObject.lyricCandidateScore(
+        title: String,
+        artist: String,
+        durationMs: Long,
+    ): Int {
+        val details = this["attributes"] as? JsonObject ?: this
+        val candidate = Candidate(
+            id = firstString(ID_KEYS) ?: "",
+            title = details.firstString(TITLE_KEYS).orEmpty(),
+            artist = details.firstString(ARTIST_KEYS) ?: details.artistNames().orEmpty(),
+            durationMs = details.firstLong(DURATION_KEYS).toDurationMs(),
+        )
+        return candidate.score(title, artist, durationMs)
     }
 
     private fun bestCandidate(
@@ -256,9 +320,12 @@ object PaxSenix {
         lyricsGetBearer(url.toString(), key)
     }
 
-    private fun authenticatedBody(vararg urls: HttpUrl): String? = urls.firstNotNullOfOrNull(::apiBody)
-
     private data class Candidate(val id: String, val title: String, val artist: String, val durationMs: Long)
+    private data class ParsedDocument(
+        val lines: List<LyricLine>,
+        val metadataScore: Int,
+        val durationDistanceMs: Long,
+    )
 
     private val ID_KEYS = listOf("id", "trackId", "track_id", "realId")
     private val TITLE_KEYS = listOf("name", "title", "trackName", "track_name")

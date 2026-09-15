@@ -211,6 +211,9 @@ object AppSettings {
     val audioQualityWifi = MutableStateFlow(AudioQuality.LOSSLESS)
     val audioQualityCellular = MutableStateFlow(AudioQuality.LOSSLESS)
 
+    /** Allowed duration difference when replacing a playing stream with one from a source. */
+    val upgradeLengthSlackSeconds = MutableStateFlow(DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS)
+
     /**
      * What a saved file should be, answered on its own terms.
      *
@@ -714,6 +717,10 @@ object AppSettings {
         migrateSingleQuality()
         audioQualityWifi.value = readQuality(KEY_QUALITY_WIFI)
         audioQualityCellular.value = readQuality(KEY_QUALITY_CELLULAR)
+        upgradeLengthSlackSeconds.value = prefs.getInt(
+            KEY_UPGRADE_LENGTH_SLACK_SECONDS,
+            DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS,
+        ).coerceIn(MIN_UPGRADE_LENGTH_SLACK_SECONDS, MAX_UPGRADE_LENGTH_SLACK_SECONDS)
         migrateDownloadQuality()
         downloadQuality.value = readDownloadQuality()
         wifiOnlyDownloads.value = prefs.getBoolean(KEY_WIFI_ONLY_DOWNLOADS, true)
@@ -950,6 +957,15 @@ object AppSettings {
     fun setAudioQualityCellular(value: AudioQuality) {
         audioQualityCellular.value = value
         prefs.edit().putString(KEY_QUALITY_CELLULAR, value.name).apply()
+    }
+
+    fun setUpgradeLengthSlackSeconds(value: Int) {
+        val normalized = value.coerceIn(
+            MIN_UPGRADE_LENGTH_SLACK_SECONDS,
+            MAX_UPGRADE_LENGTH_SLACK_SECONDS,
+        )
+        upgradeLengthSlackSeconds.value = normalized
+        prefs.edit().putInt(KEY_UPGRADE_LENGTH_SLACK_SECONDS, normalized).apply()
     }
 
     fun setDownloadQuality(value: DownloadQuality) {
@@ -1653,6 +1669,10 @@ object AppSettings {
     const val MIN_LYRICS_OFFSET_MS = -5_000
     const val MAX_LYRICS_OFFSET_MS = 5_000
 
+    const val DEFAULT_UPGRADE_LENGTH_SLACK_SECONDS = 3
+    const val MIN_UPGRADE_LENGTH_SLACK_SECONDS = 0
+    const val MAX_UPGRADE_LENGTH_SLACK_SECONDS = 10
+
     private const val DEFAULT_PERFORMANCE_REFRESH_RATE = 120
 
     private fun normalizePerformanceRefreshRate(value: Int): Int =
@@ -1661,6 +1681,7 @@ object AppSettings {
     private const val KEY_QUALITY_LEGACY = "audio_quality"
     private const val KEY_QUALITY_WIFI = "audio_quality_wifi"
     private const val KEY_QUALITY_CELLULAR = "audio_quality_cellular"
+    private const val KEY_UPGRADE_LENGTH_SLACK_SECONDS = "upgrade_length_slack_seconds"
     private const val KEY_QUALITY_DOWNLOAD = "audio_quality_download"
     private const val KEY_WIFI_ONLY_DOWNLOADS = "wifi_only_downloads"
     private const val KEY_EXPORT_DOWNLOADS = "export_downloads"

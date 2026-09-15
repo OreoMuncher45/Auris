@@ -51,12 +51,12 @@ enum class LyricsSource(
     ),
     PAXSENIX_SPOTIFY(
         label = "PaxSenix: Spotify",
-        detail = "Spotify lyrics through PaxSenix; API key required",
+        detail = "Spotify lyrics with PaxSenix fallback; API key required",
         wordSynced = false,
     ),
     PAXSENIX_MUSIXMATCH(
         label = "PaxSenix: Musixmatch",
-        detail = "Musixmatch timings through PaxSenix; API key required",
+        detail = "Musixmatch timings with PaxSenix fallback; API key required",
         wordSynced = true,
     ),
     LYRICS_PLUS(

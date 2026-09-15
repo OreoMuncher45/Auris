@@ -610,6 +610,11 @@
     <string name="sources_order_header">Sources, tried in this order</string>
     <string name="sources_quality_capped">This connection is set below High quality, so streams are transcoded to fit that limit. Downloads are unaffected.</string>
     <string name="sources_subtitle">Where audio comes from and the order used</string>
+    <string name="source_matching">Source matching</string>
+    <string name="upgrade_length_slack">Track length tolerance</string>
+    <string name="upgrade_length_slack_subtitle">Maximum duration difference allowed for a replacement stream</string>
+    <string name="upgrade_length_slack_footer">A larger tolerance accepts more source matches; a smaller tolerance is stricter. The default is 3 seconds.</string>
+    <string name="seconds_short">%1$d s</string>
     <string name="spdc_token">sp_dc token</string>
     <string name="spotify_canvas_setup">Spotify Canvas setup</string>
     <string name="spotify_canvas_setup_description">To use Spotify Canvas, provide your Spotify sp_dc cookie.</string>
