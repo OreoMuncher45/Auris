@@ -1029,12 +1029,16 @@ fun NowPlayingScreen(
     val density = LocalDensity.current
     val haptics = rememberHaptics()
 
+    // Keep the header caption and the system glyphs on the same contrast
+    // decision. The caption sits over the same upper part of the cover as the
+    // status bar when this is a phone-sized player.
+    val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
+    val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
+
     // A docked pane sits beside the page rather than covering the screen, so
     // the status bar it's under belongs to the page, not this artwork — only
     // the full-screen sheet gets to repaint it.
     if (!docked) {
-        val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
-        val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
         SystemBarIcons(dark = isLightArtwork)
     }
 
@@ -1129,6 +1133,17 @@ fun NowPlayingScreen(
     // The queue lives inside the player, Apple-style, rather than in a sheet.
     var queueOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
+    // Whether the lyrics or queue list is actively mid-scroll. The player's own
+    // swipe gestures — skip-by-drag and the dismiss band — are suppressed for
+    // as long as either is true, so a scroll that grazes past a list's edge
+    // can never be misread as a drag meant for the player underneath it. Reset
+    // whenever the owning panel closes, since a list scrolled mid-transition
+    // out never gets a matching "stopped scrolling" event of its own.
+    var lyricsScrolling by remember { mutableStateOf(false) }
+    var queueScrolling by remember { mutableStateOf(false) }
+    LaunchedEffect(lyricsOpen) { if (!lyricsOpen) lyricsScrolling = false }
+    LaunchedEffect(queueOpen) { if (!queueOpen) queueScrolling = false }
+    val panelScrolling = lyricsScrolling || queueScrolling
     var lyricsControlsOpen by remember { mutableStateOf(false) }
     // Change the panel and its controls in the same snapshot. Driving the
     // controls from a LaunchedEffect left one composed frame where lyrics were
@@ -1181,6 +1196,8 @@ fun NowPlayingScreen(
     } else {
         lyrics.orEmpty()
     }
+    val lyricsLoadingLines = stringArrayResource(R.array.lyrics_loading_lines)
+    val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
     val translationScope = rememberCoroutineScope()
     val toggleTranslation: () -> Unit = toggleTranslation@{
         when (val state = translationState) {
@@ -1820,12 +1837,11 @@ fun NowPlayingScreen(
                 // then gets out of the way, and fading either one out would
                 // leave a tablet's whole lyric column blank for as long as the
                 // track keeps playing.
-                val loadingLines = stringArrayResource(R.array.lyrics_loading_lines)
                 Text(
                     text = if (lyricsUnavailable) {
                         stringResource(R.string.lyrics_not_available)
                     } else {
-                        loadingLines.first()
+                        lyricsLoadingText
                     },
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White.copy(alpha = 0.6f),
@@ -1897,7 +1913,8 @@ fun NowPlayingScreen(
             translationState is LyricsTranslationUiState.SameLanguage ->
                 stringResource(R.string.lyrics_already_in_language, translationLanguageName)
             lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
-            lyrics.isNullOrEmpty() -> stringResource(R.string.no_lyrics_found)
+            lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
+            lyrics.isNullOrEmpty() -> lyricsLoadingText
             else -> stringResource(R.string.lyrics_saved_with_download)
         }
 
@@ -1935,7 +1952,7 @@ fun NowPlayingScreen(
                         )
                     } else {
                         LyricsLoadingLine(
-                            trackKey = song.videoId,
+                            text = lyricsLoadingText,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -2207,8 +2224,8 @@ fun NowPlayingScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .pointerInput(showAudioPipeline) {
-                    if (showAudioPipeline) return@pointerInput
+                .pointerInput(showAudioPipeline, panelScrolling) {
+                    if (showAudioPipeline || panelScrolling) return@pointerInput
                     var total = 0f
                     detectHorizontalDragGestures(
                         onDragStart = { total = 0f },
@@ -2250,44 +2267,61 @@ fun NowPlayingScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 if (!docked) {
-                    // The origin caption always occupies the bottom of this strip,
-                    // so keep the handle clear of it for every kind of queue.
+                    // While the origin caption is present the handle belongs at
+                    // the top of the strip. As lyrics or the queue replace the
+                    // album-cover player, it glides into the now-empty strip's
+                    // vertical centre alongside the caption's fade.
                     Box(
-                        Modifier.align(Alignment.TopCenter).offset(y = 6.dp)
+                        Modifier
+                            .align(Alignment.TopCenter)
+                            .offset(
+                                y = lerp(
+                                    6.dp,
+                                    (topStrip - 5.dp).coerceAtLeast(0.dp) / 2,
+                                    p,
+                                ),
+                            )
                             .width(38.dp)
                             .height(5.dp)
                             .clip(RoundedCornerShape(3.dp))
                             .background(Color.White.copy(alpha = 0.32f)),
                     )
                 }
-                Text(
-                    text = playedBy?.let {
-                        stringResource(R.string.played_by, it)
-                    } ?: song.radioName?.let {
-                        stringResource(R.string.playing_radio, it)
-                    } ?: stringResource(
-                        R.string.playing_from,
-                        song.playbackSource ?: song.albumName ?: stringResource(R.string.queue),
-                    ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.78f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .align(if (docked) Alignment.Center else Alignment.BottomCenter)
-                        .clickable {
-                            if (playedBy != null) {
-                                onListenTogether()
-                            } else if (song.playbackSourceType == PlaybackSourceType.QUEUE) {
-                                queueOpen = true
-                                closeLyrics()
-                            } else {
-                                onOpenPlaybackSource()
+                // [p] is the shared album-to-panel transition. Keeping this in
+                // composition until its final frame gives the caption a real
+                // fade on both entry and exit, but removes its click target
+                // entirely once lyrics or the queue owns the player.
+                if (p < 0.999f) {
+                    Text(
+                        text = playedBy?.let {
+                            stringResource(R.string.played_by, it)
+                        } ?: song.radioName?.let {
+                            stringResource(R.string.playing_radio, it)
+                        } ?: stringResource(
+                            R.string.playing_from,
+                            song.playbackSource ?: song.albumName ?: stringResource(R.string.queue),
+                        ),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (isLightArtwork) Color.Black else Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .align(if (docked) Alignment.Center else Alignment.BottomCenter)
+                            .graphicsLayer { alpha = 1f - p }
+                            .clickable {
+                                if (playedBy != null) {
+                                    onListenTogether()
+                                } else if (song.playbackSourceType == PlaybackSourceType.QUEUE) {
+                                    queueOpen = true
+                                    closeLyrics()
+                                } else {
+                                    onOpenPlaybackSource()
+                                }
                             }
-                        }
-                        .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
-                )
+                            .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
+                    )
+                }
             }
 
             Column(
@@ -2319,8 +2353,8 @@ fun NowPlayingScreen(
                     // half second lying across a list the finger was already
                     // scrolling.
                     .onGloballyPositioned { dismissBandSpace = it }
-                    .pointerInput(showAudioPipeline) {
-                        if (showAudioPipeline) return@pointerInput
+                    .pointerInput(showAudioPipeline, panelScrolling) {
+                        if (showAudioPipeline || panelScrolling) return@pointerInput
                         awaitEachGesture {
                             // Unconsumed on purpose, as the blanket version was:
                             // the collapsed sleeve's own clickable — the way back
@@ -2941,6 +2975,7 @@ fun NowPlayingScreen(
                                 onRevealControls = { lyricsControlsOpen = true },
                                 onHideControls = { lyricsControlsOpen = false },
                                 translationProgress = particleProgress,
+                                onScrollingChange = { lyricsScrolling = it },
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -3011,6 +3046,7 @@ fun NowPlayingScreen(
                             onRemove = onRemoveFromQueue,
                             onMove = onMoveInQueue,
                             onClear = onClearQueue,
+                            onScrollingChange = { queueScrolling = it },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -3078,7 +3114,7 @@ fun NowPlayingScreen(
                         )
                     } else {
                         LyricsLoadingLine(
-                            trackKey = song.videoId,
+                            text = lyricsLoadingText,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -3105,7 +3141,8 @@ fun NowPlayingScreen(
                         translationState is LyricsTranslationUiState.SameLanguage ->
                             stringResource(R.string.lyrics_already_in_language, translationLanguageName)
                         lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
-                        lyrics.isNullOrEmpty() -> stringResource(R.string.no_lyrics_found)
+                        lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
+                        lyrics.isNullOrEmpty() -> lyricsLoadingText
                         else -> stringResource(R.string.lyrics_saved_with_download)
                     },
                     style = MaterialTheme.typography.titleMedium,
@@ -4976,6 +5013,9 @@ private fun LyricsPanel(
     onRevealControls: () -> Unit,
     onHideControls: () -> Unit,
     translationProgress: State<Float>? = null,
+    /** Reports whether the lyric list is mid-scroll, so the player above it
+     * can stand down its own swipe gestures for as long as it is. */
+    onScrollingChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val clock = rememberLyricClock(positionMs, isPlaying)
@@ -5016,6 +5056,9 @@ private fun LyricsPanel(
     // the blur and the movement are one gesture.
     val focusLine = if (leadLine >= 0) leadLine else scrollLine
     val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect(onScrollingChange)
+    }
     // LayoutInfo changes on every scroll frame. Observe only height here so
     // the entire lyrics list is not recomposed for every scrolling pixel.
     val viewportHeight by remember(listState) {
@@ -5829,11 +5872,7 @@ private fun LyricsUnavailableLine(trackKey: Any, modifier: Modifier = Modifier) 
 
 /** Stands in for [CurrentLyricLine] while a lookup is still in flight. */
 @Composable
-private fun LyricsLoadingLine(trackKey: Any, modifier: Modifier = Modifier) {
-    val loadingLines = stringArrayResource(R.array.lyrics_loading_lines)
-    // Keep the loading copy stable while this track's lyric lookup is pending.
-    // The resource array itself is not a stable Compose key.
-    val text = remember(trackKey) { loadingLines.random() }
+private fun LyricsLoadingLine(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
@@ -6560,9 +6599,13 @@ private fun InlineQueue(
     onRemove: (Int) -> Unit,
     onMove: (Int, Int) -> Unit,
     onClear: () -> Unit,
+    onScrollingChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect(onScrollingChange)
+    }
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     // Where AutoPlay's tracks start. The queue is kept with them last, so this
     // is one boundary rather than a category to test row by row.
