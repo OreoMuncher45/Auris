@@ -667,4 +667,470 @@
     <string name="listen_together_jam_unnamed">一緒に聴いています</string>
     <string name="listen_together_open">一緒に聴く</string>
     <string name="listen_together_open_count">一緒に聴いています · %1$d</string>
+
+    <string name="vietnamese">ベトナム語</string>
+
+    <string name="miscellaneous_footer">オンにすると、最近のアプリ画面からアプリを終了した際に音楽の再生も停止します。</string>
+
+
+    <string name="switch_account">アカウントを切り替える</string>
+
+    <string name="accounts">アカウント</string>
+
+    <string name="profiles">プロフィール</string>
+
+    <string name="personal">個人</string>
+
+    <string name="brand_account">ブランド アカウント</string>
+
+    <string name="add_account">アカウントを追加</string>
+
+    <string name="manage_accounts">アカウントを管理</string>
+
+    <string name="current_account">現在のアカウント</string>
+
+    <string name="current_profile">現在のプロフィール</string>
+
+    <string name="selected_account">選択したアカウント</string>
+
+    <string name="listen_as">次のユーザーとして聴く</string>
+
+    <string name="default_youtube_profile">YouTube Music デフォルト プロフィール</string>
+
+    <string name="account_profiles_help">Google アカウントには個人プロフィールとブランド プロフィールがあります。それぞれにライブラリ、高評価、再生履歴があります。</string>
+
+    <string name="choose_profile">プロフィールを選択</string>
+
+    <string name="use_this_profile">このプロフィールを使用</string>
+
+    <string name="switch_profile_hint">アバターで切り替えて、このプロフィールを使用します。</string>
+
+    <string name="profile_unavailable">このページではログインしているプロフィールはまだありません。</string>
+
+    <string name="export_compatible_downloads">互換性のあるダウンロードをエクスポート</string>
+
+    <string name="output_precision">出力精度</string>
+
+    <string name="prefer_usb_dac">USB DAC を優先</string>
+
+    <string name="blur_unfocused_lyrics">フォーカスされていない歌詞をぼかす</string>
+
+    <string name="blur_unfocused_lyrics_subtitle">現在の行をハイライトします</string>
+
+    <string name="advanced_options">詳細設定</string>
+
+    <string name="lyrics_debug_logs">歌詞デバッグログ</string>
+
+    <string name="lyrics_debug_logs_subtitle">歌詞パネルにライブ API クエリとスクレイパーのアクティビティを表示します</string>
+
+    <string name="shelf_trending_community_playlists">急上昇のコミュニティ再生リスト</string>
+
+    <string name="shelf_featured_playlists_for_you">おすすめの再生リスト</string>
+
+    <string name="shelf_quick_picks">クイック ミックス</string>
+
+    <string name="shelf_listen_again">もう一度聴く</string>
+
+    <string name="shelf_mixed_for_you">ミックス</string>
+
+    <string name="shelf_similar_to">%1$s に似ている曲</string>
+
+    <string name="shelf_forgotten_favorites">よく聴いたお気に入りの曲</string>
+
+    <string name="shelf_recommended_music_videos">おすすめのミュージック ビデオ</string>
+
+    <string name="shelf_from_your_library">ライブラリから</string>
+
+    <string name="shelf_charts">チャート</string>
+
+    <string name="shelf_new_releases">最新リリース</string>
+
+    <string name="shelf_top_music_videos">人気のミュージック ビデオ</string>
+
+    <string name="shelf_for_you">あなたへのおすすめ</string>
+
+    <string name="shelf_energy_boosters">エネルギー チャージ</string>
+
+    <string name="shelf_feel_good">気分アップ</string>
+
+    <string name="shelf_commute">通勤・通学</string>
+
+    <string name="shelf_workout">ワークアウト</string>
+
+    <string name="shelf_focus">集中</string>
+
+    <string name="shelf_relax">リラックス</string>
+
+    <string name="shelf_sleep">睡眠</string>
+
+    <string name="shelf_party">パーティー</string>
+
+    <string name="shelf_romance">ロマンス</string>
+
+    <string name="shelf_sad">哀愁</string>
+
+    <string name="shelf_100_on_repeat">リピート再生中</string>
+
+    <string name="shelf_new_albums_singles">最新アルバム＆シングル</string>
+
+    <string name="shelf_hits_today">今日のヒット曲</string>
+
+    <string name="shelf_artists_on_the_rise">注目のアーティスト</string>
+
+    <string name="shelf_top_tunes_right_now">注目の曲</string>
+
+    <string name="shelf_concerts">コンサート</string>
+
+    <string name="shelf_shorts">ショート</string>
+
+    <string name="shelf_single">シングル</string>
+
+    <string name="shelf_chart">チャート</string>
+
+    <string name="shelf_song_item">曲</string>
+
+    <string name="shelf_from_the_community">コミュニティより</string>
+
+    <string name="shelf_youtube_charts">YouTube チャート</string>
+
+    <string name="shelf_trending">急上昇</string>
+
+    <string name="shelf_recents">最近</string>
+
+    <string name="subscriptions">登録チャンネル</string>
+
+    <string name="card_views_format">%1$s 回視聴</string>
+
+    <string name="card_plays_format">%1$s 回再生</string>
+
+    <string name="card_songs_format">%1$s 曲</string>
+
+
+    <plurals name="track_count_plural">
+        <item quantity="other">%1$d 曲</item>
+    </plurals>
+
+    <string name="add_addon">アドオンを追加</string>
+
+    <string name="add_addon_detail">ホストしているかリンクを受け取ったアドオン サーバーを BitChord に指定します</string>
+
+    <string name="addon_url_description">アドオンの URL（ルートまたは manifest.json）を貼り付けます。BitChord が検索および再生できる曲を読み取ります。</string>
+
+    <string name="automix_mode_balanced">バランス</string>
+
+    <string name="automix_mode_balanced_subtitle">2 スレッド · 速度、発熱、バッテリーのバランスを推奨</string>
+
+    <string name="automix_mode_efficient">省電力</string>
+
+    <string name="automix_mode_efficient_subtitle">1 スレッド · 最低限の発熱とバッテリー消費 · 分析に時間がかかる場合があります</string>
+
+    <string name="automix_mode_performance">高パフォーマンス</string>
+
+    <string name="automix_mode_performance_subtitle">4 スレッド · 最速分析 · 発熱とバッテリー消費が高くなります</string>
+
+    <string name="automix_not_supported_video">動画の曲では Automix はサポートされていません</string>
+
+    <string name="automix_performance">Automix パフォーマンス</string>
+
+    <string name="automix_performance_subtitle">バックグラウンド分析で使用できる CPU 使用量を設定します</string>
+
+    <string name="automix_performance_warning">高いパフォーマンスを設定すると分析が速くなりますが、バッテリーを多く消費し端末が温かくなる可能性があります。</string>
+
+    <string name="channel_session_unavailable">このページにはまだセッションがありません — 最初に YouTube Music を開いてください</string>
+
+    <string name="channel_switch_instructions">アバターで切り替え、[このチャンネルを使用] をタップします</string>
+
+    <string name="choose_a_channel">チャンネルを選択</string>
+
+    <string name="convert_to_audio">音声に変換</string>
+
+    <string name="converting_to_audio">音声に変換中…</string>
+
+    <string name="dolby_atmos">Dolby Atmos</string>
+
+    <string name="dolby_atmos_subtitle">利用可能な場合は、より臨場感のあるサラウンド バージョンの曲を再生します。</string>
+
+    <string name="dolby_atmos_unavailable">このデバイスは Atmos を再生できないため、通常バージョンで再生されます</string>
+
+    <string name="legacy_mesh_gradient">従来のメッシュ グラデーション</string>
+
+    <string name="legacy_mesh_gradient_subtitle">v1.5 のプレーヤー背面の流れるカラー アニメーションを復元します</string>
+
+    <string name="liquid_glass">リキッド グラス</string>
+
+    <string name="liquid_glass_subtitle">フローティング ナビゲーション バーの屈折ガラス効果。Android 12 以降のみ。</string>
+
+    <string name="liquid_glass_unavailable">Android 12 以降が必要です</string>
+
+    <string name="playing_radio">%1$s ラジオを再生中</string>
+
+    <string name="playlist_action">プレイリスト</string>
+
+    <string name="radio_started">%1$s ラジオを開始しました</string>
+
+    <string name="revert_to_original">オリジナルに戻す</string>
+
+    <string name="scrobble_primary_artist_only">メイン アーティストのみスクロブル</string>
+
+    <string name="scrobble_primary_artist_only_subtitle">曲に複数のアーティストがクレジットされている場合は最初のアーティストを使用します</string>
+
+    <string name="select_all">すべて選択</string>
+
+    <string name="sort_date_added_oldest">追加日（古い順）</string>
+
+    <string name="sort_date_added_toggle">追加日</string>
+
+    <string name="sort_default">デフォルトの順序</string>
+
+    <string name="sort_library">並べ替え</string>
+
+    <string name="sort_songs">曲を並べ替え</string>
+
+    <string name="source_already_added">%1$s として追加済み</string>
+
+    <string name="source_skipped_by_quality">%1$s では使用されていません · 音質は %2$s に設定されています</string>
+
+    <string name="source_unrecognised">BitChord はそのリンクを認識できませんでした</string>
+
+    <string name="start_radio">ラジオを開始</string>
+
+    <string name="subscribe">チャンネル登録</string>
+
+    <string name="unsubscribe">チャンネル登録を解除</string>
+
+    <string name="upgrade_quality">音質をアップグレード</string>
+
+    <string name="use_this_channel">このチャンネルを使用</string>
+
+
+    <string name="lyrics_offset">Lyrics offset</string>
+
+    <string name="lyrics_offset_description">Positive values show lyrics later</string>
+
+    <string name="lyrics_offset_reset">Reset</string>
+
+    <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
+
+    <string name="increase_lyrics_offset">Increase lyrics offset</string>
+
+    <string name="auto_quick_picks">Quick picks</string>
+
+    <string name="auto_recents">Recent</string>
+
+    <string name="auto_liked">Liked songs</string>
+
+    <string name="auto_login_title">Sign in to YouTube on your phone</string>
+
+    <string name="auto_login_subtitle">Open BitChord on your phone to sign in</string>
+
+    <string name="auto_empty_recents_title">No recent songs</string>
+
+    <string name="auto_empty_recents_subtitle">Songs you play will appear here</string>
+
+    <string name="auto_empty_quick_picks_title">No suggestions</string>
+
+    <string name="auto_empty_quick_picks_subtitle">Check your connection and try again</string>
+
+    <string name="auto_empty_playlists_title">No playlists available</string>
+
+    <string name="auto_empty_playlists_subtitle">Check your connection and try again</string>
+
+    <string name="auto_empty_liked_title">No liked songs</string>
+
+    <string name="auto_empty_liked_subtitle">Tap the heart on a song to save it here</string>
+
+    <string name="auto_empty_offline_title">No offline songs</string>
+
+    <string name="auto_empty_offline_subtitle">Download songs on your phone to listen here</string>
+
+    <string name="auto_unavailable_title">Content unavailable</string>
+
+    <string name="auto_unavailable_subtitle">Reopen the folder and try again</string>
+
+    <string name="settings_search_hint">Search settings</string>
+
+    <string name="settings_search_empty">No settings match “%1$s”</string>
+
+    <string name="prefer_music_only">Prefer music-only version</string>
+
+    <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+
+    <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
+
+    <string name="equalizer_dynamic">Dynamic</string>
+
+    <string name="equalizer_manual">Manual</string>
+
+    <string name="equalizer_tone">Tone</string>
+
+    <string name="equalizer_tilt">Tilt</string>
+
+    <string name="equalizer_contour">Contour</string>
+
+    <string name="equalizer_broad">Broad</string>
+
+    <string name="equalizer_focused">Focused</string>
+
+    <string name="equalizer_broad_footer">Drag left for a warmer sound and right for a brighter one; down scoops the middle, up brings it forward. Broad moves wide stretches of the spectrum at once.</string>
+
+    <string name="equalizer_focused_footer">Drag left for a warmer sound and right for a brighter one; down scoops the middle, up brings it forward. Focused works on narrower stretches, so it changes less around what it moves.</string>
+
+    <string name="equalizer_preset">Preset</string>
+
+    <string name="equalizer_bands">Bands</string>
+
+    <string name="equalizer_bands_footer">Moving a band leaves the preset behind and the curve becomes your own.</string>
+
+    <string name="equalizer_reset">Reset all bands</string>
+
+    <string name="equalizer_balance">Balance</string>
+
+    <string name="equalizer_balance_left">L</string>
+
+    <string name="equalizer_balance_right">R</string>
+
+    <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+
+    <string name="equalizer_float_title">Not running right now</string>
+
+    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
+
+    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
+
+    <string name="system_equalizer">System equalizer</string>
+
+    <string name="system_equalizer_subtitle">Your device\'s own panel</string>
+
+    <string name="system_equalizer_footer">Runs after BitChord\'s, on the whole audio session. Using both applies both.</string>
+
+    <string name="eq_preset_flat">Flat</string>
+
+    <string name="eq_preset_acoustic">Acoustic</string>
+
+    <string name="eq_preset_bass_boost">Bass boost</string>
+
+    <string name="eq_preset_bass_cut">Bass cut</string>
+
+    <string name="eq_preset_vocal">Vocal</string>
+
+    <string name="eq_preset_treble_boost">Treble boost</string>
+
+    <string name="eq_preset_treble_cut">Treble cut</string>
+
+    <string name="eq_preset_loudness">Loudness</string>
+
+    <string name="eq_preset_spoken_word">Spoken word</string>
+
+    <string name="eq_preset_electronic">Electronic</string>
+
+    <string name="eq_preset_rock">Rock</string>
+
+    <string name="eq_preset_hip_hop">Hip-hop</string>
+
+    <string name="eq_preset_jazz">Jazz</string>
+
+    <string name="eq_preset_classical">Classical</string>
+
+    <string name="eq_preset_small_speakers">Small speakers</string>
+
+    <string name="eq_preset_late_night">Late night</string>
+
+    <string name="eq_preset_custom">Custom</string>
+
+    <string name="translation_language">Translation language</string>
+
+    <string name="translation_language_description">The language the translate button turns lyrics into.</string>
+
+    <string name="translation_language_app_default">App language</string>
+
+    <string name="translation_language_subtitle">Follows the app language</string>
+
+    <string name="search_languages">Search languages</string>
+
+    <string name="no_languages_match">No languages match</string>
+
+    <string name="data_saver">Data-Saver</string>
+
+    <string name="medium_quality">Medium Quality</string>
+
+    <string name="audio_pipeline">Audio Pipeline</string>
+
+    <string name="pipeline_track_info">Track Info</string>
+
+    <string name="pipeline_decoder">Decoder</string>
+
+    <string name="pipeline_resampler">Resampler</string>
+
+    <string name="pipeline_dsp">DSP</string>
+
+    <string name="pipeline_output_device">Output Device</string>
+
+    <string name="pipeline_source">Source</string>
+
+    <string name="pipeline_format">Format</string>
+
+    <string name="pipeline_bit_depth">Bit Depth</string>
+
+    <string name="pipeline_sample_rate">Sample Rate</string>
+
+    <string name="pipeline_bitrate">Bitrate</string>
+
+    <string name="pipeline_channels">Channels</string>
+
+    <string name="pipeline_decoder_name">Decoder Name</string>
+
+    <string name="pipeline_io_rate">I/O Rate</string>
+
+    <string name="pipeline_type">Type</string>
+
+    <string name="pipeline_cutoff">Cutoff</string>
+
+    <string name="pipeline_quality">Quality</string>
+
+    <string name="pipeline_pcm_format">PCM Format</string>
+
+    <string name="pipeline_eq_preset">EQ Preset</string>
+
+    <string name="pipeline_stereo_expand">Stereo Expand</string>
+
+    <string name="pipeline_buffers">Buffers</string>
+
+    <string name="pipeline_output_api">Output API</string>
+
+    <string name="pipeline_device_name">Device Name</string>
+
+    <string name="playing_from">Playing from %1$s</string>
+
+    <string name="played_by">Played by %1$s</string>
+
+    <string name="shared_link">Shared link</string>
+
+    <string name="song_will_play_next">Song will play next</string>
+
+    <string name="song_added_to_queue">Song added to queue</string>
+
+    <string name="paxsenix_api_key">PaxSenix API key</string>
+
+    <string name="paxsenix_api_key_configured">PaxSenix API key — configured</string>
+
+    <string name="paxsenix_api_key_missing">PaxSenix API key — optional, not configured</string>
+
+    <string name="open_lyrics">Lyrics</string>
+
+    <string name="audio_output">Audio output</string>
+
+    <string name="audio_output_playing">Playing here</string>
+
+    <string name="wired_headphones">Wired headphones</string>
+
+    <string name="usb_audio">USB audio</string>
+
+    <string name="hdmi_output">HDMI</string>
+
+    <string name="personal_phone">%1$s’s Phone</string>
+
+    <string name="this_phone">This phone</string>
+
+
+
 </resources>

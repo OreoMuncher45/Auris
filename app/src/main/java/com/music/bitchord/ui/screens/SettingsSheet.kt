@@ -499,7 +499,7 @@ fun SettingsScreen(
                     badge = stringResource(R.string.blocking).takeIf { wifiOnlyDownloads && metered == true },
                 )
             }
-            val exportDownloadsTitle = "Export compatible downloads"
+            val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)
             row(exportDownloadsTitle, "music folder", divided = false) {
                 SettingsSubRow(
                     title = exportDownloadsTitle,
@@ -530,7 +530,7 @@ fun SettingsScreen(
                     onClick = { AppSettings.setPreferMusicOnly(!preferMusicOnly) },
                 )
             }
-            val outputPrecisionTitle = "Output precision"
+            val outputPrecisionTitle = stringResource(R.string.output_precision)
             row(outputPrecisionTitle, "pcm", "bit depth", "sample rate", "dac") {
                 SettingsRow(
                     icon = Icons.Rounded.GraphicEq,
@@ -552,13 +552,13 @@ fun SettingsScreen(
                     modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
             }
-            val preferUsbDacTitle = "Prefer USB DAC"
+            val preferUsbDacTitle = stringResource(R.string.prefer_usb_dac)
             row(preferUsbDacTitle, "headphone", "output") {
                 SettingsSubRow(
                     title = preferUsbDacTitle,
                     checked = preferUsbDac,
                     onCheckedChange = AppSettings::setPreferUsbDac,
-                    badge = "Connected".takeIf { outputStatus.isUsb },
+                    badge = stringResource(R.string.connected).takeIf { outputStatus.isUsb },
                 )
             }
             // Automix decides its own length from each pair of tracks —
@@ -867,12 +867,12 @@ fun SettingsScreen(
             // sources are third-party services being reached on the user's
             // connection — which is the part worth being able to narrow.
             if (syncedLyrics) {
-                val lyricsBlurTitle = "Blur unfocused lyrics"
+                val lyricsBlurTitle = stringResource(R.string.blur_unfocused_lyrics)
                 row(lyricsBlurTitle, "lyrics", "blur") {
                     SettingsRow(
                         icon = Icons.Rounded.BlurOn,
                         title = lyricsBlurTitle,
-                        subtitle = "Keeps the spotlight on the current line",
+                        subtitle = stringResource(R.string.blur_unfocused_lyrics_subtitle),
                         trailing = {
                             Switch(
                                 checked = lyricsBlur,
@@ -1224,7 +1224,7 @@ fun SettingsScreen(
             }
         }
 
-        SearchableSettingsGroup(search, header = "Advanced Options") {
+        SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
             row(showNerdStatsTitle, "debug", "bitrate", "codec") {
                 SettingsRow(
