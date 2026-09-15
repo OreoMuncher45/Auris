@@ -537,7 +537,11 @@ func applyControl(p *party.Party, member *party.Member, action string, frame map
 		if !okFrom || !okTo {
 			return false, "missing_indices", "queueMove requires fromIndex and toIndex"
 		}
-		if !p.Playback.MoveUpcoming(&member.MemberId, int(fromNum), int(toNum)) {
+		var videoId string
+		if v, ok := frame["videoId"].(string); ok {
+			videoId = v
+		}
+		if !p.Playback.MoveUpcoming(&member.MemberId, int(fromNum), int(toNum), videoId) {
 			return false, "invalid_move", "Invalid queue move indices"
 		}
 		return true, "", ""

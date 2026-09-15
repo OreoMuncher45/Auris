@@ -566,14 +566,26 @@ class PartySync(
         // Play next, Add to queue, removing a row, dragging one. Before this,
         // none of them reached the party and its copy of the queue silently went
         // stale until the next track change happened to rebuild it.
-        if (clampedIds != party.queue.items.map(PartyTrack::videoId)) {
-            val countToTake = clampedIds.size
-            val queue = (0 until countToTake)
-                .map { exo.getMediaItemAt(it).toSong() }
-                .filterNot(Song::isDeviceFile)
-                .map { it.toPartyTrack(0L) }
-            ListenTogether.setQueue(queue, trackIndex)
-            controls++
+        val partyIds = party.queue.items.map(PartyTrack::videoId)
+        if (clampedIds != partyIds) {
+            val singleMove = if (partyIds.size == clampedIds.size && trackIndex >= 0 && trackIndex < partyIds.size && partyIds[trackIndex] == clampedIds[trackIndex]) {
+                detectSingleMove(partyIds, clampedIds)
+            } else {
+                null
+            }
+
+            if (singleMove != null && singleMove.fromIndex > trackIndex && singleMove.toIndex > trackIndex) {
+                ListenTogether.queueMove(singleMove.fromIndex, singleMove.toIndex, singleMove.videoId)
+                controls++
+            } else {
+                val countToTake = clampedIds.size
+                val queue = (0 until countToTake)
+                    .map { exo.getMediaItemAt(it).toSong() }
+                    .filterNot(Song::isDeviceFile)
+                    .map { it.toPartyTrack(0L) }
+                ListenTogether.setQueue(queue, trackIndex)
+                controls++
+            }
         }
 
         when {
@@ -656,13 +668,26 @@ class PartySync(
         }
 
         if (localUpcomingIds != desiredUpcomingIds) {
-            // Update items after currentIndex without touching the currently playing item
-            if (exo.mediaItemCount > currentIndex + 1) {
-                exo.removeMediaItems(currentIndex + 1, exo.mediaItemCount)
+            val singleMove = if (localUpcomingIds.size == desiredUpcomingIds.size) {
+                detectSingleMove(localUpcomingIds, desiredUpcomingIds)
+            } else {
+                null
             }
-            if (desiredUpcoming.isNotEmpty()) {
-                val mediaItems = desiredUpcoming.map { it.toSong().toMediaItem() }
-                exo.addMediaItems(currentIndex + 1, mediaItems)
+
+            if (singleMove != null) {
+                exo.moveMediaItem(
+                    currentIndex + 1 + singleMove.fromIndex,
+                    currentIndex + 1 + singleMove.toIndex,
+                )
+            } else {
+                // Update items after currentIndex without touching the currently playing item
+                if (exo.mediaItemCount > currentIndex + 1) {
+                    exo.removeMediaItems(currentIndex + 1, exo.mediaItemCount)
+                }
+                if (desiredUpcoming.isNotEmpty()) {
+                    val mediaItems = desiredUpcoming.map { it.toSong().toMediaItem() }
+                    exo.addMediaItems(currentIndex + 1, mediaItems)
+                }
             }
         }
     }
@@ -790,3 +815,40 @@ private fun PartyTrack.toSong(): Song = Song(
         "%d:%02d".format(total / 60, total % 60)
     },
 )
+
+internal data class QueueMoveDelta(
+    val fromIndex: Int,
+    val toIndex: Int,
+    val videoId: String,
+)
+
+/**
+ * Detects if [newList] is the result of moving exactly one item in [oldList].
+ * If so, returns the from and to indices (offset by [baseOffset]) and the item's id.
+ * Returns null if the lists cannot be explained by a single move.
+ */
+internal fun detectSingleMove(
+    oldList: List<String>,
+    newList: List<String>,
+    baseOffset: Int = 0,
+): QueueMoveDelta? {
+    if (oldList.size != newList.size || oldList == newList || oldList.isEmpty()) return null
+    if (oldList.groupingBy { it }.eachCount() != newList.groupingBy { it }.eachCount()) return null
+
+    for (from in oldList.indices) {
+        val item = oldList[from]
+        val withoutItem = oldList.toMutableList().apply { removeAt(from) }
+        for (to in oldList.indices) {
+            if (from == to) continue
+            val simulated = withoutItem.toMutableList().apply { add(to, item) }
+            if (simulated == newList) {
+                return QueueMoveDelta(
+                    fromIndex = baseOffset + from,
+                    toIndex = baseOffset + to,
+                    videoId = item,
+                )
+            }
+        }
+    }
+    return null
+}

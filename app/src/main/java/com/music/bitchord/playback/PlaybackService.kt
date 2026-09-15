@@ -5078,6 +5078,11 @@ class PlaybackService : MediaLibraryService() {
             super.removeMediaItems(fromIndex, toIndex)
         }
 
+        override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
+            onUserIntent()
+            super.moveMediaItem(currentIndex, newIndex)
+        }
+
         override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
             onUserIntent()
             super.moveMediaItems(fromIndex, toIndex, newIndex)

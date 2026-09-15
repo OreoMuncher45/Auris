@@ -328,12 +328,29 @@ func (p *PlaybackState) ClearUpcoming(memberId *string) bool {
 	return true
 }
 
-func (p *PlaybackState) MoveUpcoming(memberId *string, fromIdx, toIdx int) bool {
+func (p *PlaybackState) MoveUpcoming(memberId *string, fromIdx, toIdx int, videoId string) bool {
+	if videoId != "" {
+		match := -1
+		for i, item := range p.Queue {
+			if item.VideoId == videoId {
+				match = i
+				break
+			}
+		}
+		if match == -1 {
+			return false
+		}
+		fromIdx = match
+	}
+
 	if fromIdx < 0 || fromIdx >= len(p.Queue) || toIdx < 0 || toIdx >= len(p.Queue) {
 		return false
 	}
 	if fromIdx <= p.QueueIndex || toIdx <= p.QueueIndex {
 		return false
+	}
+	if fromIdx == toIdx {
+		return true
 	}
 
 	item := p.Queue[fromIdx]

@@ -172,3 +172,82 @@ func TestQueueStep(t *testing.T) {
 		t.Fatalf("Expected Step forward past end to fail")
 	}
 }
+
+func TestQueueMoveUpcoming(t *testing.T) {
+	ps := NewPlaybackState()
+	t0 := &Track{VideoId: "t0", Title: "T0"}
+	t1 := &Track{VideoId: "t1", Title: "T1"}
+	t2 := &Track{VideoId: "t2", Title: "T2"}
+	t3 := &Track{VideoId: "t3", Title: "T3"}
+
+	ps.SetTrack(nil, t0, 0, true, nil, nil)
+	ps.SetQueue(nil, []*Track{t0, t1, t2, t3}, 0)
+
+	memberId := "mem-1"
+	origSeq := ps.QueueSeq
+
+	// 1. Move playing track (index 0) must fail
+	if ps.MoveUpcoming(&memberId, 0, 2, "") {
+		t.Fatalf("MoveUpcoming should not allow moving playing track at index 0")
+	}
+
+	// 2. Target index <= QueueIndex must fail
+	if ps.MoveUpcoming(&memberId, 2, 0, "") {
+		t.Fatalf("MoveUpcoming should not allow moving into playing position at index 0")
+	}
+
+	// 3. Move t1 (index 1) to index 3 (end)
+	if !ps.MoveUpcoming(&memberId, 1, 3, "") {
+		t.Fatalf("MoveUpcoming 1->3 failed")
+	}
+	if ps.QueueSeq != origSeq+1 {
+		t.Fatalf("Expected QueueSeq increment, got %d vs %d", ps.QueueSeq, origSeq+1)
+	}
+	// Expected order: t0 (playing), t2, t3, t1
+	expected := []string{"t0", "t2", "t3", "t1"}
+	for i, exp := range expected {
+		if ps.Queue[i].VideoId != exp {
+			t.Fatalf("Expected index %d to be %s, got %s", i, exp, ps.Queue[i].VideoId)
+		}
+	}
+
+	// 4. Move t1 backward from index 3 to index 1
+	if !ps.MoveUpcoming(&memberId, 3, 1, "") {
+		t.Fatalf("MoveUpcoming 3->1 failed")
+	}
+	// Expected order restored: t0, t1, t2, t3
+	expectedRestored := []string{"t0", "t1", "t2", "t3"}
+	for i, exp := range expectedRestored {
+		if ps.Queue[i].VideoId != exp {
+			t.Fatalf("Expected index %d to be %s, got %s", i, exp, ps.Queue[i].VideoId)
+		}
+	}
+
+	// 5. Move using videoId resolution (even if fromIdx is mismatched or 0)
+	if !ps.MoveUpcoming(&memberId, 0, 3, "t2") {
+		t.Fatalf("MoveUpcoming with videoId 't2' failed")
+	}
+	// t2 was at index 2, moved to index 3 -> t0, t1, t3, t2
+	expectedVideoId := []string{"t0", "t1", "t3", "t2"}
+	for i, exp := range expectedVideoId {
+		if ps.Queue[i].VideoId != exp {
+			t.Fatalf("Expected index %d to be %s, got %s", i, exp, ps.Queue[i].VideoId)
+		}
+	}
+
+	// 6. Unknown videoId must fail
+	if ps.MoveUpcoming(&memberId, 1, 2, "unknown-id") {
+		t.Fatalf("MoveUpcoming with unknown videoId should fail")
+	}
+
+	// 7. Out of bounds index must fail
+	if ps.MoveUpcoming(&memberId, 1, 10, "") {
+		t.Fatalf("MoveUpcoming with out-of-bounds target index should fail")
+	}
+
+	// 8. Same fromIdx and toIdx should succeed as no-op
+	if !ps.MoveUpcoming(&memberId, 2, 2, "") {
+		t.Fatalf("MoveUpcoming no-op should succeed")
+	}
+}
+

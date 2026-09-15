@@ -438,9 +438,10 @@ object ListenTogether {
 
     fun queueClear() = control("queueClear") {}
 
-    fun queueMove(fromIndex: Int, toIndex: Int) = control("queueMove") {
+    fun queueMove(fromIndex: Int, toIndex: Int, videoId: String? = null) = control("queueMove") {
         put("fromIndex", fromIndex)
         put("toIndex", toIndex)
+        if (videoId != null) put("videoId", videoId)
     }
 
     private fun control(action: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
