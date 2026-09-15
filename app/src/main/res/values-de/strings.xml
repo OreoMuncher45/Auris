@@ -685,4 +685,9 @@
     <string name="listen_together_jam_unnamed">Gemeinsam hören</string>
     <string name="listen_together_open">Gemeinsam hören</string>
     <string name="listen_together_open_count">Gemeinsam hören · %1$d</string>
+
+    <string name="vietnamese">Vietnamesisch</string>
+    
+    <string name="miscellaneous_footer">Wenn aktiviert, stoppt das Schließen der App aus den letzten Apps auch die Musikwiedergabe.</string>
+    
 </resources>

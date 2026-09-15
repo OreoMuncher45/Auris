@@ -667,4 +667,9 @@
     <string name="listen_together_jam_unnamed">一起听</string>
     <string name="listen_together_open">一起听</string>
     <string name="listen_together_open_count">一起听 · %1$d</string>
+
+    <string name="vietnamese">越南语</string>
+    
+    <string name="miscellaneous_footer">启用后，从最近任务界面关闭应用也会停止音乐播放。</string>
+    
 </resources>

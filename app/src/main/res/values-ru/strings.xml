@@ -707,4 +707,9 @@
     <string name="listen_together_jam_unnamed">Слушаем вместе</string>
     <string name="listen_together_open">Слушать вместе</string>
     <string name="listen_together_open_count">Слушаем вместе · %1$d</string>
+
+    <string name="vietnamese">Вьетнамский</string>
+    
+    <string name="miscellaneous_footer">При включении закрытие приложения из недавних также останавливает воспроизведение музыки.</string>
+    
 </resources>

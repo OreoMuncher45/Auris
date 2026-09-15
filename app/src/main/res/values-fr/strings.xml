@@ -685,4 +685,9 @@
     <string name="listen_together_jam_unnamed">Écoute commune</string>
     <string name="listen_together_open">Écouter ensemble</string>
     <string name="listen_together_open_count">Écoute commune · %1$d</string>
+
+    <string name="vietnamese">Vietnamien</string>
+    
+    <string name="miscellaneous_footer">Une fois activé, fermer l\'application depuis les applications récentes arrête aussi la musique.</string>
+    
 </resources>

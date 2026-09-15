@@ -717,4 +717,9 @@
     <string name="listen_together_jam_unnamed">Wspólne słuchanie</string>
     <string name="listen_together_open">Słuchajcie razem</string>
     <string name="listen_together_open_count">Wspólne słuchanie · %1$d</string>
+
+    <string name="vietnamese">Wietnamski</string>
+    
+    <string name="miscellaneous_footer">Po włączeniu, zamknięcie aplikacji z listy ostatnio używanych aplikacji zatrzyma odtwarzanie muzyki.</string>
+    
 </resources>

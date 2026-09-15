@@ -43,6 +43,7 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.Locale
+import androidx.appcompat.app.AppCompatDelegate
 
 /**
  * Minimal Innertube (youtubei) client.
@@ -61,6 +62,25 @@ import java.util.Locale
  * from the stored cookie; no long-lived token is ever minted or stored.
  */
 object Innertube {
+    private val currentLanguage: String
+        get() = AppCompatDelegate.getApplicationLocales().get(0)?.language?.ifEmpty { null }
+            ?: Locale.getDefault().language.ifEmpty { "en" }
+
+    private val currentCountry: String
+        get() = AppCompatDelegate.getApplicationLocales().get(0)?.country?.takeIf { it.length == 2 }
+            ?: Locale.getDefault().country.takeIf { it.length == 2 }
+            ?: "US"
+
+    private val acceptLanguageHeader: String
+        get() {
+            val lang = currentLanguage
+            val country = currentCountry
+            return if (lang == "en") {
+                "en-US,en;q=0.9"
+            } else {
+                "$lang-$country,$lang;q=0.9,en-US;q=0.8,en;q=0.7"
+            }
+        }
 
     private const val MUSIC_BASE = "https://music.youtube.com/youtubei/v1"
     private const val YT_BASE = "https://www.youtube.com/youtubei/v1"
@@ -392,7 +412,7 @@ object Innertube {
     private suspend fun fetchSessionScope(session: String): SessionScope? {
         val html = client.get("$MUSIC_ORIGIN/") {
             header("User-Agent", WEB_USER_AGENT)
-            header("Accept-Language", "en-US,en;q=0.9")
+            header("Accept-Language", acceptLanguageHeader)
             header("Cookie", session)
             sapisidFrom(session)?.let { header("Authorization", sapisidHash(it)) }
         }.bodyAsText()
@@ -563,7 +583,7 @@ object Innertube {
         val text = withRetry {
             client.get("$YOUTUBE_ORIGIN/getAccountSwitcherEndpoint") {
                 header("User-Agent", WEB_USER_AGENT)
-                header("Accept-Language", "en-US,en;q=0.9")
+                header("Accept-Language", acceptLanguageHeader)
                 header("X-Origin", YOUTUBE_ORIGIN)
                 header("Referer", "$YOUTUBE_ORIGIN/")
                 cookie?.let { c ->
@@ -1203,8 +1223,8 @@ object Innertube {
                             putJsonObject("client") {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", clientVersion)
-                                put("hl", "en")
-                                put("gl", "US")
+                                put("hl", currentLanguage)
+                                put("gl", currentCountry)
                                 visitorData?.let { put("visitorData", it) }
                             }
                             putJsonObject("user") {
@@ -1344,8 +1364,8 @@ object Innertube {
                             playerClient.deviceMake?.let { put("deviceMake", it) }
                             playerClient.deviceModel?.let { put("deviceModel", it) }
                             playerClient.androidSdkVersion?.let { put("androidSdkVersion", it.toInt()) }
-                            put("hl", "en")
-                            put("gl", "US")
+                            put("hl", currentLanguage)
+                            put("gl", currentCountry)
                             visitorData?.let { put("visitorData", it) }
                         }
                     }

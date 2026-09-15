@@ -667,4 +667,9 @@
     <string name="listen_together_jam_unnamed">Mendengar bersama</string>
     <string name="listen_together_open">Dengar bersama</string>
     <string name="listen_together_open_count">Mendengar bersama · %1$d</string>
+
+    <string name="vietnamese">Vietnam</string>
+    
+    <string name="miscellaneous_footer">Jika diaktifkan, menutup aplikasi dari layar aplikasi terbaru juga akan menghentikan pemutaran musik.</string>
+    
 </resources>

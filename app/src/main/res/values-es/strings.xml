@@ -714,4 +714,9 @@
     <string name="listen_together_jam_unnamed">Escuchando juntos</string>
     <string name="listen_together_open">Escuchar juntos</string>
     <string name="listen_together_open_count">Escuchando juntos · %1$d</string>
+
+    <string name="vietnamese">Vietnamita</string>
+    
+    <string name="miscellaneous_footer">Al activarlo, cerrar la app desde recientes también detiene la música.</string>
+    
 </resources>

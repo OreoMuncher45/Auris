@@ -689,4 +689,9 @@
     <string name="listen_together_jam_unnamed">מאזינים ביחד</string>
     <string name="listen_together_open">להאזין ביחד</string>
     <string name="listen_together_open_count">מאזינים ביחד · %1$d</string>
+
+    <string name="vietnamese">וייטנאמית</string>
+    
+    <string name="miscellaneous_footer">כשמופעל, סגירת האפליקציה ממסך האפליקציות האחרונות תעצור גם את השמעת המוזיקה.</string>
+    
 </resources>

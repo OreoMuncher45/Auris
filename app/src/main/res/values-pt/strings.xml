@@ -689,4 +689,9 @@
     <string name="listen_together_jam_unnamed">Ouvindo junto</string>
     <string name="listen_together_open">Ouvir junto</string>
     <string name="listen_together_open_count">Ouvindo junto · %1$d</string>
+
+    <string name="vietnamese">Vietnamita</string>
+    
+    <string name="miscellaneous_footer">Quando ativado, fechar o app pela tela de apps recentes também interrompe a reprodução de música.</string>
+    
 </resources>

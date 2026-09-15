@@ -667,4 +667,9 @@
     <string name="listen_together_jam_unnamed">一緒に聴いています</string>
     <string name="listen_together_open">一緒に聴く</string>
     <string name="listen_together_open_count">一緒に聴いています · %1$d</string>
+
+    <string name="vietnamese">ベトナム語</string>
+    
+    <string name="miscellaneous_footer">オンにすると、最近のアプリ画面からアプリを終了した際に音楽の再生も停止します。</string>
+    
 </resources>
