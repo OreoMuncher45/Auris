@@ -8,9 +8,9 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/KabirSinghBhatia/BitChord/backend-go/clock"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/codes"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/config"
+	"github.com/KabirSinghBhatia/BitChord/backend/clock"
+	"github.com/KabirSinghBhatia/BitChord/backend/codes"
+	"github.com/KabirSinghBhatia/BitChord/backend/config"
 )
 
 // PartyError represents an error with an HTTP status code and wire error code.

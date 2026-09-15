@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/KabirSinghBhatia/BitChord/backend-go/codes"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/config"
+	"github.com/KabirSinghBhatia/BitChord/backend/codes"
+	"github.com/KabirSinghBhatia/BitChord/backend/config"
 )
 
 func TestCodeNormalisation(t *testing.T) {

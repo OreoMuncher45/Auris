@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/KabirSinghBhatia/BitChord/backend-go/protocol"
+	"github.com/KabirSinghBhatia/BitChord/backend/protocol"
 )
 
 func setupTestServer() *httptest.Server {

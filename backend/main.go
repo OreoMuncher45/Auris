@@ -10,11 +10,11 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/KabirSinghBhatia/BitChord/backend-go/clock"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/config"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/hub"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/party"
-	"github.com/KabirSinghBhatia/BitChord/backend-go/protocol"
+	"github.com/KabirSinghBhatia/BitChord/backend/clock"
+	"github.com/KabirSinghBhatia/BitChord/backend/config"
+	"github.com/KabirSinghBhatia/BitChord/backend/hub"
+	"github.com/KabirSinghBhatia/BitChord/backend/party"
+	"github.com/KabirSinghBhatia/BitChord/backend/protocol"
 )
 
 var (
