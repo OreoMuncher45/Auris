@@ -1241,6 +1241,8 @@ object InnertubeParser {
         if (resolvedBrowseId != null &&
             !resolvedBrowseId.startsWith("VL") &&
             !resolvedBrowseId.startsWith("PL") &&
+            !resolvedBrowseId.startsWith("MPRE") &&
+            !resolvedBrowseId.startsWith("UC") &&
             (VIDEO_WORD.containsMatchIn(title) || VIDEO_WORD.containsMatchIn(subtitle))
         ) {
             return null
