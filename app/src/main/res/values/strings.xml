@@ -32,6 +32,28 @@
     <string name="retry">Retry</string>
     <string name="shuffle">Shuffle</string>
     <string name="more">More</string>
+    <string name="lyrics_offset">Lyrics offset</string>
+    <string name="lyrics_offset_description">Positive values show lyrics later</string>
+    <string name="lyrics_offset_reset">Reset</string>
+    <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
+    <string name="increase_lyrics_offset">Increase lyrics offset</string>
+    <string name="auto_quick_picks">Quick picks</string>
+    <string name="auto_recents">Recent</string>
+    <string name="auto_liked">Liked songs</string>
+    <string name="auto_login_title">Sign in to YouTube on your phone</string>
+    <string name="auto_login_subtitle">Open BitChord on your phone to sign in</string>
+    <string name="auto_empty_recents_title">No recent songs</string>
+    <string name="auto_empty_recents_subtitle">Songs you play will appear here</string>
+    <string name="auto_empty_quick_picks_title">No suggestions</string>
+    <string name="auto_empty_quick_picks_subtitle">Check your connection and try again</string>
+    <string name="auto_empty_playlists_title">No playlists available</string>
+    <string name="auto_empty_playlists_subtitle">Check your connection and try again</string>
+    <string name="auto_empty_liked_title">No liked songs</string>
+    <string name="auto_empty_liked_subtitle">Tap the heart on a song to save it here</string>
+    <string name="auto_empty_offline_title">No offline songs</string>
+    <string name="auto_empty_offline_subtitle">Download songs on your phone to listen here</string>
+    <string name="auto_unavailable_title">Content unavailable</string>
+    <string name="auto_unavailable_subtitle">Reopen the folder and try again</string>
     <string name="add_to_playlist">Add to playlist</string>
     <string name="add_to_library">Add to library</string>
     <string name="remove_from_library">Remove from library</string>
@@ -65,6 +87,8 @@
     <string name="recent_searches">Recent searches</string>
     <string name="clear">Clear</string>
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_search_empty">No settings match “%1$s”</string>
     <string name="recent_search_edit">Edit “%1$s”</string>
     <string name="recent_search_remove">Remove “%1$s” from recent searches</string>
     <string name="storage_required_save">Storage access is needed to save songs</string>
@@ -185,6 +209,7 @@
     <string name="hebrew">Hebrew</string>
     <string name="italian">Italian</string>
     <string name="turkish">Turkish</string>
+    <string name="thai">Thai</string>
     <string name="show_all">Show all</string>
     <string name="grid_view">Grid</string>
     <string name="list_view">List</string>
@@ -215,8 +240,51 @@
     <string name="automix_mode_performance_subtitle">4 threads · fastest analysis · higher heat and battery use</string>
     <string name="skip_silence">Skip silence</string>
     <string name="skip_silence_subtitle">Trim gaps longer than a second</string>
+    <string name="prefer_music_only">Prefer music-only version</string>
+    <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
     <string name="equalizer">Equalizer</string>
-    <string name="equalizer_subtitle">Your device\'s system panel</string>
+    <string name="equalizer_subtitle">Tone, seven bands and balance</string>
+    <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
+    <string name="equalizer_dynamic">Dynamic</string>
+    <string name="equalizer_manual">Manual</string>
+    <string name="equalizer_tone">Tone</string>
+    <string name="equalizer_tilt">Tilt</string>
+    <string name="equalizer_contour">Contour</string>
+    <string name="equalizer_broad">Broad</string>
+    <string name="equalizer_focused">Focused</string>
+    <string name="equalizer_broad_footer">Drag left for a warmer sound and right for a brighter one; down scoops the middle, up brings it forward. Broad moves wide stretches of the spectrum at once.</string>
+    <string name="equalizer_focused_footer">Drag left for a warmer sound and right for a brighter one; down scoops the middle, up brings it forward. Focused works on narrower stretches, so it changes less around what it moves.</string>
+    <string name="equalizer_preset">Preset</string>
+    <string name="equalizer_bands">Bands</string>
+    <string name="equalizer_bands_footer">Moving a band leaves the preset behind and the curve becomes your own.</string>
+    <string name="equalizer_reset">Reset all bands</string>
+    <string name="equalizer_balance">Balance</string>
+    <string name="equalizer_balance_left">L</string>
+    <string name="equalizer_balance_right">R</string>
+    <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+    <string name="equalizer_float_title">Not running right now</string>
+    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
+    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
+    <string name="system_equalizer">System equalizer</string>
+    <string name="system_equalizer_subtitle">Your device\'s own panel</string>
+    <string name="system_equalizer_footer">Runs after BitChord\'s, on the whole audio session. Using both applies both.</string>
+    <string name="eq_preset_flat">Flat</string>
+    <string name="eq_preset_acoustic">Acoustic</string>
+    <string name="eq_preset_bass_boost">Bass boost</string>
+    <string name="eq_preset_bass_cut">Bass cut</string>
+    <string name="eq_preset_vocal">Vocal</string>
+    <string name="eq_preset_treble_boost">Treble boost</string>
+    <string name="eq_preset_treble_cut">Treble cut</string>
+    <string name="eq_preset_loudness">Loudness</string>
+    <string name="eq_preset_spoken_word">Spoken word</string>
+    <string name="eq_preset_electronic">Electronic</string>
+    <string name="eq_preset_rock">Rock</string>
+    <string name="eq_preset_hip_hop">Hip-hop</string>
+    <string name="eq_preset_jazz">Jazz</string>
+    <string name="eq_preset_classical">Classical</string>
+    <string name="eq_preset_small_speakers">Small speakers</string>
+    <string name="eq_preset_late_night">Late night</string>
+    <string name="eq_preset_custom">Custom</string>
     <string name="show_nerd_stats">Show stats for nerds</string>
     <string name="show_nerd_stats_subtitle">Codec, bitrate and sample rate on the player</string>
     <string name="theme">Theme</string>
@@ -256,7 +324,6 @@
     <string name="dark">Dark</string>
     <string name="full_screen_cover_art_subtitle">Runs the cover to the edges of the player instead of a square sleeve</string>
     <string name="animated_cover_art_subtitle">Plays the looping video some releases ship instead of a still sleeve</string>
-    <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
     <string name="dont_repeat_songs_subtitle">AutoPlay won’t suggest a song already played or suggested this session</string>
     <string name="download_quality_subtitle">%1$s per track, whatever the connection</string>
     <string name="filter_non_music_audio">Filter non-music audio</string>
@@ -293,6 +360,18 @@
     <string name="buttons">Buttons</string>
     <string name="clear_name">Clear name</string>
     <string name="close_lyrics">Close lyrics</string>
+    <string name="translate_lyrics">Translate lyrics</string>
+    <string name="show_original_lyrics">Show original lyrics</string>
+    <string name="translating_lyrics_to">Translating to %1$s…</string>
+    <string name="lyrics_translated_to">Translated to %1$s</string>
+    <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
+    <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
+    <string name="translation_language">Translation language</string>
+    <string name="translation_language_description">The language the translate button turns lyrics into.</string>
+    <string name="translation_language_app_default">App language</string>
+    <string name="translation_language_subtitle">Follows the app language</string>
+    <string name="search_languages">Search languages</string>
+    <string name="no_languages_match">No languages match</string>
     <string name="connect_account_first">Connect an account first</string>
     <string name="connected_presence_off">Connected, presence off</string>
     <string name="copy_log">Copy log</string>
@@ -343,6 +422,31 @@
     <string name="high_quality_upgrading">High quality, upgrading</string>
     <string name="upgrading_quality">Upgrading quality</string>
     <string name="hi_res_lossless">Hi-Res Lossless</string>
+    <string name="data_saver">Data-Saver</string>
+    <string name="medium_quality">Medium Quality</string>
+    <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="pipeline_track_info">Track Info</string>
+    <string name="pipeline_decoder">Decoder</string>
+    <string name="pipeline_resampler">Resampler</string>
+    <string name="pipeline_dsp">DSP</string>
+    <string name="pipeline_output_device">Output Device</string>
+    <string name="pipeline_source">Source</string>
+    <string name="pipeline_format">Format</string>
+    <string name="pipeline_bit_depth">Bit Depth</string>
+    <string name="pipeline_sample_rate">Sample Rate</string>
+    <string name="pipeline_bitrate">Bitrate</string>
+    <string name="pipeline_channels">Channels</string>
+    <string name="pipeline_decoder_name">Decoder Name</string>
+    <string name="pipeline_io_rate">I/O Rate</string>
+    <string name="pipeline_type">Type</string>
+    <string name="pipeline_cutoff">Cutoff</string>
+    <string name="pipeline_quality">Quality</string>
+    <string name="pipeline_pcm_format">PCM Format</string>
+    <string name="pipeline_eq_preset">EQ Preset</string>
+    <string name="pipeline_stereo_expand">Stereo Expand</string>
+    <string name="pipeline_buffers">Buffers</string>
+    <string name="pipeline_output_api">Output API</string>
+    <string name="pipeline_device_name">Device Name</string>
     <string name="bit_depth">%1$d-bit</string>
     <string name="mono">Mono</string>
     <string name="stereo">Stereo</string>
@@ -363,6 +467,9 @@
     <string name="starting">Starting</string>
     <string name="start_radio">Start radio</string>
     <string name="playing_radio">Playing %1$s Radio</string>
+    <string name="playing_from">Playing from %1$s</string>
+    <string name="played_by">Played by %1$s</string>
+    <string name="shared_link">Shared link</string>
     <string name="radio_started">%1$s radio started</string>
     <string name="saved_to_bitchord_folder">Saved to Music/BitChord</string>
     <string name="nothing_downloading">Nothing downloading</string>
@@ -416,10 +523,12 @@
         <item quantity="one">%1$d song will play next</item>
         <item quantity="other">%1$d songs will play next</item>
     </plurals>
+    <string name="song_will_play_next">Song will play next</string>
     <plurals name="songs_added_to_queue">
         <item quantity="one">Added %1$d song to the queue</item>
         <item quantity="other">Added %1$d songs to the queue</item>
     </plurals>
+    <string name="song_added_to_queue">Song added to queue</string>
     <plurals name="log_copied_line_count">
         <item quantity="one">Log copied · %1$d line</item>
         <item quantity="other">Log copied · %1$d lines</item>
@@ -438,6 +547,9 @@
     <string name="listening_history">Listening history</string>
     <string name="lyrics_not_available">Lyrics not available</string>
     <string name="lyrics_sources_order">Sources are tried in this order. Drag to reorder them. The first source with lyrics wins unless syllable lyrics are prioritized.</string>
+    <string name="paxsenix_api_key">PaxSenix API key</string>
+    <string name="paxsenix_api_key_configured">PaxSenix API key — configured</string>
+    <string name="paxsenix_api_key_missing">PaxSenix API key — optional, not configured</string>
     <string name="max_delay">Maximum delay</string>
     <string name="max_delay_subtitle">Maximum scrobble delay in seconds</string>
     <string name="min_song_duration">Minimum song duration</string>
@@ -498,6 +610,11 @@
     <string name="sources_order_header">Sources, tried in this order</string>
     <string name="sources_quality_capped">This connection is set below High quality, so streams are transcoded to fit that limit. Downloads are unaffected.</string>
     <string name="sources_subtitle">Where audio comes from and the order used</string>
+    <string name="source_matching">Source matching</string>
+    <string name="upgrade_length_slack">Track length tolerance</string>
+    <string name="upgrade_length_slack_subtitle">Maximum duration difference allowed for a replacement stream</string>
+    <string name="upgrade_length_slack_footer">A larger tolerance accepts more source matches; a smaller tolerance is stricter. The default is 3 seconds.</string>
+    <string name="seconds_short">%1$d s</string>
     <string name="spdc_token">sp_dc token</string>
     <string name="spotify_canvas_setup">Spotify Canvas setup</string>
     <string name="spotify_canvas_setup_description">To use Spotify Canvas, provide your Spotify sp_dc cookie.</string>
@@ -706,4 +823,157 @@
     <string name="use_this_profile">Use this profile</string>
     <string name="switch_profile_hint">Switch using the avatar, then use this profile.</string>
     <string name="profile_unavailable">No signed-in profile is available on this page yet.</string>
+    <string name="open_lyrics">Lyrics</string>
+    <string name="audio_output">Audio output</string>
+    <string name="audio_output_playing">Playing here</string>
+    <string name="wired_headphones">Wired headphones</string>
+    <string name="usb_audio">USB audio</string>
+    <string name="hdmi_output">HDMI</string>
+    <string name="personal_phone">%1$s’s Phone</string>
+    <string name="this_phone">This phone</string>
+
+    <!-- Listen together -->
+    <string name="listen_together">Listen together</string>
+    <string name="listen_together_subtitle">Share a code and play the same music, in time</string>
+    <string name="listen_together_in_party">In a party · %1$s</string>
+    <string name="listen_together_sign_in_footer">Listening together needs an account, so everyone in the party can see who else is in it.</string>
+    <string name="listen_together_server">Party server</string>
+    <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_offline">Can’t be reached right now</string>
+    <string name="listen_together_server_checking">Checking…</string>
+    <string name="listen_together_server_unknown">Tap to check</string>
+    <string name="listen_together_custom_server">Use your own server</string>
+    <string name="listen_together_custom_server_footer">Leave this empty to use the built-in server. If you run your own copy, everyone in the party has to be pointed at the same one.</string>
+    <string name="listen_together_using_builtin">Using the built-in server</string>
+    <string name="listen_together_create">Create a party</string>
+    <string name="listen_together_create_subtitle">Get a code to share with friends</string>
+    <string name="listen_together_create_footer">You get a six-character code. Anyone who has it can join, up to five devices including yours.</string>
+    <string name="listen_together_join">Join a party</string>
+    <string name="listen_together_join_action">Join</string>
+    <string name="listen_together_code_hint">Six letters or digits</string>
+    <string name="listen_together_code">Party code</string>
+    <string name="listen_together_code_footer">Read it out or send it. O and I aren’t used, so an “oh” is always a zero.</string>
+    <string name="copy_code">Copy code</string>
+    <string name="listen_together_share_text">Listen with me on BitChord — party code %1$s</string>
+    <string name="listen_together_now_playing">Now playing</string>
+    <string name="listen_together_nothing_playing">Nothing playing yet</string>
+    <string name="listen_together_listening">Listening · %1$d of %2$d</string>
+    <string name="listen_together_members_footer">A party holds %1$d devices. Anyone in it can control the music.</string>
+    <string name="listen_together_you">You</string>
+    <string name="listen_together_host">Host</string>
+    <string name="listen_together_away">Away — their slot is held</string>
+    <string name="listen_together_leave">Leave the party</string>
+    <string name="listen_together_leave_subtitle">The others carry on listening</string>
+    <string name="listen_together_reconnecting">Reconnecting…</string>
+    <string name="listen_together_syncing_clock">Measuring the clock…</string>
+    <string name="listen_together_in_sync">In sync · %1$d ms round trip</string>
+    <string name="listen_together_jam">%1$s’s Jam</string>
+    <string name="listen_together_jam_unnamed">Listening together</string>
+    <string name="listen_together_open">Listen together</string>
+    <string name="listen_together_open_count">Listening together · %1$d</string>
+
+    <string name="vietnamese">Vietnamese</string>
+
+    <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
+
+    <string name="export_compatible_downloads">Export compatible downloads</string>
+
+    <string name="output_precision">Output precision</string>
+
+    <string name="prefer_usb_dac">Prefer USB DAC</string>
+
+    <string name="blur_unfocused_lyrics">Blur unfocused lyrics</string>
+
+    <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
+
+    <string name="advanced_options">Advanced options</string>
+
+    <string name="lyrics_debug_logs">Lyrics debug logs</string>
+
+    <string name="lyrics_debug_logs_subtitle">Show live API queries and scraper activity in the lyrics panel</string>
+
+    <string name="shelf_trending_community_playlists">Trending community playlists</string>
+
+    <string name="shelf_featured_playlists_for_you">Featured playlists for you</string>
+
+    <string name="shelf_quick_picks">Quick picks</string>
+
+    <string name="shelf_listen_again">Listen again</string>
+
+    <string name="shelf_mixed_for_you">Mixed for you</string>
+
+    <string name="shelf_similar_to">Similar to %1$s</string>
+
+    <string name="shelf_forgotten_favorites">Forgotten favorites</string>
+
+    <string name="shelf_recommended_music_videos">Recommended music videos</string>
+
+    <string name="shelf_from_your_library">From your library</string>
+
+    <string name="shelf_charts">Charts</string>
+
+    <string name="shelf_new_releases">New releases</string>
+
+    <string name="shelf_top_music_videos">Top music videos</string>
+
+    <string name="shelf_for_you">For you</string>
+
+    <string name="shelf_energy_boosters">Energy boosters</string>
+
+    <string name="shelf_feel_good">Feel good</string>
+
+    <string name="shelf_commute">Commute</string>
+
+    <string name="shelf_workout">Workout</string>
+
+    <string name="shelf_focus">Focus</string>
+
+    <string name="shelf_relax">Relax</string>
+
+    <string name="shelf_sleep">Sleep</string>
+
+    <string name="shelf_party">Party</string>
+
+    <string name="shelf_romance">Romance</string>
+
+    <string name="shelf_sad">Sad</string>
+
+    <string name="shelf_100_on_repeat">100% on repeat</string>
+
+    <string name="shelf_new_albums_singles">New albums &amp; singles</string>
+
+    <string name="shelf_hits_today">Hits today</string>
+
+    <string name="shelf_artists_on_the_rise">Artists on the rise</string>
+
+
+    <string name="shelf_top_tunes_right_now">Top tunes right now</string>
+
+    <string name="shelf_concerts">Concerts</string>
+
+    <string name="shelf_shorts">Shorts</string>
+
+    <string name="shelf_single">Single</string>
+
+    <string name="shelf_chart">Chart</string>
+
+    <string name="shelf_song_item">Song</string>
+
+    <string name="shelf_from_the_community">From the community</string>
+
+    <string name="shelf_youtube_charts">YouTube Charts</string>
+
+    <string name="shelf_trending">Trending</string>
+
+    <string name="shelf_recents">Recents</string>
+
+    <string name="subscriptions">Subscriptions</string>
+
+
+    <string name="card_views_format">%1$s views</string>
+
+    <string name="card_plays_format">%1$s plays</string>
+
+    <string name="card_songs_format">%1$s songs</string>
+
 </resources>

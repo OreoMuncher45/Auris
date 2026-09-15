@@ -142,6 +142,10 @@ object LastPlayed {
         val album: String? = null,
         val explicit: Boolean? = null,
         val video: Boolean = false,
+        val radio: String? = null,
+        val source: String? = null,
+        val sourceType: String? = null,
+        val sourceId: String? = null,
     ) {
         fun toSong() = Song(
             videoId = id,
@@ -153,6 +157,12 @@ object LastPlayed {
             isExplicit = explicit,
             isVideo = video,
             fromAutoplay = auto,
+            radioName = radio,
+            playbackSource = source,
+            playbackSourceType = sourceType?.let {
+                runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
+            },
+            playbackSourceId = sourceId,
             localUri = local,
             localPath = path,
         )
@@ -170,6 +180,10 @@ object LastPlayed {
                 album = song.albumName,
                 explicit = song.isExplicit,
                 video = song.isVideo,
+                radio = song.radioName,
+                source = song.playbackSource,
+                sourceType = song.playbackSourceType?.name,
+                sourceId = song.playbackSourceId,
             )
         }
     }

@@ -48,6 +48,9 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -57,13 +60,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -182,6 +189,33 @@ const val HERO_CARD_RATIO = 0.92f
  * width.
  */
 fun heroCardWidth(available: Dp): Dp = minOf(available * HERO_CARD_FRACTION, HERO_CARD_MAX_WIDTH)
+
+/** Share of the row a page of tracks takes, so the next page peeks in past it. */
+private const val TRACK_COLUMN_FRACTION = 0.88f
+
+/**
+ * How wide a sideways-paging column of track rows is ever allowed to get.
+ *
+ * Same trap [HERO_CARD_MAX_WIDTH] answers, and worse for a list: a track row is
+ * artwork, a title and a subtitle, none of which have any use for more room. At
+ * 88% of a tablet the row's contents stay their own size and the space all lands
+ * between the title and the overflow button, so four songs eat the width of the
+ * screen and read as a page half-filled rather than a shelf.
+ *
+ * 400dp clears what the widest phone asks for (0.88 of 448dp is 394dp), so every
+ * phone keeps the width the fraction gives it and only a tablet is held back —
+ * to a column near a phone's own width, which is the size these rows were drawn
+ * at, with the next page showing beside it.
+ */
+private val TRACK_COLUMN_MAX_WIDTH = 400.dp
+
+/**
+ * How wide a column of track rows should be in a row [available] wide — shared
+ * by Home's Recents, an artist's Top songs, and the skeletons that stand in for
+ * them, which have to agree to the pixel or the page jumps when the data lands.
+ */
+fun trackColumnWidth(available: Dp): Dp =
+    minOf(available * TRACK_COLUMN_FRACTION, TRACK_COLUMN_MAX_WIDTH)
 
 /** How many cards sit across a library grid row, and how wide each lands. */
 data class LibraryGridSpec(val columns: Int, val cardWidth: Dp)
@@ -668,5 +702,72 @@ fun MessageState(
         if (actionLabel != null && onAction != null) {
             Button(onClick = onAction) { Text(actionLabel) }
         }
+    }
+}
+
+/**
+ * The narrow, pill-shaped text field this app uses instead of Material's
+ * `OutlinedTextField` — the same box the alerts and the search bar are built
+ * from.
+ *
+ * Flat `surfaceVariant`, an 11dp radius, no outline and no floating label. A
+ * stock `OutlinedTextField` dropped onto one of these pages reads as a widget
+ * borrowed from another app: it is the only thing on the screen wearing a
+ * border, and its label reserves a band of empty space above every row it sits
+ * in whether or not there is a label to put there.
+ */
+@Composable
+fun PillTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    isPassword: Boolean = false,
+    /**
+     * What the box is filled with.
+     *
+     * The default is the fill the alerts want, since their frosted card is
+     * `surface` and this sits on top of it. A field dropped into a settings
+     * card has to be told otherwise: those cards are *already* `surfaceVariant`
+     * (see `SettingsGroup`), and a field the colour of the card it is in is a
+     * field nobody can see.
+     */
+    container: Color = MaterialTheme.colorScheme.surfaceVariant,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .background(container, RoundedCornerShape(11.dp))
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        if (value.isEmpty()) {
+            Text(
+                text = placeholder,
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            enabled = enabled,
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 15.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
+            keyboardOptions = keyboardOptions,
+            keyboardActions = keyboardActions,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }

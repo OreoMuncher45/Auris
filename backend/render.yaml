@@ -1,0 +1,30 @@
+# Render blueprint for the Listen Together server.
+#
+# Blueprints are read from the *repository root*, so deploying this file as-is
+# means either copying it up a level or — simpler, and what the README
+# describes — creating the service by hand in the dashboard with Root Directory
+# set to `backend`. The values below are the same either way.
+#
+# One instance, no autoscaling, on purpose: a party lives in the memory of the
+# instance holding its WebSockets, so a second instance would be a second,
+# disjoint set of parties. See app/party.py, PartyStore.
+services:
+  - type: web
+    name: bitchord-listen-together
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --ws websockets
+    healthCheckPath: /healthz
+    numInstances: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.6
+      # Everything below is optional — app/config.py has the same defaults.
+      - key: JAM_MAX_MEMBERS
+        value: "5"
+      - key: JAM_STATE_HEARTBEAT_MS
+        value: "5000"
+      - key: JAM_PLAY_LEAD_MS
+        value: "350"

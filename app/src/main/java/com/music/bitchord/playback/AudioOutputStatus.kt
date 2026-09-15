@@ -23,6 +23,8 @@ object AudioOutputStatus {
         val actualEncoding: Int? = null,
         val actualSampleRateHz: Int? = null,
         val floatFallback: Boolean = false,
+        val decoderName: String? = null,
+        val bufferSize: Int? = null,
     )
 
     val current = MutableStateFlow(Snapshot())
@@ -48,16 +50,26 @@ object AudioOutputStatus {
             // Cleared on a route change. onAudioTrackInitialized publishes the
             // format Android actually accepted for the new AudioTrack.
             floatFallback = requestedPcmMode == OutputPcmMode.FLOAT_32 && !floatEnabled,
+            decoderName = current.value.decoderName,
         )
     }
 
-    fun publishAudioTrack(encoding: Int, sampleRateHz: Int) {
+    fun publishDecoder(decoderName: String?) {
+        current.value = current.value.copy(decoderName = decoderName)
+    }
+
+    fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {
         current.value = current.value.copy(
             actualEncoding = encoding,
             actualSampleRateHz = sampleRateHz,
+            bufferSize = bufferSize ?: current.value.bufferSize,
             floatFallback = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 &&
                 encoding != AudioFormat.ENCODING_PCM_FLOAT,
         )
+    }
+
+    fun reset() {
+        current.value = Snapshot()
     }
 
     fun encodingLabel(snapshot: Snapshot): String = when (snapshot.actualEncoding) {

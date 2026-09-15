@@ -70,6 +70,19 @@ data class Song(
     val sourceQuality: String? = null,
     /** Explicit-content state from the catalogue; null when that source does not say. */
     val isExplicit: Boolean? = null,
+    /**
+     * The page, collection, or feed section that put this track in the queue.
+     *
+     * This is deliberately separate from [albumName]: a song can belong to an
+     * album while it was actually played from Search, History, a playlist, or
+     * a recommendation shelf. Kept on every queue item so Now Playing can name
+     * that origin after skips and after the playback service restores a queue.
+     */
+    val playbackSource: String? = null,
+    /** Where tapping [playbackSource] should return in the app. */
+    val playbackSourceType: PlaybackSourceType? = null,
+    /** Browse id for an album, playlist, or other source page. */
+    val playbackSourceId: String? = null,
 )
 
 /**
@@ -181,6 +194,18 @@ const val PLAYER_ART_PX = 1200
 
 enum class BrowseType { ALBUM, ARTIST, PLAYLIST, OTHER }
 
+/** A queue-level origin shown above Now Playing, in the style of Spotify. */
+enum class PlaybackSourceType {
+    HOME,
+    SEARCH,
+    HISTORY,
+    REPLAY,
+    EXPLORE,
+    BROWSE,
+    SHARED_LINK,
+    QUEUE,
+}
+
 /** A non-track search result: album, artist or playlist. */
 data class BrowseItem(
     val browseId: String,
@@ -259,6 +284,8 @@ data class HomeShelf(
     val items: List<ShelfItem>,
     /** YouTube's "strapline" — the grey line Apple Music runs under a heading. */
     val subtitle: String = "",
+    val moreBrowseId: String? = null,
+    val moreParams: String? = null,
 )
 
 /** A page of the Home feed, plus the token for the next one — null once exhausted. */
@@ -291,6 +318,13 @@ data class LibraryPage(
     val likedSongs: List<Song>,
     val librarySongs: List<Song>,
     val shelves: List<HomeShelf>,
+    /**
+     * The continuation token behind [likedSongs]' first page, when Liked Music
+     * has more tracks than that one page held. Consumed by whoever owns the
+     * library's lifecycle to finish syncing the liked collection into
+     * [com.music.bitchord.data.LikeState]; never stored as page state.
+     */
+    val likedContinuation: String? = null,
 ) {
     val isEmpty: Boolean
         get() = likedSongs.isEmpty() && librarySongs.isEmpty() && shelves.isEmpty()

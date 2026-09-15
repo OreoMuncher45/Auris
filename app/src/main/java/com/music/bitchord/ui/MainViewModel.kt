@@ -157,6 +157,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _suggestions = MutableStateFlow<List<String>>(emptyList())
     val suggestions: StateFlow<List<String>> = _suggestions.asStateFlow()
 
+    /**
+     * Live media results shown alongside typeahead suggestions. Populated by a
+     * lightweight search that runs in parallel with text completions; the UI
+     * renders these as playable track cards and browse items below the text
+     * suggestion rows. Cleared when the user commits to a search or empties
+     * the field.
+     */
+    private val _typeaheadResults = MutableStateFlow<List<SearchResult>>(emptyList())
+    val typeaheadResults: StateFlow<List<SearchResult>> = _typeaheadResults.asStateFlow()
+
     // The search pipeline's own state. Declared here, above [init], because
     // that is where the collector is started from and a property declared
     // below it would still be null when it runs. See [startSearchPipeline].
@@ -264,6 +274,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val key = videoId to sources
         if (lyricsFor == key) return
+        // The duration lands a beat after the track, and a database match needs
+        // it. Turned away here rather than inside the job below: claiming the
+        // lookup first and giving it up asynchronously means the very re-trigger
+        // that carries the duration can arrive while the claim still stands, be
+        // dropped as a duplicate, and leave the track marked as being looked up
+        // by nobody — which is what left a paused track loading for ever, since
+        // pausing is when the duration is most likely to arrive a frame late.
+        if (localUri == null && durationMs <= 0L) return
         lyricsFor = key
         _lyrics.value = null
         _lyricsSource.value = null
@@ -582,6 +600,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private var songMenuJob: Job? = null
 
+    /** In-flight liked-library continuation sync — see [syncLikedMusic]. */
+    private var likedSyncJob: Job? = null
+
     /**
      * Loads the account state behind an opening track menu — the library
      * tokens, and any rating the response happens to state.
@@ -604,12 +625,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         songMenuJob = viewModelScope.launch {
             val menu = YtMusicRepository.songMenu(videoId).getOrNull() ?: return@launch
             _songMenu.value = menu
-            val stated = menu.likeStatus
-            if (stated != null && stated != LikeStatus.INDIFFERENT &&
-                videoId !in LikeState.overrides.value
-            ) {
-                LikeState.set(videoId, stated)
-            }
+            LikeState.rememberStated(videoId, menu.likeStatus)
         }
     }
 
@@ -1025,6 +1041,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         startSearchPipeline()
         startSuggestPipeline()
+        startTypeaheadMediaPipeline()
         loadHome()
         loadExplore()
         if (_signedIn.value) {
@@ -1345,12 +1362,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun fetchLibrary(identity: String?) {
         val next = YtMusicRepository.library().fold(
             onSuccess = { page ->
+                // Liked Music is published with just its first page on the tab;
+                // the rest of the collection is synced into LikeState here, in
+                // this ViewModel's scope, so it is cancelled with the screen and
+                // a liked track past the first page still reads as liked.
+                page.likedContinuation?.let { token -> syncLikedMusic(identity, token) }
                 if (page.isEmpty) UiState.Error(text(R.string.library_empty))
-                else UiState.Success(page)
+                else UiState.Success(page.copy(likedContinuation = null))
             },
             onFailure = { UiState.Error(it.friendly()) },
         )
         if (identity == listenerKey()) _library.value = next
+    }
+
+    /**
+     * Follows Liked Music's continuation chain to exhaustion, seeding each
+     * page's ids into [LikeState] so every liked track reads as liked.
+     *
+     * Scoped to [viewModelScope] — a re-fetch of the library cancels and
+     * replaces it, and it dies with the screen. It only ever seeds ids, never
+     * retaining the full songs for pages already behind the tab.
+     *
+     * [identity] is the listener this token belongs to, checked before every
+     * page: [LikeState] is a single shared map, not scoped per account, so a
+     * sync still in flight when the listener switches must stop rather than
+     * go on seeding the old account's likes into the new one's session.
+     */
+    private fun syncLikedMusic(identity: String?, token: String) {
+        likedSyncJob?.cancel()
+        likedSyncJob = viewModelScope.launch {
+            YtMusicRepository.syncLikedMusic(token) { next ->
+                if (identity != listenerKey()) null else YtMusicRepository.moreSongs(next).getOrNull()
+            }
+        }
     }
 
     /**
@@ -1397,6 +1441,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _searchLoadingMore.value = false
             _results.value = null
             _suggestions.value = emptyList()
+            _typeaheadResults.value = emptyList()
             return
         }
         // The previous keystroke's completions are left up beneath the new
@@ -1433,6 +1478,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun submitSearch() {
         recordSearch()
         _suggestions.value = emptyList()
+        _typeaheadResults.value = emptyList()
         runSearch()
     }
 
@@ -1445,6 +1491,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun searchFor(term: String) {
         _query.value = term
         _suggestions.value = emptyList()
+        _typeaheadResults.value = emptyList()
         SearchHistory.record(term)
         runSearch()
     }
@@ -1625,6 +1672,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
     }
 
+    /**
+     * Parallel pipeline that fetches live media results (tracks, artists,
+     * albums) for the current query text. Runs alongside [startSuggestPipeline]
+     * with its own debounce so a fast typist doesn't saturate the network.
+     */
+    @OptIn(FlowPreview::class)
+    private fun startTypeaheadMediaPipeline() = viewModelScope.launch {
+        suggestRequests
+            .debounce(TYPEAHEAD_MEDIA_DEBOUNCE_MS)
+            .collectLatest { input ->
+                if (input.isBlank()) {
+                    _typeaheadResults.value = emptyList()
+                    return@collectLatest
+                }
+                // Only show media results while suggestions are still visible —
+                // i.e., the user is still typing, not reading search results.
+                if (_suggestions.value.isEmpty()) {
+                    _typeaheadResults.value = emptyList()
+                    return@collectLatest
+                }
+                val result = YtMusicRepository.searchTypeahead(input).getOrNull()
+                // If the field moved on, drop the result silently.
+                if (_query.value != input) {
+                    _typeaheadResults.value = emptyList()
+                    return@collectLatest
+                }
+                // Cap results so the dropdown doesn't grow unbounded.
+                _typeaheadResults.value = result?.rows.orEmpty().take(TYPEAHEAD_MAX_RESULTS)
+            }
+    }
+
     /** Caches and publishes the initial result page without waiting for later pages. */
     private fun published(
         page: YtMusicRepository.SearchPage,
@@ -1755,6 +1833,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * list is up by the time the thumb has left the key.
          */
         const val SUGGEST_DEBOUNCE_MS = 180L
+
+        /**
+         * Debounce for the parallel media-search pipeline. Slightly longer than
+         * text suggestions so it doesn't fire on every single keystroke — a
+         * full search is heavier than a suggestion request, and the UI only
+         * needs a few results to fill the dropdown.
+         */
+        const val TYPEAHEAD_MEDIA_DEBOUNCE_MS = 350L
+
+        /**
+         * Maximum number of live media results shown in the typeahead dropdown.
+         * Enough to give variety without making the list unscrollable.
+         */
+        const val TYPEAHEAD_MAX_RESULTS = 8
 
         const val SEARCH_CACHE_ENTRIES = 100
 
@@ -2002,17 +2094,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * A playlist of a few hundred tracks is several round trips, and taking
      * them before showing anything meant a spinner for all of them. Growing
      * the list underneath the reader is also what makes it safe to keep
-     * following continuations [YtMusicRepository.MAX_PAGES] deep — nobody is
-     * waiting on the last one.
+     * following continuations however deep the playlist runs — nobody is
+     * waiting on the last one — so a playlist past YouTube's ~1000-track,
+     * ten-page shelf still loads to the end instead of stopping there.
      *
      * Stops the moment the page leaves the stack: there is no one to append
-     * for.
+     * for. A page that adds nothing new (below) is the other exit, for a feed
+     * that loops back on itself instead of running dry.
      */
     private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
         viewModelScope.launch {
             var next: String? = token
-            var page = 1
-            while (next != null && page++ < YtMusicRepository.MAX_PAGES) {
+            while (next != null) {
                 val fetched = YtMusicRepository.moreSongs(next).getOrNull() ?: return@launch
                 val stack = _detailStack.value
                 val index = stack.indexOfFirst { it.browseId == browseId }
@@ -2329,6 +2422,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun clearListenerState(restoreCached: Boolean = false) {
         _account.value = null
+        likedSyncJob?.cancel()
         LikeState.clear()
         _playlistsLoading.value = false
         _playlists.value = emptyList()
@@ -2392,6 +2486,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _library.value = UiState.Loading
         // Ratings and playlists belong to the account that just left; keeping
         // them would show the next signed-in user someone else's hearts.
+        likedSyncJob?.cancel()
         LikeState.clear()
         _playlists.value = emptyList()
         _playlistOwned.value = emptyMap()

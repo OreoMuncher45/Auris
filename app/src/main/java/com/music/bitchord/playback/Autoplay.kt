@@ -12,6 +12,26 @@ import kotlinx.coroutines.CancellationException
 const val MAX_QUEUED_AUTOPLAY = 10
 
 /**
+ * Whether AutoPlay should forget its last seed and try the current track again.
+ *
+ * A completed load normally leaves its seed behind to de-duplicate the several
+ * player callbacks caused by one queue edit. If that edit leaves the current
+ * track with nothing after it, however, the seed is no longer useful: keeping
+ * it would make an enabled AutoPlay queue stay empty forever.
+ */
+fun autoplayQueueNeedsRefresh(
+    enabled: Boolean,
+    repeatAll: Boolean,
+    currentIndex: Int,
+    itemCount: Int,
+    loadInProgress: Boolean,
+): Boolean = enabled &&
+    !repeatAll &&
+    !loadInProgress &&
+    currentIndex >= 0 &&
+    currentIndex == itemCount - 1
+
+/**
  * Finds the YouTube id that should seed AutoPlay for a song. Module tracks do not
  * carry YouTube ids, so they are matched on YouTube before the radio request.
  */
@@ -43,6 +63,12 @@ suspend fun loadAutoplayTracks(
     if (extra.isEmpty()) return Result.success(emptyList())
 
     return Result.success(extra.map {
-        it.copy(fromAutoplay = true, radioName = seedSong.radioName)
+        it.copy(
+            fromAutoplay = true,
+            radioName = seedSong.radioName,
+            playbackSource = seedSong.playbackSource,
+            playbackSourceType = seedSong.playbackSourceType,
+            playbackSourceId = seedSong.playbackSourceId,
+        )
     })
 }

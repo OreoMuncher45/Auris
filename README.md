@@ -17,7 +17,7 @@
 
 <br/>
 
-[**Download**](#download) · [**Features**](#features) · [**Support**](#support) · [**Disclaimer**](#disclaimer)
+[**Download**](#download) · [**Features**](#features) · [**Contributing**](#contributing) · [**Support**](#support) · [**Disclaimer**](#disclaimer)
 
 <br/>
 
@@ -26,7 +26,7 @@
 
 </div>
 
-> [!WARNING]
+> [!IMPORTANT]
 > BitChord is not affiliated with, endorsed by, or connected to YouTube or Google in any way. Use it at your own discretion.
 
 ---
@@ -49,6 +49,7 @@
 - **Offline downloads** — save tracks with embedded metadata.
 - **Local music library** integration.
 - **Background playback** via a proper foreground media session.
+- **Apple-like lyrics animation** — credit to [binimum](https://github.com/binimum/am-lyrics).
 
 #### Experience
 - **Animated album canvas** — motion artwork on the now-playing screen.
@@ -92,12 +93,26 @@ Grab the latest signed APK from the [Releases](https://github.com/kushagrasinghx
 
 <div align="center">
 
+<h1><a id="contributing"></a>Contributing</h1>
+
+We welcome contributions to BitChord! When submitting a Pull Request, please ensure you make your PR against the **`latest`** branch, not the `main` branch.
+
+</div>
+
+---
+
+<div align="center">
+
 <h1><a id="support"></a>Support</h1>
 
 BitChord is free and always will be — if it's earned a spot in your rotation, you can chip in here:
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/kushagrasinghx)
 [![PayPal](https://img.shields.io/badge/PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/kuxhagrasingh)
+
+<br/>
+<br/>
+<img src="upi_support.jpg" alt="UPI Support" width="250" />
 
 </div>
 

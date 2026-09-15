@@ -89,6 +89,18 @@ data class SourceStream(
      * against the runtime being played.
      */
     val durationSec: Int? = null,
+    /**
+     * Which [MusicSource.configId] this came from, when the caller knows.
+     *
+     * Set by [SourceResolver] once a source has actually answered — never by a
+     * source itself, since it has no reason to know its own id. Kept so a
+     * second look during playback (see
+     * [QualityUpgrade][com.music.bitchord.playback.QualityUpgrade]) can leave
+     * the source already serving the track out of the search: asking it again
+     * for the same recording at the same tier is deterministic and only ever
+     * reproduces the stream already playing.
+     */
+    val sourceConfigId: String? = null,
 )
 
 /**

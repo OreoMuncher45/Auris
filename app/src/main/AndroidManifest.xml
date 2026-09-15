@@ -17,6 +17,15 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!--
+      Asked for only when the output picker is first opened, and only on API 31+
+      where it exists. Without it a paired headset is listed by the audio
+      framework under a generic name rather than its own, which turns a list of
+      places to send the music into a list of things called "Bluetooth".
+      Everything else in the app works without it.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!--
       In-app updates: handing a downloaded APK to the system installer. The
       per-app "install unknown apps" switch is still the user's to flip; this
       only lets the request reach the installer.
@@ -41,6 +50,7 @@
     <application
         android:name=".BitChordApplication"
         android:allowBackup="true"
+        android:appCategory="audio"
         android:usesCleartextTraffic="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -77,15 +87,32 @@
             android:resource="@xml/automotive_app_desc" />
 
         <!--
-          Portrait only. Every screen is laid out for a tall single column —
-          the player's artwork square, the frosted bars, the floating tab bar —
-          and none of it has a landscape design to fall back on.
+          No android:screenOrientation here, and that is deliberate rather than
+          an omission: this attribute takes a constant, so setting it would
+          lock every device and leaving it off would free every device, and
+          neither is what this app wants. Tablets rotate, phones do not — a
+          question only a resource can answer, so MainActivity.onCreate asks
+          R.bool.allow_rotation and sets requestedOrientation from it.
+
+          [android:configChanges] is the other half of that: without it, a
+          rotation the system now allows is still a full Activity restart,
+          which throws away every bit of in-memory Compose state along with
+          it — the sheet showing Now Playing, whether the lyrics or queue
+          panel was open, mid-scrub position, all of it — before any of this
+          screen's own responsive layout logic ever gets a chance to run.
+          Declaring these configurations here is what turns a rotation back
+          into an ordinary recomposition: the same Activity keeps running,
+          the same state survives, and the width- and height-aware branches
+          in NowPlayingScreen.kt decide the new layout.
+
+          uiMode is deliberately *not* in the list: a day/night change should
+          still recreate the Activity so the theme is rebuilt from resources.
         -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
             android:theme="@style/Theme.BitChord">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -170,6 +197,19 @@
                 <data android:scheme="http" />
                 <data android:scheme="https" />
                 <data android:host="youtu.be" />
+            </intent-filter>
+
+            <!-- Public Listen Together invites. autoVerify makes a tap open
+                 BitChord directly once the domain publishes its assetlinks
+                 association for the production signing certificate. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="bitchord.kushagrasingh.in"
+                    android:pathPattern="/invite/......" />
             </intent-filter>
 
             <!--

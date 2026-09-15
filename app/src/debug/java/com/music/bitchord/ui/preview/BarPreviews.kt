@@ -164,6 +164,7 @@ private fun ChromeStack(scrolled: Boolean, withMiniPlayer: Boolean) {
                     hazeState = hazeState,
                     onPlayPause = {},
                     onNext = {},
+                    onPrevious = {},
                     onExpand = {},
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -229,7 +230,7 @@ private fun MiniPlayerPreview() {
                 isPlaying = true,
                 isLoading = false,
                 hazeState = haze,
-                onPlayPause = {}, onNext = {}, onExpand = {},
+                onPlayPause = {}, onNext = {}, onPrevious = {}, onExpand = {},
                 modifier = Modifier.fillMaxWidth(),
             )
             MiniPlayer(
@@ -237,7 +238,7 @@ private fun MiniPlayerPreview() {
                 isPlaying = false,
                 isLoading = false,
                 hazeState = haze,
-                onPlayPause = {}, onNext = {}, onExpand = {},
+                onPlayPause = {}, onNext = {}, onPrevious = {}, onExpand = {},
                 modifier = Modifier.fillMaxWidth(),
             )
             MiniPlayer(
@@ -245,7 +246,7 @@ private fun MiniPlayerPreview() {
                 isPlaying = false,
                 isLoading = true,
                 hazeState = haze,
-                onPlayPause = {}, onNext = {}, onExpand = {},
+                onPlayPause = {}, onNext = {}, onPrevious = {}, onExpand = {},
                 modifier = Modifier.fillMaxWidth(),
             )
         }

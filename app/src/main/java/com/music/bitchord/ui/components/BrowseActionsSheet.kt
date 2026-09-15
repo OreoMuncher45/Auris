@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -136,6 +137,13 @@ fun BrowseActionsSheet(
     onOpen: (() -> Unit)? = null,
     onDownloadAll: (() -> Unit)? = null,
     /**
+     * Shares the release's own YouTube Music link — the album/playlist
+     * counterpart to a track's own Share row in [SongActionsSheet]. Null for
+     * anything with no such link to share: an artist card, or a page built
+     * from something other than a real browse id (a Local Music grouping).
+     */
+    onShare: (() -> Unit)? = null,
+    /**
      * Set whenever [target] is a playlist, regardless of who owns it — pinning
      * doesn't touch the account, only what sits at the top of this device's
      * Library tab. Null everywhere else (albums, artists), where "pin" has
@@ -232,6 +240,9 @@ fun BrowseActionsSheet(
                 target.type.localizedOpenLabel(),
                 onClick = it,
             )
+        }
+        onShare?.let {
+            ActionRow(Icons.Rounded.Share, stringResource(R.string.share), onClick = it)
         }
         onTogglePin?.let {
             ActionRow(

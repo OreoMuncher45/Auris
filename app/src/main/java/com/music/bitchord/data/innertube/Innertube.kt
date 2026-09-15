@@ -41,7 +41,9 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.Base64
 import java.util.Locale
+import androidx.appcompat.app.AppCompatDelegate
 
 /**
  * Minimal Innertube (youtubei) client.
@@ -60,6 +62,27 @@ import java.util.Locale
  * from the stored cookie; no long-lived token is ever minted or stored.
  */
 object Innertube {
+    private val currentLanguage: String
+        get() {
+            val raw = AppCompatDelegate.getApplicationLocales().get(0)?.language?.ifEmpty { null }
+                ?: Locale.getDefault().language.ifEmpty { "en" }
+            return when (raw.lowercase(Locale.ROOT)) {
+                "iw" -> "he"
+                "in" -> "id"
+                "ji" -> "yi"
+                else -> raw
+            }
+        }
+
+    private val acceptLanguageHeader: String
+        get() {
+            val lang = currentLanguage
+            return if (lang == "en") {
+                "en-US,en;q=0.9"
+            } else {
+                "$lang,en-US;q=0.8,en;q=0.7"
+            }
+        }
 
     private const val MUSIC_BASE = "https://music.youtube.com/youtubei/v1"
     private const val YT_BASE = "https://www.youtube.com/youtubei/v1"
@@ -391,7 +414,7 @@ object Innertube {
     private suspend fun fetchSessionScope(session: String): SessionScope? {
         val html = client.get("$MUSIC_ORIGIN/") {
             header("User-Agent", WEB_USER_AGENT)
-            header("Accept-Language", "en-US,en;q=0.9")
+            header("Accept-Language", acceptLanguageHeader)
             header("Cookie", session)
             sapisidFrom(session)?.let { header("Authorization", sapisidHash(it)) }
         }.bodyAsText()
@@ -562,7 +585,7 @@ object Innertube {
         val text = withRetry {
             client.get("$YOUTUBE_ORIGIN/getAccountSwitcherEndpoint") {
                 header("User-Agent", WEB_USER_AGENT)
-                header("Accept-Language", "en-US,en;q=0.9")
+                header("Accept-Language", acceptLanguageHeader)
                 header("X-Origin", YOUTUBE_ORIGIN)
                 header("Referer", "$YOUTUBE_ORIGIN/")
                 cookie?.let { c ->
@@ -586,6 +609,13 @@ object Innertube {
         put("videoId", videoId)
         put("playlistId", "RDAMVM$videoId")
         put("isAudioOnly", true)
+    }
+
+    /** Timed caption transcript used as a last-resort lyrics source. */
+    suspend fun transcript(videoId: String): JsonObject = postMusic("get_transcript") {
+        // get_transcript expects a tiny protobuf: field 1, length, video id.
+        val bytes = byteArrayOf(10, videoId.toByteArray().size.toByte()) + videoId.toByteArray()
+        put("params", Base64.getEncoder().encodeToString(bytes))
     }
 
     suspend fun search(query: String, params: String? = null): JsonObject =
@@ -614,6 +644,22 @@ object Innertube {
     suspend fun searchSuggestions(input: String): JsonObject =
         postMusic("music/get_search_suggestions") {
             put("input", input)
+        }
+
+    /**
+     * Live media results for the typeahead phase — same shape as [search] but
+     * deliberately unauthenticated so YouTube Music does not log each debounced
+     * keystroke to the account's server-side search history.
+     *
+     * The regular [search] endpoint records every call against the signed-in
+     * account, which turns a slow typist's intermediate queries ("P", "Pe",
+     * "Perf…") into polluting history entries.  By omitting the session cookie
+     * here we still get full search results (tracks, artists, albums) but they
+     * land as anonymous lookups that don't touch the user's account history.
+     */
+    suspend fun searchTypeahead(query: String): JsonObject =
+        postMusicAnonymous("search") {
+            put("query", query)
         }
 
     /**
@@ -1154,6 +1200,8 @@ object Innertube {
             client.post("$MUSIC_BASE/$endpoint") {
                 contentType(ContentType.Application.Json)
                 parameter("prettyPrint", "false")
+                parameter("hl", currentLanguage)
+                header("Accept-Language", acceptLanguageHeader)
                 query.forEach { (key, value) -> parameter(key, value) }
                 header("X-Origin", MUSIC_ORIGIN)
                 header("Origin", MUSIC_ORIGIN)
@@ -1179,7 +1227,7 @@ object Innertube {
                             putJsonObject("client") {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", clientVersion)
-                                put("hl", "en")
+                                put("hl", currentLanguage)
                                 put("gl", "US")
                                 visitorData?.let { put("visitorData", it) }
                             }
@@ -1205,6 +1253,52 @@ object Innertube {
                 ?.get("visitorData")?.jsonPrimitive?.content
         }
         return response
+    }
+
+    /**
+     * Like [postMusic] but deliberately strips the session cookie so YouTube
+     * Music does not record the call against any account.
+     *
+     * Used for typeahead lookups where intermediate keystrokes must remain
+     * anonymous — see [searchTypeahead].
+     */
+    private suspend fun postMusicAnonymous(
+        endpoint: String,
+        bodyExtras: JsonObjectBuilder.() -> Unit,
+    ): JsonObject {
+        val clientVersion = webRemixVersion
+        return withRetry {
+            client.post("$MUSIC_BASE/$endpoint") {
+                contentType(ContentType.Application.Json)
+                parameter("prettyPrint", "false")
+                header("X-Origin", MUSIC_ORIGIN)
+                header("Origin", MUSIC_ORIGIN)
+                header("Referer", "$MUSIC_ORIGIN/")
+                header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_ID)
+                header("X-YouTube-Client-Version", clientVersion)
+                visitorData?.let { header("X-Goog-Visitor-Id", it) }
+                // No Cookie / Authorization headers — anonymous request.
+                setBody(
+                    buildJsonObject {
+                        putJsonObject("context") {
+                            putJsonObject("client") {
+                                put("clientName", "WEB_REMIX")
+                                put("clientVersion", clientVersion)
+                                put("hl", "en")
+                                put("gl", "US")
+                                visitorData?.let { put("visitorData", it) }
+                            }
+                            putJsonObject("user") {
+                                put("lockedSafetyMode", false)
+                                // No onBehalfOfUser — no account context.
+                            }
+                            putJsonObject("request") { put("useSsl", true) }
+                        }
+                        bodyExtras()
+                    },
+                )
+            }.body<JsonObject>()
+        }
     }
 
     /**
@@ -1274,7 +1368,7 @@ object Innertube {
                             playerClient.deviceMake?.let { put("deviceMake", it) }
                             playerClient.deviceModel?.let { put("deviceModel", it) }
                             playerClient.androidSdkVersion?.let { put("androidSdkVersion", it.toInt()) }
-                            put("hl", "en")
+                            put("hl", currentLanguage)
                             put("gl", "US")
                             visitorData?.let { put("visitorData", it) }
                         }

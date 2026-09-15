@@ -23,12 +23,14 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,15 +50,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MoreVert
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.R
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
+import java.util.Locale
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -68,15 +75,20 @@ import com.music.bitchord.ui.components.feedSkeleton
 import com.music.bitchord.ui.components.recentlyPlayedSkeleton
 import com.music.bitchord.ui.components.heroCardWidth
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
+
+private const val RECENTS_TITLE = "Recents"
+private const val RECENT_TRACKS_PER_COLUMN = 4
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     state: UiState<List<HomeShelf>>,
     listState: LazyListState,
-    onItemClick: (ShelfItem) -> Unit,
+    /** The tapped item and the recommendation shelf it came from. */
+    onItemClick: (ShelfItem, String) -> Unit,
     onRetry: () -> Unit,
     refreshing: Boolean,
     onRefresh: () -> Unit,
@@ -98,6 +110,8 @@ fun HomeScreen(
     loadingMore: Boolean = false,
     recentlyPlayedLoading: Boolean = false,
 ) {
+    val recentsViewType by AppSettings.homeRecentsViewType.collectAsStateWithLifecycle()
+
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -123,12 +137,24 @@ fun HomeScreen(
                 }
             }
             when (state) {
-                is UiState.Loading -> feedSkeleton()
+                is UiState.Loading -> {
+                    if (recentlyPlayedLoading) {
+                        recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
+                        // Recents owns the leading layout while its request is
+                        // pending, so the feed behind it starts with ordinary
+                        // shelf placeholders rather than another hero card.
+                        feedSkeleton(firstIsHero = false)
+                    } else {
+                        feedSkeleton()
+                    }
+                }
                 is UiState.Error -> item {
                     MessageState(state.message, actionLabel = stringResource(R.string.retry), onAction = onRetry)
                 }
                 is UiState.Success -> {
-                    if (recentlyPlayedLoading) recentlyPlayedSkeleton()
+                    if (recentlyPlayedLoading) {
+                        recentlyPlayedSkeleton(listLayout = recentsViewType == LibraryViewType.LIST)
+                    }
                     // The loading skeleton already owns the hero slot. Until
                     // Recently Played lands, every real shelf must retain its
                     // compact-card layout instead of briefly becoming a hero.
@@ -137,6 +163,16 @@ fun HomeScreen(
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
                         firstIsHero = !recentlyPlayedLoading,
+                        recentsViewType = recentsViewType,
+                        onRecentsViewTypeToggle = {
+                            AppSettings.setHomeRecentsViewType(
+                                if (recentsViewType == LibraryViewType.LIST) {
+                                    LibraryViewType.GRID
+                                } else {
+                                    LibraryViewType.LIST
+                                },
+                            )
+                        },
                     )
                     if (loadingMore) feedMoreSkeleton()
                 }
@@ -165,35 +201,101 @@ fun HomeScreen(
 }
 
 /**
- * The lead shelf gets Apple's full-bleed treatment — near-page-width cards that
- * page sideways — and the rest fall back to the compact grid of square cards.
+ * Recents mirrors the artist page's top-tracks pager. Any other lead shelf keeps
+ * Apple's full-bleed treatment, while the remaining shelves use square cards.
  */
 private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
-    onItemClick: (ShelfItem) -> Unit,
+    onItemClick: (ShelfItem, String) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
     firstIsHero: Boolean = true,
+    recentsViewType: LibraryViewType,
+    onRecentsViewTypeToggle: () -> Unit,
 ) {
     shelves.forEachIndexed { index, shelf ->
         item(key = shelf.title + index) {
-            if (index == 0 && firstIsHero) {
-                HeroShelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
+            val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
+            if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
+                RecentShelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                    viewType = recentsViewType,
+                    onViewTypeToggle = onRecentsViewTypeToggle,
+                )
+            } else if (index == 0 && firstIsHero) {
+                HeroShelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
             } else {
-                Shelf(shelf = shelf, onItemClick = onItemClick, onItemLongPress = onItemLongPress)
+                Shelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
             }
         }
     }
 }
 
-/**
- * Shared by the home feed, Explore and Library so headings line up across tabs.
- *
- * [onShowAll] is only ever set on Library, whose rows stop at five cards
- * rather than running the shelf's whole length — see [LibraryGridShelf].
- * Home and Explore never pass it, so their heading is unchanged.
- */
+/** The same four-rows-per-page treatment used by an artist's Top songs. */
 @Composable
-internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
+private fun RecentShelf(
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+    viewType: LibraryViewType,
+    onViewTypeToggle: () -> Unit,
+) {
+    Column(Modifier.padding(bottom = 26.dp)) {
+        RecentSectionHeader(
+            title = shelf.title,
+            subtitle = shelf.subtitle,
+            viewType = viewType,
+            onViewTypeToggle = onViewTypeToggle,
+        )
+        if (viewType == LibraryViewType.LIST) {
+            BoxWithConstraints {
+                val columnWidth = trackColumnWidth(maxWidth)
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(shelf.items.chunked(RECENT_TRACKS_PER_COLUMN)) { column ->
+                        Column(Modifier.width(columnWidth)) {
+                            column.forEach { item ->
+                                RecentTrackRow(
+                                    item = item,
+                                    onClick = { onItemClick(item) },
+                                    onLongPress = onItemLongPress?.let { { it(item) } },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            BoxWithConstraints {
+                val cardWidth = heroCardWidth(maxWidth)
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    items(shelf.items) { item ->
+                        HeroCard(
+                            item = item,
+                            onClick = { onItemClick(item) },
+                            onLongPress = onItemLongPress?.let { { it(item) } },
+                            modifier = Modifier.width(cardWidth),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentSectionHeader(
+    title: String,
+    subtitle: String,
+    viewType: LibraryViewType,
+    onViewTypeToggle: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)
@@ -218,6 +320,129 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
                 )
             }
         }
+        Spacer(Modifier.width(8.dp))
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onViewTypeToggle),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (viewType == LibraryViewType.LIST) {
+                    BitChordIcons.GridView
+                } else {
+                    BitChordIcons.ListView
+                },
+                contentDescription = stringResource(
+                    if (viewType == LibraryViewType.LIST) {
+                        R.string.switch_to_grid_view
+                    } else {
+                        R.string.switch_to_list_view
+                    },
+                ),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecentTrackRow(
+    item: ShelfItem,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .thumbnailBorder(RoundedCornerShape(7.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (onLongPress != null) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onLongPress),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.MoreVert,
+                    contentDescription = stringResource(R.string.more),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Shared by the home feed, Explore and Library so headings line up across tabs.
+ *
+ * [onShowAll] is only ever set on Library, whose rows stop at five cards
+ * rather than running the shelf's whole length — see [LibraryGridShelf].
+ * Home and Explore never pass it, so their heading is unchanged.
+ */
+@Composable
+internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
+    val displayTitle = localizeShelfTitle(title)
+    val displaySubtitle = localizeShelfSubtitle(subtitle)
+    Row(
+        modifier = Modifier
+            .padding(horizontal = PAGE_GUTTER, vertical = 10.dp)
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = displayTitle,
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (displaySubtitle.isNotBlank()) {
+                Text(
+                    text = displaySubtitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         if (onShowAll != null) {
             Text(
                 text = stringResource(R.string.show_all),
@@ -229,6 +454,175 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
             )
         }
     }
+}
+@Composable
+internal fun localizeShelfTitle(title: String): String {
+    val trimmed = title.trim()
+    return when {
+        trimmed.equals("Recents", ignoreCase = true) ||
+            trimmed.equals("Recently played", ignoreCase = true) ||
+            trimmed.equals("Gần đây", ignoreCase = true) ||
+            trimmed.equals("最近", ignoreCase = true) ->
+            stringResource(R.string.shelf_recents)
+        trimmed.equals("Playlists", ignoreCase = true) ||
+            trimmed.equals("Danh sách phát", ignoreCase = true) ||
+            trimmed.equals("再生リスト", ignoreCase = true) ->
+            stringResource(R.string.playlists)
+        trimmed.equals("Albums", ignoreCase = true) ||
+            trimmed.equals("Album", ignoreCase = true) ||
+            trimmed.equals("アルバム", ignoreCase = true) ->
+            stringResource(R.string.albums)
+        trimmed.equals("Artists", ignoreCase = true) ||
+            trimmed.equals("Nghệ sĩ", ignoreCase = true) ||
+            trimmed.equals("アーティスト", ignoreCase = true) ->
+            stringResource(R.string.artists)
+        trimmed.equals("Subscriptions", ignoreCase = true) ||
+            trimmed.equals("Đã đăng ký", ignoreCase = true) ||
+            trimmed.equals("登録チャンネル", ignoreCase = true) ->
+            stringResource(R.string.subscriptions)
+        trimmed.equals("Trending community playlists", ignoreCase = true) ||
+            trimmed.equals("Danh sách phát cộng đồng thịnh hành", ignoreCase = true) ||
+            trimmed.equals("Danh sách phát thịnh hành trong cộng đồng người dùng", ignoreCase = true) ||
+            trimmed.equals("急上昇のコミュニティ再生リスト", ignoreCase = true) ->
+            stringResource(R.string.shelf_trending_community_playlists)
+        trimmed.equals("Featured playlists for you", ignoreCase = true) ||
+            trimmed.equals("Danh sách phát đề xuất cho bạn", ignoreCase = true) ||
+            trimmed.equals("Danh sách phát nổi bật dành cho bạn", ignoreCase = true) ||
+            trimmed.equals("おすすめの再生リスト", ignoreCase = true) ->
+            stringResource(R.string.shelf_featured_playlists_for_you)
+        trimmed.equals("Quick picks", ignoreCase = true) ||
+            trimmed.equals("Lựa chọn nhanh", ignoreCase = true) ||
+            trimmed.equals("Chọn nhanh đài phát", ignoreCase = true) ||
+            trimmed.equals("クイック ミックス", ignoreCase = true) ->
+            stringResource(R.string.shelf_quick_picks)
+        trimmed.equals("Listen again", ignoreCase = true) ||
+            trimmed.equals("Nghe lại", ignoreCase = true) ||
+            trimmed.equals("もう一度聴く", ignoreCase = true) ->
+            stringResource(R.string.shelf_listen_again)
+        trimmed.equals("Mixed for you", ignoreCase = true) ||
+            trimmed.equals("Dành riêng cho bạn", ignoreCase = true) ||
+            trimmed.equals("ミックス", ignoreCase = true) ->
+            stringResource(R.string.shelf_mixed_for_you)
+        trimmed.startsWith("Similar to", ignoreCase = true) -> {
+            val rest = trimmed.substring(10).trim()
+            stringResource(R.string.shelf_similar_to, rest)
+        }
+        trimmed.startsWith("Tương tự như", ignoreCase = true) -> {
+            val rest = trimmed.substring(12).trim()
+            stringResource(R.string.shelf_similar_to, rest)
+        }
+        trimmed.equals("Forgotten favorites", ignoreCase = true) ||
+            trimmed.equals("Giai điệu quen thuộc", ignoreCase = true) ||
+            trimmed.equals("よく聴いたお気に入りの曲", ignoreCase = true) ->
+            stringResource(R.string.shelf_forgotten_favorites)
+        trimmed.equals("Recommended music videos", ignoreCase = true) ||
+            trimmed.equals("Video âm nhạc đề xuất", ignoreCase = true) ||
+            trimmed.equals("おすすめのミュージック ビデオ", ignoreCase = true) ->
+            stringResource(R.string.shelf_recommended_music_videos)
+        trimmed.equals("From your library", ignoreCase = true) ||
+            trimmed.equals("Từ thư viện của bạn", ignoreCase = true) ||
+            trimmed.equals("ライブラリから", ignoreCase = true) ->
+            stringResource(R.string.shelf_from_your_library)
+        trimmed.equals("Charts", ignoreCase = true) ||
+            trimmed.equals("Bảng xếp hạng", ignoreCase = true) ||
+            trimmed.equals("チャート", ignoreCase = true) ->
+            stringResource(R.string.shelf_charts)
+        trimmed.equals("New releases", ignoreCase = true) ||
+            trimmed.equals("Bản phát hành mới", ignoreCase = true) ||
+            trimmed.equals("最新リリース", ignoreCase = true) ->
+            stringResource(R.string.shelf_new_releases)
+        trimmed.equals("Top music videos", ignoreCase = true) ||
+            trimmed.equals("Video âm nhạc hàng đầu", ignoreCase = true) ||
+            trimmed.equals("人気のミュージック ビデオ", ignoreCase = true) ->
+            stringResource(R.string.shelf_top_music_videos)
+        trimmed.equals("For you", ignoreCase = true) ||
+            trimmed.equals("Dành cho bạn", ignoreCase = true) ||
+            trimmed.equals("あなたへのおすすめ", ignoreCase = true) ->
+            stringResource(R.string.shelf_for_you)
+        trimmed.equals("Hits today", ignoreCase = true) ||
+            trimmed.equals("Today's Hits", ignoreCase = true) ||
+            trimmed.equals("Bản hit hôm nay", ignoreCase = true) ||
+            trimmed.equals("今日のヒット曲", ignoreCase = true) ->
+            stringResource(R.string.shelf_hits_today)
+        trimmed.equals("Artists on the rise", ignoreCase = true) ||
+            trimmed.equals("Nghệ sĩ đang lên", ignoreCase = true) ->
+            stringResource(R.string.shelf_artists_on_the_rise)
+        trimmed.equals("Concerts", ignoreCase = true) ||
+            trimmed.equals("Buổi hòa nhạc", ignoreCase = true) ||
+            trimmed.equals("コンサート", ignoreCase = true) ->
+            stringResource(R.string.shelf_concerts)
+        trimmed.startsWith("Shorts", ignoreCase = true) ||
+            trimmed.equals("Shorts nổi bật", ignoreCase = true) ||
+            trimmed.equals("ショート", ignoreCase = true) ->
+            stringResource(R.string.shelf_shorts)
+        trimmed.equals("Trending", ignoreCase = true) ||
+            trimmed.equals("Thịnh hành", ignoreCase = true) ||
+            trimmed.equals("急上昇", ignoreCase = true) ->
+            stringResource(R.string.shelf_trending)
+        else -> title
+    }
+}
+@Composable
+internal fun localizeShelfSubtitle(subtitle: String): String {
+    val trimmed = subtitle.trim()
+    return when {
+        trimmed.equals("TOP TUNES RIGHT NOW", ignoreCase = true) ||
+            trimmed.equals("Top tunes right now", ignoreCase = true) ||
+            trimmed.equals("Giai điệu hàng đầu hiện nay", ignoreCase = true) ||
+            trimmed.equals("注目の曲", ignoreCase = true) ->
+            stringResource(R.string.shelf_top_tunes_right_now)
+        trimmed.equals("From the community", ignoreCase = true) ||
+            trimmed.equals("Từ cộng đồng", ignoreCase = true) ||
+            trimmed.equals("コミュニティより", ignoreCase = true) ->
+            stringResource(R.string.shelf_from_the_community)
+        trimmed.equals("YouTube Charts", ignoreCase = true) ||
+            trimmed.equals("Bảng xếp hạng YouTube", ignoreCase = true) ||
+            trimmed.equals("YouTube チャート", ignoreCase = true) ->
+            stringResource(R.string.shelf_youtube_charts)
+        else -> subtitle
+    }
+}
+
+@Composable
+internal fun localizeCardSubtitle(subtitle: String): String {
+    if (subtitle.isBlank()) return subtitle
+    val delimiter = " • "
+    val parts = subtitle.split(delimiter)
+    val songLabel = stringResource(R.string.shelf_song_item)
+    val singleLabel = stringResource(R.string.shelf_single)
+    val chartLabel = stringResource(R.string.shelf_chart)
+    val playlistLabel = stringResource(R.string.playlist)
+    val localizedParts = parts.map { part ->
+        val trimmed = part.trim()
+        val lower = trimmed.lowercase(Locale.ROOT)
+        when {
+            trimmed.equals("Song", ignoreCase = true) || trimmed.equals("Titre", ignoreCase = true) ||
+                trimmed.equals("Bài hát", ignoreCase = true) || trimmed.equals("曲", ignoreCase = true) -> songLabel
+            trimmed.equals("Single", ignoreCase = true) || trimmed.equals("Đĩa đơn", ignoreCase = true) ||
+                trimmed.equals("シングル", ignoreCase = true) -> singleLabel
+            trimmed.equals("Chart", ignoreCase = true) || trimmed.equals("Bảng xếp hạng", ignoreCase = true) ||
+                trimmed.equals("チャート", ignoreCase = true) -> chartLabel
+            trimmed.equals("Playlist", ignoreCase = true) || trimmed.equals("Danh sách phát", ignoreCase = true) ||
+                trimmed.equals("再生リスト", ignoreCase = true) -> playlistLabel
+            lower.endsWith(" views") || lower.endsWith(" view") || lower.endsWith(" lượt xem") ||
+                lower.endsWith(" 回視聴") || lower.endsWith("回視聴") -> {
+                val count = trimmed.substringBeforeLast(' ', "").trim()
+                if (count.any { it.isDigit() }) stringResource(R.string.card_views_format, count) else part
+            }
+            lower.endsWith(" plays") || lower.endsWith(" play") || lower.endsWith(" lượt phát") ||
+                lower.endsWith(" 回再生") || lower.endsWith("回再生") -> {
+                val count = trimmed.substringBeforeLast(' ', "").trim()
+                if (count.any { it.isDigit() }) stringResource(R.string.card_plays_format, count) else part
+            }
+            lower.endsWith(" songs") || lower.endsWith(" song") || lower.endsWith(" bài hát") ||
+                lower.endsWith(" 曲") || lower.endsWith("曲") -> {
+                val count = trimmed.substringBeforeLast(' ', "").trim()
+                if (count.any { it.isDigit() }) stringResource(R.string.card_songs_format, count) else part
+            }
+            else -> part
+        }
+    }
+    return localizedParts.joinToString(delimiter)
 }
 
 @Composable
@@ -305,8 +699,9 @@ private fun HeroCard(
                 overflow = TextOverflow.Ellipsis,
             )
             if (item.subtitle.isNotBlank()) {
+                val displaySubtitle = localizeCardSubtitle(item.subtitle)
                 Text(
-                    text = item.subtitle,
+                    text = displaySubtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.72f),
                     maxLines = 2,
@@ -496,8 +891,9 @@ internal fun ShelfCard(
                 modifier = Modifier.weight(1f, fill = false),
             )
         }
+        val displaySubtitle = localizeCardSubtitle(item.subtitle)
         Text(
-            text = item.subtitle,
+            text = displaySubtitle,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
