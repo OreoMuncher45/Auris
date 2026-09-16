@@ -448,18 +448,27 @@ type Party struct {
 	Code         string
 	Members      map[string]*Member
 	Playback     *PlaybackState
+	MaxMembers   int
 	CreatedAtMs  int64
 	TouchedAtMs  int64
 	EmptySinceMs *int64
 }
 
 func NewParty(code string) *Party {
+	return NewPartyWithMaxMembers(code, config.MaxMembers)
+}
+
+func NewPartyWithMaxMembers(code string, maxMembers int) *Party {
+	if maxMembers < 2 || maxMembers > 10 {
+		maxMembers = 5
+	}
 	now := clock.NowMs()
 	empty := now
 	return &Party{
 		Code:         code,
 		Members:      make(map[string]*Member),
 		Playback:     NewPlaybackState(),
+		MaxMembers:   maxMembers,
 		CreatedAtMs:  now,
 		TouchedAtMs:  now,
 		EmptySinceMs: &empty,
@@ -497,8 +506,8 @@ func (p *Party) Join(userId, deviceId, displayName string, avatarUrl *string) (*
 		}
 	}
 
-	if len(p.Members) >= config.MaxMembers {
-		return nil, NewPartyError(409, "party_full", fmt.Sprintf("This party is full (%d devices).", config.MaxMembers))
+	if len(p.Members) >= p.MaxMembers {
+		return nil, NewPartyError(409, "party_full", fmt.Sprintf("This party is full (%d devices).", p.MaxMembers))
 	}
 
 	m := &Member{
@@ -520,6 +529,21 @@ func (p *Party) Join(userId, deviceId, displayName string, avatarUrl *string) (*
 	p.Members[m.MemberId] = m
 	p.Touch()
 	return m, nil
+}
+
+func (p *Party) SetMaxMembers(member *Member, maxMembers int) error {
+	if !member.IsHost {
+		return NewPartyError(403, "host_only", "Only the host can change the party size.")
+	}
+	if maxMembers < 2 || maxMembers > 10 {
+		return NewPartyError(422, "invalid_capacity", "Party size must be between 2 and 10.")
+	}
+	if maxMembers < len(p.Members) {
+		return NewPartyError(409, "party_too_small", "Party size cannot be smaller than the current member count.")
+	}
+	p.MaxMembers = maxMembers
+	p.Touch()
+	return nil
 }
 
 func (p *Party) Authenticate(token string) (*Member, error) {
@@ -647,7 +671,7 @@ func (p *Party) ToWire() map[string]interface{} {
 	return map[string]interface{}{
 		"code":        p.Code,
 		"createdAtMs": p.CreatedAtMs,
-		"maxMembers":  config.MaxMembers,
+		"maxMembers":  p.MaxMembers,
 		"members":     membersWire,
 		"playback":    p.Playback.ToWire(now),
 		"queue":       p.Playback.QueueToWire(),
@@ -680,6 +704,10 @@ func (s *PartyStore) Create() (*Party, error) {
 // CreateWithLimit atomically rejects creation once the service-wide room limit
 // is reached. A non-positive limit means unlimited (used by unit tests).
 func (s *PartyStore) CreateWithLimit(maxParties int) (*Party, error) {
+	return s.CreateWithLimits(maxParties, config.MaxMembers)
+}
+
+func (s *PartyStore) CreateWithLimits(maxParties, maxMembers int) (*Party, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if maxParties > 0 && len(s.parties) >= maxParties {
@@ -689,7 +717,7 @@ func (s *PartyStore) CreateWithLimit(maxParties int) (*Party, error) {
 	for i := 0; i < 12; i++ {
 		code := codes.NewCode()
 		if _, exists := s.parties[code]; !exists {
-			p := NewParty(code)
+		p := NewPartyWithMaxMembers(code, maxMembers)
 			s.parties[code] = p
 			return p, nil
 		}

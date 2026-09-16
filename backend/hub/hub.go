@@ -130,6 +130,15 @@ func (h *Hub) Send(code, memberId string, payload interface{}) {
 	}
 }
 
+func (h *Hub) CloseMember(code, memberId string) {
+	h.mu.RLock()
+	room := h.sockets[code]
+	var target *SafeConn
+	if room != nil { target = room[memberId] }
+	h.mu.RUnlock()
+	if target != nil { _ = target.Close() }
+}
+
 func (h *Hub) Broadcast(code string, payload interface{}, skipMemberId string) {
 	h.mu.RLock()
 	room := h.sockets[code]

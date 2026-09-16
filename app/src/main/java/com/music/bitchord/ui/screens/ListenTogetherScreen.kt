@@ -50,6 +50,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -80,6 +81,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyMember
+import com.music.bitchord.data.listentogether.PartyActivity
 import com.music.bitchord.ui.components.PillTextField
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -116,11 +118,14 @@ fun ListenTogetherScreen(
     val state by ListenTogether.state.collectAsStateWithLifecycle()
     val customServer by ListenTogether.customServerUrl.collectAsStateWithLifecycle()
     val serverStatus by ListenTogether.serverStatus.collectAsStateWithLifecycle()
+    val activity by ListenTogether.activity.collectAsStateWithLifecycle()
 
     var serverInput by remember(customServer) { mutableStateOf(customServer) }
     var codeInput by remember(inviteCode) { mutableStateOf(inviteCode.orEmpty()) }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
+    var nickname by remember { mutableStateOf(ListenTogether.nickname()) }
+    var maxMembers by remember { mutableIntStateOf(5) }
 
     // A membership outlives the process; the socket does not. Opening it when
     // the screen is looked at — rather than on every cold start — is what keeps
@@ -189,11 +194,15 @@ fun ListenTogetherScreen(
                         .take(ListenTogether.CODE_LENGTH)
                 },
                 busy = busy,
+                nickname = nickname,
+                onNicknameChange = { nickname = it.take(80); ListenTogether.setNickname(nickname) },
+                maxMembers = maxMembers,
+                onMaxMembersChange = { maxMembers = it.coerceIn(2, 10) },
                 onCreate = {
                     busy = true
                     failure = null
                     scope.launch {
-                        failure = ListenTogether.createParty().exceptionOrNull()?.message
+                        failure = ListenTogether.createParty(nickname, maxMembers).exceptionOrNull()?.message
                         busy = false
                     }
                 },
@@ -201,7 +210,7 @@ fun ListenTogetherScreen(
                     busy = true
                     failure = null
                     scope.launch {
-                        failure = ListenTogether.joinParty(codeInput).exceptionOrNull()?.message
+                        failure = ListenTogether.joinParty(codeInput, nickname).exceptionOrNull()?.message
                         if (failure == null) codeInput = ""
                         busy = false
                     }
@@ -226,6 +235,8 @@ fun ListenTogetherScreen(
                     )
                 },
                 onLeave = { scope.launch { ListenTogether.leaveParty() } },
+                onSetCapacity = ListenTogether::setMaxMembers,
+                onKick = ListenTogether::kick,
             )
         }
 
@@ -237,6 +248,8 @@ fun ListenTogetherScreen(
                 modifier = Modifier.padding(start = GROUP_INSET + 4.dp, end = GROUP_INSET + 4.dp, top = 12.dp),
             )
         }
+
+        PartyActivityList(activity)
 
         // Last, and empty by default. Nobody setting up a party needs to think
         // about an address — there is one built in — so this is where somebody
@@ -346,12 +359,42 @@ private fun NotInAParty(
     codeInput: String,
     onCodeInput: (String) -> Unit,
     busy: Boolean,
+    nickname: String,
+    onNicknameChange: (String) -> Unit,
+    maxMembers: Int,
+    onMaxMembersChange: (Int) -> Unit,
     onCreate: () -> Unit,
     onJoin: () -> Unit,
 ) {
     val ready = signedIn && hasServer && !busy
 
-    SettingsGroup(footer = stringResource(R.string.listen_together_create_footer)) {
+    SettingsGroup(header = stringResource(R.string.listen_together_profile)) {
+        Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
+            PillTextField(
+                value = nickname,
+                onValueChange = onNicknameChange,
+                placeholder = stringResource(R.string.listen_together_nickname_hint),
+                container = MaterialTheme.colorScheme.background,
+                enabled = ready,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            )
+        }
+    }
+
+    SettingsGroup(footer = stringResource(R.string.listen_together_create_footer, maxMembers)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = ROW_INSET, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.listen_together_party_size), style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.listen_together_party_size_subtitle), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TextButton(onClick = { onMaxMembersChange(maxMembers - 1) }, enabled = ready && maxMembers > 2) { Text("−") }
+            Text("$maxMembers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+            TextButton(onClick = { onMaxMembersChange(maxMembers + 1) }, enabled = ready && maxMembers < 10) { Text("+") }
+        }
+        RowDivider()
         SettingsRow(
             icon = Icons.Rounded.GroupAdd,
             title = stringResource(R.string.listen_together_create),
@@ -544,6 +587,8 @@ private fun InAParty(
     onCopy: () -> Unit,
     onShare: () -> Unit,
     onLeave: () -> Unit,
+    onSetCapacity: (Int) -> Unit,
+    onKick: (String) -> Unit,
 ) {
     SettingsGroup(
         header = stringResource(R.string.listen_together_code),
@@ -585,9 +630,24 @@ private fun InAParty(
         ),
         footer = stringResource(R.string.listen_together_members_footer, state.maxMembers),
     ) {
+        if (state.you?.isHost == true) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = ROW_INSET, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.listen_together_party_size), style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.listen_together_host_controls), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { onSetCapacity(state.maxMembers - 1) }, enabled = state.maxMembers > maxOf(2, state.members.size)) { Text("−") }
+                Text("${state.maxMembers}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                TextButton(onClick = { onSetCapacity(state.maxMembers + 1) }, enabled = state.maxMembers < 10) { Text("+") }
+            }
+            RowDivider()
+        }
         state.members.forEachIndexed { index, member ->
             if (index > 0) RowDivider()
-            MemberRow(member = member, isYou = member.memberId == state.you?.memberId)
+            MemberRow(member = member, isYou = member.memberId == state.you?.memberId, canKick = state.you?.isHost == true && !member.isHost, onKick = { onKick(member.memberId) })
         }
     }
 
@@ -666,7 +726,7 @@ private fun connectionLine(state: ListenTogether.State): String = when {
 }
 
 @Composable
-private fun MemberRow(member: PartyMember, isYou: Boolean) {
+private fun MemberRow(member: PartyMember, isYou: Boolean, canKick: Boolean = false, onKick: () -> Unit = {}) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -724,6 +784,36 @@ private fun MemberRow(member: PartyMember, isYou: Boolean) {
         if (member.isHost) {
             Spacer(Modifier.width(8.dp))
             Badge(stringResource(R.string.listen_together_host))
+        } else if (canKick) {
+            TextButton(onClick = onKick) { Text(stringResource(R.string.listen_together_remove)) }
+        }
+    }
+}
+
+@Composable
+private fun PartyActivityList(entries: List<PartyActivity>) {
+    if (entries.isEmpty()) return
+    SettingsGroup(
+        header = stringResource(R.string.listen_together_activity),
+        footer = stringResource(R.string.listen_together_activity_footer),
+    ) {
+        entries.forEachIndexed { index, entry ->
+            if (index > 0) RowDivider()
+            val action = when (entry.action) {
+                "play" -> stringResource(R.string.listen_together_activity_played)
+                "pause" -> stringResource(R.string.listen_together_activity_paused)
+                "seek" -> stringResource(R.string.listen_together_activity_seeked)
+                "next" -> stringResource(R.string.listen_together_activity_skipped)
+                "previous" -> stringResource(R.string.listen_together_activity_went_back)
+                "queueAdd" -> stringResource(R.string.listen_together_activity_added)
+                "queueRemove" -> stringResource(R.string.listen_together_activity_removed_track)
+                "queueClear" -> stringResource(R.string.listen_together_activity_cleared)
+                "queueMove" -> stringResource(R.string.listen_together_activity_reordered)
+                "kick" -> stringResource(R.string.listen_together_activity_removed_member)
+                "setMaxMembers" -> stringResource(R.string.listen_together_activity_changed_size)
+                else -> stringResource(R.string.listen_together_activity_updated)
+            }
+            SettingsRow(icon = Icons.Rounded.MusicNote, title = entry.by, subtitle = action)
         }
     }
 }

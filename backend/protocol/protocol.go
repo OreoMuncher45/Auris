@@ -14,6 +14,7 @@ const (
 	FramePong    = "pong"
 	FrameError   = "error"
 	FrameBye     = "bye"
+	FrameActivity = "activity"
 )
 
 // Client -> Server frame types
@@ -38,6 +39,8 @@ const (
 	ActionQueueMove   = "queueMove"
 	ActionNext        = "next"
 	ActionPrevious    = "previous"
+	ActionKick        = "kick"
+	ActionSetMaxMembers = "setMaxMembers"
 )
 
 // JoinRequest is the identity submitted when creating or joining a party.
@@ -46,6 +49,7 @@ type JoinRequest struct {
 	DeviceId    string  `json:"deviceId"`
 	DisplayName string  `json:"displayName"`
 	AvatarUrl   *string `json:"avatarUrl,omitempty"`
+	MaxMembers  *int    `json:"maxMembers,omitempty"`
 }
 
 // Validate ensures all required identity fields are present and safe.
@@ -76,6 +80,9 @@ func (r *JoinRequest) Validate() error {
 		} else {
 			r.AvatarUrl = &trimmed
 		}
+	}
+	if r.MaxMembers != nil && (*r.MaxMembers < 2 || *r.MaxMembers > 10) {
+		return errors.New("maxMembers must be between 2 and 10")
 	}
 	return nil
 }

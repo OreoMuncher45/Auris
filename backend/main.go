@@ -226,7 +226,9 @@ func handleCreateParty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := store.CreateWithLimit(config.MaxParties)
+	maxMembers := 5
+	if req.MaxMembers != nil { maxMembers = *req.MaxMembers }
+	p, err := store.CreateWithLimits(config.MaxParties, maxMembers)
 	if err != nil {
 		if pe, ok := err.(*party.PartyError); ok {
 			jsonError(w, pe.Status, pe.Code, pe.Message)
@@ -524,6 +526,10 @@ func handleSocketFrame(p *party.Party, member *party.Member, sc *hub.SafeConn, f
 				hubInst.Broadcast(p.Code, queueFrame(p), "")
 			}
 			hubInst.Broadcast(p.Code, stateFrame(p), "")
+			if action == protocol.ActionKick || action == protocol.ActionSetMaxMembers {
+				hubInst.Broadcast(p.Code, membersFrame(p), "")
+			}
+			hubInst.Broadcast(p.Code, activityFrame(member, action), "")
 		} else if errCode != "" {
 			_ = sc.WriteJSON(map[string]interface{}{
 				"type":    protocol.FrameError,
@@ -672,6 +678,24 @@ func applyControl(p *party.Party, member *party.Member, action string, frame map
 		}
 		return true, "", ""
 
+	case protocol.ActionSetMaxMembers:
+		value, ok := frame["maxMembers"].(float64)
+		if !ok { return false, "invalid_capacity", "Choose a party size between 2 and 10." }
+		if err := p.SetMaxMembers(member, int(value)); err != nil {
+			pe := err.(*party.PartyError)
+			return false, pe.Code, pe.Message
+		}
+		return true, "", ""
+
+	case protocol.ActionKick:
+		targetID, _ := frame["memberId"].(string)
+		if !member.IsHost { return false, "host_only", "Only the host can remove listeners." }
+		if targetID == "" || targetID == member.MemberId { return false, "invalid_member", "Choose another listener to remove." }
+		if p.Remove(targetID) == nil { return false, "not_found", "That listener is no longer in this party." }
+		hubInst.Send(p.Code, targetID, map[string]interface{}{ "type": protocol.FrameBye, "message": "The host removed you from this party." })
+		hubInst.CloseMember(p.Code, targetID)
+		return true, "", ""
+
 	default:
 		return false, "unknown_action", fmt.Sprintf("Unknown control action '%s'", action)
 	}
@@ -685,6 +709,10 @@ func stateFrame(p *party.Party) map[string]interface{} {
 		"playback": p.Playback.ToWire(clock.NowMs()),
 		"serverMs": clock.NowMs(),
 	}
+}
+
+func activityFrame(member *party.Member, action string) map[string]interface{} {
+	return map[string]interface{}{"type": protocol.FrameActivity, "action": action, "by": member.DisplayName, "atMs": clock.NowMs()}
 }
 
 func queueFrame(p *party.Party) map[string]interface{} {
@@ -703,7 +731,7 @@ func membersFrame(p *party.Party) map[string]interface{} {
 	return map[string]interface{}{
 		"type":       protocol.FrameMembers,
 		"members":    membersList,
-		"maxMembers": config.MaxMembers,
+		"maxMembers": p.MaxMembers,
 		"serverMs":   clock.NowMs(),
 	}
 }
