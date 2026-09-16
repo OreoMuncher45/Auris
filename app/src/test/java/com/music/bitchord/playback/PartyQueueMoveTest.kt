@@ -1,11 +1,21 @@
 package com.music.bitchord.playback
 
+import com.music.bitchord.data.listentogether.PartyTrack
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 class PartyQueueMoveTest {
+
+    @Test
+    fun partyTrackKeepsAutoplaySectionMetadataOnTheWire() {
+        val encoded = Json.encodeToString(PartyTrack.serializer(), PartyTrack("A", fromAutoplay = true))
+        val decoded = Json.decodeFromString(PartyTrack.serializer(), encoded)
+
+        assertEquals(true, decoded.fromAutoplay)
+    }
 
     @Test
     fun testDetectSingleMoveForward() {

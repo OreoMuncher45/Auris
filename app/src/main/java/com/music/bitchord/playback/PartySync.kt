@@ -680,14 +680,15 @@ class PartySync(
                     currentIndex + 1 + singleMove.toIndex,
                 )
             } else {
-                // Update items after currentIndex without touching the currently playing item
-                if (exo.mediaItemCount > currentIndex + 1) {
-                    exo.removeMediaItems(currentIndex + 1, exo.mediaItemCount)
-                }
-                if (desiredUpcoming.isNotEmpty()) {
-                    val mediaItems = desiredUpcoming.map { it.toSong().toMediaItem() }
-                    exo.addMediaItems(currentIndex + 1, mediaItems)
-                }
+                // One atomic timeline edit. Removing and then adding the tail
+                // creates an empty intermediate timeline, which can briefly
+                // rebuffer or interrupt the current renderer on some devices.
+                // The active item is deliberately outside this replacement.
+                exo.replaceMediaItems(
+                    currentIndex + 1,
+                    exo.mediaItemCount,
+                    desiredUpcoming.map { it.toSong().toMediaItem() },
+                )
             }
         }
     }
@@ -800,6 +801,7 @@ private fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
     // otherwise what the row that queued the track claimed.
     durationMs = playerDurationMs.takeIf { it > 0L }
         ?: TrackMatcher.secondsOf(durationText)?.let { it * 1000L },
+    fromAutoplay = fromAutoplay,
 )
 
 private fun PartyTrack.toSong(): Song = Song(
@@ -814,6 +816,7 @@ private fun PartyTrack.toSong(): Song = Song(
         val total = ms / 1000
         "%d:%02d".format(total / 60, total % 60)
     },
+    fromAutoplay = fromAutoplay,
 )
 
 internal data class QueueMoveDelta(

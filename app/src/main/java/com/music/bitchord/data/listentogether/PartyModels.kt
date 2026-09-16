@@ -30,6 +30,8 @@ data class PartyTrack(
     val artist: String = "",
     val thumbnailUrl: String? = null,
     val durationMs: Long? = null,
+    /** Preserves the queue's shared manual/AutoPlay section boundary. */
+    val fromAutoplay: Boolean = false,
 )
 
 /** One signed-in device in the party, as every other device sees it. */

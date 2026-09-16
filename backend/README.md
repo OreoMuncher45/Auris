@@ -143,7 +143,7 @@ Client → server:
 {"type": "control", "action": "previous"}
 ```
 
-A `track` is `{videoId, title, artist, thumbnailUrl, durationMs}` — enough to
+A `track` is `{videoId, title, artist, thumbnailUrl, durationMs, fromAutoplay}` — enough to
 identify and to *show* a song, and nothing more. Stream URLs, sources, quality
 and download state stay each device's own business, so two people in a party can
 be on different sources at different bitrates and still be in the same place.
