@@ -792,7 +792,7 @@ class PartySync(
 private fun Song.isDeviceFile(): Boolean =
     videoId.startsWith("content://") || videoId.startsWith("file://")
 
-private fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
+internal fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
     videoId = videoId,
     title = title,
     artist = artist,

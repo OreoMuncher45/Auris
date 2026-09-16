@@ -111,6 +111,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -1385,6 +1386,22 @@ class PlaybackService : MediaLibraryService() {
         // After the player exists and before the session is built: the
         // session's wrapper reports the user's actions to it.
         partySync = PartySync(scope) { player }.also { it.start() }
+        // AutoPlay may already be enabled when a party is created or restored.
+        // The host becoming known is then the first chance to seed the shared
+        // tail; without this, it would wait until the current track changed.
+        scope.launch {
+            ListenTogether.state
+                .map { state -> state.code to (state.you?.isHost == true) }
+                .distinctUntilChanged()
+                .collectLatest { (code, isHost) ->
+                    if (code != null && isHost) {
+                        autoplayLoadJob?.cancel()
+                        autoplayLoadJob = null
+                        autoplaySeed = null
+                        loadAutoplayForCurrentTrack()
+                    }
+                }
+        }
         loadAutoplayForCurrentTrack()
 
         // Only the analytics listener reports the format the audio renderer was
@@ -1604,7 +1621,14 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun loadAutoplayForCurrentTrack() {
         val exoPlayer = player ?: return
-        if (!AppSettings.autoplay.value || exoPlayer.repeatMode == Player.REPEAT_MODE_ALL || ListenTogether.state.value.inParty) {
+        val party = ListenTogether.state.value
+        // A party needs one authoritative recommendation source.  Letting every
+        // listener fill the tail independently makes queues diverge, so the host
+        // supplies AutoPlay tracks and sends them through the shared queue.
+        if (!AppSettings.autoplay.value ||
+            exoPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
+            (party.inParty && party.you?.isHost != true)
+        ) {
             return
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
@@ -1650,7 +1674,17 @@ class PlaybackService : MediaLibraryService() {
                     return@launch
                 }
                 if (resolved.isNotEmpty()) {
-                    latestPlayer.addMediaItems(resolved.map { it.toMediaItem() })
+                    val latestParty = ListenTogether.state.value
+                    if (latestParty.inParty) {
+                        // Do not mutate ExoPlayer directly here. The server's
+                        // state broadcast reconciles every device atomically,
+                        // including this one, and keeps the AutoPlay section
+                        // identical for all listeners.
+                        if (latestParty.you?.isHost != true) return@launch
+                        ListenTogether.queueAdd(resolved.map { it.toPartyTrack(0L) })
+                    } else {
+                        latestPlayer.addMediaItems(resolved.map { it.toMediaItem() })
+                    }
                     if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += resolved
                     return@launch
                 }
