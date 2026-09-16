@@ -140,9 +140,9 @@ object LrcLib {
      */
     private fun stripAlignmentMarker(body: String): Pair<String, LyricAlignment> {
         if (body.startsWith(ALIGNMENT_MARKER)) {
-            return body.substringAfter(ALIGNMENT_MARKER), LyricAlignment.End
+            return body.substringAfter(ALIGNMENT_MARKER) to LyricAlignment.End
         }
-        return body, LyricAlignment.Start
+        return body to LyricAlignment.Start
     }
 
     private const val ALIGNMENT_MARKER = "<R>"
