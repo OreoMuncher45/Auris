@@ -2301,8 +2301,14 @@ fun NowPlayingScreen(
                             R.string.playing_from,
                             song.playbackSource ?: song.albumName ?: stringResource(R.string.queue),
                         ),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (isLightArtwork) Color.Black else Color.White,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            shadow = Shadow(
+                                color = Color.Black.copy(alpha = 0.55f),
+                                offset = Offset(0f, 1f),
+                                blurRadius = 4f,
+                            ),
+                        ),
+                        color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
