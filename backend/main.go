@@ -2,10 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,9 +24,11 @@ import (
 var (
 	store    = party.NewPartyStore()
 	hubInst  = hub.NewHub()
+	createLimiter = newIPRateLimiter(time.Minute, config.CreateRatePerMinute, config.RateLimitMaxEntries)
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return true // Handled by CORS middleware or allowed for mobile client
+			origin := r.Header.Get("Origin")
+			return origin == "" || config.IsAllowedOrigin(origin)
 		},
 	}
 )
@@ -48,22 +54,116 @@ func main() {
 
 	addr := fmt.Sprintf("0.0.0.0:%d", config.Port)
 	log.Printf("BitChord Listen Together (Go) starting on %s...", addr)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	server := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       20 * time.Second,
+		WriteTimeout:      20 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("Server stopped: %v", err)
 	}
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if origin != "" && config.IsAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 		if r.Method == "OPTIONS" {
+			if origin != "" && !config.IsAllowedOrigin(origin) {
+				http.Error(w, "origin not allowed", http.StatusForbidden)
+				return
+			}
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+type ipRateLimiter struct {
+	mu      sync.Mutex
+	window  time.Duration
+	limit   int
+	maxKeys int
+	entries map[string]ipRateEntry
+}
+
+type ipRateEntry struct {
+	started time.Time
+	count   int
+}
+
+func newIPRateLimiter(window time.Duration, limit, maxKeys int) *ipRateLimiter {
+	return &ipRateLimiter{window: window, limit: limit, maxKeys: maxKeys, entries: make(map[string]ipRateEntry)}
+}
+
+func (l *ipRateLimiter) Allow(ip string) bool {
+	if l.limit <= 0 {
+		return true
+	}
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for key, entry := range l.entries {
+		if now.Sub(entry.started) >= l.window {
+			delete(l.entries, key)
+		}
+	}
+	entry := l.entries[ip]
+	if entry.started.IsZero() || now.Sub(entry.started) >= l.window {
+		if entry.started.IsZero() && l.maxKeys > 0 && len(l.entries) >= l.maxKeys {
+			return false
+		}
+		l.entries[ip] = ipRateEntry{started: now, count: 1}
+		return true
+	}
+	if entry.count >= l.limit {
+		return false
+	}
+	entry.count++
+	l.entries[ip] = entry
+	return true
+}
+
+func clientIP(r *http.Request) string {
+	if config.TrustProxy {
+		if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); forwarded != "" {
+			return forwarded
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func decodeJSONBody(w http.ResponseWriter, r *http.Request, dst interface{}) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, config.RequestMaxBytes)
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			jsonError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Request body is too large.")
+		} else {
+			jsonError(w, http.StatusUnprocessableEntity, "invalid_json", "Malformed JSON body.")
+		}
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		jsonError(w, http.StatusUnprocessableEntity, "invalid_json", "Request body must contain one JSON object.")
+		return false
+	}
+	return true
 }
 
 func jsonResponse(w http.ResponseWriter, status int, data interface{}) {
@@ -113,9 +213,12 @@ func handleTime(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCreateParty(w http.ResponseWriter, r *http.Request) {
+	if !createLimiter.Allow(clientIP(r)) {
+		jsonError(w, http.StatusTooManyRequests, "create_rate_limited", "You can create up to two parties per minute. Please try again shortly.")
+		return
+	}
 	var req protocol.JoinRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusUnprocessableEntity, "invalid_json", "Malformed JSON body.")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if err := req.Validate(); err != nil {
@@ -123,7 +226,7 @@ func handleCreateParty(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := store.Create()
+	p, err := store.CreateWithLimit(config.MaxParties)
 	if err != nil {
 		if pe, ok := err.(*party.PartyError); ok {
 			jsonError(w, pe.Status, pe.Code, pe.Message)
@@ -162,8 +265,7 @@ func handleCreateParty(w http.ResponseWriter, r *http.Request) {
 func handleJoinParty(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
 	var req protocol.JoinRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		jsonError(w, http.StatusUnprocessableEntity, "invalid_json", "Malformed JSON body.")
+	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 	if err := req.Validate(); err != nil {
@@ -290,7 +392,7 @@ func handleLeaveParty(w http.ResponseWriter, r *http.Request) {
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	code := r.PathValue("code")
-	token := r.URL.Query().Get("token")
+	token := parseBearerToken(r)
 	if token == "" {
 		http.Error(w, "missing token", http.StatusUnauthorized)
 		return
@@ -309,7 +411,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad token", http.StatusUnauthorized)
 		return
 	}
-	p.MarkConnected(member, true)
 	p.Unlock()
 
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -317,6 +418,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WebSocket upgrade failed: %v", err)
 		return
 	}
+	conn.SetReadLimit(config.WebSocketMaxBytes)
+	_ = conn.SetReadDeadline(time.Now().Add(time.Duration(config.ConnectionIdleMs) * time.Millisecond))
+
+	p.Lock()
+	p.MarkConnected(member, true)
+	p.Unlock()
 
 	sc := hubInst.Attach(p.Code, member.MemberId, conn)
 
@@ -352,6 +459,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		if err := conn.ReadJSON(&raw); err != nil {
 			break
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(time.Duration(config.ConnectionIdleMs) * time.Millisecond))
 		handleSocketFrame(p, member, sc, raw)
 	}
 }
@@ -364,6 +472,12 @@ func handleSocketFrame(p *party.Party, member *party.Member, sc *hub.SafeConn, f
 
 	p.Lock()
 	defer p.Unlock()
+	if !p.SpendFrameBudget(member) {
+		_ = sc.WriteJSON(map[string]interface{}{
+			"type": protocol.FrameError, "error": "rate_limited", "message": "Too many messages at once.",
+		})
+		return
+	}
 
 	member.LastSeenMs = clock.NowMs()
 

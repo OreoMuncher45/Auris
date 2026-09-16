@@ -29,3 +29,12 @@ services:
         value: "5000"
       - key: JAM_MAX_UPCOMING_QUEUE
         value: "25"
+      - key: JAM_MAX_PARTIES
+        value: "50"
+      - key: JAM_CREATE_RATE_PER_MINUTE
+        value: "2"
+      - key: JAM_CONNECTION_IDLE_MS
+        value: "900000"
+      # Render terminates TLS and supplies the real client IP in X-Forwarded-For.
+      - key: JAM_TRUST_PROXY
+        value: "true"

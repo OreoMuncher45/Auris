@@ -112,12 +112,16 @@ matching Kotlin's naming keeps `@SerialName` off every field.
 |---|---|
 | `GET /healthz` | Render's health check. |
 | `GET /api/time` | `{"serverMs":…}` — a clock sample before the socket exists. |
-| `POST /api/parties` | Create a party and join it as host. Body: `userId`, `deviceId`, `displayName`, `avatarUrl?`. → `201` with `code`, `token`, `you`, `party`. |
+| `POST /api/parties` | Create a party and join it as host. Body: `userId`, `deviceId`, `displayName`, `avatarUrl?`. → `201` with `code`, `token`, `you`, `party`. Creation is capped per IP and by the service-wide party limit. |
 | `POST /api/parties/{code}/join` | Same body. `404` unknown code, `409` full, `422` no identity. The code is normalised first, so lower case, spaces, and `O`/`I`/`L` typed for `0`/`1` all work. |
 | `GET /api/parties/{code}` | Full snapshot. Needs `Authorization: Bearer <token>`. |
 | `POST /api/parties/{code}/leave` | Give up the slot. Needs the bearer token. |
 
-### WebSocket — `/ws/parties/{code}?token=…`
+### WebSocket — `/ws/parties/{code}`
+
+Pass the party token in `Authorization: Bearer <token>` during the WebSocket
+handshake. Tokens are intentionally not accepted in the URL, which prevents
+them from being recorded in common HTTP access logs.
 
 Client → server:
 
@@ -261,7 +265,15 @@ Every one of these is optional — `config/config.go` carries the same defaults.
 | `JAM_EMPTY_PARTY_TTL_MS` | `120000` | How long an empty party survives. |
 | `JAM_PARTY_MAX_AGE_MS` | `43200000` | Hard ceiling on a party's life. |
 | `JAM_CONTROL_RATE_PER_SECOND` | `25` | Per-member control ceiling. |
-| `JAM_ALLOWED_ORIGINS` | *(none)* | CORS, if a browser client ever exists. |
+| `JAM_FRAME_RATE_PER_SECOND` | `30` | Per-member WebSocket frame ceiling, including ping and sync frames. |
+| `JAM_MAX_PARTIES` | `50` | Maximum concurrent parties. Conservative default for Render Free (250 sockets at five devices each). |
+| `JAM_CREATE_RATE_PER_MINUTE` | `2` | Maximum new parties per client IP per minute. |
+| `JAM_RATE_LIMIT_MAX_ENTRIES` | `10000` | Maximum tracked client IPs before new creations are rejected, preventing the limiter itself from growing without bound. |
+| `JAM_REQUEST_MAX_BYTES` | `16384` | Maximum REST request size. |
+| `JAM_WEBSOCKET_MAX_BYTES` | `16384` | Maximum incoming WebSocket message size. |
+| `JAM_CONNECTION_IDLE_MS` | `900000` | Close a WebSocket that sends no message for 15 minutes. |
+| `JAM_ALLOWED_ORIGINS` | *(none)* | Comma-separated browser Origin allowlist. Native clients send no Origin and remain supported. |
+| `JAM_TRUST_PROXY` | `false` | Read `X-Forwarded-For` for rate limiting only when a trusted proxy terminates requests. |
 | `PORT` | `8000` | Port the server listens on. |
 
 ## Layout

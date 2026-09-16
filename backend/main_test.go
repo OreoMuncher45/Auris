@@ -124,11 +124,9 @@ func TestWebSocketFlow(t *testing.T) {
 	u, _ := url.Parse(ts.URL)
 	u.Scheme = "ws"
 	u.Path = fmt.Sprintf("/ws/parties/%s", code)
-	q := u.Query()
-	q.Set("token", token)
-	u.RawQuery = q.Encode()
-
-	ws, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	headers := http.Header{}
+	headers.Set("Authorization", "Bearer "+token)
+	ws, _, err := websocket.DefaultDialer.Dial(u.String(), headers)
 	if err != nil {
 		t.Fatalf("WebSocket connection failed: %v", err)
 	}
@@ -210,5 +208,18 @@ func TestWebSocketFlow(t *testing.T) {
 	}
 	if !receivedQueue {
 		t.Fatalf("Expected queue broadcast after queueAdd")
+	}
+}
+
+func TestCreateRateLimiter(t *testing.T) {
+	limiter := newIPRateLimiter(time.Minute, 2, 100)
+	if !limiter.Allow("203.0.113.10") || !limiter.Allow("203.0.113.10") {
+		t.Fatal("expected the first two creations from an IP to be allowed")
+	}
+	if limiter.Allow("203.0.113.10") {
+		t.Fatal("expected the third creation from an IP to be rate limited")
+	}
+	if !limiter.Allow("203.0.113.11") {
+		t.Fatal("expected a separate IP to have its own allowance")
 	}
 }

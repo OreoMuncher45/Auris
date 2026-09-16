@@ -421,6 +421,8 @@ type Member struct {
 	LastSeenMs         int64   `json:"lastSeenMs"`
 	ControlBudget      float64 `json:"-"`
 	ControlBudgetAtMs  int64   `json:"-"`
+	FrameBudget        float64 `json:"-"`
+	FrameBudgetAtMs    int64   `json:"-"`
 }
 
 func (m *Member) ToWire() map[string]interface{} {
@@ -508,6 +510,8 @@ func (p *Party) Join(userId, deviceId, displayName string, avatarUrl *string) (*
 		LastSeenMs:        now,
 		ControlBudget:     config.ControlRatePerSecond,
 		ControlBudgetAtMs: now,
+		FrameBudget:       config.FrameRatePerSecond,
+		FrameBudgetAtMs:   now,
 	}
 	p.Members[m.MemberId] = m
 	p.Touch()
@@ -555,6 +559,26 @@ func (p *Party) SpendControlBudget(member *Member) bool {
 		return false
 	}
 	member.ControlBudget -= 1.0
+	return true
+}
+
+// SpendFrameBudget limits every received WebSocket frame, not just controls.
+// This prevents ping/sync frames from bypassing the control rate limit.
+func (p *Party) SpendFrameBudget(member *Member) bool {
+	now := clock.NowMs()
+	elapsedS := float64(now-member.FrameBudgetAtMs) / 1000.0
+	if elapsedS < 0 {
+		elapsedS = 0
+	}
+	member.FrameBudget += elapsedS * config.FrameRatePerSecond
+	if member.FrameBudget > config.FrameRatePerSecond {
+		member.FrameBudget = config.FrameRatePerSecond
+	}
+	member.FrameBudgetAtMs = now
+	if member.FrameBudget < 1.0 {
+		return false
+	}
+	member.FrameBudget -= 1.0
 	return true
 }
 
@@ -646,8 +670,17 @@ func (s *PartyStore) Len() int {
 }
 
 func (s *PartyStore) Create() (*Party, error) {
+	return s.CreateWithLimit(0)
+}
+
+// CreateWithLimit atomically rejects creation once the service-wide room limit
+// is reached. A non-positive limit means unlimited (used by unit tests).
+func (s *PartyStore) CreateWithLimit(maxParties int) (*Party, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if maxParties > 0 && len(s.parties) >= maxParties {
+		return nil, NewPartyError(503, "server_full", "The party server is busy. Please try again in a few minutes.")
+	}
 
 	for i := 0; i < 12; i++ {
 		code := codes.NewCode()

@@ -522,7 +522,8 @@ object ListenTogether {
             val held = token ?: return
             try {
                 _state.update { it.copy(connection = Connection.CONNECTING) }
-                http.webSocket("${wsBase()}/ws/parties/$code?token=$held") {
+                http.webSocket("${wsBase()}/ws/parties/$code") {
+                    header("Authorization", "Bearer $held")
                     session = this
                     backoffMs = 1_000L
                     _state.update { it.copy(connection = Connection.LIVE, error = null) }
