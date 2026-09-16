@@ -1386,15 +1386,16 @@ class PlaybackService : MediaLibraryService() {
         // After the player exists and before the session is built: the
         // session's wrapper reports the user's actions to it.
         partySync = PartySync(scope) { player }.also { it.start() }
-        // AutoPlay may already be enabled when a party is created or restored.
-        // The host becoming known is then the first chance to seed the shared
-        // tail; without this, it would wait until the current track changed.
+        // AutoPlay has one shared supplier in a party. The host supplies it
+        // while connected; if they disappear, the lowest stable connected member
+        // ID takes over. That election is deterministic on every phone, so two
+        // listeners never append different recommendations at once.
         scope.launch {
             ListenTogether.state
-                .map { state -> state.code to (state.you?.isHost == true) }
+                .map { state -> Triple(state.code, state.playback.autoplayEnabled, autoplaySupplierId(state)) }
                 .distinctUntilChanged()
-                .collectLatest { (code, isHost) ->
-                    if (code != null && isHost) {
+                .collectLatest { (code, enabled, supplierId) ->
+                    if (code != null && enabled && supplierId == ListenTogether.state.value.you?.memberId) {
                         autoplayLoadJob?.cancel()
                         autoplayLoadJob = null
                         autoplaySeed = null
@@ -1591,8 +1592,17 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun toggleAutoplayFromNotification() {
-        val enabled = !AppSettings.autoplay.value
+        val party = ListenTogether.state.value
+        val enabled = if (party.inParty) !party.playback.autoplayEnabled else !AppSettings.autoplay.value
         AppSettings.setAutoplay(enabled)
+        if (party.inParty) {
+            // The party owns this setting while connected. The state frame
+            // wakes whichever connected member currently won the supplier
+            // election, including after the host has become unreachable.
+            ListenTogether.setAutoplay(enabled)
+            mediaSession?.setCustomLayout(notificationButtons())
+            return
+        }
         if (enabled) {
             autoplayLoadJob?.cancel()
             autoplayLoadJob = null
@@ -1622,12 +1632,9 @@ class PlaybackService : MediaLibraryService() {
     private fun loadAutoplayForCurrentTrack() {
         val exoPlayer = player ?: return
         val party = ListenTogether.state.value
-        // A party needs one authoritative recommendation source.  Letting every
-        // listener fill the tail independently makes queues diverge, so the host
-        // supplies AutoPlay tracks and sends them through the shared queue.
-        if (!AppSettings.autoplay.value ||
+        if (!autoplayEnabled(party) ||
             exoPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
-            (party.inParty && party.you?.isHost != true)
+            (party.inParty && autoplaySupplierId(party) != party.you?.memberId)
         ) {
             return
         }
@@ -1644,9 +1651,11 @@ class PlaybackService : MediaLibraryService() {
             var emptyRefreshesRemaining = MAX_AUTOPLAY_EMPTY_REFRESHES
             while (isActive) {
                 val activePlayer = player ?: return@launch
-                if (!AppSettings.autoplay.value ||
+                val activeParty = ListenTogether.state.value
+                if (!autoplayEnabled(activeParty) ||
                     activePlayer.repeatMode == Player.REPEAT_MODE_ALL ||
-                    activePlayer.currentMediaItem?.mediaId != current.videoId
+                    activePlayer.currentMediaItem?.mediaId != current.videoId ||
+                    (activeParty.inParty && autoplaySupplierId(activeParty) != activeParty.you?.memberId)
                 ) {
                     return@launch
                 }
@@ -1667,20 +1676,20 @@ class PlaybackService : MediaLibraryService() {
                     emptyList()
                 }
                 val latestPlayer = player ?: return@launch
-                if (!AppSettings.autoplay.value ||
+                val latestParty = ListenTogether.state.value
+                if (!autoplayEnabled(latestParty) ||
                     latestPlayer.repeatMode == Player.REPEAT_MODE_ALL ||
-                    latestPlayer.currentMediaItem?.mediaId != current.videoId
+                    latestPlayer.currentMediaItem?.mediaId != current.videoId ||
+                    (latestParty.inParty && autoplaySupplierId(latestParty) != latestParty.you?.memberId)
                 ) {
                     return@launch
                 }
                 if (resolved.isNotEmpty()) {
-                    val latestParty = ListenTogether.state.value
                     if (latestParty.inParty) {
                         // Do not mutate ExoPlayer directly here. The server's
                         // state broadcast reconciles every device atomically,
                         // including this one, and keeps the AutoPlay section
                         // identical for all listeners.
-                        if (latestParty.you?.isHost != true) return@launch
                         ListenTogether.queueAdd(resolved.map { it.toPartyTrack(0L) })
                     } else {
                         latestPlayer.addMediaItems(resolved.map { it.toMediaItem() })
@@ -1708,7 +1717,7 @@ class PlaybackService : MediaLibraryService() {
     private fun refreshAutoplayIfQueueEmpty() {
         val exoPlayer = player ?: return
         if (!autoplayQueueNeedsRefresh(
-                enabled = AppSettings.autoplay.value,
+                enabled = autoplayEnabled(ListenTogether.state.value),
                 repeatAll = exoPlayer.repeatMode == Player.REPEAT_MODE_ALL,
                 currentIndex = exoPlayer.currentMediaItemIndex,
                 itemCount = exoPlayer.mediaItemCount,
@@ -1720,6 +1729,20 @@ class PlaybackService : MediaLibraryService() {
         autoplayLoadJob = null
         autoplaySeed = null
         loadAutoplayForCurrentTrack()
+    }
+
+    /** In a party, AutoPlay is shared instead of depending on one phone's prefs. */
+    private fun autoplayEnabled(party: ListenTogether.State): Boolean =
+        if (party.inParty) party.playback.autoplayEnabled else AppSettings.autoplay.value
+
+    /** Host first; when unavailable choose one connected listener consistently. */
+    private fun autoplaySupplierId(party: ListenTogether.State): String? {
+        if (!party.inParty) return null
+        return party.members.firstOrNull { it.isHost && it.connected }?.memberId
+            ?: party.members.asSequence()
+                .filter { it.connected }
+                .minByOrNull { it.memberId }
+                ?.memberId
     }
 
     /**
@@ -1776,7 +1799,7 @@ class PlaybackService : MediaLibraryService() {
         autoplayLoadJob?.cancel()
         autoplayLoadJob = null
         autoplaySeed = null
-        if (stashed.isEmpty() || !AppSettings.autoplay.value) return
+        if (stashed.isEmpty() || !autoplayEnabled(ListenTogether.state.value)) return
         if (exoPlayer.currentMediaItem?.mediaId != seed) return
         // A track the listener queued by hand during the loop is not queued
         // twice for having been in the mix before it.

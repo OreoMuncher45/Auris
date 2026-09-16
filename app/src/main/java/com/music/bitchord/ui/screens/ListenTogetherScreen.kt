@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.screens
 
 import android.content.Intent
+import android.text.format.DateFormat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -117,7 +118,6 @@ fun ListenTogetherScreen(
 
     val state by ListenTogether.state.collectAsStateWithLifecycle()
     val customServer by ListenTogether.customServerUrl.collectAsStateWithLifecycle()
-    val serverStatus by ListenTogether.serverStatus.collectAsStateWithLifecycle()
     val activity by ListenTogether.activity.collectAsStateWithLifecycle()
 
     var serverInput by remember(customServer) { mutableStateOf(customServer) }
@@ -131,9 +131,15 @@ fun ListenTogetherScreen(
     // the screen is looked at — rather than on every cold start — is what keeps
     // a feature nobody is currently using off the radio.
     LaunchedEffect(Unit) { ListenTogether.ensureConnected() }
-    // Re-checked whenever the address changes, so switching to your own server
-    // says whether it answers rather than waiting for a create to fail.
-    LaunchedEffect(customServer) { ListenTogether.refreshServerHealth() }
+    // This page owns the health polling: the latency badge belongs to Listen
+    // together, so it refreshes while this page is visible and stops when the
+    // composable leaves the screen.
+    LaunchedEffect(customServer) {
+        while (true) {
+            ListenTogether.refreshServerHealth()
+            delay(10_000)
+        }
+    }
 
     // A link tap is already an explicit request to join. Signed-out users keep
     // the populated code while the sign-in page is open. joinParty switches an
@@ -180,8 +186,6 @@ fun ListenTogetherScreen(
                 )
             }
         }
-
-        ServerHealthRow(status = serverStatus, onRecheck = ListenTogether::refreshServerHealth)
 
         if (!state.inParty) {
             NotInAParty(
@@ -387,12 +391,16 @@ private fun NotInAParty(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.listen_together_party_size), style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    stringResource(R.string.listen_together_party_size),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 Text(stringResource(R.string.listen_together_party_size_subtitle), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            TextButton(onClick = { onMaxMembersChange(maxMembers - 1) }, enabled = ready && maxMembers > 2) { Text("−") }
-            Text("$maxMembers", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
-            TextButton(onClick = { onMaxMembersChange(maxMembers + 1) }, enabled = ready && maxMembers < 10) { Text("+") }
+            TextButton(onClick = { onMaxMembersChange(maxMembers - 1) }, enabled = ready && maxMembers > 2) { Text("−", color = MaterialTheme.colorScheme.onSurface) }
+            Text("$maxMembers", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+            TextButton(onClick = { onMaxMembersChange(maxMembers + 1) }, enabled = ready && maxMembers < 10) { Text("+", color = MaterialTheme.colorScheme.onSurface) }
         }
         RowDivider()
         SettingsRow(
@@ -636,12 +644,16 @@ private fun InAParty(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.listen_together_party_size), style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        stringResource(R.string.listen_together_party_size),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
                     Text(stringResource(R.string.listen_together_host_controls), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                TextButton(onClick = { onSetCapacity(state.maxMembers - 1) }, enabled = state.maxMembers > maxOf(2, state.members.size)) { Text("−") }
-                Text("${state.maxMembers}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
-                TextButton(onClick = { onSetCapacity(state.maxMembers + 1) }, enabled = state.maxMembers < 10) { Text("+") }
+                TextButton(onClick = { onSetCapacity(state.maxMembers - 1) }, enabled = state.maxMembers > maxOf(2, state.members.size)) { Text("−", color = MaterialTheme.colorScheme.onSurface) }
+                Text("${state.maxMembers}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
+                TextButton(onClick = { onSetCapacity(state.maxMembers + 1) }, enabled = state.maxMembers < 10) { Text("+", color = MaterialTheme.colorScheme.onSurface) }
             }
             RowDivider()
         }
@@ -797,23 +809,25 @@ private fun PartyActivityList(entries: List<PartyActivity>) {
         header = stringResource(R.string.listen_together_activity),
         footer = stringResource(R.string.listen_together_activity_footer),
     ) {
-        entries.forEachIndexed { index, entry ->
-            if (index > 0) RowDivider()
-            val action = when (entry.action) {
-                "play" -> stringResource(R.string.listen_together_activity_played)
-                "pause" -> stringResource(R.string.listen_together_activity_paused)
-                "seek" -> stringResource(R.string.listen_together_activity_seeked)
-                "next" -> stringResource(R.string.listen_together_activity_skipped)
-                "previous" -> stringResource(R.string.listen_together_activity_went_back)
-                "queueAdd" -> stringResource(R.string.listen_together_activity_added)
-                "queueRemove" -> stringResource(R.string.listen_together_activity_removed_track)
-                "queueClear" -> stringResource(R.string.listen_together_activity_cleared)
-                "queueMove" -> stringResource(R.string.listen_together_activity_reordered)
-                "kick" -> stringResource(R.string.listen_together_activity_removed_member)
-                "setMaxMembers" -> stringResource(R.string.listen_together_activity_changed_size)
-                else -> stringResource(R.string.listen_together_activity_updated)
+        val logScroll = rememberScrollState()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(156.dp)
+                .background(MaterialTheme.colorScheme.surface)
+                .verticalScroll(logScroll)
+                .padding(horizontal = ROW_INSET, vertical = 8.dp),
+        ) {
+            entries.forEach { entry ->
+                val timestamp = DateFormat.format("HH:mm:ss", entry.atMs)
+                Text(
+                    text = "[$timestamp] ${entry.by}: ${entry.detail.ifBlank { entry.action }}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            SettingsRow(icon = Icons.Rounded.MusicNote, title = entry.by, subtitle = action)
         }
     }
 }

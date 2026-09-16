@@ -89,6 +89,8 @@ data class PartyPlayback(
     val startedBy: String? = null,
     /** Snapshot of their name so attribution survives that member leaving. */
     val startedByName: String? = null,
+    /** Party-wide setting so a connected listener can refill AutoPlay on host loss. */
+    val autoplayEnabled: Boolean = false,
     val updatedAtMs: Long = 0,
 )
 
@@ -135,6 +137,7 @@ data class PartyActivity(
     val action: String,
     val by: String,
     val atMs: Long,
+    val detail: String = "",
 )
 
 @Serializable

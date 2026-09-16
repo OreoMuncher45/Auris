@@ -41,6 +41,7 @@ const (
 	ActionPrevious    = "previous"
 	ActionKick        = "kick"
 	ActionSetMaxMembers = "setMaxMembers"
+	ActionSetAutoplay = "setAutoplay"
 )
 
 // JoinRequest is the identity submitted when creating or joining a party.

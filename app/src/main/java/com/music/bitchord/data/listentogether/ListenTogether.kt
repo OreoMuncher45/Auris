@@ -170,7 +170,7 @@ object ListenTogether {
     val state: StateFlow<State> = _state.asStateFlow()
 
     private val _activity = MutableStateFlow<List<PartyActivity>>(emptyList())
-    /** Last 100 actions, persisted only on this device. */
+    /** Last 100 actions for this app session only. */
     val activity: StateFlow<List<PartyActivity>> = _activity.asStateFlow()
 
     /**
@@ -244,14 +244,6 @@ object ListenTogether {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        _activity.value = prefs.getString(KEY_ACTIVITY, null)?.let { saved ->
-            runCatching {
-                json.decodeFromString(
-                    kotlinx.serialization.builtins.ListSerializer(PartyActivity.serializer()),
-                    saved,
-                )
-            }.getOrNull()
-        }.orEmpty()
         // Only ever an override. Blank is the normal state and means the
         // built-in server, which is resolved at the point of use in [httpBase]
         // rather than copied in here — so there is no moment at which the
@@ -465,6 +457,8 @@ object ListenTogether {
     fun setMaxMembers(value: Int) = control("setMaxMembers") { put("maxMembers", value) }
 
     fun kick(memberId: String) = control("kick") { put("memberId", memberId) }
+
+    fun setAutoplay(enabled: Boolean) = control("setAutoplay") { put("enabled", enabled) }
 
     private fun control(action: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
         val frame = buildJsonObject {
@@ -709,7 +703,8 @@ object ListenTogether {
                 val action = frame["action"]?.jsonPrimitive?.content ?: return
                 val by = frame["by"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: return
                 val atMs = frame["atMs"]?.jsonPrimitive?.content?.toLongOrNull() ?: received
-                recordActivity(PartyActivity(action, by, atMs))
+                val detail = frame["detail"]?.jsonPrimitive?.content.orEmpty()
+                recordActivity(PartyActivity(action, by, atMs, detail))
             }
 
             "error" -> {
@@ -794,10 +789,6 @@ object ListenTogether {
     private fun recordActivity(entry: PartyActivity) {
         val next = (listOf(entry) + _activity.value).take(100)
         _activity.value = next
-        prefs.edit().putString(
-            KEY_ACTIVITY,
-            json.encodeToString(kotlinx.serialization.builtins.ListSerializer(PartyActivity.serializer()), next),
-        ).apply()
     }
 
     private suspend fun post(url: String, body: JoinRequest): PartyMembership {
@@ -895,7 +886,6 @@ object ListenTogether {
     private const val KEY_TOKEN = "party_token"
     private const val KEY_DEVICE = "device_id"
     private const val KEY_NICKNAME = "party_nickname"
-    private const val KEY_ACTIVITY = "party_activity"
 
     /**
      * The party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`

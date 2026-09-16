@@ -6,6 +6,7 @@ import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -191,6 +192,13 @@ class PartySync(
                         lastPartyCode = code
                         if (!wasInParty && nowInParty) {
                             onEnteredParty()
+                            // A just-created party has no shared AutoPlay
+                            // choice yet. Seed it once from its host's local
+                            // preference; after this, the server owns it.
+                            val party = ListenTogether.state.value
+                            if (party.you?.isHost == true && party.playback.seq == 0L) {
+                                ListenTogether.setAutoplay(AppSettings.autoplay.value)
+                            }
                         } else if (wasInParty && !nowInParty) {
                             onLeftParty()
                         }
@@ -668,6 +676,20 @@ class PartySync(
         }
 
         if (localUpcomingIds != desiredUpcomingIds) {
+            // The normal case (a listener or AutoPlay appending a song) must
+            // never rewrite the timeline. Adding after the active item keeps
+            // its decoder and audio renderer untouched on every device.
+            if (desiredUpcomingIds.startsWith(localUpcomingIds)) {
+                exo.addMediaItems(desiredUpcoming.drop(localUpcomingIds.size).map { it.toSong().toMediaItem() })
+                return
+            }
+
+            // Likewise, trimming only the tail leaves the active source alone.
+            if (localUpcomingIds.startsWith(desiredUpcomingIds)) {
+                exo.removeMediaItems(currentIndex + 1 + desiredUpcomingIds.size, exo.mediaItemCount)
+                return
+            }
+
             val singleMove = if (localUpcomingIds.size == desiredUpcomingIds.size) {
                 detectSingleMove(localUpcomingIds, desiredUpcomingIds)
             } else {
@@ -692,6 +714,9 @@ class PartySync(
             }
         }
     }
+
+    private fun <T> List<T>.startsWith(prefix: List<T>): Boolean =
+        size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
 
     private companion object {
         const val TAG = "PartySync"

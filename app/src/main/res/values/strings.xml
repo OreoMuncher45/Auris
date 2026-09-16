@@ -856,7 +856,7 @@
     <string name="listen_together_host_controls">Only you can change capacity or remove listeners</string>
     <string name="listen_together_remove">Remove</string>
     <string name="listen_together_activity">Recent activity</string>
-    <string name="listen_together_activity_footer">Saved only on this device · latest first · up to 100 actions</string>
+    <string name="listen_together_activity_footer">This session only · latest first · up to 100 actions</string>
     <string name="listen_together_activity_played">Started playback</string>
     <string name="listen_together_activity_paused">Paused playback</string>
     <string name="listen_together_activity_seeked">Sought in the track</string>

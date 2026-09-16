@@ -537,6 +537,7 @@ private fun BitChordApp(
     var browseActions by remember { mutableStateOf<BrowseTarget?>(null) }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
     val partyState by ListenTogether.state.collectAsStateWithLifecycle()
+    val partyServerStatus by ListenTogether.serverStatus.collectAsStateWithLifecycle()
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
     // Incremented each time the search tab is re-tapped while already selected,
     // which SearchScreen uses as a signal to focus the input field.
@@ -2677,6 +2678,23 @@ private fun BitChordApp(
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
                     actions = {
+                        // This is intentionally scoped to Listen together: the
+                        // round-trip time is meaningful while coordinating a
+                        // party, but would be noise in the rest of the app.
+                        if (showListenTogether) {
+                            val ping = partyServerStatus.latencyMs.coerceAtLeast(0)
+                            Text(
+                                text = when (partyServerStatus.health) {
+                                    ListenTogether.Health.ONLINE -> if (ping > 9_999) "9999+ ms" else "$ping ms"
+                                    ListenTogether.Health.CHECKING -> "…"
+                                    else -> "—"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 8.dp),
+                            )
+                        }
                         // Only worth surfacing where there's room for it and it won't
                         // be mistaken for a per-page action — Home, at rest.
                         if (!showSettings && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer &&

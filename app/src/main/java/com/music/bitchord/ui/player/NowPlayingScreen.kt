@@ -6081,7 +6081,9 @@ private val BOTTOM_ACTION_SIZE = 44.dp
  * One half of the output capsule — wider than it is tall, so the capsule reads
  * as a capsule rather than as two circles that have been pushed together.
  */
-private val PILL_SEGMENT_WIDTH = 54.dp
+// The count reserve is kept on both halves, so entering a party never makes
+// the capsule lopsided or shifts the queue control beside it.
+private val PILL_SEGMENT_WIDTH = 64.dp
 
 /**
  * Optical sizes, not equal ones.
@@ -6137,10 +6139,9 @@ private fun PillDivider() {
  * two glyphs that happen to sit side by side — headphones for which speaker the
  * sound leaves by, the party for which *people* it reaches.
  *
- * The halves are the same width in every state, party or no party, so the
- * capsule never resizes under the finger. How many people are in the party is a
- * fact for the page the right half opens, and for screen readers, rather than a
- * number living down here.
+ * The halves reserve exactly the same width in every state. When a party is
+ * active, the right half uses that reserve for its live member count; the left
+ * half intentionally retains the same footprint so the pill stays balanced.
  *
  * Collects the party itself instead of taking it as a parameter: the state
  * carries a playhead and lands on every heartbeat, and read any higher up it
@@ -6177,6 +6178,7 @@ private fun OutputPartyPill(
             },
             onClick = onParty,
             highlighted = badge.inParty,
+            trailingLabel = badge.members.takeIf { badge.inParty }?.toString(),
         )
     }
 }
@@ -6196,6 +6198,7 @@ private fun PillSegment(
     icon: ImageVector? = null,
     iconSize: Dp = PILL_ICON_SIZE,
     label: String? = null,
+    trailingLabel: String? = null,
     highlighted: Boolean = false,
     haptic: Haptic = Haptic.Tap,
     /** See [BottomGlyph], where the same window means the same thing. */
@@ -6224,12 +6227,23 @@ private fun PillSegment(
     ) {
         val tint = Color.White.copy(alpha = if (highlighted) 1f else 0.75f)
         if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = tint,
-                modifier = Modifier.size(iconSize),
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(iconSize),
+                )
+                if (trailingLabel != null) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = trailingLabel,
+                        color = tint,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
         } else if (label != null) {
             Text(
                 text = label,

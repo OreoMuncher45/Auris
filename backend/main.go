@@ -529,7 +529,7 @@ func handleSocketFrame(p *party.Party, member *party.Member, sc *hub.SafeConn, f
 			if action == protocol.ActionKick || action == protocol.ActionSetMaxMembers {
 				hubInst.Broadcast(p.Code, membersFrame(p), "")
 			}
-			hubInst.Broadcast(p.Code, activityFrame(member, action), "")
+			hubInst.Broadcast(p.Code, activityFrame(member, action, frame), "")
 		} else if errCode != "" {
 			_ = sc.WriteJSON(map[string]interface{}{
 				"type":    protocol.FrameError,
@@ -687,6 +687,14 @@ func applyControl(p *party.Party, member *party.Member, action string, frame map
 		}
 		return true, "", ""
 
+	case protocol.ActionSetAutoplay:
+		enabled, ok := frame["enabled"].(bool)
+		if !ok {
+			return false, "invalid_autoplay", "AutoPlay must be enabled or disabled."
+		}
+		p.Playback.SetAutoplay(&member.MemberId, enabled)
+		return true, "", ""
+
 	case protocol.ActionKick:
 		targetID, _ := frame["memberId"].(string)
 		if !member.IsHost { return false, "host_only", "Only the host can remove listeners." }
@@ -711,8 +719,38 @@ func stateFrame(p *party.Party) map[string]interface{} {
 	}
 }
 
-func activityFrame(member *party.Member, action string) map[string]interface{} {
-	return map[string]interface{}{"type": protocol.FrameActivity, "action": action, "by": member.DisplayName, "atMs": clock.NowMs()}
+func activityFrame(member *party.Member, action string, frame map[string]interface{}) map[string]interface{} {
+	detail := action
+	trackTitle := func(raw interface{}) string {
+		track, _ := raw.(map[string]interface{})
+		title, _ := track["title"].(string)
+		return title
+	}
+	switch action {
+	case protocol.ActionSetTrack:
+		if title := trackTitle(frame["track"]); title != "" { detail = "Changed the song to \"" + title + "\"" }
+	case protocol.ActionQueueAdd:
+		if tracks, ok := frame["tracks"].([]interface{}); ok && len(tracks) > 0 {
+			title := trackTitle(tracks[0])
+			if title != "" {
+				if len(tracks) == 1 { detail = "Added \"" + title + "\" to the queue" } else { detail = fmt.Sprintf("Added \"%s\" and %d more to the queue", title, len(tracks)-1) }
+			}
+		}
+	case protocol.ActionSetQueue:
+		if tracks, ok := frame["queue"].([]interface{}); ok { detail = fmt.Sprintf("Replaced the queue with %d tracks", len(tracks)) }
+	case protocol.ActionQueueRemove: detail = "Removed a track from the queue"
+	case protocol.ActionQueueClear: detail = "Cleared upcoming tracks"
+	case protocol.ActionQueueMove: detail = "Reordered the upcoming queue"
+	case protocol.ActionNext: detail = "Skipped to the next song"
+	case protocol.ActionPrevious: detail = "Went back to the previous song"
+	case protocol.ActionPlay: detail = "Started playback"
+	case protocol.ActionPause: detail = "Paused playback"
+	case protocol.ActionSeek: detail = "Changed the playback position"
+	case protocol.ActionKick: detail = "Removed a listener from the party"
+	case protocol.ActionSetMaxMembers: detail = "Changed the party size"
+	case protocol.ActionSetAutoplay: detail = "Changed AutoPlay"
+	}
+	return map[string]interface{}{"type": protocol.FrameActivity, "action": action, "by": member.DisplayName, "detail": detail, "atMs": clock.NowMs()}
 }
 
 func queueFrame(p *party.Party) map[string]interface{} {

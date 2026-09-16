@@ -100,6 +100,7 @@ type PlaybackState struct {
 	UpdatedAtMs   int64    `json:"updatedAtMs"`
 	StartedBy     *string  `json:"startedBy"`
 	StartedByName *string  `json:"startedByName"`
+	AutoplayEnabled bool   `json:"autoplayEnabled"`
 }
 
 func NewPlaybackState() *PlaybackState {
@@ -399,8 +400,19 @@ func (p *PlaybackState) ToWire(serverMs int64) map[string]interface{} {
 		"updatedBy":           p.UpdatedBy,
 		"startedBy":           p.StartedBy,
 		"startedByName":       p.StartedByName,
+		"autoplayEnabled":     p.AutoplayEnabled,
 		"updatedAtMs":         p.UpdatedAtMs,
 	}
+}
+
+// SetAutoplay changes the party-wide AutoPlay choice. It belongs to playback
+// state so a replacement AutoPlay supplier can continue after the host leaves.
+func (p *PlaybackState) SetAutoplay(memberId *string, enabled bool) {
+	if p.AutoplayEnabled == enabled {
+		return
+	}
+	p.AutoplayEnabled = enabled
+	p.touch(memberId)
 }
 
 func (p *PlaybackState) QueueToWire() map[string]interface{} {
