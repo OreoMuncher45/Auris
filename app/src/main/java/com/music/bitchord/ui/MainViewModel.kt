@@ -43,6 +43,8 @@ import com.music.bitchord.data.model.SongMenu
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.UserPlaylist
+import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
@@ -1425,61 +1427,53 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Recent searches, kept on device. */
-    val searchHistory: StateFlow<List<String>> = SearchHistory.recent
+    /** Recent searches, kept on device as rich entity records. */
+    val searchHistory: StateFlow<List<SearchHistoryEntity>> = SearchHistory.recent
 
-    fun onQueryChange(value: String) {
-        val previous = _query.value
-        _query.value = value
-        if (value.isBlank()) {
-            // Emptying the field is how the recent searches are got back to,
-            // so it takes down the suggestions and the results together.
-            // Nothing in flight can still be waiting to overwrite the latter:
-            // the id it would be checked against has already moved past it.
-            newestRequestId.incrementAndGet()
-            searchSession = null
-            _searchLoadingMore.value = false
-            _results.value = null
-            _suggestions.value = emptyList()
-            _typeaheadResults.value = emptyList()
-            return
+    /**
+     * Records a full entity payload in the history — used when the user taps
+     * a suggestion, result row, or typeahead card so the recents list shows
+     * real artwork and metadata instead of raw text.
+     */
+    fun recordEntity(entity: SearchHistoryEntity) = SearchHistory.record(entity)
+
+    /**
+     * Records a track entity from a search hit.
+     * Falls back to recording the raw query if no song data is available.
+     */
+    fun recordSearch() {
+        val q = _query.value.trim()
+        if (q.isEmpty()) return
+        // If we have a current top result or typeahead, prefer entity recording
+        val topResult = (_results.value as? UiState.Success)?.data?.firstOrNull {
+            it is SearchResult.TopTrack || it is SearchResult.Track
         }
-        // The previous keystroke's completions are left up beneath the new
-        // lead row while the fresh ones are fetched — the same reasoning as
-        // [prefixMatch]: they were right a letter ago, and a list that
-        // collapses to one row on every letter is what makes a typeahead feel
-        // broken. Text that isn't a continuation of what they were for (the
-        // whole field replaced at once, say) drops them instead of showing
-        // completions of a query that's gone.
-        val stale = if (value.startsWith(previous, true) || previous.startsWith(value, true)) {
-            _suggestions.value.drop(1)
+        if (topResult is SearchResult.Track) {
+            recordEntity(SearchHistoryEntity(
+                id = topResult.song.videoId,
+                title = topResult.song.title,
+                subtitle = listOfNotNull(topResult.song.artist).joinToString(" · "),
+                artworkUrl = topResult.song.thumbnailUrl,
+                entityType = EntityType.TRACK,
+            ))
+        } else if (topResult is SearchResult.TopTrack) {
+            recordEntity(SearchHistoryEntity(
+                id = topResult.song.videoId,
+                title = topResult.song.title,
+                subtitle = listOfNotNull(topResult.song.artist).joinToString(" · "),
+                artworkUrl = topResult.song.thumbnailUrl,
+                entityType = EntityType.TRACK,
+            ))
         } else {
-            emptyList()
+            // Fallback: record as a raw-text entity for backwards compatibility
+            recordEntity(SearchHistoryEntity(
+                id = "q:$q",
+                title = q,
+                subtitle = "",
+                artworkUrl = null,
+                entityType = EntityType.TRACK,
+            ))
         }
-        _suggestions.value = listOf(value) + stale.filterNot { it.equals(value, true) }
-        suggestRequests.tryEmit(value)
-    }
-
-    /**
-     * Commits the current query to the history. Called when the user acts on
-     * what they found — submitting from the keyboard, or opening a result —
-     * rather than on every keystroke, which would fill the list with the
-     * prefixes typed on the way to the real query.
-     */
-    fun recordSearch() = SearchHistory.record(_query.value)
-
-    /**
-     * The search button — the keyboard's search action, or the magnifier in
-     * the field. The only thing that runs a search for text the user typed:
-     * keystrokes themselves ask for suggestions and nothing more, so a query
-     * is fetched once, when they say it's finished, instead of once per
-     * prefix on the way to it.
-     */
-    fun submitSearch() {
-        recordSearch()
-        _suggestions.value = emptyList()
-        _typeaheadResults.value = emptyList()
-        runSearch()
     }
 
     /**
@@ -1492,11 +1486,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _query.value = term
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
-        SearchHistory.record(term)
+        SearchHistory.record(SearchHistoryEntity(
+            id = "q:$term",
+            title = term,
+            subtitle = "",
+            artworkUrl = null,
+            entityType = EntityType.TRACK,
+        ))
         runSearch()
     }
 
-    fun removeSearch(term: String) = SearchHistory.remove(term)
+    fun removeSearch(id: String) = SearchHistory.remove(id)
 
     fun clearSearchHistory() = SearchHistory.clear()
 
