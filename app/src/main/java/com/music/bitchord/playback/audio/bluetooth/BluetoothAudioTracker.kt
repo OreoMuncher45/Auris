@@ -52,7 +52,9 @@ data class BluetoothTelemetry(
         append(codecName)
         if (bitDepth != null) append(" / $bitDepth-bit")
         if (sampleRateHz != null) append(" / $sampleRateHz Hz")
-        if (bitrateLabel != "Not exposed by Android" && bitrateLabel.isNotBlank()) {
+        if (mode != null && mode.isNotBlank()) {
+            append(" ($mode)")
+        } else if (bitrateLabel != "Not exposed by Android" && bitrateLabel.isNotBlank()) {
             append(" @ $bitrateLabel")
         }
     }
@@ -76,6 +78,17 @@ class BluetoothAudioTracker(private val context: Context) {
 
     private var a2dpProfile: BluetoothA2dp? = null
     private var isReceiverRegistered: Boolean = false
+
+    private fun hasBluetoothConnectPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.BLUETOOTH_CONNECT,
+            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
 
     private val profileListener = object : BluetoothProfile.ServiceListener {
         override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
@@ -108,8 +121,15 @@ class BluetoothAudioTracker(private val context: Context) {
                         _telemetry.value = BluetoothTelemetry()
                     }
                 }
-                BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED,
                 BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                    if (state == BluetoothAdapter.STATE_OFF || state == BluetoothAdapter.STATE_TURNING_OFF) {
+                        _telemetry.value = BluetoothTelemetry()
+                    } else if (state == BluetoothAdapter.STATE_ON) {
+                        refreshCurrentDevice()
+                    }
+                }
+                BluetoothAdapter.ACTION_CONNECTION_STATE_CHANGED -> {
                     refreshCurrentDevice()
                 }
             }
@@ -145,6 +165,10 @@ class BluetoothAudioTracker(private val context: Context) {
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to bind A2DP profile proxy", e)
         }
+
+        if (a2dpProfile != null) {
+            refreshCurrentDevice()
+        }
     }
 
     /**
@@ -166,15 +190,42 @@ class BluetoothAudioTracker(private val context: Context) {
             }
             a2dpProfile = null
         }
+        _telemetry.value = BluetoothTelemetry()
     }
 
     /**
-     * Asynchronously queries the active A2DP device's codec status via reflection.
+     * Asynchronously queries the active A2DP device's codec status.
+     * Uses BLUETOOTH_CONNECT permission when granted; falls back safely to AudioManager if not.
      */
-    @SuppressLint("MissingPermission")
     fun refreshCurrentDevice() {
         val a2dp = a2dpProfile ?: return
+
+        if (!hasBluetoothConnectPermission()) {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            val btDevice = audioManager?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)?.firstOrNull {
+                it.isSink && it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+            }
+            if (btDevice != null) {
+                val name = btDevice.productName?.toString()?.trim().takeIf { !it.isNullOrBlank() } ?: "Bluetooth Device"
+                val current = _telemetry.value
+                if (!current.isConnected) {
+                    _telemetry.value = BluetoothTelemetry(
+                        isConnected = true,
+                        deviceName = name,
+                        codecName = "Bluetooth A2DP",
+                        bitrateLabel = "Not exposed by Android",
+                        isAuthoritative = false,
+                        lastUpdatedMs = SystemClock.elapsedRealtime(),
+                    )
+                }
+            } else {
+                _telemetry.value = BluetoothTelemetry()
+            }
+            return
+        }
+
         try {
+            @SuppressLint("MissingPermission")
             val connectedDevices = a2dp.connectedDevices
             val activeDevice = connectedDevices.firstOrNull()
             if (activeDevice == null) {
@@ -183,12 +234,13 @@ class BluetoothAudioTracker(private val context: Context) {
             }
 
             val deviceName = try {
+                @SuppressLint("MissingPermission")
                 activeDevice.name ?: activeDevice.alias ?: "Bluetooth Device"
             } catch (_: Throwable) {
                 "Bluetooth Device"
             }
 
-            // Reflection: BluetoothA2dp.getCodecStatus(BluetoothDevice)
+            // Query codec status via A2DP profile proxy
             val method: Method? = try {
                 a2dp.javaClass.getMethod("getCodecStatus", BluetoothDevice::class.java)
             } catch (_: Throwable) {
@@ -218,20 +270,34 @@ class BluetoothAudioTracker(private val context: Context) {
     }
 
     private fun parseCodecStatusIntent(intent: Intent) {
-        val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+        val deviceName = if (hasBluetoothConnectPermission()) {
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
+            }
+            try {
+                @SuppressLint("MissingPermission")
+                device?.name ?: device?.alias ?: _telemetry.value.deviceName ?: "Bluetooth Device"
+            } catch (_: Throwable) {
+                _telemetry.value.deviceName ?: "Bluetooth Device"
+            }
+        } else {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+            val btDevice = audioManager?.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)?.firstOrNull {
+                it.isSink && it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP
+            }
+            btDevice?.productName?.toString()?.trim() ?: _telemetry.value.deviceName ?: "Bluetooth Device"
+        }
+
+        val codecStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_CODEC_STATUS, android.bluetooth.BluetoothCodecStatus::class.java)
         } else {
             @Suppress("DEPRECATION")
-            intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
-        }
+            intent.getParcelableExtra(EXTRA_CODEC_STATUS)
+        } ?: intent.extras?.get(EXTRA_CODEC_STATUS)
 
-        val deviceName = try {
-            device?.name ?: _telemetry.value.deviceName ?: "Bluetooth Device"
-        } catch (_: Throwable) {
-            _telemetry.value.deviceName ?: "Bluetooth Device"
-        }
-
-        val codecStatus = intent.extras?.get(EXTRA_CODEC_STATUS)
         if (codecStatus != null) {
             val parsed = parseCodecStatusObject(codecStatus, deviceName)
             if (parsed != null) {
@@ -242,18 +308,63 @@ class BluetoothAudioTracker(private val context: Context) {
         refreshCurrentDevice()
     }
 
-    private fun parseCodecStatusObject(codecStatus: Any, deviceName: String): BluetoothTelemetry? {
+    internal fun parseCodecStatusObject(codecStatus: Any, deviceName: String): BluetoothTelemetry? {
         return try {
-            val getCodecConfigMethod = codecStatus.javaClass.getMethod("getCodecConfig")
-            val codecConfig = getCodecConfigMethod.invoke(codecStatus) ?: return null
-            parseCodecConfigObject(codecConfig, deviceName)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && codecStatus is android.bluetooth.BluetoothCodecStatus) {
+                val codecConfig = codecStatus.codecConfig ?: return null
+                parseCodecConfigTyped(codecConfig, deviceName)
+            } else {
+                val getCodecConfigMethod = codecStatus.javaClass.getMethod("getCodecConfig")
+                val codecConfig = getCodecConfigMethod.invoke(codecStatus) ?: return null
+                parseCodecConfigReflective(codecConfig, deviceName)
+            }
         } catch (e: Throwable) {
             Log.d(TAG, "Failed to parse BluetoothCodecStatus: ${e.message}")
             null
         }
     }
 
-    internal fun parseCodecConfigObject(codecConfig: Any, deviceName: String): BluetoothTelemetry {
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    internal fun parseCodecConfigTyped(
+        codecConfig: android.bluetooth.BluetoothCodecConfig,
+        deviceName: String,
+    ): BluetoothTelemetry {
+        val codecType = codecConfig.codecType
+        val sampleRateMask = codecConfig.sampleRate
+        val bitsMask = codecConfig.bitsPerSample
+        val codecSpecific1 = codecConfig.codecSpecific1
+
+        val codecName: String = try {
+            val nameMethod = codecConfig.javaClass.getMethod("getCodecName")
+            (nameMethod.invoke(codecConfig) as? String)?.takeIf { it.isNotBlank() }
+        } catch (_: Throwable) {
+            null
+        } ?: mapCodecType(codecType)
+
+        val sampleRateHz = mapSampleRate(sampleRateMask)
+        val bitDepth = mapBitDepth(bitsMask)
+        val mode = when (codecType) {
+            SOURCE_CODEC_TYPE_LDAC -> parseLdacQualityMode(codecSpecific1)
+            else -> null
+        }
+
+        return BluetoothTelemetry(
+            isConnected = true,
+            deviceName = deviceName,
+            codecName = codecName,
+            sampleRateHz = sampleRateHz,
+            bitDepth = bitDepth,
+            bitrateLabel = "Not exposed by Android",
+            mode = mode,
+            isAuthoritative = true,
+            lastUpdatedMs = SystemClock.elapsedRealtime(),
+        )
+    }
+
+    internal fun parseCodecConfigReflective(
+        codecConfig: Any,
+        deviceName: String,
+    ): BluetoothTelemetry {
         val clazz = codecConfig.javaClass
 
         val codecType = try {
@@ -282,7 +393,6 @@ class BluetoothAudioTracker(private val context: Context) {
         }
 
         val codecName = try {
-            // Android 14+ public or internal method
             val nameMethod = clazz.getMethod("getCodecName")
             (nameMethod.invoke(codecConfig) as? String)?.takeIf { it.isNotBlank() }
         } catch (_: Throwable) {
@@ -291,10 +401,9 @@ class BluetoothAudioTracker(private val context: Context) {
 
         val sampleRateHz = mapSampleRate(sampleRateMask)
         val bitDepth = mapBitDepth(bitsMask)
-
-        val (bitrateLabel, mode) = when (codecType) {
-            SOURCE_CODEC_TYPE_LDAC -> parseLdacBitrate(codecSpecific1)
-            else -> Pair("Not exposed by Android", null)
+        val mode = when (codecType) {
+            SOURCE_CODEC_TYPE_LDAC -> parseLdacQualityMode(codecSpecific1)
+            else -> null
         }
 
         return BluetoothTelemetry(
@@ -303,7 +412,7 @@ class BluetoothAudioTracker(private val context: Context) {
             codecName = codecName,
             sampleRateHz = sampleRateHz,
             bitDepth = bitDepth,
-            bitrateLabel = bitrateLabel,
+            bitrateLabel = "Not exposed by Android",
             mode = mode,
             isAuthoritative = true,
             lastUpdatedMs = SystemClock.elapsedRealtime(),
@@ -337,39 +446,50 @@ class BluetoothAudioTracker(private val context: Context) {
         }
 
         fun mapSampleRate(mask: Int): Int? = when {
+            mask in setOf(44100, 48000, 88200, 96000, 176400, 192000) -> mask
+            mask <= 0 || mask > 63 -> null
             (mask and (1 shl 5)) != 0 -> 192000
             (mask and (1 shl 4)) != 0 -> 176400
             (mask and (1 shl 3)) != 0 -> 96000
             (mask and (1 shl 2)) != 0 -> 88200
             (mask and (1 shl 1)) != 0 -> 48000
             (mask and (1 shl 0)) != 0 -> 44100
-            mask in setOf(44100, 48000, 88200, 96000, 176400, 192000) -> mask
             else -> null
         }
 
         fun mapBitDepth(mask: Int): Int? = when {
+            mask in setOf(16, 24, 32) -> mask
+            mask <= 0 || mask > 7 -> null
             (mask and (1 shl 2)) != 0 -> 32
             (mask and (1 shl 1)) != 0 -> 24
             (mask and (1 shl 0)) != 0 -> 16
-            mask in setOf(16, 24, 32) -> mask
             else -> null
         }
 
         /**
-         * Parses LDAC vendor-specific parameter 1 for operational bitrate mode.
+         * Parses LDAC vendor-specific parameter 1 for the configured nominal quality mode.
          *
          * AOSP LDAC values (from a2dp_vendor_ldac_constants.h):
-         * 1000 = High Quality (990 kbps)
-         * 1001 = Standard (660 kbps)
-         * 1002 = Connection Priority (330 kbps)
-         * 1003 = Adaptive Bit Rate (ABR)
+         * 1000 = High Quality (990 kbps nominal)
+         * 1001 = Standard (660 kbps nominal)
+         * 1002 = Connection Priority (330 kbps nominal)
+         * 1003 = Adaptive Bitrate (ABR)
          */
-        fun parseLdacBitrate(param1: Long): Pair<String, String?> = when (param1) {
-            1000L -> Pair("990 kbps (High Quality)", "Fixed")
-            1001L -> Pair("660 kbps (Standard)", "Fixed")
-            1002L -> Pair("330 kbps (Connection)", "Fixed")
-            1003L -> Pair("Adaptive (ABR)", "Adaptive")
-            else -> Pair("Not exposed by Android", null)
+        fun parseLdacQualityMode(param1: Long): String? = when (param1) {
+            1000L -> "High Quality (990 kbps nominal)"
+            1001L -> "Standard (660 kbps nominal)"
+            1002L -> "Connection Priority (330 kbps nominal)"
+            1003L -> "Adaptive Bitrate (ABR)"
+            else -> null
+        }
+
+        /**
+         * Parses LDAC bitrate information.
+         * Nominal mode and realtime bitrate are kept strictly separated:
+         * realtime bitrate is never guessed or faked and remains "Not exposed by Android".
+         */
+        fun parseLdacBitrate(param1: Long): Pair<String, String?> {
+            return Pair("Not exposed by Android", parseLdacQualityMode(param1))
         }
     }
 }

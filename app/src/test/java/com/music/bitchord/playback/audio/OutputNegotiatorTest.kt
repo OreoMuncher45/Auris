@@ -259,8 +259,8 @@ class OutputNegotiatorTest {
     @Test
     fun bluetoothTelemetryFormattingAccuratelyReportsLdacBitrate() {
         val (bitrateLabel, mode) = com.music.bitchord.playback.audio.bluetooth.BluetoothAudioTracker.parseLdacBitrate(1000L)
-        assertEquals("990 kbps (High Quality)", bitrateLabel)
-        assertEquals("Fixed", mode)
+        assertEquals("Not exposed by Android", bitrateLabel)
+        assertEquals("High Quality (990 kbps nominal)", mode)
 
         val telemetry = com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry(
             isConnected = true,
@@ -273,7 +273,7 @@ class OutputNegotiatorTest {
             isAuthoritative = true,
         )
 
-        assertEquals("LDAC / 24-bit / 96000 Hz @ 990 kbps (High Quality)", telemetry.formattedSummary())
+        assertEquals("LDAC / 24-bit / 96000 Hz (High Quality (990 kbps nominal))", telemetry.formattedSummary())
         assertTrue(telemetry.isHighRes)
     }
 }

@@ -279,7 +279,7 @@ object AudioOutputStatus {
      * Authoritative runtime verification of whether the active AudioTrack path is genuinely direct
      * and bypassing AudioFlinger mixer, versus being rejected by AudioPolicy and placed on a MixerThread.
      */
-    private fun evaluateActualPath(snapshot: Snapshot): Snapshot {
+    internal fun evaluateActualPath(snapshot: Snapshot): Snapshot {
         // Direct USB (userspace USB stream) directly communicates with USB endpoints,
         // bypassing Android AudioFlinger and AudioPolicy entirely.
         if (snapshot.transportType == TransportType.DIRECT_USB ||
