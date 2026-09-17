@@ -44,6 +44,7 @@ object AudioOutputStatus {
         val encodings: IntArray = IntArray(0),
         val isUsb: Boolean = false,
         val routeKind: AudioRouting.Kind = AudioRouting.Kind.PHONE,
+        val requestedTransportType: TransportType = TransportType.AUDIO_TRACK,
         val transportType: TransportType = TransportType.AUDIO_TRACK,
         val actualEncoding: Int? = null,
         val actualSampleRateHz: Int? = null,
@@ -59,6 +60,9 @@ object AudioOutputStatus {
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
         val directPlaybackSelected: Boolean = false,
+        val directPlaybackRequested: Boolean = false,
+        val directPlaybackActual: Boolean = false,
+        val directPlaybackRejected: Boolean = false,
         val directPlaybackDetail: String? = null,
         val bluetoothTelemetry: BluetoothTelemetry? = null,
         val negotiationResult: OutputNegotiationResult? = null,
@@ -73,6 +77,7 @@ object AudioOutputStatus {
                 encodings.contentEquals(other.encodings) &&
                 isUsb == other.isUsb &&
                 routeKind == other.routeKind &&
+                requestedTransportType == other.requestedTransportType &&
                 transportType == other.transportType &&
                 actualEncoding == other.actualEncoding &&
                 actualSampleRateHz == other.actualSampleRateHz &&
@@ -88,6 +93,9 @@ object AudioOutputStatus {
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
                 directPlaybackSelected == other.directPlaybackSelected &&
+                directPlaybackRequested == other.directPlaybackRequested &&
+                directPlaybackActual == other.directPlaybackActual &&
+                directPlaybackRejected == other.directPlaybackRejected &&
                 directPlaybackDetail == other.directPlaybackDetail &&
                 bluetoothTelemetry == other.bluetoothTelemetry &&
                 negotiationResult == other.negotiationResult
@@ -101,6 +109,7 @@ object AudioOutputStatus {
             result = 31 * result + encodings.contentHashCode()
             result = 31 * result + isUsb.hashCode()
             result = 31 * result + routeKind.hashCode()
+            result = 31 * result + requestedTransportType.hashCode()
             result = 31 * result + transportType.hashCode()
             result = 31 * result + (actualEncoding ?: 0)
             result = 31 * result + (actualSampleRateHz ?: 0)
@@ -116,6 +125,9 @@ object AudioOutputStatus {
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
             result = 31 * result + directPlaybackSelected.hashCode()
+            result = 31 * result + directPlaybackRequested.hashCode()
+            result = 31 * result + directPlaybackActual.hashCode()
+            result = 31 * result + directPlaybackRejected.hashCode()
             result = 31 * result + (directPlaybackDetail?.hashCode() ?: 0)
             result = 31 * result + (bluetoothTelemetry?.hashCode() ?: 0)
             result = 31 * result + (negotiationResult?.hashCode() ?: 0)
@@ -193,13 +205,14 @@ object AudioOutputStatus {
                 Pair(FallbackReason.NONE, null)
         }
 
-        current.value = current.value.copy(
+        val baseSnapshot = current.value.copy(
             requestedPcmMode = requestedPcmMode,
             deviceName = device?.productName?.toString()?.ifBlank { null } ?: "System default",
             sampleRatesHz = device?.sampleRates ?: IntArray(0),
             encodings = device?.encodings ?: IntArray(0),
             isUsb = isUsbDevice,
             routeKind = computedRouteKind,
+            requestedTransportType = transport,
             transportType = transport,
             floatFallback = fallback,
             fallbackReason = reason,
@@ -212,12 +225,14 @@ object AudioOutputStatus {
             directPlaybackDetail = directSupport?.description,
             bluetoothTelemetry = bluetoothTelemetry,
         )
+        current.value = evaluateActualPath(baseSnapshot)
     }
 
     fun publishNegotiation(result: OutputNegotiationResult) {
-        current.value = current.value.copy(
+        val baseSnapshot = current.value.copy(
             negotiationResult = result,
             routeKind = result.route.kind,
+            requestedTransportType = result.output.transport,
             transportType = result.output.transport,
             directPlaybackSupported = result.route.directSupport.isDirectSupported,
             directPlaybackSelected = result.output.isDirect && result.output.transport != TransportType.DIRECT_USB,
@@ -229,6 +244,7 @@ object AudioOutputStatus {
             decoderOutputEncoding = result.decoder.encoding,
             dspFormat = result.dsp.format,
         )
+        current.value = evaluateActualPath(baseSnapshot)
     }
 
     fun publishDecoder(decoderName: String?) {
@@ -244,12 +260,147 @@ object AudioOutputStatus {
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {
         val isFloat = encoding == AudioFormat.ENCODING_PCM_FLOAT
-        current.value = current.value.copy(
+        val baseSnapshot = current.value.copy(
             actualEncoding = encoding,
             actualSampleRateHz = sampleRateHz,
             bufferSize = bufferSize ?: current.value.bufferSize,
             floatFallback = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 && !isFloat,
         )
+        current.value = evaluateActualPath(baseSnapshot)
+    }
+
+    /**
+     * Authoritative runtime verification of whether the active AudioTrack path is genuinely direct
+     * and bypassing AudioFlinger mixer, versus being rejected by AudioPolicy and placed on a MixerThread.
+     */
+    private fun evaluateActualPath(snapshot: Snapshot): Snapshot {
+        // Direct USB (userspace USB stream) directly communicates with USB endpoints,
+        // bypassing Android AudioFlinger and AudioPolicy entirely.
+        if (snapshot.transportType == TransportType.DIRECT_USB ||
+            snapshot.requestedTransportType == TransportType.DIRECT_USB
+        ) {
+            return snapshot.copy(
+                transportType = TransportType.DIRECT_USB,
+                directPlaybackRequested = true,
+                directPlaybackActual = true,
+                directPlaybackRejected = false,
+                directPlaybackSelected = false,
+                systemMixerRateHz = null,
+            )
+        }
+
+        val requestedDirect = snapshot.requestedTransportType == TransportType.AUDIO_TRACK_DIRECT ||
+            snapshot.directPlaybackSelected ||
+            (snapshot.directSupport?.isDirectSupported == true && snapshot.routeKind != AudioRouting.Kind.PHONE)
+
+        val sampleRate = snapshot.actualSampleRateHz
+            ?: snapshot.negotiationResult?.output?.sampleRateHz
+            ?: snapshot.negotiationResult?.source?.sampleRateHz
+            ?: 48000
+
+        val encoding = snapshot.actualEncoding
+            ?: when (snapshot.negotiationResult?.output?.encoding) {
+                PcmEncoding.PCM_FLOAT -> AudioFormat.ENCODING_PCM_FLOAT
+                PcmEncoding.PCM_24BIT_PACKED -> AudioFormat.ENCODING_PCM_24BIT_PACKED
+                PcmEncoding.PCM_32BIT -> AudioFormat.ENCODING_PCM_32BIT
+                PcmEncoding.PCM_16BIT -> AudioFormat.ENCODING_PCM_16BIT
+                null -> null
+            }
+
+        val defaultMixerRate = snapshot.systemMixerRateHz ?: 48000
+
+        return when (snapshot.routeKind) {
+            AudioRouting.Kind.PHONE -> {
+                snapshot.copy(
+                    transportType = TransportType.AUDIO_TRACK,
+                    directPlaybackRequested = false,
+                    directPlaybackActual = false,
+                    directPlaybackRejected = false,
+                    directPlaybackSelected = false,
+                    systemMixerRateHz = defaultMixerRate,
+                )
+            }
+            AudioRouting.Kind.USB -> {
+                val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() || snapshot.sampleRatesHz.contains(sampleRate)
+                val encodingSupported = snapshot.encodings.isEmpty() || (encoding != null && snapshot.encodings.contains(encoding))
+                val isFloatPcm = encoding == AudioFormat.ENCODING_PCM_FLOAT
+
+                val isGenuineDirect = requestedDirect &&
+                    snapshot.directSupport?.isDirectSupported == true &&
+                    sampleRateSupported &&
+                    encodingSupported &&
+                    !isFloatPcm
+
+                if (isGenuineDirect) {
+                    snapshot.copy(
+                        transportType = TransportType.AUDIO_TRACK_DIRECT,
+                        directPlaybackRequested = true,
+                        directPlaybackActual = true,
+                        directPlaybackRejected = false,
+                        directPlaybackSelected = true,
+                        systemMixerRateHz = null,
+                    )
+                } else if (requestedDirect || snapshot.directSupport?.isDirectSupported == true) {
+                    snapshot.copy(
+                        transportType = TransportType.AUDIO_TRACK,
+                        directPlaybackRequested = true,
+                        directPlaybackActual = false,
+                        directPlaybackRejected = true,
+                        directPlaybackSelected = false,
+                        systemMixerRateHz = defaultMixerRate,
+                        fallbackReason = FallbackReason.ROUTE_LIMITATION,
+                        fallbackDetail = "Direct playback unavailable for active USB device",
+                    )
+                } else {
+                    snapshot.copy(
+                        transportType = TransportType.AUDIO_TRACK,
+                        directPlaybackRequested = false,
+                        directPlaybackActual = false,
+                        directPlaybackRejected = false,
+                        directPlaybackSelected = false,
+                        systemMixerRateHz = defaultMixerRate,
+                    )
+                }
+            }
+            AudioRouting.Kind.BLUETOOTH -> {
+                snapshot.copy(
+                    transportType = TransportType.AUDIO_TRACK,
+                    directPlaybackRequested = false,
+                    directPlaybackActual = false,
+                    directPlaybackRejected = false,
+                    directPlaybackSelected = false,
+                    systemMixerRateHz = defaultMixerRate,
+                )
+            }
+            else -> {
+                val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() || snapshot.sampleRatesHz.contains(sampleRate)
+                val isGenuineDirect = requestedDirect &&
+                    snapshot.directSupport?.isDirectSupported == true &&
+                    sampleRateSupported
+
+                if (isGenuineDirect) {
+                    snapshot.copy(
+                        transportType = TransportType.AUDIO_TRACK_DIRECT,
+                        directPlaybackRequested = true,
+                        directPlaybackActual = true,
+                        directPlaybackRejected = false,
+                        directPlaybackSelected = true,
+                        systemMixerRateHz = null,
+                    )
+                } else {
+                    snapshot.copy(
+                        transportType = TransportType.AUDIO_TRACK,
+                        directPlaybackRequested = requestedDirect,
+                        directPlaybackActual = false,
+                        directPlaybackRejected = requestedDirect,
+                        directPlaybackSelected = false,
+                        systemMixerRateHz = defaultMixerRate,
+                        fallbackReason = if (requestedDirect) FallbackReason.ROUTE_LIMITATION else snapshot.fallbackReason,
+                        fallbackDetail = if (requestedDirect) "Direct playback unavailable for active ${snapshot.routeKind.name} device" else snapshot.fallbackDetail,
+                    )
+                }
+            }
+        }
     }
 
     fun reset() {

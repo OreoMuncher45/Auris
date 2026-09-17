@@ -351,8 +351,10 @@ fun AudioPipelineDialog(
                     val directStatusText = when {
                         outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
                             "Active (Direct Userspace USB)"
-                        outputStatus.directPlaybackSelected ->
+                        outputStatus.directPlaybackActual ->
                             "Active (Direct AudioTrack, Bypasses Mixer)"
+                        outputStatus.directPlaybackRejected ->
+                            "Inactive / Fallback"
                         outputStatus.directPlaybackSupported ->
                             "Supported (Framework Mixed)"
                         else ->
@@ -366,14 +368,14 @@ fun AudioPipelineDialog(
                     val mixerText = when {
                         outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
                             "Direct (Bypasses System Mixer)"
-                        outputStatus.directPlaybackSelected ->
+                        outputStatus.directPlaybackActual ->
                             "Direct (Bit-Matched, Bypasses AudioFlinger)"
                         outputStatus.systemMixerRateHz != null ->
-                            "${outputStatus.systemMixerRateHz} Hz (AudioFlinger)"
+                            "AudioFlinger Mixer ${outputStatus.systemMixerRateHz} Hz"
                         else -> null
                     }
                     mixerText?.let {
-                        PipelineRow("System Mixer", it)
+                        PipelineRow("System", it)
                     }
 
                     if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
@@ -390,8 +392,8 @@ fun AudioPipelineDialog(
                     }
 
                     if (outputStatus.fallbackReason != com.music.bitchord.playback.audio.FallbackReason.NONE) {
-                        val detail = outputStatus.fallbackDetail?.let { ": $it" }.orEmpty()
-                        PipelineRow("Fallback", "${outputStatus.fallbackReason.label}$detail")
+                        val fallbackText = outputStatus.fallbackDetail ?: outputStatus.fallbackReason.label
+                        PipelineRow("Fallback", fallbackText)
                     }
                 }
             }
