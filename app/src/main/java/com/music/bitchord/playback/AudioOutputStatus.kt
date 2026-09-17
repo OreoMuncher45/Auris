@@ -64,6 +64,8 @@ object AudioOutputStatus {
         val directPlaybackActual: Boolean = false,
         val directPlaybackRejected: Boolean = false,
         val directPlaybackDetail: String? = null,
+        val halFormat: String? = null,
+        val usbEndpointFormat: String? = null,
         val bluetoothTelemetry: BluetoothTelemetry? = null,
         val negotiationResult: OutputNegotiationResult? = null,
     ) {
@@ -97,6 +99,8 @@ object AudioOutputStatus {
                 directPlaybackActual == other.directPlaybackActual &&
                 directPlaybackRejected == other.directPlaybackRejected &&
                 directPlaybackDetail == other.directPlaybackDetail &&
+                halFormat == other.halFormat &&
+                usbEndpointFormat == other.usbEndpointFormat &&
                 bluetoothTelemetry == other.bluetoothTelemetry &&
                 negotiationResult == other.negotiationResult
         }
@@ -129,6 +133,8 @@ object AudioOutputStatus {
             result = 31 * result + directPlaybackActual.hashCode()
             result = 31 * result + directPlaybackRejected.hashCode()
             result = 31 * result + (directPlaybackDetail?.hashCode() ?: 0)
+            result = 31 * result + (halFormat?.hashCode() ?: 0)
+            result = 31 * result + (usbEndpointFormat?.hashCode() ?: 0)
             result = 31 * result + (bluetoothTelemetry?.hashCode() ?: 0)
             result = 31 * result + (negotiationResult?.hashCode() ?: 0)
             return result
@@ -318,12 +324,24 @@ object AudioOutputStatus {
                     directPlaybackRejected = false,
                     directPlaybackSelected = false,
                     systemMixerRateHz = defaultMixerRate,
+                    halFormat = "PCM24 packed",
+                    usbEndpointFormat = null,
                 )
             }
             AudioRouting.Kind.USB -> {
                 val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() || snapshot.sampleRatesHz.contains(sampleRate)
                 val encodingSupported = snapshot.encodings.isEmpty() || (encoding != null && snapshot.encodings.contains(encoding))
                 val isFloatPcm = encoding == AudioFormat.ENCODING_PCM_FLOAT
+
+                val maxUsbRate = snapshot.sampleRatesHz.maxOrNull() ?: 48000
+                val usbEnc = when {
+                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_32BIT) -> "PCM32"
+                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED) -> "PCM24"
+                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_FLOAT) -> "Float32"
+                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_16BIT) -> "PCM16"
+                    else -> "PCM16"
+                }
+                val usbEndpointStr = "$usbEnc / $maxUsbRate Hz"
 
                 val isGenuineDirect = requestedDirect &&
                     snapshot.directSupport?.isDirectSupported == true &&
@@ -339,6 +357,8 @@ object AudioOutputStatus {
                         directPlaybackRejected = false,
                         directPlaybackSelected = true,
                         systemMixerRateHz = null,
+                        halFormat = null,
+                        usbEndpointFormat = usbEndpointStr,
                     )
                 } else if (requestedDirect || snapshot.directSupport?.isDirectSupported == true) {
                     snapshot.copy(
@@ -348,6 +368,8 @@ object AudioOutputStatus {
                         directPlaybackRejected = true,
                         directPlaybackSelected = false,
                         systemMixerRateHz = defaultMixerRate,
+                        halFormat = "PCM24 packed",
+                        usbEndpointFormat = usbEndpointStr,
                         fallbackReason = FallbackReason.ROUTE_LIMITATION,
                         fallbackDetail = "Direct playback unavailable for active USB device",
                     )
@@ -359,6 +381,8 @@ object AudioOutputStatus {
                         directPlaybackRejected = false,
                         directPlaybackSelected = false,
                         systemMixerRateHz = defaultMixerRate,
+                        halFormat = "PCM24 packed",
+                        usbEndpointFormat = usbEndpointStr,
                     )
                 }
             }
@@ -370,6 +394,8 @@ object AudioOutputStatus {
                     directPlaybackRejected = false,
                     directPlaybackSelected = false,
                     systemMixerRateHz = defaultMixerRate,
+                    halFormat = "PCM24 packed",
+                    usbEndpointFormat = null,
                 )
             }
             else -> {
@@ -386,6 +412,8 @@ object AudioOutputStatus {
                         directPlaybackRejected = false,
                         directPlaybackSelected = true,
                         systemMixerRateHz = null,
+                        halFormat = null,
+                        usbEndpointFormat = null,
                     )
                 } else {
                     snapshot.copy(
@@ -395,6 +423,8 @@ object AudioOutputStatus {
                         directPlaybackRejected = requestedDirect,
                         directPlaybackSelected = false,
                         systemMixerRateHz = defaultMixerRate,
+                        halFormat = "PCM24 packed",
+                        usbEndpointFormat = null,
                         fallbackReason = if (requestedDirect) FallbackReason.ROUTE_LIMITATION else snapshot.fallbackReason,
                         fallbackDetail = if (requestedDirect) "Direct playback unavailable for active ${snapshot.routeKind.name} device" else snapshot.fallbackDetail,
                     )

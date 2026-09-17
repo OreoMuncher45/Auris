@@ -324,20 +324,15 @@ fun AudioPipelineDialog(
 
                 // 5. Output Device Stage
                 val deviceName = outputStatus.deviceName.ifBlank { "System default" }
-                val inDepth = outputStatus.decoderOutputEncoding
-                    ?: when (outputStatus.actualEncoding) {
-                        AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
-                        AudioFormat.ENCODING_PCM_16BIT -> "16-bit PCM"
-                        else -> nerdStats?.bitDepth?.let { "$it-bit" } ?: "16-bit PCM"
-                    }
-                val outDepth = when (outputStatus.actualEncoding) {
-                    AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
-                    AudioFormat.ENCODING_PCM_16BIT -> if (outputStatus.floatFallback) "16-bit fallback" else "16-bit PCM"
-                    else -> if (outputStatus.floatFallback) "16-bit fallback" else inDepth
+                val audioTrackEncoding = when (outputStatus.actualEncoding) {
+                    AudioFormat.ENCODING_PCM_FLOAT -> "Float32"
+                    AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM24"
+                    AudioFormat.ENCODING_PCM_32BIT -> "PCM32"
+                    AudioFormat.ENCODING_PCM_16BIT -> "PCM16"
+                    else -> "Float32"
                 }
-                val bitDepthOutputText = "In: $inDepth  Out: $outDepth"
-                val outputSampleRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz
-                val outputSampleRateText = if (outputSampleRate != null) "$outputSampleRate Hz" else "—"
+                val audioTrackRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz ?: 48000
+                val audioTrackText = "$audioTrackEncoding / $audioTrackRate Hz"
 
                 PipelineStage(
                     icon = Icons.AutoMirrored.Rounded.VolumeUp,
@@ -354,28 +349,36 @@ fun AudioPipelineDialog(
                         outputStatus.directPlaybackActual ->
                             "Active (Direct AudioTrack, Bypasses Mixer)"
                         outputStatus.directPlaybackRejected ->
-                            "Inactive / Fallback"
+                            "Rejected"
                         outputStatus.directPlaybackSupported ->
                             "Supported (Framework Mixed)"
                         else ->
                             "Not Supported (Mixed Path)"
                     }
-                    PipelineRow("Direct Status", directStatusText)
-
-                    PipelineRow(stringResource(R.string.pipeline_bit_depth), bitDepthOutputText)
-                    PipelineRow(stringResource(R.string.pipeline_sample_rate), outputSampleRateText)
+                    PipelineRow("Direct", directStatusText)
+                    PipelineRow("AudioTrack", audioTrackText)
 
                     val mixerText = when {
                         outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
                             "Direct (Bypasses System Mixer)"
                         outputStatus.directPlaybackActual ->
                             "Direct (Bit-Matched, Bypasses AudioFlinger)"
-                        outputStatus.systemMixerRateHz != null ->
-                            "AudioFlinger Mixer ${outputStatus.systemMixerRateHz} Hz"
+                        outputStatus.systemMixerRateHz != null -> {
+                            val hal = outputStatus.halFormat
+                            if (hal != null) {
+                                "AudioFlinger Mixer ${outputStatus.systemMixerRateHz} Hz, HAL $hal"
+                            } else {
+                                "AudioFlinger Mixer ${outputStatus.systemMixerRateHz} Hz"
+                            }
+                        }
                         else -> null
                     }
                     mixerText?.let {
                         PipelineRow("System", it)
+                    }
+
+                    outputStatus.usbEndpointFormat?.let {
+                        PipelineRow("USB Endpoint", it)
                     }
 
                     if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
