@@ -98,6 +98,9 @@ class EqualizerProcessor : BaseAudioProcessor() {
         target = if (enabled) Tuning(curve, balance.coerceIn(-1f, 1f)) else Tuning.OFF
     }
 
+    val isEnabled: Boolean
+        get() = target !== Tuning.OFF
+
     /**
      * Configures the Float32 DSP engine for [sampleRate] and [channelCount].
      */

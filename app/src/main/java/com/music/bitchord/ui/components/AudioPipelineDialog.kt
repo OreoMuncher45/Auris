@@ -241,6 +241,9 @@ fun AudioPipelineDialog(
                     isLast = false,
                 ) {
                     PipelineRow(stringResource(R.string.pipeline_decoder_name), decoderName)
+                    outputStatus.decoderOutputEncoding?.let {
+                        PipelineRow(stringResource(R.string.pipeline_format), it)
+                    }
                 }
 
                 // 3. Resampler Stage
@@ -279,14 +282,7 @@ fun AudioPipelineDialog(
                 }
 
                 // 4. DSP Stage
-                val pcmFormat = when (outputStatus.actualEncoding) {
-                    AudioFormat.ENCODING_PCM_FLOAT -> "Float32"
-                    AudioFormat.ENCODING_PCM_16BIT -> "16-bit PCM"
-                    AudioFormat.ENCODING_PCM_24BIT_PACKED -> "24-bit PCM"
-                    AudioFormat.ENCODING_PCM_32BIT -> "32-bit PCM"
-                    null -> nerdStats?.bitDepth?.let { "$it-bit PCM" } ?: "Float32"
-                    else -> "PCM (${outputStatus.actualEncoding})"
-                }
+                val pcmFormat = outputStatus.dspFormat
                 val dspRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz
                 val dspRateText = if (dspRate != null) "$dspRate Hz" else "—"
                 val eqPresetText = if (eqEnabled) {
@@ -328,13 +324,18 @@ fun AudioPipelineDialog(
 
                 // 5. Output Device Stage
                 val deviceName = outputStatus.deviceName.ifBlank { "System default" }
-                val inDepth = when (outputStatus.actualEncoding) {
-                    AudioFormat.ENCODING_PCM_FLOAT -> "32-bit"
-                    AudioFormat.ENCODING_PCM_16BIT -> "16-bit"
-                    else -> nerdStats?.bitDepth?.let { "$it-bit" } ?: "16-bit"
+                val inDepth = outputStatus.decoderOutputEncoding
+                    ?: when (outputStatus.actualEncoding) {
+                        AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
+                        AudioFormat.ENCODING_PCM_16BIT -> "16-bit PCM"
+                        else -> nerdStats?.bitDepth?.let { "$it-bit" } ?: "16-bit PCM"
+                    }
+                val outDepth = when (outputStatus.actualEncoding) {
+                    AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
+                    AudioFormat.ENCODING_PCM_16BIT -> if (outputStatus.floatFallback) "16-bit fallback" else "16-bit PCM"
+                    else -> if (outputStatus.floatFallback) "16-bit fallback" else inDepth
                 }
-                val outDepth = if (outputStatus.floatFallback) "16-bit" else inDepth
-                val bitDepthOutputText = "In: $inDepth Out: $outDepth"
+                val bitDepthOutputText = "In: $inDepth  Out: $outDepth"
                 val outputSampleRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz
                 val outputSampleRateText = if (outputSampleRate != null) "$outputSampleRate Hz" else "—"
 

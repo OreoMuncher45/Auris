@@ -64,6 +64,10 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
     /** Parks both filters. Glided, not snapped. */
     fun open() = setCutoffs(OPEN_HZ, OFF_HZ)
 
+    val isFiltering: Boolean
+        get() = targetLowPassHz < OPEN_HZ || targetHighPassHz > OFF_HZ ||
+            currentLowPassHz < OPEN_HZ - SETTLED_HZ || currentHighPassHz > OFF_HZ + SETTLED_HZ
+
     /**
      * Configures the Float32 DSP engine for [sampleRate] and [channelCount].
      */

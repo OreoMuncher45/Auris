@@ -25,6 +25,8 @@ object AudioOutputStatus {
         val floatFallback: Boolean = false,
         val decoderName: String? = null,
         val bufferSize: Int? = null,
+        val decoderOutputEncoding: String? = null,
+        val dspFormat: String = "Float32",
     )
 
     val current = MutableStateFlow(Snapshot())
@@ -51,11 +53,20 @@ object AudioOutputStatus {
             // format Android actually accepted for the new AudioTrack.
             floatFallback = requestedPcmMode == OutputPcmMode.FLOAT_32 && !floatEnabled,
             decoderName = current.value.decoderName,
+            decoderOutputEncoding = current.value.decoderOutputEncoding,
+            dspFormat = current.value.dspFormat,
         )
     }
 
     fun publishDecoder(decoderName: String?) {
         current.value = current.value.copy(decoderName = decoderName)
+    }
+
+    fun publishDsp(decoderOutputEncoding: String?, dspFormat: String = "Float32") {
+        current.value = current.value.copy(
+            decoderOutputEncoding = decoderOutputEncoding,
+            dspFormat = dspFormat,
+        )
     }
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {

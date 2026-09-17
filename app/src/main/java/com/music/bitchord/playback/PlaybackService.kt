@@ -24,6 +24,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.core.net.toUri
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -57,6 +58,8 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
+import com.music.bitchord.playback.audio.DspChain
+import com.music.bitchord.playback.audio.PrecisionAudioSink
 import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.R
@@ -4213,27 +4216,24 @@ class PlaybackService : MediaLibraryService() {
             // the preference asks for it. The selected USB route must advertise
             // the format; otherwise Media3 uses its stable PCM16 path.
             setEnableAudioFloatOutput(configuredFloatOutput)
-            if (configuredFloatOutput) {
-                // c2.sec.flac.decoder produces one extra 232.2ms timestamp
-                // advance per decoded buffer when Media3 requests float PCM.
-                // Keep the real PCM_FLOAT sink, but decode FLAC through the
-                // platform software codec on affected Samsung devices.
-                setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
-                    val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
-                        MediaCodecSelector.PREFER_SOFTWARE
-                    } else {
-                        MediaCodecSelector.DEFAULT
-                    }
-                    val candidates = selector.getDecoderInfos(
-                        mimeType,
-                        requiresSecureDecoder,
-                        requiresTunnelingDecoder,
-                    )
-                    if (mimeType == MimeTypes.AUDIO_FLAC) {
-                        candidates.filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
-                    } else {
-                        candidates
-                    }
+            // c2.sec.flac.decoder produces one extra 232.2ms timestamp
+            // advance per decoded buffer when Media3 requests float PCM.
+            // Decode FLAC through the platform software codec on affected Samsung devices.
+            setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
+                    MediaCodecSelector.PREFER_SOFTWARE
+                } else {
+                    MediaCodecSelector.DEFAULT
+                }
+                val candidates = selector.getDecoderInfos(
+                    mimeType,
+                    requiresSecureDecoder,
+                    requiresTunnelingDecoder,
+                )
+                if (mimeType == MimeTypes.AUDIO_FLAC) {
+                    candidates.filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
+                } else {
+                    candidates
                 }
             }
         }
@@ -4242,31 +4242,40 @@ class PlaybackService : MediaLibraryService() {
             context: Context,
             enableFloatOutput: Boolean,
             enableAudioTrackPlaybackParams: Boolean,
-        ): AudioSink = DefaultAudioSink.Builder(context)
-            .setEnableFloatOutput(enableFloatOutput)
-            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .setAudioProcessorChain(
-                DefaultAudioSink.DefaultAudioProcessorChain(
-                    // Transition filtering last of the three: widening is a
-                    // property of the track, and a bass swap that ran before it
-                    // would have its own low end fed back in by the crossfeed —
-                    // or, once the equaliser is in the chain, by whatever the
-                    // listener's low band was set to. The equaliser sits between
-                    // them for the same reason: it belongs to the listener and
-                    // the whole session, while the transition filter belongs to
-                    // one handoff and has to have the last word on it.
-                    arrayOf(spatial, equalizer, transition),
-                    SilenceSkippingAudioProcessor(
-                        MIN_SILENCE_US,
-                        SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
-                        SilenceSkippingAudioProcessor.DEFAULT_MAX_SILENCE_TO_KEEP_DURATION_US,
-                        SilenceSkippingAudioProcessor.DEFAULT_MIN_VOLUME_TO_KEEP_PERCENTAGE,
-                        SilenceSkippingAudioProcessor.DEFAULT_SILENCE_THRESHOLD_LEVEL,
+        ): AudioSink {
+            val defaultSink = DefaultAudioSink.Builder(context)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                .setAudioProcessorChain(
+                    DefaultAudioSink.DefaultAudioProcessorChain(
+                        emptyArray<AudioProcessor>(),
+                        SilenceSkippingAudioProcessor(
+                            MIN_SILENCE_US,
+                            SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
+                            SilenceSkippingAudioProcessor.DEFAULT_MAX_SILENCE_TO_KEEP_DURATION_US,
+                            SilenceSkippingAudioProcessor.DEFAULT_MIN_VOLUME_TO_KEEP_PERCENTAGE,
+                            SilenceSkippingAudioProcessor.DEFAULT_SILENCE_THRESHOLD_LEVEL,
+                        ),
+                        SonicAudioProcessor(),
                     ),
-                    SonicAudioProcessor(),
-                ),
+                )
+                .build()
+
+            // Transition filtering last of the three: widening is a
+            // property of the track, and a bass swap that ran before it
+            // would have its own low end fed back in by the crossfeed —
+            // or, once the equaliser is in the chain, by whatever the
+            // listener's low band was set to. The equaliser sits between
+            // them for the same reason: it belongs to the listener and
+            // the whole session, while the transition filter belongs to
+            // one handoff and has to have the last word on it.
+            val dspChain = DspChain(spatial, equalizer, transition)
+            return PrecisionAudioSink(
+                delegate = defaultSink,
+                dspChain = dspChain,
+                enableFloatOutput = enableFloatOutput,
             )
-            .build()
+        }
     }
 
     /**
