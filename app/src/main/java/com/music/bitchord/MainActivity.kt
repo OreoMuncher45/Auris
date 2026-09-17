@@ -2569,12 +2569,12 @@ private fun BitChordApp(
                                         viewModel.recordEntity(entity)
                                         // Play the track by its video id
                                         playRadio(
-                                            listOf(com.music.bitchord.data.model.Song(
+                                            com.music.bitchord.data.model.Song(
                                                 videoId = entity.id,
                                                 title = entity.title,
                                                 artist = entity.subtitle,
                                                 thumbnailUrl = entity.artworkUrl,
-                                            )),
+                                            ),
                                             QueueSource(entity.title, PlaybackSourceType.SEARCH),
                                         )
                                     }

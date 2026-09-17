@@ -1500,6 +1500,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearSearchHistory() = SearchHistory.clear()
 
+    fun onQueryChange(newValue: String) {
+        _query.value = newValue
+        if (newValue.isBlank()) {
+            _suggestions.value = emptyList()
+            _typeaheadResults.value = emptyList()
+            _results.value = null
+            return
+        }
+        // While typing, surface text completions — the pipeline already feeds
+        // them through [suggestRequests] and publishes results via typeahead.
+        suggestRequests.tryEmit(newValue)
+    }
+
+    /**
+     * Commits the current query text: clears suggestions/typeahead, runs the
+     * full search, and records the term in history for future recall.
+     */
+    fun submitSearch() {
+        val q = _query.value.trim()
+        if (q.isEmpty()) return
+        _suggestions.value = emptyList()
+        _typeaheadResults.value = emptyList()
+        runSearch()
+    }
+
     fun onFilterChange(value: SearchFilter) {
         if (_filter.value == value) return
         _filter.value = value
