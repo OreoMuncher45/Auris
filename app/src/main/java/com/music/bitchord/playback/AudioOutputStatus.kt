@@ -14,9 +14,12 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.playback.audio.DirectAudioProbe
 import com.music.bitchord.playback.audio.FallbackReason
 import com.music.bitchord.playback.audio.OutputNegotiationResult
+import com.music.bitchord.playback.audio.PcmEncoding
 import com.music.bitchord.playback.audio.TransportType
+import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -25,8 +28,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * kept separate from source-format statistics.
  *
  * This snapshot transparently reports:
- * - Route kind and active transport (AudioTrack vs Direct USB)
+ * - Route kind and active transport (AudioTrack, AudioTrack (Direct), or Direct USB)
  * - Actual decoder output format, DSP format, and AudioTrack format
+ * - Direct playback support status (Android 13+ AudioManager direct profiles)
+ * - Realtime Bluetooth codec configuration and telemetry (LDAC, LHDC, AAC, SBC)
  * - Exact fallback reason and explanation if fallback occurred
  * - Downstream system mixer sample rate (e.g. 48 kHz AudioFlinger)
  */
@@ -51,6 +56,11 @@ object AudioOutputStatus {
         val decoderOutputEncoding: String? = null,
         val dspFormat: String = "Float32",
         val directUsbProbe: DirectUsbProbeResult? = null,
+        val directSupport: DirectAudioProbe.DirectSupport? = null,
+        val directPlaybackSupported: Boolean = false,
+        val directPlaybackSelected: Boolean = false,
+        val directPlaybackDetail: String? = null,
+        val bluetoothTelemetry: BluetoothTelemetry? = null,
         val negotiationResult: OutputNegotiationResult? = null,
     ) {
         override fun equals(other: Any?): Boolean {
@@ -75,6 +85,11 @@ object AudioOutputStatus {
                 decoderOutputEncoding == other.decoderOutputEncoding &&
                 dspFormat == other.dspFormat &&
                 directUsbProbe == other.directUsbProbe &&
+                directSupport == other.directSupport &&
+                directPlaybackSupported == other.directPlaybackSupported &&
+                directPlaybackSelected == other.directPlaybackSelected &&
+                directPlaybackDetail == other.directPlaybackDetail &&
+                bluetoothTelemetry == other.bluetoothTelemetry &&
                 negotiationResult == other.negotiationResult
         }
 
@@ -98,6 +113,11 @@ object AudioOutputStatus {
             result = 31 * result + (decoderOutputEncoding?.hashCode() ?: 0)
             result = 31 * result + dspFormat.hashCode()
             result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
+            result = 31 * result + (directSupport?.hashCode() ?: 0)
+            result = 31 * result + directPlaybackSupported.hashCode()
+            result = 31 * result + directPlaybackSelected.hashCode()
+            result = 31 * result + (directPlaybackDetail?.hashCode() ?: 0)
+            result = 31 * result + (bluetoothTelemetry?.hashCode() ?: 0)
             result = 31 * result + (negotiationResult?.hashCode() ?: 0)
             return result
         }
@@ -112,6 +132,8 @@ object AudioOutputStatus {
         floatEnabled: Boolean,
         routeKind: AudioRouting.Kind? = null,
         directUsbProbe: DirectUsbProbeResult? = null,
+        directSupport: DirectAudioProbe.DirectSupport? = null,
+        bluetoothTelemetry: BluetoothTelemetry? = null,
         systemMixerRateHz: Int? = null,
     ) {
         val device = preferred ?: manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
@@ -143,12 +165,17 @@ object AudioOutputStatus {
             else -> AudioRouting.Kind.PHONE
         }
 
-        val isDirectViable = directUsbProbe?.isViable == true && isUsbDevice
-        val transport = if (isDirectViable) TransportType.DIRECT_USB else TransportType.AUDIO_TRACK
+        val isDirectUsbViable = directUsbProbe?.isViable == true && isUsbDevice
+        val isDirectAudioTrack = directSupport?.isDirectSupported == true && computedRouteKind != AudioRouting.Kind.PHONE
+        val transport = when {
+            isDirectUsbViable -> TransportType.DIRECT_USB
+            isDirectAudioTrack -> TransportType.AUDIO_TRACK_DIRECT
+            else -> TransportType.AUDIO_TRACK
+        }
 
         val fallback = requestedPcmMode == OutputPcmMode.FLOAT_32 && !floatEnabled
         val (reason, detail) = when {
-            isDirectViable -> Pair(FallbackReason.NONE, null)
+            isDirectUsbViable -> Pair(FallbackReason.NONE, null)
             computedRouteKind == AudioRouting.Kind.PHONE && fallback ->
                 Pair(FallbackReason.ROUTE_LIMITATION, "Speaker output capped at 16-bit to avoid OEM mixer distortion")
             computedRouteKind == AudioRouting.Kind.USB && fallback ->
@@ -156,6 +183,10 @@ object AudioOutputStatus {
                     if (directUsbProbe?.isViable == false) FallbackReason.DIRECT_USB_UNAVAILABLE else FallbackReason.ROUTE_LIMITATION,
                     directUsbProbe?.diagnosticReason ?: "USB route does not advertise Float32 output",
                 )
+            computedRouteKind == AudioRouting.Kind.BLUETOOTH && fallback -> {
+                val btCode = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
+                Pair(FallbackReason.ROUTE_LIMITATION, "Bluetooth route$btCode does not advertise Float32 output")
+            }
             fallback ->
                 Pair(FallbackReason.ROUTE_LIMITATION, "${computedRouteKind.name} route does not advertise Float32")
             else ->
@@ -173,8 +204,13 @@ object AudioOutputStatus {
             floatFallback = fallback,
             fallbackReason = reason,
             fallbackDetail = detail,
-            systemMixerRateHz = systemMixerRateHz ?: if (isUsbDevice) 48000 else null,
+            systemMixerRateHz = systemMixerRateHz ?: if (isUsbDevice && !isDirectAudioTrack && !isDirectUsbViable) 48000 else null,
             directUsbProbe = directUsbProbe,
+            directSupport = directSupport,
+            directPlaybackSupported = directSupport?.isDirectSupported == true,
+            directPlaybackSelected = isDirectAudioTrack,
+            directPlaybackDetail = directSupport?.description,
+            bluetoothTelemetry = bluetoothTelemetry,
         )
     }
 
@@ -183,6 +219,10 @@ object AudioOutputStatus {
             negotiationResult = result,
             routeKind = result.route.kind,
             transportType = result.output.transport,
+            directPlaybackSupported = result.route.directSupport.isDirectSupported,
+            directPlaybackSelected = result.output.isDirect && result.output.transport != TransportType.DIRECT_USB,
+            directPlaybackDetail = result.route.directSupport.description,
+            bluetoothTelemetry = result.route.bluetoothTelemetry,
             fallbackReason = result.output.fallbackReason,
             fallbackDetail = result.output.fallbackDetail,
             systemMixerRateHz = result.output.systemMixerRateHz,
@@ -203,12 +243,12 @@ object AudioOutputStatus {
     }
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {
+        val isFloat = encoding == AudioFormat.ENCODING_PCM_FLOAT
         current.value = current.value.copy(
             actualEncoding = encoding,
             actualSampleRateHz = sampleRateHz,
             bufferSize = bufferSize ?: current.value.bufferSize,
-            floatFallback = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 &&
-                encoding != AudioFormat.ENCODING_PCM_FLOAT,
+            floatFallback = current.value.requestedPcmMode == OutputPcmMode.FLOAT_32 && !isFloat,
         )
     }
 
@@ -218,6 +258,8 @@ object AudioOutputStatus {
 
     fun encodingLabel(snapshot: Snapshot): String = when (snapshot.actualEncoding) {
         AudioFormat.ENCODING_PCM_FLOAT -> "32-bit float"
+        AudioFormat.ENCODING_PCM_24BIT_PACKED -> "24-bit PCM"
+        AudioFormat.ENCODING_PCM_32BIT -> "32-bit PCM"
         AudioFormat.ENCODING_PCM_16BIT -> if (snapshot.floatFallback) "16-bit fallback" else "16-bit PCM"
         null -> if (snapshot.floatFallback) "16-bit fallback" else snapshot.requestedPcmMode.label
         else -> "PCM (${snapshot.actualEncoding})"

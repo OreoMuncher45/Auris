@@ -14,13 +14,15 @@ import android.media.AudioFormat
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputPolicy
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 
 /**
- * Output transport mechanism.
+ * Output transport mechanism selected by the universal best-path engine.
  */
 enum class TransportType(val label: String) {
     AUDIO_TRACK("AudioTrack"),
+    AUDIO_TRACK_DIRECT("AudioTrack (Direct)"),
     DIRECT_USB("Direct USB"),
 }
 
@@ -63,6 +65,8 @@ data class RouteDescriptor(
     val isDirectUsbCapable: Boolean = false,
     val advertisedEncodings: List<Int> = emptyList(),
     val advertisedSampleRates: List<Int> = emptyList(),
+    val directSupport: DirectAudioProbe.DirectSupport = DirectAudioProbe.DirectSupport.NONE,
+    val bluetoothTelemetry: BluetoothTelemetry? = null,
 )
 
 data class OutputDescriptor(
@@ -70,6 +74,7 @@ data class OutputDescriptor(
     val encoding: PcmEncoding,
     val sampleRateHz: Int,
     val channelCount: Int,
+    val isDirect: Boolean = false,
     val systemMixerRateHz: Int? = null,
     val fallbackReason: FallbackReason = FallbackReason.NONE,
     val fallbackDetail: String? = null,
@@ -88,19 +93,25 @@ data class OutputNegotiationResult(
 ) {
     /** True if end-to-end sample rate was preserved without downstream mixer conversion. */
     val isSampleRatePreserved: Boolean
-        get() = output.systemMixerRateHz == null || output.sampleRateHz == output.systemMixerRateHz
+        get() = output.isDirect || output.systemMixerRateHz == null || output.sampleRateHz == output.systemMixerRateHz
 }
 
 /**
- * Authoritative route and output negotiation engine.
+ * Universal Best-Path Output Selection Engine.
  *
- * Rules:
- * 1. Internal DSP is ALWAYS Float32 for all supported linear PCM sources.
- * 2. Speaker output (PHONE) is strictly capped at 16-bit PCM.
- * 3. External routes (USB, Bluetooth, Wired, HDMI) negotiate formats based strictly on
- *    actively advertised runtime capabilities (AudioDeviceInfo encodings/rates).
- * 4. Never use source metadata as a substitute for runtime output facts.
- * 5. Never label a route as bit-perfect without verified hardware endpoint proof.
+ * Deterministic selection order:
+ * 1. Native/direct playback when Android exposes a direct path for the exact format/rate/channel configuration.
+ * 2. Direct USB transport when userspace USB streaming is actually possible and safe.
+ * 3. Highest-quality Android Bluetooth output actually supported by the active route.
+ * 4. Highest-quality normal AudioTrack route supported by the active route.
+ * 5. Safe fallback.
+ *
+ * Core Rules:
+ * - Internal DSP is ALWAYS canonical Float32.
+ * - Built-in phone speaker is strictly capped at 16-bit PCM for hardware safety.
+ * - External routes evaluate Float32, 24-bit packed, and 16-bit based on runtime direct profiles & advertised encodings.
+ * - Native source sample rate is prioritized to eliminate unnecessary SRC.
+ * - Zero marketing claims: only factual, runtime-verified capabilities are reported.
  */
 object OutputNegotiator {
 
@@ -116,7 +127,10 @@ object OutputNegotiator {
         advertisedSampleRates: List<Int>,
         requestedMode: OutputPcmMode,
         directUsbProbe: DirectUsbProbeResult? = null,
+        directSupport: DirectAudioProbe.DirectSupport = DirectAudioProbe.DirectSupport.NONE,
+        bluetoothTelemetry: BluetoothTelemetry? = null,
         delegateSupportsFloat: Boolean = true,
+        delegateSupportsPcm24: Boolean = true,
         knownSystemMixerRateHz: Int? = null,
     ): OutputNegotiationResult {
         val decoder = DecoderDescriptor(
@@ -132,71 +146,31 @@ object OutputNegotiator {
             channelCount = channelCount,
         )
 
-        val advertisesFloat = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_FLOAT)
-        val canUseFloat = AudioOutputPolicy.shouldUseFloatOutput(requestedMode, routeKind, advertisesFloat) &&
-            delegateSupportsFloat
-
-        val isDirectViable = directUsbProbe?.isViable == true && routeKind == AudioRouting.Kind.USB
-        val transport = if (isDirectViable) TransportType.DIRECT_USB else TransportType.AUDIO_TRACK
-
-        val (targetEncoding, fallbackReason, fallbackDetail) = when {
-            isDirectViable -> {
-                Triple(PcmEncoding.PCM_FLOAT, FallbackReason.NONE, null)
-            }
-            routeKind == AudioRouting.Kind.PHONE -> {
-                val reason = if (requestedMode == OutputPcmMode.FLOAT_32) {
-                    FallbackReason.ROUTE_LIMITATION
-                } else {
-                    FallbackReason.NONE
-                }
-                val detail = if (reason != FallbackReason.NONE) {
-                    "Speaker output capped at 16-bit PCM to prevent OEM mixer distortion"
-                } else {
-                    null
-                }
-                Triple(PcmEncoding.PCM_16BIT, reason, detail)
-            }
-            canUseFloat -> {
-                Triple(PcmEncoding.PCM_FLOAT, FallbackReason.NONE, null)
-            }
-            routeKind == AudioRouting.Kind.USB && requestedMode == OutputPcmMode.FLOAT_32 -> {
-                val reason = if (directUsbProbe?.isViable == false) {
-                    FallbackReason.DIRECT_USB_UNAVAILABLE
-                } else {
-                    FallbackReason.ROUTE_LIMITATION
-                }
-                val detail = directUsbProbe?.diagnosticReason
-                    ?: "USB device does not advertise Float32 (16-bit PCM fallback)"
-                Triple(PcmEncoding.PCM_16BIT, reason, detail)
-            }
-            requestedMode == OutputPcmMode.FLOAT_32 && !advertisesFloat -> {
-                Triple(
-                    PcmEncoding.PCM_16BIT,
-                    FallbackReason.ROUTE_LIMITATION,
-                    "${routeKind.name.lowercase().replaceFirstChar { it.uppercase() }} route advertises PCM16 only (16-bit fallback)",
-                )
-            }
-            else -> {
-                Triple(PcmEncoding.PCM_16BIT, FallbackReason.NONE, null)
-            }
-        }
-
         val route = RouteDescriptor(
             kind = routeKind,
             deviceName = deviceName,
             isDirectUsbCapable = directUsbProbe?.isViable == true,
             advertisedEncodings = advertisedEncodings,
             advertisedSampleRates = advertisedSampleRates,
+            directSupport = directSupport,
+            bluetoothTelemetry = bluetoothTelemetry,
         )
 
-        val output = OutputDescriptor(
-            transport = transport,
-            encoding = targetEncoding,
+        // Evaluate Best Output
+        val output = selectBestOutput(
+            source = source,
             sampleRateHz = sampleRateHz,
             channelCount = channelCount,
-            systemMixerRateHz = knownSystemMixerRateHz,
-            fallbackReason = fallbackReason,
-            fallbackDetail = fallbackDetail,
+            routeKind = routeKind,
+            advertisedEncodings = advertisedEncodings,
+            advertisedSampleRates = advertisedSampleRates,
+            requestedMode = requestedMode,
+            directUsbProbe = directUsbProbe,
+            directSupport = directSupport,
+            bluetoothTelemetry = bluetoothTelemetry,
+            delegateSupportsFloat = delegateSupportsFloat,
+            delegateSupportsPcm24 = delegateSupportsPcm24,
+            knownSystemMixerRateHz = knownSystemMixerRateHz,
         )
 
         return OutputNegotiationResult(
@@ -205,6 +179,206 @@ object OutputNegotiator {
             dsp = dsp,
             route = route,
             output = output,
+        )
+    }
+
+    private fun selectBestOutput(
+        source: SourceDescriptor,
+        sampleRateHz: Int,
+        channelCount: Int,
+        routeKind: AudioRouting.Kind,
+        advertisedEncodings: List<Int>,
+        advertisedSampleRates: List<Int>,
+        requestedMode: OutputPcmMode,
+        directUsbProbe: DirectUsbProbeResult?,
+        directSupport: DirectAudioProbe.DirectSupport,
+        bluetoothTelemetry: BluetoothTelemetry?,
+        delegateSupportsFloat: Boolean,
+        delegateSupportsPcm24: Boolean,
+        knownSystemMixerRateHz: Int?,
+    ): OutputDescriptor {
+        val advertisesFloat = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_FLOAT)
+        val advertisesPcm24 = advertisedEncodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED)
+
+        // 1. Phone Speaker Safety Rule: Always cap at PCM16
+        if (routeKind == AudioRouting.Kind.PHONE) {
+            val fallbackReason = if (requestedMode == OutputPcmMode.FLOAT_32) {
+                FallbackReason.ROUTE_LIMITATION
+            } else {
+                FallbackReason.NONE
+            }
+            val fallbackDetail = if (fallbackReason != FallbackReason.NONE) {
+                "Speaker output capped at 16-bit PCM to prevent OEM mixer distortion"
+            } else {
+                null
+            }
+            return OutputDescriptor(
+                transport = TransportType.AUDIO_TRACK,
+                encoding = PcmEncoding.PCM_16BIT,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = false,
+                systemMixerRateHz = knownSystemMixerRateHz,
+                fallbackReason = fallbackReason,
+                fallbackDetail = fallbackDetail,
+            )
+        }
+
+        // 2. Direct USB Priority: userspace USB streaming if authorized and viable
+        val isDirectUsbViable = routeKind == AudioRouting.Kind.USB && directUsbProbe?.isViable == true
+        if (isDirectUsbViable) {
+            return OutputDescriptor(
+                transport = TransportType.DIRECT_USB,
+                encoding = PcmEncoding.PCM_FLOAT,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = true,
+                systemMixerRateHz = null, // Bypasses Android AudioFlinger entirely
+                fallbackReason = FallbackReason.NONE,
+                fallbackDetail = null,
+            )
+        }
+
+        // 3. Android DIRECT Playback Evaluation (API 33+)
+        // Priority 3A: Direct Float32
+        if (requestedMode == OutputPcmMode.FLOAT_32 && directSupport.supportsFloat && delegateSupportsFloat) {
+            return OutputDescriptor(
+                transport = TransportType.AUDIO_TRACK_DIRECT,
+                encoding = PcmEncoding.PCM_FLOAT,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = true,
+                systemMixerRateHz = null, // Direct hardware output bypasses mixer
+                fallbackReason = FallbackReason.NONE,
+                fallbackDetail = null,
+            )
+        }
+
+        // Priority 3B: Direct PCM24
+        val isSourceHighRes = (source.bitDepth ?: 16) > 16
+        if (isSourceHighRes && directSupport.supportsPcm24 && delegateSupportsPcm24) {
+            val fallbackReason = if (requestedMode == OutputPcmMode.FLOAT_32 && !directSupport.supportsFloat) {
+                FallbackReason.ROUTE_LIMITATION
+            } else {
+                FallbackReason.NONE
+            }
+            val fallbackDetail = if (fallbackReason != FallbackReason.NONE) {
+                "Route exposes direct 24-bit PCM (Float32 converted to packed 24-bit)"
+            } else {
+                null
+            }
+            return OutputDescriptor(
+                transport = TransportType.AUDIO_TRACK_DIRECT,
+                encoding = PcmEncoding.PCM_24BIT_PACKED,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = true,
+                systemMixerRateHz = null,
+                fallbackReason = fallbackReason,
+                fallbackDetail = fallbackDetail,
+            )
+        }
+
+        // Priority 3C: Direct PCM16
+        if (directSupport.supportsPcm16 && requestedMode != OutputPcmMode.FLOAT_32 && !isSourceHighRes) {
+            return OutputDescriptor(
+                transport = TransportType.AUDIO_TRACK_DIRECT,
+                encoding = PcmEncoding.PCM_16BIT,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = true,
+                systemMixerRateHz = null,
+                fallbackReason = FallbackReason.NONE,
+                fallbackDetail = null,
+            )
+        }
+
+        // 4. External Route Advertised Capabilities (Normal AudioTrack with framework mixing)
+        // Check Float32 advertised:
+        val canUseFloat = AudioOutputPolicy.shouldUseFloatOutput(requestedMode, routeKind, advertisesFloat) &&
+            delegateSupportsFloat
+        if (canUseFloat) {
+            return OutputDescriptor(
+                transport = TransportType.AUDIO_TRACK,
+                encoding = PcmEncoding.PCM_FLOAT,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = false,
+                systemMixerRateHz = knownSystemMixerRateHz,
+                fallbackReason = FallbackReason.NONE,
+                fallbackDetail = null,
+            )
+        }
+
+        // Check 24-bit advertised:
+        if (isSourceHighRes && advertisesPcm24 && delegateSupportsPcm24) {
+            val fallbackReason = if (requestedMode == OutputPcmMode.FLOAT_32) {
+                FallbackReason.ROUTE_LIMITATION
+            } else {
+                FallbackReason.NONE
+            }
+            val fallbackDetail = if (fallbackReason != FallbackReason.NONE) {
+                "${routeKind.name} route advertises 24-bit PCM (Float32 converted to packed 24-bit)"
+            } else {
+                null
+            }
+            return OutputDescriptor(
+                transport = TransportType.AUDIO_TRACK,
+                encoding = PcmEncoding.PCM_24BIT_PACKED,
+                sampleRateHz = sampleRateHz,
+                channelCount = channelCount,
+                isDirect = false,
+                systemMixerRateHz = knownSystemMixerRateHz,
+                fallbackReason = fallbackReason,
+                fallbackDetail = fallbackDetail,
+            )
+        }
+
+        // 5. 16-bit PCM Fallback
+        val (reason, detail) = when {
+            routeKind == AudioRouting.Kind.USB -> {
+                val r = if (directUsbProbe?.isViable == false) {
+                    FallbackReason.DIRECT_USB_UNAVAILABLE
+                } else {
+                    FallbackReason.ROUTE_LIMITATION
+                }
+                val d = directUsbProbe?.diagnosticReason
+                    ?: "USB device advertises 16-bit PCM only"
+                Pair(r, d)
+            }
+            routeKind == AudioRouting.Kind.BLUETOOTH -> {
+                val btSummary = bluetoothTelemetry?.codecName?.let { " ($it)" }.orEmpty()
+                Pair(
+                    FallbackReason.ROUTE_LIMITATION,
+                    "Bluetooth route$btSummary advertises 16-bit PCM only",
+                )
+            }
+            requestedMode == OutputPcmMode.FLOAT_32 -> {
+                Pair(
+                    FallbackReason.ROUTE_LIMITATION,
+                    "${routeKind.name} route advertises 16-bit PCM only",
+                )
+            }
+            isSourceHighRes -> {
+                Pair(
+                    FallbackReason.ROUTE_LIMITATION,
+                    "${routeKind.name} route does not expose high-res output",
+                )
+            }
+            else -> {
+                Pair(FallbackReason.NONE, null)
+            }
+        }
+
+        return OutputDescriptor(
+            transport = TransportType.AUDIO_TRACK,
+            encoding = PcmEncoding.PCM_16BIT,
+            sampleRateHz = sampleRateHz,
+            channelCount = channelCount,
+            isDirect = false,
+            systemMixerRateHz = knownSystemMixerRateHz,
+            fallbackReason = reason,
+            fallbackDetail = detail,
         )
     }
 }

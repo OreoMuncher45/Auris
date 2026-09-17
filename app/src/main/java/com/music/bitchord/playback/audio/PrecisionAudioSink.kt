@@ -47,6 +47,7 @@ class PrecisionAudioSink(
     val dspChain: DspChain,
     private val enableFloatOutput: Boolean,
     val directAudioOutput: DirectAudioOutput? = null,
+    private val preferredOutputEncodingProvider: ((Format) -> PcmEncoding?)? = null,
 ) : ForwardingAudioSink(delegate) {
 
     /** Whether the precision Float32 DSP path is currently active for the configured format. */
@@ -93,12 +94,27 @@ class PrecisionAudioSink(
                 // 2. Ensure internal buffers are sized for max frames and channel count
                 ensureBuffers(channelCount)
 
-                // 3. Determine target output encoding based on float output setting & delegate capability
+                // 3. Determine target output encoding based on preferred encoding, float output setting & delegate capability
                 val floatFormat = format.buildUpon()
                     .setPcmEncoding(C.ENCODING_PCM_FLOAT)
                     .build()
-                val canUseFloat = enableFloatOutput && delegate.supportsFormat(floatFormat)
-                val targetEncoding = if (canUseFloat) PcmEncoding.PCM_FLOAT else PcmEncoding.PCM_16BIT
+                val pcm24Format = format.buildUpon()
+                    .setPcmEncoding(C.ENCODING_PCM_24BIT)
+                    .build()
+                val pcm16Format = format.buildUpon()
+                    .setPcmEncoding(C.ENCODING_PCM_16BIT)
+                    .build()
+
+                val preferredEncoding = preferredOutputEncodingProvider?.invoke(format)
+                val isHighResSource = encoding.bitDepth > 16
+
+                val targetEncoding = when {
+                    preferredEncoding == PcmEncoding.PCM_FLOAT && delegate.supportsFormat(floatFormat) -> PcmEncoding.PCM_FLOAT
+                    preferredEncoding == PcmEncoding.PCM_24BIT_PACKED && delegate.supportsFormat(pcm24Format) -> PcmEncoding.PCM_24BIT_PACKED
+                    preferredEncoding == PcmEncoding.PCM_16BIT -> PcmEncoding.PCM_16BIT
+                    preferredEncoding == null && enableFloatOutput && delegate.supportsFormat(floatFormat) -> PcmEncoding.PCM_FLOAT
+                    else -> PcmEncoding.PCM_16BIT
+                }
 
                 // 4. Configure delegate DefaultAudioSink
                 val delegateFormat = format.buildUpon()
@@ -129,19 +145,16 @@ class PrecisionAudioSink(
                     )
                     return
                 } catch (e: Exception) {
-                    // If Float32 delegate config failed, try falling back to PCM16 before aborting precision
-                    if (targetEncoding == PcmEncoding.PCM_FLOAT) {
+                    // If Float32 or PCM24 delegate config failed, try falling back to PCM16 before aborting precision
+                    if (targetEncoding != PcmEncoding.PCM_16BIT) {
                         try {
-                            val pcm16Format = format.buildUpon()
-                                .setPcmEncoding(C.ENCODING_PCM_16BIT)
-                                .build()
-                            val pcm16Config = AudioSink.AudioSinkConfig.Builder(pcm16Format)
+                            val fallbackPcm16Config = AudioSink.AudioSinkConfig.Builder(pcm16Format)
                                 .setPreferredBufferSizeOverride(audioSinkConfig.preferredBufferSizeOverride)
                                 .setOutputChannelMapping(audioSinkConfig.outputChannelMapping)
                                 .setTimeline(audioSinkConfig.timeline)
                                 .setMediaPeriodId(audioSinkConfig.mediaPeriodId)
                                 .build()
-                            delegate.configure(pcm16Config)
+                            delegate.configure(fallbackPcm16Config)
                             inputPcmEncoding = encoding
                             targetOutputEncoding = PcmEncoding.PCM_16BIT
                             isPrecisionActive = true

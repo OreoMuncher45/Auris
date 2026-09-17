@@ -347,11 +347,48 @@ fun AudioPipelineDialog(
                     PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
                     PipelineRow("Route", outputStatus.routeKind.name)
                     PipelineRow("Transport", outputStatus.transportType.label)
+
+                    val directStatusText = when {
+                        outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
+                            "Active (Direct Userspace USB)"
+                        outputStatus.directPlaybackSelected ->
+                            "Active (Direct AudioTrack, Bypasses Mixer)"
+                        outputStatus.directPlaybackSupported ->
+                            "Supported (Framework Mixed)"
+                        else ->
+                            "Not Supported (Mixed Path)"
+                    }
+                    PipelineRow("Direct Status", directStatusText)
+
                     PipelineRow(stringResource(R.string.pipeline_bit_depth), bitDepthOutputText)
                     PipelineRow(stringResource(R.string.pipeline_sample_rate), outputSampleRateText)
-                    outputStatus.systemMixerRateHz?.let { mixerRate ->
-                        PipelineRow("System Mixer", "$mixerRate Hz (AudioFlinger)")
+
+                    val mixerText = when {
+                        outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
+                            "Direct (Bypasses System Mixer)"
+                        outputStatus.directPlaybackSelected ->
+                            "Direct (Bit-Matched, Bypasses AudioFlinger)"
+                        outputStatus.systemMixerRateHz != null ->
+                            "${outputStatus.systemMixerRateHz} Hz (AudioFlinger)"
+                        else -> null
                     }
+                    mixerText?.let {
+                        PipelineRow("System Mixer", it)
+                    }
+
+                    if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
+                        val bt = outputStatus.bluetoothTelemetry
+                        if (bt != null && bt.isConnected) {
+                            PipelineRow("Bluetooth Codec", bt.codecName)
+                            bt.bitDepth?.let { PipelineRow("Codec Bits", "$it-bit") }
+                            bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", "$it Hz") }
+                            PipelineRow("Codec Bitrate", bt.bitrateLabel)
+                            bt.mode?.let { PipelineRow("Codec Mode", it) }
+                        } else {
+                            PipelineRow("Bluetooth Codec", "A2DP Standard")
+                        }
+                    }
+
                     if (outputStatus.fallbackReason != com.music.bitchord.playback.audio.FallbackReason.NONE) {
                         val detail = outputStatus.fallbackDetail?.let { ": $it" }.orEmpty()
                         PipelineRow("Fallback", "${outputStatus.fallbackReason.label}$detail")

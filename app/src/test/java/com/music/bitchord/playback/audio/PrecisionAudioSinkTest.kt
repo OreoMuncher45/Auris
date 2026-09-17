@@ -888,4 +888,52 @@ class PrecisionAudioSinkTest {
         assertTrue(handled)
         assertFalse("Trailing incomplete frame bytes must be consumed so buffer finishes", inputBuffer.hasRemaining())
     }
+
+    @Test
+    fun `preferredOutputEncodingProvider directs target encoding to 24-bit packed PCM`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = PrecisionAudioSink(
+            delegate = fakeDelegate,
+            dspChain = DspChain(SpatialAudioProcessor(), EqualizerProcessor(), TransitionFilterProcessor()),
+            enableFloatOutput = true,
+            preferredOutputEncodingProvider = { format -> PcmEncoding.PCM_24BIT_PACKED },
+        )
+
+        val inputFormat = Format.Builder()
+            .setSampleMimeType(MimeTypes.AUDIO_RAW)
+            .setPcmEncoding(C.ENCODING_PCM_FLOAT)
+            .setChannelCount(2)
+            .setSampleRate(96000)
+            .build()
+        sink.configure(AudioSink.AudioSinkConfig.Builder(inputFormat).build())
+
+        assertTrue(sink.isPrecisionActive)
+        assertEquals(PcmEncoding.PCM_FLOAT, sink.inputPcmEncoding)
+        assertEquals(PcmEncoding.PCM_24BIT_PACKED, sink.targetOutputEncoding)
+        assertEquals(C.ENCODING_PCM_24BIT, fakeDelegate.configuredConfig?.format?.pcmEncoding)
+    }
+
+    @Test
+    fun `preferredOutputEncodingProvider directs target encoding to 16-bit PCM on phone speaker`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = PrecisionAudioSink(
+            delegate = fakeDelegate,
+            dspChain = DspChain(SpatialAudioProcessor(), EqualizerProcessor(), TransitionFilterProcessor()),
+            enableFloatOutput = true,
+            preferredOutputEncodingProvider = { format -> PcmEncoding.PCM_16BIT },
+        )
+
+        val inputFormat = Format.Builder()
+            .setSampleMimeType(MimeTypes.AUDIO_RAW)
+            .setPcmEncoding(C.ENCODING_PCM_FLOAT)
+            .setChannelCount(2)
+            .setSampleRate(96000)
+            .build()
+        sink.configure(AudioSink.AudioSinkConfig.Builder(inputFormat).build())
+
+        assertTrue(sink.isPrecisionActive)
+        assertEquals(PcmEncoding.PCM_FLOAT, sink.inputPcmEncoding)
+        assertEquals(PcmEncoding.PCM_16BIT, sink.targetOutputEncoding)
+        assertEquals(C.ENCODING_PCM_16BIT, fakeDelegate.configuredConfig?.format?.pcmEncoding)
+    }
 }

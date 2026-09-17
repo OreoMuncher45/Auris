@@ -174,4 +174,106 @@ class OutputNegotiatorTest {
         assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
         assertEquals(FallbackReason.NONE, result.output.fallbackReason)
     }
+
+    @Test
+    fun directFloat32SelectedWhenDirectAudioSupported() {
+        val directSupport = DirectAudioProbe.DirectSupport(
+            isDirectSupported = true,
+            isOffloadSupported = false,
+            supportsFloat = true,
+            supportsPcm24 = true,
+            supportsPcm16 = true,
+            description = "Direct PCM supported: Float32/24-bit/16-bit @ 96000 Hz",
+        )
+
+        val result = OutputNegotiator.negotiate(
+            source = flac96kHz24BitSource,
+            decoderName = "c2.android.flac.decoder",
+            sampleRateHz = 96000,
+            channelCount = 2,
+            routeKind = AudioRouting.Kind.USB,
+            deviceName = "Direct AudioTrack DAC",
+            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT),
+            advertisedSampleRates = listOf(96000),
+            requestedMode = OutputPcmMode.FLOAT_32,
+            directSupport = directSupport,
+        )
+
+        assertEquals(TransportType.AUDIO_TRACK_DIRECT, result.output.transport)
+        assertEquals(PcmEncoding.PCM_FLOAT, result.output.encoding)
+        assertTrue(result.output.isDirect)
+        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
+        assertTrue(result.isSampleRatePreserved)
+    }
+
+    @Test
+    fun directPcm24SelectedWhenDirectAudioExposesPcm24Only() {
+        val directSupport = DirectAudioProbe.DirectSupport(
+            isDirectSupported = true,
+            isOffloadSupported = false,
+            supportsFloat = false,
+            supportsPcm24 = true,
+            supportsPcm16 = true,
+            description = "Direct PCM supported: 24-bit/16-bit @ 96000 Hz",
+        )
+
+        val result = OutputNegotiator.negotiate(
+            source = flac96kHz24BitSource,
+            decoderName = "c2.android.flac.decoder",
+            sampleRateHz = 96000,
+            channelCount = 2,
+            routeKind = AudioRouting.Kind.USB,
+            deviceName = "Direct PCM24 DAC",
+            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT),
+            advertisedSampleRates = listOf(96000),
+            requestedMode = OutputPcmMode.FLOAT_32,
+            directSupport = directSupport,
+        )
+
+        assertEquals(TransportType.AUDIO_TRACK_DIRECT, result.output.transport)
+        assertEquals(PcmEncoding.PCM_24BIT_PACKED, result.output.encoding)
+        assertTrue(result.output.isDirect)
+        assertEquals(FallbackReason.ROUTE_LIMITATION, result.output.fallbackReason)
+        assertTrue(result.isSampleRatePreserved)
+    }
+
+    @Test
+    fun externalRouteAdvertisedPcm24SelectedWhenSourceIsHighRes() {
+        val result = OutputNegotiator.negotiate(
+            source = flac96kHz24BitSource,
+            decoderName = "c2.android.flac.decoder",
+            sampleRateHz = 96000,
+            channelCount = 2,
+            routeKind = AudioRouting.Kind.WIRED,
+            deviceName = "Hi-Res Wired Headphone Out",
+            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_24BIT_PACKED),
+            advertisedSampleRates = listOf(96000),
+            requestedMode = OutputPcmMode.PCM_16,
+        )
+
+        assertEquals(TransportType.AUDIO_TRACK, result.output.transport)
+        assertEquals(PcmEncoding.PCM_24BIT_PACKED, result.output.encoding)
+        assertEquals(FallbackReason.NONE, result.output.fallbackReason)
+    }
+
+    @Test
+    fun bluetoothTelemetryFormattingAccuratelyReportsLdacBitrate() {
+        val (bitrateLabel, mode) = com.music.bitchord.playback.audio.bluetooth.BluetoothAudioTracker.parseLdacBitrate(1000L)
+        assertEquals("990 kbps (High Quality)", bitrateLabel)
+        assertEquals("Fixed", mode)
+
+        val telemetry = com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry(
+            isConnected = true,
+            deviceName = "Sony WH-1000XM5",
+            codecName = "LDAC",
+            sampleRateHz = 96000,
+            bitDepth = 24,
+            bitrateLabel = bitrateLabel,
+            mode = mode,
+            isAuthoritative = true,
+        )
+
+        assertEquals("LDAC / 24-bit / 96000 Hz @ 990 kbps (High Quality)", telemetry.formattedSummary())
+        assertTrue(telemetry.isHighRes)
+    }
 }
