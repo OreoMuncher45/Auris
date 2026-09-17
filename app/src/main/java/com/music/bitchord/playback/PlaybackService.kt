@@ -12,6 +12,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.music.bitchord.playback.audio.usb.UsbDirectManager
+import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -4303,24 +4305,22 @@ class PlaybackService : MediaLibraryService() {
     private fun applyOutputRoute() {
         val manager = audioManager ?: return
         val usb = preferredUsbDevice()
-        // This one call is the whole of output switching: nothing an app is
-        // allowed to do moves the *system's* routing, so what the picker moves
-        // is where our own AudioTrack renders. See [AudioRouting] for the two
-        // routing APIs that look like the answer and are not, and for why the
-        // sink handed over here must never be a Bluetooth SCO one.
-        //
-        // An explicit choice outranks the USB-DAC preference, which is a
-        // standing rule about what to do when nobody has said otherwise.
-        // Resolved against the devices connected *now*, so a headset that has
-        // since been unplugged stops being the answer on its own.
         val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
         val preferred = chosen ?: usb.takeIf { AppSettings.preferUsbDac.value }
         eachPlayer { it.setPreferredAudioDevice(preferred) }
+
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+        val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
+
         AudioOutputStatus.publish(
             manager = manager,
             requestedPcmMode = AppSettings.outputPcmMode.value,
-            preferred = preferred,
+            preferred = activeDevice,
             floatEnabled = shouldEnableFloatOutput(),
+            routeKind = routeKind,
+            directUsbProbe = directUsbProbe,
+            systemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
     }
 
@@ -4419,12 +4419,27 @@ class PlaybackService : MediaLibraryService() {
                 device.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
 
+    private fun resolveActiveOutputDevice(): AudioDeviceInfo? {
+        val manager = audioManager ?: return null
+        val infos = runCatching { manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }.getOrNull() ?: return null
+        val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
+        val preferred = chosen ?: preferredUsbDevice().takeIf { AppSettings.preferUsbDac.value }
+        return preferred ?: AudioRouting.activeOf(infos, null)
+    }
+
+    private fun resolveActiveRouteKind(device: AudioDeviceInfo?): AudioRouting.Kind {
+        if (device == null) return AudioRouting.Kind.PHONE
+        return AudioRouting.kindOf(device.type) ?: AudioRouting.Kind.PHONE
+    }
+
     private fun shouldEnableFloatOutput(): Boolean {
-        val usb = preferredUsbDevice()
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+        val advertisesFloat = activeDevice?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true
         return AudioOutputPolicy.shouldUseFloatOutput(
             requestedMode = AppSettings.outputPcmMode.value,
-            isPreferredUsbRoute = AppSettings.preferUsbDac.value && usb != null,
-            advertisesPcmFloat = usb?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true,
+            routeKind = routeKind,
+            advertisesPcmFloat = advertisesFloat,
         )
     }
 
@@ -4450,12 +4465,7 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
-            // Just the route, not a reconfiguration: picking an output moves
-            // where the AudioTrack renders, and tearing the renderers down for
-            // it would put a gap in the music at the moment the listener is
-            // watching for one. The float/PCM decision is a property of the USB
-            // DAC preference, which has its own collector above.
-            AudioRouting.selectedId.drop(1).collect { applyOutputRoute() }
+            AudioRouting.selectedId.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
