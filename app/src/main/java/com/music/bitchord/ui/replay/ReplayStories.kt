@@ -908,7 +908,7 @@ private const val STORY_ROWS = 5
 private const val STORY_ASPECT = 9f / 16f
 
 /** How long a card holds before moving on, unless a finger is on the screen. */
-private const val PAGE_MILLIS = 7_000f
+private const val PAGE_MILLIS = 14_000f
 
 /** The share of the width that means "back" — the left edge, as everywhere else. */
 private const val BACK_ZONE = 0.32f
