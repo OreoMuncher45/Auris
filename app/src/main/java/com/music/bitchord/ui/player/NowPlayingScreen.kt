@@ -5,6 +5,7 @@ import com.music.bitchord.ui.components.ExplicitSongTitle
 
 import android.database.ContentObserver
 import android.graphics.Bitmap
+import android.media.AudioFormat
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -245,6 +246,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.PLAYER_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
 import kotlinx.coroutines.launch
@@ -1346,12 +1348,17 @@ fun NowPlayingScreen(
         }
     }
 
-    BackHandler(enabled = showAudioPipeline) { showAudioPipeline = false }
+    // Registered ahead of the pipeline dialog's own handler below: the
+    // pipeline is now only ever opened from the row at the bottom of this
+    // drawer, so it is always the topmost of the two when both are up, and
+    // back has to close it first rather than taking the drawer out from
+    // under it.
+    BackHandler(enabled = showAudioOutput) { showAudioOutput = false }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         val view = LocalView.current
-        DisposableEffect(view, showAudioPipeline) {
-            val callback = if (showAudioPipeline) {
-                OverlayBack.register(view) { showAudioPipeline = false }
+        DisposableEffect(view, showAudioOutput) {
+            val callback = if (showAudioOutput) {
+                OverlayBack.register(view) { showAudioOutput = false }
             } else {
                 null
             }
@@ -1359,14 +1366,12 @@ fun NowPlayingScreen(
         }
     }
 
-    // Same again for the output drawer, so back puts it away rather than
-    // taking the whole player down from under it.
-    BackHandler(enabled = showAudioOutput) { showAudioOutput = false }
+    BackHandler(enabled = showAudioPipeline) { showAudioPipeline = false }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         val view = LocalView.current
-        DisposableEffect(view, showAudioOutput) {
-            val callback = if (showAudioOutput) {
-                OverlayBack.register(view) { showAudioOutput = false }
+        DisposableEffect(view, showAudioPipeline) {
+            val callback = if (showAudioPipeline) {
+                OverlayBack.register(view) { showAudioPipeline = false }
             } else {
                 null
             }
@@ -2037,17 +2042,18 @@ fun NowPlayingScreen(
         // readout set their flags on a tablet and nothing ever appears. They
         // are overlays over whatever player is on screen, and this is the
         // player that is on screen.
-        if (showAudioPipeline) {
-            AudioPipelineDialog(
-                hazeState = playerHaze,
-                onDismiss = { showAudioPipeline = false },
-            )
-        }
         if (showAudioOutput) {
             AudioOutputSheet(
                 hazeState = playerHaze,
                 accountName = accountName,
                 onDismiss = { showAudioOutput = false },
+                onOpenPipeline = { showAudioPipeline = true },
+            )
+        }
+        if (showAudioPipeline) {
+            AudioPipelineDialog(
+                hazeState = playerHaze,
+                onDismiss = { showAudioPipeline = false },
             )
         }
         if (lyricsOffsetOpen) {
@@ -3240,7 +3246,6 @@ fun NowPlayingScreen(
                     losslessRequested = losslessRequested,
                     effectiveQuality = effectiveQuality,
                     nerdStats = nerdStats,
-                    onBadgeClick = { showAudioPipeline = true },
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(horizontal = 8.dp),
@@ -3475,17 +3480,18 @@ fun NowPlayingScreen(
             }
             }
         }
-        if (showAudioPipeline) {
-            AudioPipelineDialog(
-                hazeState = playerHaze,
-                onDismiss = { showAudioPipeline = false },
-            )
-        }
         if (showAudioOutput) {
             AudioOutputSheet(
                 hazeState = playerHaze,
                 accountName = accountName,
                 onDismiss = { showAudioOutput = false },
+                onOpenPipeline = { showAudioPipeline = true },
+            )
+        }
+        if (showAudioPipeline) {
+            AudioPipelineDialog(
+                hazeState = playerHaze,
+                onDismiss = { showAudioPipeline = false },
             )
         }
         if (lyricsOffsetOpen) {
@@ -6273,22 +6279,49 @@ private fun OutputCaption(
 ) {
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
+    val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
+    // Above what 16-bit/48kHz covers, on the device actually being played to
+    // — [AudioOutputStatus.actualEncoding] is read off the negotiated
+    // AudioTrack, the same figure the Audio Pipeline dialog states as fact,
+    // not off what the source merely claims. Same shine as the Lossless /
+    // Hi-Res Lossless badge below the seek bar, for the same reason: this is
+    // confirmed, not advertised, so it's worth it.
+    val isHiResOutput = when (outputStatus.actualEncoding) {
+        AudioFormat.ENCODING_PCM_24BIT_PACKED,
+        AudioFormat.ENCODING_PCM_32BIT,
+        AudioFormat.ENCODING_PCM_FLOAT,
+        -> true
+        else -> (outputStatus.actualSampleRateHz ?: 0) > 48_000
+    }
     // The host's first name, exactly as the output line already shortens the
     // account's — "Kushagra's Jam" alongside "Kushagra's Phone".
     val jamName = badge.hostFirstName
         ?.let { stringResource(R.string.listen_together_jam, it) }
         ?: stringResource(R.string.listen_together_jam_unnamed)
-    Text(
-        text = if (badge.inParty) jamName else outputName,
-        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-        color = Color.White.copy(alpha = 0.55f),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        textAlign = TextAlign.Center,
-        modifier = Modifier
-            .fillMaxWidth(0.65f)
-            .clickable { if (badge.inParty) onOpenParty() else onOpenOutput() },
-    )
+    val captionModifier = Modifier
+        .fillMaxWidth(0.65f)
+        .clickable { if (badge.inParty) onOpenParty() else onOpenOutput() }
+    if (!badge.inParty && isHiResOutput) {
+        ShimmerText(
+            text = outputName,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+            ),
+            modifier = captionModifier,
+        )
+    } else {
+        Text(
+            text = if (badge.inParty) jamName else outputName,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+            color = Color.White.copy(alpha = 0.55f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = captionModifier,
+        )
+    }
 }
 
 /** The three fields of a party the player draws — see [OutputPartyPill]. */
@@ -7345,7 +7378,6 @@ private fun LosslessOrStats(
     losslessRequested: Boolean,
     effectiveQuality: AudioQuality,
     nerdStats: NerdStats.Snapshot?,
-    onBadgeClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when {
@@ -7394,7 +7426,6 @@ private fun LosslessOrStats(
                 stringResource(R.string.upgrading_quality)
             },
             animated = false,
-            onClick = onBadgeClick,
             modifier = modifier,
         )
         nerdStats?.isLossless == true -> LosslessLabel(
@@ -7405,14 +7436,12 @@ private fun LosslessOrStats(
             // confirmed. It is what makes the badge read as an achievement
             // rather than a label, which only one of these two is.
             animated = true,
-            onClick = onBadgeClick,
             modifier = modifier,
         )
         nerdStats?.isDolbyAtmos == true -> LosslessLabel(
             text = "Dolby Atmos",
             animated = true,
             iconPainter = painterResource(R.drawable.ic_dolby_atmos),
-            onClick = onBadgeClick,
             modifier = modifier,
         )
         // Lossy, but the good end of lossy — a module's 320kbps tier, which
@@ -7421,26 +7450,23 @@ private fun LosslessOrStats(
         nerdStats?.isHiQuality == true -> LosslessLabel(
             text = stringResource(R.string.high_quality),
             animated = false,
-            onClick = onBadgeClick,
             modifier = modifier,
         )
         effectiveQuality == AudioQuality.LOW && nerdStats?.isLowQuality == true -> LosslessLabel(
             text = stringResource(R.string.data_saver),
             animated = false,
-            onClick = onBadgeClick,
             modifier = modifier,
         )
         effectiveQuality == AudioQuality.MEDIUM && nerdStats?.isMediumQuality == true -> LosslessLabel(
             text = stringResource(R.string.medium_quality),
             animated = false,
-            onClick = onBadgeClick,
             modifier = modifier,
         )
         else -> {}
     }
 }
 
-/** A quality glyph ahead of the status label, opening Audio Pipeline when tapped. */
+/** A quality glyph ahead of the status label. */
 @Composable
 private fun LosslessLabel(
     text: String,
@@ -7448,19 +7474,9 @@ private fun LosslessLabel(
     modifier: Modifier = Modifier,
     icon: ImageVector = Icons.Rounded.Headphones,
     iconPainter: Painter? = null,
-    onClick: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = modifier
-            .then(
-                if (onClick != null) {
-                    Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onClick,
-                    )
-                } else Modifier
-            ),
+        modifier = modifier,
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -7504,9 +7520,21 @@ private fun LosslessLabel(
  * The band's width is measured off the text itself via [onSizeChanged]
  * rather than assumed, so the sweep always clears the word fully at both
  * ends instead of being sized for whatever length happened to be typical.
+ *
+ * [style] and [baseAlpha] default to the quality badge's own look; the output
+ * caption under the transport passes its own so the same sweep can run across
+ * a differently-sized, centred line without the badge's styling leaking in.
  */
 @Composable
-private fun ShimmerText(text: String) {
+private fun ShimmerText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = MaterialTheme.typography.labelMedium.copy(
+        fontWeight = FontWeight.SemiBold,
+        fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
+    ),
+    baseAlpha: Float = 0.55f,
+) {
     var widthPx by remember { mutableIntStateOf(0) }
     val transition = rememberInfiniteTransition(label = "lossless-shimmer")
     val progress by transition.animateFloat(
@@ -7518,7 +7546,7 @@ private fun ShimmerText(text: String) {
         ),
         label = "lossless-shimmer-progress",
     )
-    val baseColor = Color.White.copy(alpha = 0.55f)
+    val baseColor = Color.White.copy(alpha = baseAlpha)
     val brush = if (widthPx <= 0) {
         Brush.linearGradient(listOf(baseColor, baseColor))
     } else {
@@ -7532,14 +7560,10 @@ private fun ShimmerText(text: String) {
     }
     Text(
         text = text,
-        style = MaterialTheme.typography.labelMedium.copy(
-            brush = brush,
-            fontWeight = FontWeight.SemiBold,
-            fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
-        ),
+        style = style.copy(brush = brush),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.onSizeChanged { widthPx = it.width },
+        modifier = modifier.onSizeChanged { widthPx = it.width },
     )
 }
 

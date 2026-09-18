@@ -40,6 +40,14 @@ object AudioOutputStatus {
         val sink: String = "AudioTrack",
         val requestedPcmMode: OutputPcmMode = OutputPcmMode.PCM_16,
         val deviceName: String = "System default",
+        /**
+         * The [AudioDeviceInfo.getId] of whatever [deviceName] names — the exact
+         * device the player resolved and is rendering to, not a second guess at
+         * it. The output picker and the caption under the transport both mark
+         * their "active" row off this rather than recomputing their own answer,
+         * which is what let the two disagree.
+         */
+        val activeDeviceId: Int? = null,
         val sampleRatesHz: IntArray = IntArray(0),
         val encodings: IntArray = IntArray(0),
         val isUsb: Boolean = false,
@@ -75,6 +83,7 @@ object AudioOutputStatus {
             return sink == other.sink &&
                 requestedPcmMode == other.requestedPcmMode &&
                 deviceName == other.deviceName &&
+                activeDeviceId == other.activeDeviceId &&
                 sampleRatesHz.contentEquals(other.sampleRatesHz) &&
                 encodings.contentEquals(other.encodings) &&
                 isUsb == other.isUsb &&
@@ -109,6 +118,7 @@ object AudioOutputStatus {
             var result = sink.hashCode()
             result = 31 * result + requestedPcmMode.hashCode()
             result = 31 * result + deviceName.hashCode()
+            result = 31 * result + (activeDeviceId ?: 0)
             result = 31 * result + sampleRatesHz.contentHashCode()
             result = 31 * result + encodings.contentHashCode()
             result = 31 * result + isUsb.hashCode()
@@ -214,6 +224,7 @@ object AudioOutputStatus {
         val baseSnapshot = current.value.copy(
             requestedPcmMode = requestedPcmMode,
             deviceName = device?.productName?.toString()?.ifBlank { null } ?: "System default",
+            activeDeviceId = device?.id,
             sampleRatesHz = device?.sampleRates ?: IntArray(0),
             encodings = device?.encodings ?: IntArray(0),
             isUsb = isUsbDevice,

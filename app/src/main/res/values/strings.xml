@@ -425,6 +425,7 @@
     <string name="data_saver">Data-Saver</string>
     <string name="medium_quality">Medium Quality</string>
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">Live signal path, decoder to output</string>
     <string name="pipeline_track_info">Track Info</string>
     <string name="pipeline_decoder">Decoder</string>
     <string name="pipeline_resampler">Resampler</string>
