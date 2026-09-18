@@ -143,7 +143,7 @@ fun ReplayStories(
     val scope = rememberCoroutineScope()
     var held by remember { mutableStateOf(false) }
     val progress = remember { Animatable(0f) }
-    val current by remember { derivedStateOf { pagerState.currentPage } }
+    val current by remember { derivedStateOf { pagerState.settledPage } }
 
     /**
      * Where a tap sends the story.
@@ -904,7 +904,7 @@ private const val STORY_ROWS = 5
 private const val STORY_ASPECT = 9f / 16f
 
 /** How long a card holds before moving on, unless a finger is on the screen. */
-private const val PAGE_MILLIS = 6_000f
+private const val PAGE_MILLIS = 9_000f
 
 /** The share of the width that means "back" — the left edge, as everywhere else. */
 private const val BACK_ZONE = 0.32f

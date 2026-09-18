@@ -153,12 +153,12 @@ fun ReplaySummary.storyHeadline(context: Context, page: ReplayStoryPage): List<H
         context.replayCount(distinctSongs, R.plurals.replay_song_count) to true,
         context.getString(R.string.replay_habits_middle) to false,
         context.replayCount(distinctArtists, R.plurals.replay_artist_count) to true,
-        "." to false,
+        " ." to false,
     )
     ReplayStoryPage.SUMMARY -> runs(
         context.getString(R.string.replay_summary_start) to false,
         label to true,
-        "." to false,
+        " ." to false,
     )
 }
 
