@@ -2006,6 +2006,7 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        currentAudioInputFormat = null
 
         // A crossfade handoff never fires [formatListener] for the entering
         // track — [CrossfadeController] starts its decoder during ARMING,
@@ -4429,18 +4430,34 @@ class PlaybackService : MediaLibraryService() {
             return PcmEncoding.PCM_16BIT
         }
 
-        val sampleRate = format.sampleRate.takeIf { it > 0 } ?: 48000
-        val channels = format.channelCount.takeIf { it > 0 } ?: 2
-        val measured = format.measure()
-        val bitDepth = measured.bitDepth ?: when (format.pcmEncoding) {
+        val inputFormat = currentAudioInputFormat ?: format
+        val sampleRate = format.sampleRate.takeIf { it > 0 }
+            ?: inputFormat.sampleRate.takeIf { it > 0 }
+            ?: 48000
+        val channels = format.channelCount.takeIf { it > 0 }
+            ?: inputFormat.channelCount.takeIf { it > 0 }
+            ?: 2
+        val measured = inputFormat.measure()
+        val bitDepth = measured.bitDepth ?: when (inputFormat.pcmEncoding) {
             C.ENCODING_PCM_32BIT -> 32
             C.ENCODING_PCM_24BIT -> 24
             C.ENCODING_PCM_FLOAT -> 32
-            else -> 16
+            else -> when (format.pcmEncoding) {
+                C.ENCODING_PCM_32BIT -> 32
+                C.ENCODING_PCM_24BIT -> 24
+                C.ENCODING_PCM_FLOAT -> 32
+                else -> 16
+            }
+        }
+
+        val sourceEncoding = if (inputFormat.sampleMimeType != null && inputFormat.sampleMimeType != "audio/raw") {
+            inputFormat.sampleMimeType!!
+        } else {
+            format.sampleMimeType ?: "audio/raw"
         }
 
         val source = SourceDescriptor(
-            encoding = format.sampleMimeType ?: "audio/raw",
+            encoding = sourceEncoding,
             sampleRateHz = sampleRate,
             channelCount = channels,
             bitDepth = bitDepth,

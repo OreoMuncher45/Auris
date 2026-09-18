@@ -120,8 +120,7 @@ object DirectAudioProbe {
             .setChannelMask(channelMask)
             .build()
         val floatSupport = AudioManager.getDirectPlaybackSupport(floatFormat, attributes)
-        val supportsFloatDirect = (floatSupport != AudioManager.DIRECT_PLAYBACK_NOT_SUPPORTED) ||
-            directProfilesList.any { it.format == AudioFormat.ENCODING_PCM_FLOAT && (it.sampleRates.isEmpty() || it.sampleRates.contains(sampleRateHz)) }
+        val supportsFloatDirect = (floatSupport != AudioManager.DIRECT_PLAYBACK_NOT_SUPPORTED)
 
         val pcm24Format = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_24BIT_PACKED)
@@ -129,8 +128,7 @@ object DirectAudioProbe {
             .setChannelMask(channelMask)
             .build()
         val pcm24Support = AudioManager.getDirectPlaybackSupport(pcm24Format, attributes)
-        val supportsPcm24Direct = (pcm24Support != AudioManager.DIRECT_PLAYBACK_NOT_SUPPORTED) ||
-            directProfilesList.any { it.format == AudioFormat.ENCODING_PCM_24BIT_PACKED && (it.sampleRates.isEmpty() || it.sampleRates.contains(sampleRateHz)) }
+        val supportsPcm24Direct = (pcm24Support != AudioManager.DIRECT_PLAYBACK_NOT_SUPPORTED)
 
         val pcm16Format = AudioFormat.Builder()
             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
@@ -138,8 +136,7 @@ object DirectAudioProbe {
             .setChannelMask(channelMask)
             .build()
         val pcm16Support = AudioManager.getDirectPlaybackSupport(pcm16Format, attributes)
-        val supportsPcm16Direct = (pcm16Support != AudioManager.DIRECT_PLAYBACK_NOT_SUPPORTED) ||
-            directProfilesList.any { it.format == AudioFormat.ENCODING_PCM_16BIT && (it.sampleRates.isEmpty() || it.sampleRates.contains(sampleRateHz)) }
+        val supportsPcm16Direct = (pcm16Support != AudioManager.DIRECT_PLAYBACK_NOT_SUPPORTED)
 
         val anyDirect = supportsFloatDirect || supportsPcm24Direct || supportsPcm16Direct
         val anyOffload = (floatSupport and AudioManager.DIRECT_PLAYBACK_OFFLOAD_SUPPORTED) != 0 ||

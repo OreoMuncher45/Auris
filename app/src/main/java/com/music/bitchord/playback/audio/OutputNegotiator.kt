@@ -280,7 +280,20 @@ object OutputNegotiator {
         }
 
         // Priority 3C: Direct PCM16
-        if (directSupport.supportsPcm16 && requestedMode != OutputPcmMode.FLOAT_32 && (!isSourceHighRes || requestedMode == OutputPcmMode.PCM_16)) {
+        if (directSupport.supportsPcm16) {
+            val fallbackReason = when {
+                requestedMode == OutputPcmMode.PCM_16 -> FallbackReason.NONE
+                requestedMode == OutputPcmMode.FLOAT_32 -> FallbackReason.ROUTE_LIMITATION
+                isSourceHighRes -> FallbackReason.ROUTE_LIMITATION
+                else -> FallbackReason.NONE
+            }
+            val fallbackDetail = when {
+                requestedMode == OutputPcmMode.FLOAT_32 ->
+                    "Route does not expose direct Float32 or 24-bit PCM (using direct 16-bit PCM)"
+                isSourceHighRes ->
+                    "Route does not expose direct 24-bit PCM (using direct 16-bit PCM)"
+                else -> null
+            }
             return OutputDescriptor(
                 transport = TransportType.AUDIO_TRACK_DIRECT,
                 encoding = PcmEncoding.PCM_16BIT,
@@ -288,8 +301,8 @@ object OutputNegotiator {
                 channelCount = channelCount,
                 isDirect = true,
                 systemMixerRateHz = null,
-                fallbackReason = FallbackReason.NONE,
-                fallbackDetail = null,
+                fallbackReason = fallbackReason,
+                fallbackDetail = fallbackDetail,
             )
         }
 

@@ -329,8 +329,13 @@ object AudioOutputStatus {
                 )
             }
             AudioRouting.Kind.USB -> {
-                val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() || snapshot.sampleRatesHz.contains(sampleRate)
-                val encodingSupported = snapshot.encodings.isEmpty() || (encoding != null && snapshot.encodings.contains(encoding))
+                val directSupported = snapshot.directSupport?.isDirectSupported == true
+                val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() ||
+                    snapshot.sampleRatesHz.contains(sampleRate) ||
+                    directSupported
+                val encodingSupported = snapshot.encodings.isEmpty() ||
+                    (encoding != null && snapshot.encodings.contains(encoding)) ||
+                    directSupported
                 val isFloatPcm = encoding == AudioFormat.ENCODING_PCM_FLOAT
 
                 val maxUsbRate = snapshot.sampleRatesHz.maxOrNull() ?: 48000
@@ -344,7 +349,7 @@ object AudioOutputStatus {
                 val usbEndpointStr = "$usbEnc / $maxUsbRate Hz"
 
                 val isGenuineDirect = requestedDirect &&
-                    snapshot.directSupport?.isDirectSupported == true &&
+                    directSupported &&
                     sampleRateSupported &&
                     encodingSupported &&
                     !isFloatPcm
