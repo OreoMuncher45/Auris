@@ -41,4 +41,57 @@ class JamInviteLinkTest {
             JamInviteLink.url("abc123"),
         )
     }
+
+    @Test
+    fun `builds the custom server share URL`() {
+        assertEquals(
+            "https://my-party.onrender.com/invite/ABC123",
+            JamInviteLink.url("abc123", "https://my-party.onrender.com"),
+        )
+        assertEquals(
+            "https://my-party.onrender.com/invite/ABC123",
+            JamInviteLink.url("abc123", "https://my-party.onrender.com/"),
+        )
+        assertEquals(
+            "https://bitchord.kushagrasingh.in/invite/ABC123",
+            JamInviteLink.url("abc123", ""),
+        )
+        assertEquals(
+            "https://bitchord.kushagrasingh.in/invite/ABC123",
+            JamInviteLink.url("abc123", null),
+        )
+    }
+
+    @Test
+    fun `builds custom scheme URL`() {
+        assertEquals(
+            "bitchord://party/ABC123?server=https%3A%2F%2Fmy-party.onrender.com",
+            JamInviteLink.schemeUrl("abc123", "https://my-party.onrender.com"),
+        )
+        assertEquals(
+            "bitchord://party/ABC123",
+            JamInviteLink.schemeUrl("abc123", null),
+        )
+    }
+
+    @Test
+    fun `parses custom scheme invite with server`() {
+        val invite = JamInviteLink.parseInvite("bitchord://party/a1b2c3?server=https%3A%2F%2Fmy-party.onrender.com")
+        assertEquals("A1B2C3", invite?.code)
+        assertEquals("https://my-party.onrender.com", invite?.serverUrl)
+    }
+
+    @Test
+    fun `parses custom scheme invite without server`() {
+        val invite = JamInviteLink.parseInvite("bitchord://party/XYZ789")
+        assertEquals("XYZ789", invite?.code)
+        assertNull(invite?.serverUrl)
+    }
+
+    @Test
+    fun `parses web invite with server parameter`() {
+        val invite = JamInviteLink.parseInvite("https://bitchord.kushagrasingh.in/invite/ABC123?server=https%3A%2F%2Fcustom.example.com")
+        assertEquals("ABC123", invite?.code)
+        assertEquals("https://custom.example.com", invite?.serverUrl)
+    }
 }

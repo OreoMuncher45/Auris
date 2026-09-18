@@ -41,12 +41,14 @@ import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -107,6 +109,7 @@ import kotlinx.coroutines.launch
 fun ListenTogetherScreen(
     signedIn: Boolean,
     inviteCode: String? = null,
+    inviteServer: String? = null,
     onInviteJoined: () -> Unit = {},
     onSignIn: () -> Unit,
     contentPadding: PaddingValues,
@@ -126,6 +129,7 @@ fun ListenTogetherScreen(
     var failure by remember { mutableStateOf<String?>(null) }
     var nickname by remember { mutableStateOf(ListenTogether.nickname()) }
     var maxMembers by remember { mutableIntStateOf(5) }
+    var pendingServerSwitchInvite by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     // A membership outlives the process; the socket does not. Opening it when
     // the screen is looked at — rather than on every cold start — is what keeps
@@ -144,9 +148,18 @@ fun ListenTogetherScreen(
     // A link tap is already an explicit request to join. Signed-out users keep
     // the populated code while the sign-in page is open. joinParty switches an
     // existing membership without dropping it first if the invite is invalid.
-    LaunchedEffect(inviteCode, signedIn) {
+    LaunchedEffect(inviteCode, inviteServer, signedIn) {
         val code = inviteCode ?: return@LaunchedEffect
         if (!signedIn) return@LaunchedEffect
+
+        val activeServer = ListenTogether.activeServerUrl().trim().trimEnd('/')
+        val targetServer = inviteServer?.trim()?.trimEnd('/')
+
+        if (!targetServer.isNullOrBlank() && !targetServer.equals(activeServer, ignoreCase = true)) {
+            pendingServerSwitchInvite = code to targetServer
+            return@LaunchedEffect
+        }
+
         if (state.code.equals(code, ignoreCase = true)) {
             onInviteJoined()
             return@LaunchedEffect
@@ -161,6 +174,70 @@ fun ListenTogetherScreen(
             onInviteJoined()
         }
         busy = false
+    }
+
+    pendingServerSwitchInvite?.let { (codeToJoin, serverToSet) ->
+        AlertDialog(
+            onDismissRequest = {
+                pendingServerSwitchInvite = null
+                onInviteJoined()
+            },
+            title = {
+                Text(
+                    stringResource(R.string.listen_together_custom_server_dialog_title),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.listen_together_custom_server_dialog_message,
+                        serverToSet,
+                        codeToJoin,
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toJoin = codeToJoin
+                        val toSet = serverToSet
+                        pendingServerSwitchInvite = null
+                        ListenTogether.setCustomServerUrl(toSet)
+                        serverInput = toSet
+                        busy = true
+                        failure = null
+                        scope.launch {
+                            val result = ListenTogether.joinParty(toJoin)
+                            failure = result.exceptionOrNull()?.message
+                            if (result.isSuccess) {
+                                codeInput = ""
+                                onInviteJoined()
+                            }
+                            busy = false
+                        }
+                    },
+                ) {
+                    Text(
+                        stringResource(R.string.listen_together_custom_server_switch_and_join),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingServerSwitchInvite = null
+                        onInviteJoined()
+                    },
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+        )
     }
 
     Column(
@@ -226,7 +303,7 @@ fun ListenTogetherScreen(
                 onCopy = { clipboard.setText(AnnotatedString(state.code.orEmpty())) },
                 onShare = {
                     val code = state.code ?: return@InAParty
-                    val link = JamInviteLink.url(code)
+                    val link = JamInviteLink.url(code, customServer.takeIf { it.isNotBlank() })
                     val message = "$link\n\n${context.getString(R.string.listen_together_share_text, code)}"
                     context.startActivity(
                         Intent.createChooser(

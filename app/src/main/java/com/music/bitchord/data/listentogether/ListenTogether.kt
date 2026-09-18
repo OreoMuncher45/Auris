@@ -188,6 +188,9 @@ object ListenTogether {
     /** Whether a party can be reached at all — a built-in or a custom address. */
     val hasServer: Boolean get() = httpBase().isNotBlank()
 
+    /** The resolved active server URL: custom override if present, else build default. */
+    fun activeServerUrl(): String = httpBase()
+
     enum class Health { UNKNOWN, CHECKING, ONLINE, OFFLINE }
 
     /**

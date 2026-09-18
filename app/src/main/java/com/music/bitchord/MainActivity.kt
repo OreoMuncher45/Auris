@@ -589,13 +589,15 @@ private fun BitChordApp(
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val incomingJamInvite by JamInviteLink.pending.collectAsStateWithLifecycle()
     var activeJamInviteCode by rememberSaveable { mutableStateOf<String?>(null) }
+    var activeJamInviteServer by rememberSaveable { mutableStateOf<String?>(null) }
 
     // An invite is navigation and an action: reveal the Jam settings page now,
     // then let that page join once an account is available. Keeping the code
     // here lets a sign-in round trip return to the invite it started from.
     LaunchedEffect(incomingJamInvite) {
-        val code = incomingJamInvite ?: return@LaunchedEffect
-        activeJamInviteCode = code
+        val invite = incomingJamInvite ?: return@LaunchedEffect
+        activeJamInviteCode = invite.code
+        activeJamInviteServer = invite.serverUrl
         showNowPlaying = false
         showReplay = false
         replayStory = null
@@ -2216,7 +2218,11 @@ private fun BitChordApp(
                         ListenTogetherScreen(
                             signedIn = signedIn,
                             inviteCode = activeJamInviteCode,
-                            onInviteJoined = { activeJamInviteCode = null },
+                            inviteServer = activeJamInviteServer,
+                            onInviteJoined = {
+                                activeJamInviteCode = null
+                                activeJamInviteServer = null
+                            },
                             onSignIn = {
                                 showListenTogether = false
                                 showSettings = false

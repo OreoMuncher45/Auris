@@ -892,6 +892,9 @@
     <string name="listen_together_jam_unnamed">Listening together</string>
     <string name="listen_together_open">Listen together</string>
     <string name="listen_together_open_count">Listening together · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">Join party on custom server?</string>
+    <string name="listen_together_custom_server_dialog_message">This party is hosted on an external server:\n\n%1$s\n\nDo you want to switch your party server and join party %2$s?</string>
+    <string name="listen_together_custom_server_switch_and_join">Switch &amp; Join</string>
 
     <string name="vietnamese">Vietnamese</string>
 

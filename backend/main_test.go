@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ func setupTestServer() *httptest.Server {
 	mux.HandleFunc("POST /api/parties/{code}/join", handleJoinParty)
 	mux.HandleFunc("GET /api/parties/{code}", handleGetParty)
 	mux.HandleFunc("POST /api/parties/{code}/leave", handleLeaveParty)
+	mux.HandleFunc("GET /invite/{code}", handleInviteLanding)
 	mux.HandleFunc("GET /ws/parties/{code}", handleWebSocket)
 
 	return httptest.NewServer(corsMiddleware(mux))
@@ -221,5 +223,46 @@ func TestCreateRateLimiter(t *testing.T) {
 	}
 	if !limiter.Allow("203.0.113.11") {
 		t.Fatal("expected a separate IP to have its own allowance")
+	}
+}
+
+func TestInviteLanding(t *testing.T) {
+	ts := setupTestServer()
+	defer ts.Close()
+
+	// 1. Non-existent party
+	res, err := http.Get(ts.URL + "/invite/ZZZZZZ")
+	if err != nil {
+		t.Fatalf("GET /invite/ZZZZZZ failed: %v", err)
+	}
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("Expected 404 for non-existent party, got %d", res.StatusCode)
+	}
+
+	// 2. Create an active party directly in store
+	p, err := store.Create()
+	if err != nil {
+		t.Fatalf("Party creation failed: %v", err)
+	}
+	code := p.Code
+
+	// 3. Active party landing page
+	resActive, err := http.Get(ts.URL + "/invite/" + code)
+	if err != nil {
+		t.Fatalf("GET /invite/%s failed: %v", code, err)
+	}
+	if resActive.StatusCode != http.StatusOK {
+		t.Errorf("Expected 200 for active party invite, got %d", resActive.StatusCode)
+	}
+	buf := new(bytes.Buffer)
+	_, _ = buf.ReadFrom(resActive.Body)
+	content := buf.String()
+
+	expectedDeepLinkPrefix := "bitchord://party/" + code
+	if !strings.Contains(content, expectedDeepLinkPrefix) {
+		t.Errorf("Expected HTML content to contain deep link %s", expectedDeepLinkPrefix)
+	}
+	if !strings.Contains(content, code) {
+		t.Errorf("Expected HTML content to contain party code %s", code)
 	}
 }
