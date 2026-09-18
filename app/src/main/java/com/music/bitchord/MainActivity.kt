@@ -127,6 +127,8 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.EntityType
+import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
@@ -2511,26 +2513,53 @@ private fun BitChordApp(
                             // Search hits are alternatives to each other, not a running
                             // order — play the one tapped and build a station from it.
                             onSongClick = { songs, index ->
-                                songs.getOrNull(index)?.let {
-                                    // Acting on a hit is what makes the query worth
-                                    // keeping — see MainViewModel.recordSearch.
-                                    viewModel.recordSearch()
-                                    playRadio(it, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
+                                songs.getOrNull(index)?.let { song ->
+                                    viewModel.recordEntity(SearchHistoryEntity(
+                                        id = song.videoId,
+                                        title = song.title,
+                                        subtitle = song.artist.ifEmpty { "" },
+                                        artworkUrl = song.thumbnailUrl,
+                                        entityType = EntityType.TRACK,
+                                    ))
+                                    playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                                 }
                             },
                             onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
                             onTopResultPlay = { song ->
-                                viewModel.recordSearch()
+                                viewModel.recordEntity(SearchHistoryEntity(
+                                    id = song.videoId,
+                                    title = song.title,
+                                    subtitle = song.artist.ifEmpty { "" },
+                                    artworkUrl = song.thumbnailUrl,
+                                    entityType = EntityType.TRACK,
+                                ))
                                 playRadio(song, QueueSource(searchLabel, PlaybackSourceType.SEARCH))
                             },
                             onTopResultPlaylist = { song ->
-                                viewModel.recordSearch()
+                                viewModel.recordEntity(SearchHistoryEntity(
+                                    id = song.videoId,
+                                    title = song.title,
+                                    subtitle = song.artist.ifEmpty { "" },
+                                    artworkUrl = song.thumbnailUrl,
+                                    entityType = EntityType.TRACK,
+                                ))
                                 viewModel.loadPlaylists()
                                 playlistTarget = song
                             },
                             onBrowseClick = { item ->
-                                viewModel.recordSearch()
+                                viewModel.recordEntity(SearchHistoryEntity(
+                                    id = item.browseId ?: "",
+                                    title = item.title,
+                                    subtitle = item.subtitle.ifBlank { "" },
+                                    artworkUrl = item.thumbnailUrl,
+                                    entityType = when (item.type) {
+                                        BrowseType.ALBUM -> EntityType.ALBUM
+                                        BrowseType.ARTIST -> EntityType.ARTIST
+                                        BrowseType.PLAYLIST -> EntityType.PLAYLIST
+                                        else -> EntityType.TRACK
+                                    },
+                                ))
                                 viewModel.openDetail(
                                     browseId = item.browseId,
                                     title = item.title,
@@ -2557,11 +2586,36 @@ private fun BitChordApp(
                             suggestions = searchSuggestions,
                             typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                             onSubmit = viewModel::submitSearch,
-                            // A suggestion and a recent search are the same act — a
-                            // term picked out of a list rather than typed — so they run
-                            // through the same path and both land in the history.
+                            // Suggestions land in search history via searchFor → recordSearch.
+                            // History items (onHistoryClick) navigate/play without re-logging.
                             onSuggestionClick = viewModel::searchFor,
-                            onHistoryClick = viewModel::searchFor,
+                            onHistoryClick = { entity ->
+                                // Tap a history entity: navigate to it or play it directly.
+                                // Do NOT recordEntity here — tapping an existing history item
+                                // must not update its timestamp and push it to the top.
+                                when (entity.entityType) {
+                                    EntityType.TRACK -> {
+                                        // Play the track by its video id
+                                        playRadio(
+                                            com.music.bitchord.data.model.Song(
+                                                videoId = entity.id,
+                                                title = entity.title,
+                                                artist = entity.subtitle,
+                                                thumbnailUrl = entity.artworkUrl,
+                                            ),
+                                            QueueSource(entity.title, PlaybackSourceType.SEARCH),
+                                        )
+                                    }
+                                    EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST -> {
+                                        viewModel.openDetail(
+                                            browseId = entity.id,
+                                            title = entity.title,
+                                            subtitle = entity.subtitle,
+                                            thumbnailUrl = entity.artworkUrl,
+                                        )
+                                    }
+                                }
+                            },
                             onHistoryRemove = viewModel::removeSearch,
                             onHistoryClear = viewModel::clearSearchHistory,
                             onTypeaheadLongPress = openSongMenu,
