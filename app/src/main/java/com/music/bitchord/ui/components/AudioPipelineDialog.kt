@@ -362,7 +362,7 @@ fun AudioPipelineDialog(
                         outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
                             "Direct (Bypasses System Mixer)"
                         outputStatus.directPlaybackActual ->
-                            "Direct (Bit-Matched, Bypasses AudioFlinger)"
+                            "Direct path active; endpoint format not independently verified"
                         outputStatus.systemMixerRateHz != null -> {
                             val hal = outputStatus.halFormat
                             if (hal != null) {
@@ -378,7 +378,7 @@ fun AudioPipelineDialog(
                     }
 
                     outputStatus.usbEndpointFormat?.let {
-                        PipelineRow("USB Endpoint", it)
+                        PipelineRow("USB Advertised Capability", it)
                     }
 
                     if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
