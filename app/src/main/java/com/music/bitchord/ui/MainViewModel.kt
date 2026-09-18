@@ -1481,18 +1481,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * search, or one of [suggestions] — and floats it to the top of the
      * history. Picking is as deliberate as submitting, so it searches on the
      * spot.
+     *
+     * Recording happens downstream via [recordSearch] when the user actually
+     * interacts with a result (taps a song, album, or artist card), which
+     * ensures the saved entity carries real artwork and metadata instead of
+     * a blank placeholder.
      */
     fun searchFor(term: String) {
         _query.value = term
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
-        SearchHistory.record(SearchHistoryEntity(
-            id = "q:$term",
-            title = term,
-            subtitle = "",
-            artworkUrl = null,
-            entityType = EntityType.TRACK,
-        ))
         runSearch()
     }
 
