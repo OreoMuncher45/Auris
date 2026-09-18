@@ -256,7 +256,7 @@ object OutputNegotiator {
 
         // Priority 3B: Direct PCM24
         val isSourceHighRes = (source.bitDepth ?: 16) > 16
-        if (isSourceHighRes && directSupport.supportsPcm24 && delegateSupportsPcm24) {
+        if (requestedMode != OutputPcmMode.PCM_16 && isSourceHighRes && directSupport.supportsPcm24 && delegateSupportsPcm24) {
             val fallbackReason = if (requestedMode == OutputPcmMode.FLOAT_32 && !directSupport.supportsFloat) {
                 FallbackReason.ROUTE_LIMITATION
             } else {
@@ -280,7 +280,7 @@ object OutputNegotiator {
         }
 
         // Priority 3C: Direct PCM16
-        if (directSupport.supportsPcm16 && requestedMode != OutputPcmMode.FLOAT_32 && !isSourceHighRes) {
+        if (directSupport.supportsPcm16 && requestedMode != OutputPcmMode.FLOAT_32 && (!isSourceHighRes || requestedMode == OutputPcmMode.PCM_16)) {
             return OutputDescriptor(
                 transport = TransportType.AUDIO_TRACK_DIRECT,
                 encoding = PcmEncoding.PCM_16BIT,
@@ -311,7 +311,7 @@ object OutputNegotiator {
         }
 
         // Check 24-bit advertised:
-        if (isSourceHighRes && advertisesPcm24 && delegateSupportsPcm24) {
+        if (requestedMode != OutputPcmMode.PCM_16 && isSourceHighRes && advertisesPcm24 && delegateSupportsPcm24) {
             val fallbackReason = if (requestedMode == OutputPcmMode.FLOAT_32) {
                 FallbackReason.ROUTE_LIMITATION
             } else {
@@ -359,7 +359,7 @@ object OutputNegotiator {
                     "${routeKind.name} route advertises 16-bit PCM only",
                 )
             }
-            isSourceHighRes -> {
+            isSourceHighRes && requestedMode != OutputPcmMode.PCM_16 -> {
                 Pair(
                     FallbackReason.ROUTE_LIMITATION,
                     "${routeKind.name} route does not expose high-res output",

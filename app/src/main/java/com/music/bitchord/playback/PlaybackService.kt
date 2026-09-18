@@ -1098,13 +1098,16 @@ class PlaybackService : MediaLibraryService() {
                     withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) }
                 } ?: throw java.io.IOException("No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}")
                 val configId = dataSpec.uri.getQueryParameter("s")
-                val sourceName = configId?.let { SourceRegistry.config(it)?.displayName }
-                    ?: stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                val sourceName = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: configId?.let { SourceRegistry.config(it)?.displayName }
                     ?: "Source"
                 val trackParam = dataSpec.uri.getQueryParameter("t")
-                NerdStats.onSourceStream(trackParam, stream.format, sourceName)
+                val fullMediaId = mediaIdIn(dataSpec.uri)
+                NerdStats.onSourceStream(fullMediaId ?: trackParam, stream.format, sourceName)
+                if (fullMediaId != null) {
+                    NerdStats.recordSource(fullMediaId, sourceName)
+                }
                 NerdStats.recordSource(trackParam, sourceName)
-                NerdStats.recordSource(mediaIdIn(dataSpec.uri), sourceName)
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(stream.url))
                     .setHttpRequestHeaders(stream.headers)
@@ -3128,10 +3131,14 @@ class PlaybackService : MediaLibraryService() {
                     .withResolvedStreamType(stream.url)
                     .build(),
             )
+            val upgradedSourceName = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                ?: "Upgrade"
+            NerdStats.onSourceStream(mediaId, stream.format, upgradedSourceName)
+            NerdStats.recordSource(mediaId, upgradedSourceName)
             player.seekTo(player.currentMediaItemIndex, now.position)
             player.prepare()
             QualityUpgrade.unshelve(mediaId)
-            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms")
+            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
@@ -3897,16 +3904,52 @@ class PlaybackService : MediaLibraryService() {
             return "Local Storage"
         }
 
-        val recorded = NerdStats.sourceFor(id)
-        if (!recorded.isNullOrBlank()) return recorded
+        // 1. Forced upgrade stream on active playback URI
+        val uri = mediaItem?.localConfiguration?.uri
+        if (uri != null) {
+            QualityUpgrade.forcedStream(uri)?.let { upgraded ->
+                val name = upgraded.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                if (!name.isNullOrBlank()) return name
+            }
+        }
 
+        // 2. Exact recorded source for this media item
+        val exactRecorded = NerdStats.exactSourceFor(id)
+        if (!exactRecorded.isNullOrBlank()) return exactRecorded
+
+        // 3. Source-backed track key (e.g. src:<configId>::<trackId>)
         val sourceTrack = SourceRegistry.parseTrackKey(id)
         if (sourceTrack != null) {
             val config = SourceRegistry.config(sourceTrack.first)
             if (config != null) return config.displayName
+            return "Unknown"
         }
 
-        return "YouTube"
+        // 4. Stream substitution (e.g. YouTube substituted by addon)
+        StreamChoice.of(id)?.let { serving ->
+            val name = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                ?: if (StreamChoice.isSubstitute(id)) "Module" else null
+            if (!name.isNullOrBlank()) return name
+        }
+
+        // 5. Virtual bitchord://source?s=... playback URI
+        if (uri?.authority == "source") {
+            val configId = uri.getQueryParameter("s")
+            val name = configId?.let { SourceRegistry.config(it)?.displayName }
+            if (!name.isNullOrBlank()) return name
+            return "Unknown"
+        }
+
+        // 6. Non-prefixed mediaId fallback to recorded source if any
+        val recorded = NerdStats.sourceFor(id)
+        if (!recorded.isNullOrBlank()) return recorded
+
+        // 7. YouTube video ID
+        if (id.length == 11 || uri?.getQueryParameter("v") != null) {
+            return "YouTube"
+        }
+
+        return "Unknown"
     }
 
     private fun publishNerdStats() {
