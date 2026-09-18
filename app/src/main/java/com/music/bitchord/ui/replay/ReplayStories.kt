@@ -179,7 +179,11 @@ fun ReplayStories(
     LaunchedEffect(current) { progress.snapTo(0f) }
     LaunchedEffect(current, held, paused) {
         if (held || paused) return@LaunchedEffect
-        if (current >= pages.lastIndex) return@LaunchedEffect
+        // On the final slide: animate progress to 1f and hold — do NOT auto-advance.
+        if (current == pages.lastIndex) {
+            progress.animateTo(1f, tween(PAGE_MILLIS.toInt(), easing = LinearEasing))
+            return@LaunchedEffect
+        }
         // Resumed from where the hold left it rather than restarted, so letting
         // go doesn't hand back a card that was nearly finished.
         val remaining = ((1f - progress.value) * PAGE_MILLIS).toInt().coerceAtLeast(0)
@@ -904,7 +908,7 @@ private const val STORY_ROWS = 5
 private const val STORY_ASPECT = 9f / 16f
 
 /** How long a card holds before moving on, unless a finger is on the screen. */
-private const val PAGE_MILLIS = 9_000f
+private const val PAGE_MILLIS = 7_000f
 
 /** The share of the width that means "back" — the left edge, as everywhere else. */
 private const val BACK_ZONE = 0.32f

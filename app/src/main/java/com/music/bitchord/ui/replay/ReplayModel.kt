@@ -157,8 +157,8 @@ fun ReplaySummary.storyHeadline(context: Context, page: ReplayStoryPage): List<H
     )
     ReplayStoryPage.SUMMARY -> runs(
         context.getString(R.string.replay_summary_start) to false,
-        label to true,
-        " ." to false,
+        " $label " to true,
+        "." to false,
     )
 }
 
