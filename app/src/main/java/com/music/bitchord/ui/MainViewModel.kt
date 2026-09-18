@@ -1439,12 +1439,38 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Records a track entity from a search hit.
-     * Falls back to recording the raw query if no song data is available.
+     * Checks _typeaheadResults first (live media while typing), then _results
+     * (committed search). Falls back to recording the raw query if no song data
+     * is available.
      */
     fun recordSearch() {
         val q = _query.value.trim()
         if (q.isEmpty()) return
-        // If we have a current top result or typeahead, prefer entity recording
+        // Prefer typeahead results — they are live and always available while typing.
+        val fromTypeahead = _typeaheadResults.value.firstOrNull {
+            it is SearchResult.TopTrack || it is SearchResult.Track
+        }
+        if (fromTypeahead is SearchResult.Track) {
+            recordEntity(SearchHistoryEntity(
+                id = fromTypeahead.song.videoId,
+                title = fromTypeahead.song.title,
+                subtitle = listOfNotNull(fromTypeahead.song.artist).joinToString(" · "),
+                artworkUrl = fromTypeahead.song.thumbnailUrl,
+                entityType = EntityType.TRACK,
+            ))
+            return
+        }
+        if (fromTypeahead is SearchResult.TopTrack) {
+            recordEntity(SearchHistoryEntity(
+                id = fromTypeahead.song.videoId,
+                title = fromTypeahead.song.title,
+                subtitle = listOfNotNull(fromTypeahead.song.artist).joinToString(" · "),
+                artworkUrl = fromTypeahead.song.thumbnailUrl,
+                entityType = EntityType.TRACK,
+            ))
+            return
+        }
+        // Fall back to committed search results.
         val topResult = (_results.value as? UiState.Success)?.data?.firstOrNull {
             it is SearchResult.TopTrack || it is SearchResult.Track
         }
