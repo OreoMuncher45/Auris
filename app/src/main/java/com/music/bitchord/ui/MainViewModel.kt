@@ -1681,8 +1681,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // moved on: typed further, or searched — which empties [_suggestions],
         // and a late answer writing to it would reopen the suggestions over
         // the results the user is by then reading.
-        fun stillWanted(input: String) =
-            _query.value == input && _suggestions.value.isNotEmpty()
+        fun stillWanted(input: String) = _query.value == input
 
         suggestRequests
             .debounce(SUGGEST_DEBOUNCE_MS)
