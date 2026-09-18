@@ -2517,7 +2517,7 @@ private fun BitChordApp(
                                     viewModel.recordEntity(SearchHistoryEntity(
                                         id = song.videoId,
                                         title = song.title,
-                                        subtitle = song.artist.ifEmpty { null },
+                                        subtitle = song.artist.ifEmpty { "" },
                                         artworkUrl = song.thumbnailUrl,
                                         entityType = EntityType.TRACK,
                                     ))
@@ -2530,7 +2530,7 @@ private fun BitChordApp(
                                 viewModel.recordEntity(SearchHistoryEntity(
                                     id = song.videoId,
                                     title = song.title,
-                                    subtitle = song.artist.ifEmpty { null },
+                                    subtitle = song.artist.ifEmpty { "" },
                                     artworkUrl = song.thumbnailUrl,
                                     entityType = EntityType.TRACK,
                                 ))
@@ -2540,7 +2540,7 @@ private fun BitChordApp(
                                 viewModel.recordEntity(SearchHistoryEntity(
                                     id = song.videoId,
                                     title = song.title,
-                                    subtitle = song.artist.ifEmpty { null },
+                                    subtitle = song.artist.ifEmpty { "" },
                                     artworkUrl = song.thumbnailUrl,
                                     entityType = EntityType.TRACK,
                                 ))
@@ -2551,7 +2551,7 @@ private fun BitChordApp(
                                 viewModel.recordEntity(SearchHistoryEntity(
                                     id = item.browseId ?: "",
                                     title = item.title,
-                                    subtitle = item.subtitle.ifBlank { null },
+                                    subtitle = item.subtitle.ifBlank { "" },
                                     artworkUrl = item.thumbnailUrl,
                                     entityType = when (item.type) {
                                         BrowseType.ALBUM -> EntityType.ALBUM
