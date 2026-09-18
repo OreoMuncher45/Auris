@@ -895,6 +895,8 @@
     <string name="listen_together_custom_server_dialog_title">Join party on custom server?</string>
     <string name="listen_together_custom_server_dialog_message">This party is hosted on an external server:\n\n%1$s\n\nDo you want to switch your party server and join party %2$s?</string>
     <string name="listen_together_custom_server_switch_and_join">Switch &amp; Join</string>
+    <string name="listen_together_official_server_dialog_title">Switch to official server?</string>
+    <string name="listen_together_official_server_dialog_message">This party is hosted on the official BitChord server.\n\nDo you want to switch back to the official server and join party %1$s?</string>
 
     <string name="vietnamese">Vietnamese</string>
 

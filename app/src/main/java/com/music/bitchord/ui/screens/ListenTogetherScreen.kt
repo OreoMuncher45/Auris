@@ -155,8 +155,13 @@ fun ListenTogetherScreen(
         val activeServer = ListenTogether.activeServerUrl().trim().trimEnd('/')
         val targetServer = inviteServer?.trim()?.trimEnd('/')
 
-        if (!targetServer.isNullOrBlank() && !targetServer.equals(activeServer, ignoreCase = true)) {
-            pendingServerSwitchInvite = code to targetServer
+        if (!targetServer.isNullOrBlank()) {
+            if (!targetServer.equals(activeServer, ignoreCase = true)) {
+                pendingServerSwitchInvite = code to targetServer
+                return@LaunchedEffect
+            }
+        } else if (customServer.isNotBlank()) {
+            pendingServerSwitchInvite = code to ""
             return@LaunchedEffect
         }
 
@@ -177,6 +182,7 @@ fun ListenTogetherScreen(
     }
 
     pendingServerSwitchInvite?.let { (codeToJoin, serverToSet) ->
+        val isSwitchToOfficial = serverToSet.isBlank()
         AlertDialog(
             onDismissRequest = {
                 pendingServerSwitchInvite = null
@@ -184,17 +190,27 @@ fun ListenTogetherScreen(
             },
             title = {
                 Text(
-                    stringResource(R.string.listen_together_custom_server_dialog_title),
+                    stringResource(
+                        if (isSwitchToOfficial) {
+                            R.string.listen_together_official_server_dialog_title
+                        } else {
+                            R.string.listen_together_custom_server_dialog_title
+                        }
+                    ),
                     style = MaterialTheme.typography.titleLarge,
                 )
             },
             text = {
                 Text(
-                    stringResource(
-                        R.string.listen_together_custom_server_dialog_message,
-                        serverToSet,
-                        codeToJoin,
-                    ),
+                    if (isSwitchToOfficial) {
+                        stringResource(R.string.listen_together_official_server_dialog_message, codeToJoin)
+                    } else {
+                        stringResource(
+                            R.string.listen_together_custom_server_dialog_message,
+                            serverToSet,
+                            codeToJoin,
+                        )
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
