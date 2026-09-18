@@ -897,6 +897,8 @@
     <string name="listen_together_custom_server_switch_and_join">Switch &amp; Join</string>
     <string name="listen_together_official_server_dialog_title">Switch to official server?</string>
     <string name="listen_together_official_server_dialog_message">This party is hosted on the official BitChord server.\n\nDo you want to switch back to the official server and join party %1$s?</string>
+    <string name="listen_together_switch_failed_stayed_in_party">Couldn’t join party: %1$s. Remaining in party %2$s.</string>
+    <string name="listen_together_switch_failed">Couldn’t join party: %1$s.</string>
 
     <string name="vietnamese">Vietnamese</string>
 

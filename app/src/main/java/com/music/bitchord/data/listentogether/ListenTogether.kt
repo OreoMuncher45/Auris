@@ -31,6 +31,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +40,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -132,6 +135,12 @@ object ListenTogether {
     /** A refusal from the server, carrying the machine-readable half. */
     class PartyException(val code: String, message: String) : Exception(message)
 
+    sealed interface SwitchPartyResult {
+        data class Success(val partyCode: String) : SwitchPartyResult
+        data class TargetFailedStayedInCurrentParty(val partyCode: String, val targetError: String) : SwitchPartyResult
+        data class TargetFailedNoParty(val targetError: String) : SwitchPartyResult
+    }
+
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -166,6 +175,7 @@ object ListenTogether {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val clock = ServerClock()
+    private val switchMutex = Mutex()
 
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
@@ -281,16 +291,21 @@ object ListenTogether {
      * up immediately and forty-five seconds later is the difference between a
      * friend being able to join and being told the party is full.
      */
-    private fun releaseStaleSlot(code: String, held: String) {
+    private fun releaseStaleSlotOnServer(serverBase: String, code: String, held: String) {
+        if (serverBase.isBlank() || code.isBlank() || held.isBlank()) return
         scope.launch {
             runCatching {
-                http.post("${httpBase()}/api/parties/$code/leave") {
+                http.post("$serverBase/api/parties/$code/leave") {
                     header("Authorization", "Bearer $held")
                 }
             }.onFailure { failure ->
                 Log.i(TAG, "stale party slot left to the server's grace: ${redact(failure.message)}")
             }
         }
+    }
+
+    private fun releaseStaleSlot(code: String, held: String) {
+        releaseStaleSlotOnServer(httpBase(), code, held)
     }
 
     /** Points this install at another server, or back at the built-in one if blank. */
@@ -325,14 +340,16 @@ object ListenTogether {
 
     // ------------------------------------------------------------ joining --
 
-    suspend fun createParty(nickname: String = nickname(), maxMembers: Int = 5): Result<String> = enter(nickname) { who ->
-        post("${httpBase()}/api/parties", JoinRequest(
-            who.userId, who.deviceId, who.name, who.avatar, maxMembers,
-            autoplayEnabled = AppSettings.autoplay.value,
-        ))
+    suspend fun createParty(nickname: String = nickname(), maxMembers: Int = 5): Result<String> = switchMutex.withLock {
+        enter(nickname) { who ->
+            post("${httpBase()}/api/parties", JoinRequest(
+                who.userId, who.deviceId, who.name, who.avatar, maxMembers,
+                autoplayEnabled = AppSettings.autoplay.value,
+            ))
+        }
     }
 
-    suspend fun joinParty(code: String, nickname: String = nickname()): Result<String> {
+    suspend fun joinParty(code: String, nickname: String = nickname()): Result<String> = switchMutex.withLock {
         val previousCode = _state.value.code
         val previousToken = token
         val result = enter(nickname) { who ->
@@ -354,7 +371,111 @@ object ListenTogether {
         ) {
             releaseStaleSlot(previousCode, previousToken)
         }
-        return result
+        result
+    }
+
+    /**
+     * Atomically switches from the current party / server to a target party on [targetCustomServer].
+     *
+     * Implements "Join Target First, Commit & Leave Old Second":
+     * - The current party connection stays active and audio continues playing while the HTTP
+     *   join request is sent to the target server.
+     * - If the target join fails (404, 409, timeout, offline, etc.), no local state or server
+     *   configuration is mutated. The user stays in their current party.
+     * - If the target join succeeds, the switch is committed inside a NonCancellable block:
+     *   the old slot is freed on the old server, the new server address is saved, and the
+     *   WebSocket connects to the target party.
+     */
+    suspend fun switchPartyWithRecovery(
+        targetCustomServer: String,
+        targetCode: String,
+        nickname: String = nickname(),
+    ): SwitchPartyResult = switchMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val who = identity(nickname)
+                ?: return@withContext if (_state.value.inParty) {
+                    SwitchPartyResult.TargetFailedStayedInCurrentParty(_state.value.code.orEmpty(), "Sign in to listen together.")
+                } else {
+                    SwitchPartyResult.TargetFailedNoParty("Sign in to listen together.")
+                }
+
+            val targetBase = resolveHttpBase(targetCustomServer)
+            if (targetBase.isBlank()) {
+                return@withContext if (_state.value.inParty) {
+                    SwitchPartyResult.TargetFailedStayedInCurrentParty(_state.value.code.orEmpty(), "Target server address is invalid or missing.")
+                } else {
+                    SwitchPartyResult.TargetFailedNoParty("Target server address is invalid or missing.")
+                }
+            }
+
+            val cleanedTargetCode = targetCode.filter { it.isLetterOrDigit() }.uppercase()
+            if (cleanedTargetCode.length != CODE_LENGTH) {
+                return@withContext if (_state.value.inParty) {
+                    SwitchPartyResult.TargetFailedStayedInCurrentParty(_state.value.code.orEmpty(), "A party code is six letters or digits.")
+                } else {
+                    SwitchPartyResult.TargetFailedNoParty("A party code is six letters or digits.")
+                }
+            }
+
+            val oldServerBase = httpBase()
+            val oldCode = _state.value.code
+            val oldToken = token
+
+            // Step 1: Join Target First while old party stays connected & playing
+            val targetJoinResult = runCatching {
+                post(
+                    "$targetBase/api/parties/$cleanedTargetCode/join",
+                    JoinRequest(who.userId, who.deviceId, who.name, who.avatar),
+                )
+            }
+
+            val membership = targetJoinResult.getOrElse { failure ->
+                Log.w(TAG, "failed to join target party: ${redact(failure.message)}")
+                val errorMsg = failure.displayMessage()
+                return@withContext if (oldCode != null) {
+                    SwitchPartyResult.TargetFailedStayedInCurrentParty(oldCode, errorMsg)
+                } else {
+                    SwitchPartyResult.TargetFailedNoParty(errorMsg)
+                }
+            }
+
+            // Step 2: Target join succeeded! Commit switch & leave old party inside NonCancellable
+            withContext(NonCancellable) {
+                // Asynchronously release old party slot on old server
+                if (!oldCode.isNullOrBlank() && !oldToken.isNullOrBlank() &&
+                    (oldServerBase != targetBase || !oldCode.equals(membership.code, ignoreCase = true))
+                ) {
+                    releaseStaleSlotOnServer(oldServerBase, oldCode, oldToken)
+                }
+
+                // Stop old socket
+                socketJob?.cancel()
+                socketJob = null
+                session = null
+
+                // Commit new server URL setting
+                setCustomServerUrl(targetCustomServer)
+
+                // Commit new party session
+                token = membership.token
+                prefs.edit()
+                    .putString(KEY_CODE, membership.code)
+                    .putString(KEY_TOKEN, membership.token)
+                    .apply()
+                clock.reset()
+                _state.value = State(
+                    code = membership.code,
+                    you = membership.you,
+                    members = membership.party.members,
+                    maxMembers = membership.party.maxMembers,
+                    playback = membership.party.playback,
+                    connection = Connection.CONNECTING,
+                )
+                connect()
+            }
+
+            SwitchPartyResult.Success(membership.code)
+        }
     }
 
     private suspend fun enter(nickname: String, request: suspend (Identity) -> PartyMembership): Result<String> =
@@ -394,25 +515,23 @@ object ListenTogether {
         }
 
     /** Give up this device's slot. The party carries on without it. */
-    suspend fun leaveParty() = withContext(Dispatchers.IO) {
-        val code = _state.value.code
-        val held = token
-        socketJob?.cancel()
-        socketJob = null
-        session = null
-        clock.reset()
-        token = null
-        prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
-        _state.value = State()
-        if (code != null && held != null) {
-            // Best effort, and after the local state is already clear: a leave
-            // that fails must not strand this device in a party its own screen
-            // says it has left. The server's disconnect grace collects the slot
-            // either way.
-            runCatching {
-                http.post("${httpBase()}/api/parties/$code/leave") {
-                    header("Authorization", "Bearer $held")
-                }
+    suspend fun leaveParty() = switchMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val code = _state.value.code
+            val held = token
+            socketJob?.cancel()
+            socketJob = null
+            session = null
+            clock.reset()
+            token = null
+            prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
+            _state.value = State()
+            if (code != null && held != null) {
+                // Best effort, and after the local state is already clear: a leave
+                // that fails must not strand this device in a party its own screen
+                // says it has left. The server's disconnect grace collects the slot
+                // either way.
+                releaseStaleSlot(code, held)
             }
         }
     }
@@ -824,11 +943,20 @@ object ListenTogether {
      * The address requests actually go to: the user's override, or the built-in
      * one. Private, and the only place the built-in address is read.
      */
-    private fun httpBase(): String {
-        val raw = _customServer.value.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
+    /**
+     * Resolves the given custom server (or default server if blank) to a fully qualified HTTP base URL.
+     */
+    private fun resolveHttpBase(customServer: String): String {
+        val raw = customServer.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
         if (raw.isBlank()) return ""
         return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
     }
+
+    /**
+     * The address requests actually go to: the user's override, or the built-in
+     * one. Private, and the only place the built-in address is read.
+     */
+    private fun httpBase(): String = resolveHttpBase(_customServer.value)
 
     /**
      * A message with every server address taken out of it.

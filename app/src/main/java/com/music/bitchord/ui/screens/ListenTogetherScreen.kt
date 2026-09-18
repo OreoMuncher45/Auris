@@ -220,16 +220,30 @@ fun ListenTogetherScreen(
                         val toJoin = codeToJoin
                         val toSet = serverToSet
                         pendingServerSwitchInvite = null
-                        ListenTogether.setCustomServerUrl(toSet)
-                        serverInput = toSet
                         busy = true
                         failure = null
                         scope.launch {
-                            val result = ListenTogether.joinParty(toJoin)
-                            failure = result.exceptionOrNull()?.message
-                            if (result.isSuccess) {
-                                codeInput = ""
-                                onInviteJoined()
+                            when (val result = ListenTogether.switchPartyWithRecovery(toSet, toJoin)) {
+                                is ListenTogether.SwitchPartyResult.Success -> {
+                                    serverInput = toSet
+                                    codeInput = ""
+                                    onInviteJoined()
+                                }
+                                is ListenTogether.SwitchPartyResult.TargetFailedStayedInCurrentParty -> {
+                                    failure = context.getString(
+                                        R.string.listen_together_switch_failed_stayed_in_party,
+                                        result.targetError.trimEnd('.'),
+                                        result.partyCode,
+                                    )
+                                    onInviteJoined()
+                                }
+                                is ListenTogether.SwitchPartyResult.TargetFailedNoParty -> {
+                                    failure = context.getString(
+                                        R.string.listen_together_switch_failed,
+                                        result.targetError.trimEnd('.'),
+                                    )
+                                    onInviteJoined()
+                                }
                             }
                             busy = false
                         }
