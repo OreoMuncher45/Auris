@@ -12,6 +12,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import com.music.bitchord.playback.audio.usb.UsbDirectManager
+import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -24,6 +26,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.core.net.toUri
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -57,6 +60,14 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
+import com.music.bitchord.playback.audio.DspChain
+import com.music.bitchord.playback.audio.PrecisionAudioSink
+import com.music.bitchord.playback.audio.DirectAudioProbe
+import com.music.bitchord.playback.audio.OutputNegotiator
+import com.music.bitchord.playback.audio.PcmEncoding
+import com.music.bitchord.playback.audio.SourceDescriptor
+import com.music.bitchord.playback.audio.bluetooth.BluetoothAudioTracker
+import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.R
@@ -407,6 +418,8 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
+    private val bluetoothTracker by lazy { BluetoothAudioTracker(this) }
+    private var currentAudioInputFormat: Format? = null
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
             // Plugging something in moves the music to it. Always — a choice
@@ -916,6 +929,8 @@ class PlaybackService : MediaLibraryService() {
             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
             applySpatialAudioEnabled()
             publishNerdStats()
+            currentAudioInputFormat = format
+            applyOutputRoute()
         }
 
         /**
@@ -1056,6 +1071,13 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
+        bluetoothTracker.start()
+        scope.launch {
+            bluetoothTracker.telemetry.collect {
+                applyOutputRoute()
+            }
+        }
+
         val streamResolver = ResolvingDataSource.Resolver { dataSpec ->
             // Which track everything below is for, said once, because none of
             // it would otherwise know: this runs on ExoPlayer's loader thread
@@ -1076,13 +1098,16 @@ class PlaybackService : MediaLibraryService() {
                     withTimeout(RESOLVE_TIMEOUT_MS) { SourceResolver.resolve(dataSpec.uri) }
                 } ?: throw java.io.IOException("No enabled source could serve ${dataSpec.uri.getQueryParameter("n")}")
                 val configId = dataSpec.uri.getQueryParameter("s")
-                val sourceName = configId?.let { SourceRegistry.config(it)?.displayName }
-                    ?: stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                val sourceName = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                    ?: configId?.let { SourceRegistry.config(it)?.displayName }
                     ?: "Source"
                 val trackParam = dataSpec.uri.getQueryParameter("t")
-                NerdStats.onSourceStream(trackParam, stream.format, sourceName)
+                val fullMediaId = mediaIdIn(dataSpec.uri)
+                NerdStats.onSourceStream(fullMediaId ?: trackParam, stream.format, sourceName)
+                if (fullMediaId != null) {
+                    NerdStats.recordSource(fullMediaId, sourceName)
+                }
                 NerdStats.recordSource(trackParam, sourceName)
-                NerdStats.recordSource(mediaIdIn(dataSpec.uri), sourceName)
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(stream.url))
                     .setHttpRequestHeaders(stream.headers)
@@ -1981,6 +2006,7 @@ class PlaybackService : MediaLibraryService() {
         alreadyAudible: Boolean = false,
     ) {
         val exoPlayer = player ?: return
+        currentAudioInputFormat = null
 
         // A crossfade handoff never fires [formatListener] for the entering
         // track — [CrossfadeController] starts its decoder during ARMING,
@@ -3106,10 +3132,14 @@ class PlaybackService : MediaLibraryService() {
                     .withResolvedStreamType(stream.url)
                     .build(),
             )
+            val upgradedSourceName = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                ?: "Upgrade"
+            NerdStats.onSourceStream(mediaId, stream.format, upgradedSourceName)
+            NerdStats.recordSource(mediaId, upgradedSourceName)
             player.seekTo(player.currentMediaItemIndex, now.position)
             player.prepare()
             QualityUpgrade.unshelve(mediaId)
-            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms")
+            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
             watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
@@ -3842,31 +3872,85 @@ class PlaybackService : MediaLibraryService() {
      * several seconds ago. Anything still unknown is left null for the UI to
      * omit — better a shorter line than a made-up number.
      */
+    private fun isLocalPlayback(mediaId: String, mediaItem: MediaItem?): Boolean {
+        if (mediaId.startsWith("content://") || mediaId.startsWith("file://") || mediaId.startsWith("/")) {
+            return true
+        }
+        val uri = mediaItem?.localConfiguration?.uri
+        if (uri != null && (uri.scheme == "file" || uri.scheme == "content")) {
+            return true
+        }
+        val requestUri = mediaItem?.requestMetadata?.mediaUri
+        if (requestUri != null && (requestUri.scheme == "file" || requestUri.scheme == "content")) {
+            return true
+        }
+        val extras = mediaItem?.mediaMetadata?.extras
+        val localUri = extras?.getString(EXTRA_LOCAL_URI)
+        if (!localUri.isNullOrBlank() && (localUri.startsWith("content://") || localUri.startsWith("file://"))) {
+            return true
+        }
+        val localPath = extras?.getString(EXTRA_LOCAL_PATH)
+        if (!localPath.isNullOrBlank()) {
+            return true
+        }
+        if (Downloads.verifiedSavedUri(mediaId) != null) {
+            return true
+        }
+        return false
+    }
+
     private fun currentSourceName(mediaId: String?, mediaItem: MediaItem?): String? {
         val id = mediaId ?: return null
-        val recorded = NerdStats.sourceFor(id)
-        if (!recorded.isNullOrBlank()) return recorded
-
-        val uri = mediaItem?.localConfiguration?.uri
-        if (uri != null) {
-            if (uri.scheme == "file" || uri.scheme == "content") {
-                return if (Downloads.verifiedSavedUri(id) != null) "Downloaded" else "Local Storage"
-            }
-        }
-        if (id.startsWith("content://") || id.startsWith("file://")) {
+        if (isLocalPlayback(id, mediaItem)) {
             return "Local Storage"
         }
-        if (Downloads.verifiedSavedUri(id) != null) {
-            return "Downloaded"
+
+        // 1. Forced upgrade stream on active playback URI
+        val uri = mediaItem?.localConfiguration?.uri
+        if (uri != null) {
+            QualityUpgrade.forcedStream(uri)?.let { upgraded ->
+                val name = upgraded.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                if (!name.isNullOrBlank()) return name
+            }
         }
 
+        // 2. Exact recorded source for this media item
+        val exactRecorded = NerdStats.exactSourceFor(id)
+        if (!exactRecorded.isNullOrBlank()) return exactRecorded
+
+        // 3. Source-backed track key (e.g. src:<configId>::<trackId>)
         val sourceTrack = SourceRegistry.parseTrackKey(id)
         if (sourceTrack != null) {
             val config = SourceRegistry.config(sourceTrack.first)
             if (config != null) return config.displayName
+            return "Unknown"
         }
 
-        return "YouTube"
+        // 4. Stream substitution (e.g. YouTube substituted by addon)
+        StreamChoice.of(id)?.let { serving ->
+            val name = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                ?: if (StreamChoice.isSubstitute(id)) "Module" else null
+            if (!name.isNullOrBlank()) return name
+        }
+
+        // 5. Virtual bitchord://source?s=... playback URI
+        if (uri?.authority == "source") {
+            val configId = uri.getQueryParameter("s")
+            val name = configId?.let { SourceRegistry.config(it)?.displayName }
+            if (!name.isNullOrBlank()) return name
+            return "Unknown"
+        }
+
+        // 6. Non-prefixed mediaId fallback to recorded source if any
+        val recorded = NerdStats.sourceFor(id)
+        if (!recorded.isNullOrBlank()) return recorded
+
+        // 7. YouTube video ID
+        if (id.length == 11 || uri?.getQueryParameter("v") != null) {
+            return "YouTube"
+        }
+
+        return "Unknown"
     }
 
     private fun publishNerdStats() {
@@ -4213,27 +4297,24 @@ class PlaybackService : MediaLibraryService() {
             // the preference asks for it. The selected USB route must advertise
             // the format; otherwise Media3 uses its stable PCM16 path.
             setEnableAudioFloatOutput(configuredFloatOutput)
-            if (configuredFloatOutput) {
-                // c2.sec.flac.decoder produces one extra 232.2ms timestamp
-                // advance per decoded buffer when Media3 requests float PCM.
-                // Keep the real PCM_FLOAT sink, but decode FLAC through the
-                // platform software codec on affected Samsung devices.
-                setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
-                    val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
-                        MediaCodecSelector.PREFER_SOFTWARE
-                    } else {
-                        MediaCodecSelector.DEFAULT
-                    }
-                    val candidates = selector.getDecoderInfos(
-                        mimeType,
-                        requiresSecureDecoder,
-                        requiresTunnelingDecoder,
-                    )
-                    if (mimeType == MimeTypes.AUDIO_FLAC) {
-                        candidates.filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
-                    } else {
-                        candidates
-                    }
+            // c2.sec.flac.decoder produces one extra 232.2ms timestamp
+            // advance per decoded buffer when Media3 requests float PCM.
+            // Decode FLAC through the platform software codec on affected Samsung devices.
+            setMediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                val selector = if (mimeType == MimeTypes.AUDIO_FLAC) {
+                    MediaCodecSelector.PREFER_SOFTWARE
+                } else {
+                    MediaCodecSelector.DEFAULT
+                }
+                val candidates = selector.getDecoderInfos(
+                    mimeType,
+                    requiresSecureDecoder,
+                    requiresTunnelingDecoder,
+                )
+                if (mimeType == MimeTypes.AUDIO_FLAC) {
+                    candidates.filterNot { AudioOutputPolicy.isUnsafeFloatFlacDecoder(it.name) }
+                } else {
+                    candidates
                 }
             }
         }
@@ -4242,31 +4323,41 @@ class PlaybackService : MediaLibraryService() {
             context: Context,
             enableFloatOutput: Boolean,
             enableAudioTrackPlaybackParams: Boolean,
-        ): AudioSink = DefaultAudioSink.Builder(context)
-            .setEnableFloatOutput(enableFloatOutput)
-            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
-            .setAudioProcessorChain(
-                DefaultAudioSink.DefaultAudioProcessorChain(
-                    // Transition filtering last of the three: widening is a
-                    // property of the track, and a bass swap that ran before it
-                    // would have its own low end fed back in by the crossfeed —
-                    // or, once the equaliser is in the chain, by whatever the
-                    // listener's low band was set to. The equaliser sits between
-                    // them for the same reason: it belongs to the listener and
-                    // the whole session, while the transition filter belongs to
-                    // one handoff and has to have the last word on it.
-                    arrayOf(spatial, equalizer, transition),
-                    SilenceSkippingAudioProcessor(
-                        MIN_SILENCE_US,
-                        SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
-                        SilenceSkippingAudioProcessor.DEFAULT_MAX_SILENCE_TO_KEEP_DURATION_US,
-                        SilenceSkippingAudioProcessor.DEFAULT_MIN_VOLUME_TO_KEEP_PERCENTAGE,
-                        SilenceSkippingAudioProcessor.DEFAULT_SILENCE_THRESHOLD_LEVEL,
+        ): AudioSink {
+            val defaultSink = DefaultAudioSink.Builder(context)
+                .setEnableFloatOutput(enableFloatOutput)
+                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                .setAudioProcessorChain(
+                    DefaultAudioSink.DefaultAudioProcessorChain(
+                        emptyArray<AudioProcessor>(),
+                        SilenceSkippingAudioProcessor(
+                            MIN_SILENCE_US,
+                            SilenceSkippingAudioProcessor.DEFAULT_SILENCE_RETENTION_RATIO,
+                            SilenceSkippingAudioProcessor.DEFAULT_MAX_SILENCE_TO_KEEP_DURATION_US,
+                            SilenceSkippingAudioProcessor.DEFAULT_MIN_VOLUME_TO_KEEP_PERCENTAGE,
+                            SilenceSkippingAudioProcessor.DEFAULT_SILENCE_THRESHOLD_LEVEL,
+                        ),
+                        SonicAudioProcessor(),
                     ),
-                    SonicAudioProcessor(),
-                ),
+                )
+                .build()
+
+            // Transition filtering last of the three: widening is a
+            // property of the track, and a bass swap that ran before it
+            // would have its own low end fed back in by the crossfeed —
+            // or, once the equaliser is in the chain, by whatever the
+            // listener's low band was set to. The equaliser sits between
+            // them for the same reason: it belongs to the listener and
+            // the whole session, while the transition filter belongs to
+            // one handoff and has to have the last word on it.
+            val dspChain = DspChain(spatial, equalizer, transition)
+            return PrecisionAudioSink(
+                delegate = defaultSink,
+                dspChain = dspChain,
+                enableFloatOutput = enableFloatOutput,
+                preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
             )
-            .build()
+        }
     }
 
     /**
@@ -4294,25 +4385,118 @@ class PlaybackService : MediaLibraryService() {
     private fun applyOutputRoute() {
         val manager = audioManager ?: return
         val usb = preferredUsbDevice()
-        // This one call is the whole of output switching: nothing an app is
-        // allowed to do moves the *system's* routing, so what the picker moves
-        // is where our own AudioTrack renders. See [AudioRouting] for the two
-        // routing APIs that look like the answer and are not, and for why the
-        // sink handed over here must never be a Bluetooth SCO one.
-        //
-        // An explicit choice outranks the USB-DAC preference, which is a
-        // standing rule about what to do when nobody has said otherwise.
-        // Resolved against the devices connected *now*, so a headset that has
-        // since been unplugged stops being the answer on its own.
         val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
         val preferred = chosen ?: usb.takeIf { AppSettings.preferUsbDac.value }
         eachPlayer { it.setPreferredAudioDevice(preferred) }
+
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+        val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
+
+        val format = currentAudioInputFormat
+        val sampleRate = format?.sampleRate?.takeIf { it > 0 } ?: 48000
+        val channels = format?.channelCount?.takeIf { it > 0 } ?: 2
+        val directSupport = DirectAudioProbe.probeDirectSupport(
+            audioManager = manager,
+            sampleRateHz = sampleRate,
+            channelCount = channels,
+            activeDevice = activeDevice,
+        )
+        val btTelemetry = if (routeKind == AudioRouting.Kind.BLUETOOTH) bluetoothTracker.telemetry.value else null
+
         AudioOutputStatus.publish(
             manager = manager,
             requestedPcmMode = AppSettings.outputPcmMode.value,
-            preferred = preferred,
+            preferred = activeDevice,
             floatEnabled = shouldEnableFloatOutput(),
+            routeKind = routeKind,
+            directUsbProbe = directUsbProbe,
+            directSupport = directSupport,
+            bluetoothTelemetry = btTelemetry,
+            systemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
+
+        if (format != null) {
+            resolvePreferredOutputEncoding(format)
+        }
+    }
+
+    private fun resolvePreferredOutputEncoding(format: Format): PcmEncoding? {
+        val manager = audioManager ?: return null
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+
+        if (routeKind == AudioRouting.Kind.PHONE) {
+            return PcmEncoding.PCM_16BIT
+        }
+
+        val inputFormat = currentAudioInputFormat ?: format
+        val sampleRate = format.sampleRate.takeIf { it > 0 }
+            ?: inputFormat.sampleRate.takeIf { it > 0 }
+            ?: 48000
+        val channels = format.channelCount.takeIf { it > 0 }
+            ?: inputFormat.channelCount.takeIf { it > 0 }
+            ?: 2
+        val measured = inputFormat.measure()
+        val bitDepth = measured.bitDepth ?: when (inputFormat.pcmEncoding) {
+            C.ENCODING_PCM_32BIT -> 32
+            C.ENCODING_PCM_24BIT -> 24
+            C.ENCODING_PCM_FLOAT -> 32
+            else -> when (format.pcmEncoding) {
+                C.ENCODING_PCM_32BIT -> 32
+                C.ENCODING_PCM_24BIT -> 24
+                C.ENCODING_PCM_FLOAT -> 32
+                else -> 16
+            }
+        }
+
+        val sourceEncoding = if (inputFormat.sampleMimeType != null && inputFormat.sampleMimeType != "audio/raw") {
+            inputFormat.sampleMimeType!!
+        } else {
+            format.sampleMimeType ?: "audio/raw"
+        }
+
+        val source = SourceDescriptor(
+            encoding = sourceEncoding,
+            sampleRateHz = sampleRate,
+            channelCount = channels,
+            bitDepth = bitDepth,
+        )
+
+        val directSupport = DirectAudioProbe.probeDirectSupport(
+            audioManager = manager,
+            sampleRateHz = sampleRate,
+            channelCount = channels,
+            activeDevice = activeDevice,
+        )
+        val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
+        val btTelemetry = if (routeKind == AudioRouting.Kind.BLUETOOTH) bluetoothTracker.telemetry.value else null
+
+        val advertisedEncodings = activeDevice?.encodings?.toList() ?: emptyList()
+        val advertisedSampleRates = activeDevice?.sampleRates?.toList() ?: emptyList()
+
+        val negotiation = OutputNegotiator.negotiate(
+            source = source,
+            decoderName = AudioOutputStatus.current.value.decoderName,
+            decoderEncoding = "Float32",
+            sampleRateHz = sampleRate,
+            channelCount = channels,
+            routeKind = routeKind,
+            deviceName = activeDevice?.productName?.toString()?.ifBlank { null } ?: "System default",
+            advertisedEncodings = advertisedEncodings,
+            advertisedSampleRates = advertisedSampleRates,
+            requestedMode = AppSettings.outputPcmMode.value,
+            directUsbProbe = directUsbProbe,
+            directSupport = directSupport,
+            bluetoothTelemetry = btTelemetry,
+            delegateSupportsFloat = shouldEnableFloatOutput(),
+            delegateSupportsPcm24 = true,
+            knownSystemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
+        )
+
+        AudioOutputStatus.publishNegotiation(negotiation)
+
+        return negotiation.output.encoding
     }
 
     private fun requestOutputReconfiguration() {
@@ -4410,12 +4594,30 @@ class PlaybackService : MediaLibraryService() {
                 device.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
 
+    private fun resolveActiveOutputDevice(): AudioDeviceInfo? {
+        val manager = audioManager ?: return null
+        val infos = runCatching { manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS) }.getOrNull() ?: return null
+        val chosen = AudioRouting.infoFor(manager, AudioRouting.selectedId.value)
+        val preferred = chosen ?: preferredUsbDevice().takeIf { AppSettings.preferUsbDac.value }
+        return preferred ?: AudioRouting.activeOf(infos, null)
+    }
+
+    private fun resolveActiveRouteKind(device: AudioDeviceInfo?): AudioRouting.Kind {
+        if (device == null) return AudioRouting.Kind.PHONE
+        return AudioRouting.kindOf(device.type) ?: AudioRouting.Kind.PHONE
+    }
+
     private fun shouldEnableFloatOutput(): Boolean {
-        val usb = preferredUsbDevice()
+        val activeDevice = resolveActiveOutputDevice()
+        val routeKind = resolveActiveRouteKind(activeDevice)
+        val advertisesFloat = activeDevice?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true
+        val directFloatSupported = audioManager?.let { mgr ->
+            DirectAudioProbe.probeDirectSupport(mgr, 48000, 2, activeDevice).supportsFloat
+        } ?: false
         return AudioOutputPolicy.shouldUseFloatOutput(
             requestedMode = AppSettings.outputPcmMode.value,
-            isPreferredUsbRoute = AppSettings.preferUsbDac.value && usb != null,
-            advertisesPcmFloat = usb?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true,
+            routeKind = routeKind,
+            advertisesPcmFloat = advertisesFloat || directFloatSupported,
         )
     }
 
@@ -4441,12 +4643,7 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
-            // Just the route, not a reconfiguration: picking an output moves
-            // where the AudioTrack renders, and tearing the renderers down for
-            // it would put a gap in the music at the moment the listener is
-            // watching for one. The float/PCM decision is a property of the USB
-            // DAC preference, which has its own collector above.
-            AudioRouting.selectedId.drop(1).collect { applyOutputRoute() }
+            AudioRouting.selectedId.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
@@ -4852,6 +5049,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         partySync?.stop()
         partySync = null
