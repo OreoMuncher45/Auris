@@ -141,6 +141,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _searchScrollReset = MutableStateFlow(0)
     val searchScrollReset: StateFlow<Int> = _searchScrollReset.asStateFlow()
 
+    /** True while a committed search is in flight — gates suggestion/media callbacks. */
+    private var searchSubmitted = false
+
     /**
      * What the search page offers while a query is being typed, led by the
      * query itself.
@@ -1515,6 +1518,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun searchFor(term: String) {
         _query.value = term
+        searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
         runSearch()
@@ -1527,11 +1531,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onQueryChange(newValue: String) {
         _query.value = newValue
         if (newValue.isBlank()) {
+            searchSubmitted = false
             _suggestions.value = emptyList()
             _typeaheadResults.value = emptyList()
             _results.value = null
             return
         }
+        // Reset the submission gate so typeahead pipelines fire again.
+        searchSubmitted = false
         // While typing, surface text completions — the pipeline already feeds
         // them through [suggestRequests] and publishes results via typeahead.
         suggestRequests.tryEmit(newValue)
@@ -1544,6 +1551,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun submitSearch() {
         val q = _query.value.trim()
         if (q.isEmpty()) return
+        searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
         runSearch()
@@ -1552,6 +1560,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun onFilterChange(value: SearchFilter) {
         if (_filter.value == value) return
         _filter.value = value
+        searchSubmitted = true
         runSearch()
     }
 
@@ -1705,7 +1714,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // moved on: typed further, or searched — which empties [_suggestions],
         // and a late answer writing to it would reopen the suggestions over
         // the results the user is by then reading.
-        fun stillWanted(input: String) = _query.value == input
+        fun stillWanted(input: String) = _query.value == input && !searchSubmitted
 
         suggestRequests
             .debounce(SUGGEST_DEBOUNCE_MS)
@@ -1734,9 +1743,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
-                // Only show media results while suggestions are still visible —
-                // i.e., the user is still typing, not reading search results.
-                if (_suggestions.value.isEmpty()) {
+                // Only show media results while the user is still typing — not
+                // reading committed search results. The query-text check on its
+                // own isn't enough: a late suggestion callback can repopulate
+                // _suggestions after submission, and we must not re-open the
+                // typeahead dropdown under an already-committed search.
+                if (searchSubmitted) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
