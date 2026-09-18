@@ -2586,15 +2586,15 @@ private fun BitChordApp(
                             suggestions = searchSuggestions,
                             typeaheadResults = viewModel.typeaheadResults.collectAsStateWithLifecycle().value,
                             onSubmit = viewModel::submitSearch,
-                            // A suggestion and a recent search are the same act — a
-                            // term picked out of a list rather than typed — so they run
-                            // through the same path and both land in the history.
+                            // Suggestions land in search history via searchFor → recordSearch.
+                            // History items (onHistoryClick) navigate/play without re-logging.
                             onSuggestionClick = viewModel::searchFor,
                             onHistoryClick = { entity ->
                                 // Tap a history entity: navigate to it or play it directly.
+                                // Do NOT recordEntity here — tapping an existing history item
+                                // must not update its timestamp and push it to the top.
                                 when (entity.entityType) {
                                     EntityType.TRACK -> {
-                                        viewModel.recordEntity(entity)
                                         // Play the track by its video id
                                         playRadio(
                                             com.music.bitchord.data.model.Song(
