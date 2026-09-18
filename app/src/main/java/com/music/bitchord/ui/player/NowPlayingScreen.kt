@@ -216,7 +216,7 @@ import coil3.request.allowHardware
 import coil3.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import com.music.bitchord.ui.theme.SystemBarIcons
+import com.music.bitchord.ui.theme.StatusBarIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.optimizedHazeEffect
@@ -1039,9 +1039,10 @@ fun NowPlayingScreen(
 
     // A docked pane sits beside the page rather than covering the screen, so
     // the status bar it's under belongs to the page, not this artwork — only
-    // the full-screen sheet gets to repaint it.
+    // the full-screen sheet gets to repaint it. The navigation bar is left
+    // alone entirely — see [StatusBarIcons].
     if (!docked) {
-        SystemBarIcons(dark = isLightArtwork)
+        StatusBarIcons(dark = isLightArtwork)
     }
 
     // Kept local to the player: a modal player is not in the page's Haze
@@ -2443,6 +2444,18 @@ fun NowPlayingScreen(
             // header icon.
             val mixing by AppSettings.smartMixInProgress.collectAsStateWithLifecycle()
             val smartAnalysis by AppSettings.smartAnalysis.collectAsStateWithLifecycle()
+            // A party doesn't mix, and doesn't analyse for one either — see
+            // [com.music.bitchord.playback.CrossfadeController]. So the two
+            // flows above simply stop moving there, and the stats line has to
+            // say why rather than leave their last values on screen as if they
+            // still described something.
+            //
+            // Read off the party rather than published as a third flow: it is
+            // the same fact the controller and the analyzer each read for
+            // themselves, and a mirror of it could only ever disagree.
+            val inParty by remember {
+                ListenTogether.state.map { it.inParty }.distinctUntilChanged()
+            }.collectAsStateWithLifecycle(initialValue = ListenTogether.state.value.inParty)
             // Height the artwork block below turns out not to need, spent by the
             // controls at the foot of the screen. Filled in from inside the box,
             // where the sleeve's real size is known; see [lastControlSpread].
@@ -2791,10 +2804,17 @@ fun NowPlayingScreen(
                                     // agree, so the line reads the same way every
                                     // time and the eye can find the half it wants
                                     // without re-parsing the sentence.
-                                    text = if (song.isVideoOrigin) {
-                                        stringResource(R.string.automix_not_supported_video)
-                                    } else {
-                                        stringResource(
+                                    text = when {
+                                        // Ahead of the video case because it is
+                                        // the broader one: in a party nothing is
+                                        // analysed for any song, video or not,
+                                        // so naming the video limitation there
+                                        // would describe a rule that is not the
+                                        // one in force.
+                                        inParty -> stringResource(R.string.automix_stopped_in_party)
+                                        song.isVideoOrigin ->
+                                            stringResource(R.string.automix_not_supported_video)
+                                        else -> stringResource(
                                             R.string.automix_analysis_status,
                                             smartAnalysis.current.localizedLabel(),
                                             smartAnalysis.next.localizedLabel(),
@@ -5147,15 +5167,17 @@ private fun LyricsPanel(
             listState.layoutInfo.visibleItemsInfo.any { it.index == currentLine }
         }
     }
-    LaunchedEffect(browsing, activeOnScreen, listState.isScrollInProgress) {
-        if (browsing && activeOnScreen && !listState.isScrollInProgress) {
+    // Paused, there is no song to follow back to, so a hand scroll should sit
+    // wherever it was left rather than snapping back on these timers.
+    LaunchedEffect(browsing, activeOnScreen, listState.isScrollInProgress, isPlaying) {
+        if (isPlaying && browsing && activeOnScreen && !listState.isScrollInProgress) {
             delay(600)
             browsing = false
         }
     }
 
-    LaunchedEffect(browsing, listState.isScrollInProgress) {
-        if (browsing && !listState.isScrollInProgress) {
+    LaunchedEffect(browsing, listState.isScrollInProgress, isPlaying) {
+        if (isPlaying && browsing && !listState.isScrollInProgress) {
             delay(5_000)
             browsing = false
         }

@@ -800,7 +800,7 @@ class PlaybackService : MediaLibraryService() {
             loadAutoplayForCurrentTrack()
             loadLyricsForCurrentTrack()
             if (exoPlayer.isPlaying) startLyricsTicker()
-            mediaSession?.setCustomLayout(notificationButtons())
+            refreshCustomLayouts()
         }
 
         /**
@@ -889,7 +889,7 @@ class PlaybackService : MediaLibraryService() {
             if (exoPlayer.isPlaying) prefetchAround(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
                 saveQueueSnapshot(exoPlayer)
-                mediaSession?.setCustomLayout(notificationButtons())
+                refreshCustomLayouts()
                 // Queue edits can remove AutoPlay's whole tail while leaving
                 // its old seed memoized. Detect that state at its source and
                 // make the current track eligible for a fresh load.
@@ -1062,13 +1062,16 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             QueueShuffle.enabled
                 .collectLatest {
-                    mediaSession?.setCustomLayout(notificationButtons())
+                    refreshCustomLayouts()
                 }
         }
         scope.launch {
-            LikeState.overrides.collectLatest {
-                mediaSession?.setCustomLayout(notificationButtons())
-            }
+            LikeState.overrides
+                .map { it[player?.currentMediaItem?.mediaId] }
+                .distinctUntilChanged()
+                .collectLatest {
+                    refreshCustomLayouts()
+                }
         }
 
         bluetoothTracker.start()
@@ -1455,7 +1458,7 @@ class PlaybackService : MediaLibraryService() {
             .setId(SESSION_ID)
             .setSessionActivity(sessionActivity())
             .build()
-        mediaSession?.setCustomLayout(notificationButtons())
+        refreshCustomLayouts()
     }
 
     private fun createCrossfadeController() = CrossfadeController(
@@ -1484,29 +1487,8 @@ class PlaybackService : MediaLibraryService() {
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
         )
 
-    /** The custom actions advertised to Android Auto and the media notification. */
+    /** Favorite and Shuffle: the only actions shown on the phone notification. */
     private fun notificationButtons(): List<CommandButton> {
-        val current = player?.currentMediaItem?.toSong()
-        val station = current
-            ?.takeIf { it.canStartStation() }
-            ?.let {
-                CommandButton.Builder(CommandButton.ICON_RADIO)
-                    .setSessionCommand(startStationCommand)
-                    .setDisplayName(getString(R.string.start_radio))
-                    .build()
-            }
-        val revert = current
-            ?.takeIf {
-                it.hasYouTubeOriginal() &&
-                    it.localUri == null &&
-                    !OriginalVersion.isPinned(it.videoId)
-            }
-            ?.let {
-                CommandButton.Builder(CommandButton.ICON_SYNC)
-                    .setSessionCommand(revertToOriginalCommand)
-                    .setDisplayName(getString(R.string.revert_to_original))
-                    .build()
-            }
         val favorite = CommandButton.Builder(
             if (LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE) {
                 CommandButton.ICON_HEART_FILLED
@@ -1528,11 +1510,48 @@ class PlaybackService : MediaLibraryService() {
             .setSessionCommand(shuffleCommand)
             .setDisplayName(if (shuffleEnabled) "Shuffle off" else "Shuffle on")
             .build()
-        // Android Auto may show only the first few custom actions without an
-        // overflow affordance, so the two car-specific recovery/navigation
-        // actions lead the list. The existing notification actions remain
-        // available on surfaces with room for them.
-        return listOfNotNull(station, revert, favorite, shuffle)
+        return listOf(favorite, shuffle)
+    }
+
+    /** Adds Radio/Revert for controllers with room for them, e.g. Android Auto. */
+    private fun carButtons(): List<CommandButton> {
+        val current = player?.currentMediaItem?.toSong()
+        val station = current
+            ?.takeIf { it.canStartStation() }
+            ?.let {
+                CommandButton.Builder(CommandButton.ICON_RADIO)
+                    .setSessionCommand(startStationCommand)
+                    .setDisplayName(getString(R.string.start_radio))
+                    .build()
+            }
+        val revert = current
+            ?.takeIf {
+                it.hasYouTubeOriginal() &&
+                    it.localUri == null &&
+                    !OriginalVersion.isPinned(it.videoId)
+            }
+            ?.let {
+                CommandButton.Builder(CommandButton.ICON_SYNC)
+                    .setSessionCommand(revertToOriginalCommand)
+                    .setDisplayName(getString(R.string.revert_to_original))
+                    .build()
+            }
+        return notificationButtons() + listOfNotNull(station, revert)
+    }
+
+    /**
+     * Pushes the current button state to every surface. The phone/lock-screen
+     * notification is driven by Media3's own internal controller, so it gets
+     * an explicit override limited to Favorite/Shuffle; every other connected
+     * controller (Android Auto, Bluetooth, Wear) falls back to the broadcast
+     * layout, which also carries Radio/Revert.
+     */
+    private fun refreshCustomLayouts() {
+        val session = mediaSession ?: return
+        session.setCustomLayout(carButtons())
+        session.getMediaNotificationControllerInfo()?.let {
+            session.setCustomLayout(it, notificationButtons())
+        }
     }
 
     /**
@@ -1608,12 +1627,12 @@ class PlaybackService : MediaLibraryService() {
         activePlayer.replaceMediaItem(index, song.toDirectYouTubeMediaItem())
         activePlayer.seekTo(index, position)
         if (wasPlaying) activePlayer.play()
-        mediaSession?.setCustomLayout(notificationButtons())
+        refreshCustomLayouts()
     }
 
     private fun toggleShuffleFromSession() {
         player?.let(QueueShuffle::toggle)
-        mediaSession?.setCustomLayout(notificationButtons())
+        refreshCustomLayouts()
     }
 
     private fun toggleAutoplayFromNotification() {
@@ -1625,7 +1644,7 @@ class PlaybackService : MediaLibraryService() {
             // wakes whichever connected member currently won the supplier
             // election, including after the host has become unreachable.
             ListenTogether.setAutoplay(enabled)
-            mediaSession?.setCustomLayout(notificationButtons())
+            refreshCustomLayouts()
             return
         }
         if (enabled) {
@@ -1644,7 +1663,7 @@ class PlaybackService : MediaLibraryService() {
             repeatAllStash = emptyList()
             repeatAllStashSeed = null
         }
-        mediaSession?.setCustomLayout(notificationButtons())
+        refreshCustomLayouts()
     }
 
     /**
@@ -1847,12 +1866,12 @@ class PlaybackService : MediaLibraryService() {
         // Match the player UI: update both surfaces immediately, then reconcile
         // the optimistic state with YouTube in the background.
         LikeState.set(videoId, target)
-        mediaSession?.setCustomLayout(notificationButtons())
+        refreshCustomLayouts()
         favoriteActionJob = scope.launch {
             YtMusicRepository.rate(videoId, target)
                 .onFailure {
                     LikeState.set(videoId, previous)
-                    mediaSession?.setCustomLayout(notificationButtons())
+                    refreshCustomLayouts()
                     TrackLog.w("BitChord", "notification favorite failed: ${it.message}", about = videoId)
                 }
         }
@@ -3168,8 +3187,18 @@ class PlaybackService : MediaLibraryService() {
             // After the swap and off the main thread, because nothing waits on
             // it — the upgrade is already audible and this only decides whether
             // the *next* transition can be a real mix.
-            launch(Dispatchers.IO) {
-                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+            //
+            // Which in a party it cannot be: the transition there is the plain
+            // one everybody moves through together, and nothing is analysed for
+            // it — see [CrossfadeController] and
+            // [com.music.bitchord.playback.smart.TrackAnalyzer]. This is the one
+            // fetch Automix makes that neither of those two gates, and a
+            // megabyte pulled for an analysis that will not run is a megabyte
+            // taken off the connection the party is syncing over.
+            if (!ListenTogether.state.value.inParty) {
+                launch(Dispatchers.IO) {
+                    AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+                }
             }
         }
     }

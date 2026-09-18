@@ -719,10 +719,25 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * behind the picker — a row's menu on a playlist offers "Add to playlist" —
      * and a page that doesn't show what was just added to it is the bug this is
      * part of fixing. Still after the answer, not ahead of it.
+     *
+     * [onResult] tells the caller whether the track was already in the
+     * playlist, so it can show the same kind of notice "Add to queue" and
+     * "Play next" do — see [MainActivity]'s `showQueueNotice`. YouTube itself
+     * has no objection to a duplicate row, so that check is made here, against
+     * the playlist's own page if it is open, or a fresh fetch of it otherwise —
+     * and a real duplicate is never sent, rather than added and only reported.
      */
-    fun addToPlaylist(playlist: UserPlaylist, song: Song) {
+    fun addToPlaylist(playlist: UserPlaylist, song: Song, onResult: (alreadyInPlaylist: Boolean) -> Unit = {}) {
         if (!requireSignIn()) return
         viewModelScope.launch {
+            val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
+                ?.songs as? UiState.Success)?.data
+            val known = openSongs
+                ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
+            if (known?.any { it.videoId == song.videoId } == true) {
+                onResult(true)
+                return@launch
+            }
             YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId)).fold(
                 onSuccess = { added ->
                     libraryStale = true
@@ -730,6 +745,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // reachable from a row's own menu on it — so the track goes
                     // into it for the same reason [addSuggestedSong] does.
                     appendToOpenPlaylist(playlist.browseId, song, added[song.videoId])
+                    onResult(false)
                 },
                 onFailure = {},
             )

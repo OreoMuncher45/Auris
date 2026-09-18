@@ -3263,7 +3263,16 @@ private fun BitChordApp(
                     song = target,
                     startCreating = target == null,
                     onPick = { playlist ->
-                        target?.let { viewModel.addToPlaylist(playlist, it) }
+                        target?.let { song ->
+                            viewModel.addToPlaylist(playlist, song) { alreadyInPlaylist ->
+                                showQueueNotice(
+                                    context.getString(
+                                        if (alreadyInPlaylist) R.string.song_already_in_playlist
+                                        else R.string.song_added_to_playlist,
+                                    ),
+                                )
+                            }
+                        }
                         dismiss()
                     },
                     onCreate = { title, privacy ->
