@@ -86,7 +86,8 @@ fun SearchScreen(
     onLoadMore: () -> Unit,
     listState: LazyListState,
     scrollResetTrigger: Int,
-    focusTrigger: Int = 0,
+    focusRequested: Boolean,
+    onFocusHandled: () -> Unit,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
@@ -114,10 +115,13 @@ fun SearchScreen(
 ) {
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
-    // Re-tapping the search tab from the nav bar increments focusTrigger;
+    // Tapping the search tab from the nav bar sets focusRequested;
     // respond by focusing the field and opening the keyboard.
-    LaunchedEffect(focusTrigger) {
-        if (focusTrigger > 0) focusRequester.requestFocus()
+    LaunchedEffect(focusRequested) {
+        if (focusRequested) {
+            focusRequester.requestFocus()
+            onFocusHandled()
+        }
     }
     // Search keeps one list state while its contents change. Reset it for each
     // new request so choosing a recent search cannot inherit the history's

@@ -469,7 +469,7 @@ private fun BitChordApp(
     var showListenTogether by remember { mutableStateOf(false) }
     var showEqualizer by remember { mutableStateOf(false) }
     var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
-    
+
     // Hosted here rather than inside SourcesScreen so its frosted card has
     // something to blur: that screen is drawn inside the `hazeSource` subtree,
     // and a haze effect sampling the layer it is itself part of renders with no
@@ -541,9 +541,9 @@ private fun BitChordApp(
     val partyState by ListenTogether.state.collectAsStateWithLifecycle()
     val partyServerStatus by ListenTogether.serverStatus.collectAsStateWithLifecycle()
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
-    // Incremented each time the search tab is re-tapped while already selected,
-    // which SearchScreen uses as a signal to focus the input field.
-    var searchFocusTrigger by remember { mutableIntStateOf(0) }
+    // Set each time the search tab is tapped, which SearchScreen uses as a
+    // signal to focus the input field.
+    var searchFocusRequested by remember { mutableStateOf(false) }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
     // Starting radio from the item already playing must not replace that media
@@ -2509,7 +2509,8 @@ private fun BitChordApp(
                             onLoadMore = viewModel::loadMoreSearchResults,
                             listState = searchListState,
                             scrollResetTrigger = searchScrollReset,
-                            focusTrigger = searchFocusTrigger,
+                            focusRequested = searchFocusRequested,
+                            onFocusHandled = { searchFocusRequested = false },
                             // Search hits are alternatives to each other, not a running
                             // order — play the one tapped and build a station from it.
                             onSongClick = { songs, index ->
@@ -2871,26 +2872,24 @@ private fun BitChordApp(
 
                 // One tab handler, whichever bar is drawing it.
                 val onTabSelected: (Int) -> Unit = { index ->
-                    // Re-tapping the search tab while already on it focuses the
-                    // input field and opens the keyboard rather than resetting.
-                    if (index == TAB_SEARCH && selectedTab == TAB_SEARCH) {
-                        searchFocusTrigger++
-                    } else {
-                        if (index != TAB_SEARCH) {
-                            searchFocusTrigger = 0
-                        }
-                        viewModel.clearDetail()
-                        viewModel.closeMoodGenre()
-                        showSettings = false
-                        showAccountScrobbling = false
-                        showSources = false
-                        showListenTogether = false
-                        showEqualizer = false
-                        showReplay = false
-                        showHistory = false
-                        libraryShowAll = null
-                        selectedTab = index
+                    // Every search tab tap resets the field, focuses it, and opens
+                    // the keyboard through SearchScreen's focus request.
+                    if (index == TAB_SEARCH) {
+                        viewModel.onQueryChange("")
+                        searchFocusRequested = true
                     }
+
+                    viewModel.clearDetail()
+                    viewModel.closeMoodGenre()
+                    showSettings = false
+                    showAccountScrobbling = false
+                    showSources = false
+                    showListenTogether = false
+                    showEqualizer = false
+                    showReplay = false
+                    showHistory = false
+                    libraryShowAll = null
+                    selectedTab = index
                 }
 
                 if (glassActive) Column(
