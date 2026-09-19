@@ -1102,6 +1102,7 @@
     <string name="listen_together_server_offline_dash">—</string>
     <string name="listen_together_invalid_server_url">URL máy chủ không hợp lệ. Vui lòng nhập địa chỉ hợp lệ (ví dụ: https://your-server.com)</string>
     <string name="listen_together_err_whitespace">URL máy chủ không được chứa khoảng trắng</string>
+    <string name="listen_together_err_invalid_path">Đường dẫn URL máy chủ không hợp lệ</string>
     <string name="listen_together_err_no_path">URL máy chủ không được bao gồm đường dẫn</string>
     <string name="listen_together_err_no_query">URL máy chủ không được bao gồm tham số truy vấn</string>
     <string name="listen_together_err_no_fragment">URL máy chủ không được bao gồm phân đoạn (fragment)</string>

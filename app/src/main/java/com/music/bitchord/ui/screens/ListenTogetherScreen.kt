@@ -102,6 +102,7 @@ private fun ServerUrlError.toMessageRes(): Int = when (this) {
     ServerUrlError.InvalidScheme -> R.string.listen_together_invalid_server_url
     ServerUrlError.InvalidHost -> R.string.listen_together_invalid_server_url
     ServerUrlError.InvalidPort -> R.string.listen_together_err_invalid_port
+    ServerUrlError.InvalidPath -> R.string.listen_together_err_invalid_path
     ServerUrlError.HasPath -> R.string.listen_together_err_no_path
     ServerUrlError.HasQuery -> R.string.listen_together_err_no_query
     ServerUrlError.HasFragment -> R.string.listen_together_err_no_fragment
@@ -466,6 +467,26 @@ fun ListenTogetherScreen(
                         }
                     }
                 }
+                val disconnectServer: () -> Unit = {
+                    serverInput = ""
+                    pendingSaveJob?.cancel()
+                    pendingSaveJob = scope.launch {
+                        busy = true
+                        try {
+                            ListenTogether.setCustomServerUrl("")
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.listen_together_switched_to_default),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        } catch (_: CancellationException) {
+                        } finally {
+                            if (pendingSaveJob === coroutineContext[Job]) {
+                                busy = false
+                            }
+                        }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Rounded.Dns,
@@ -566,16 +587,34 @@ fun ListenTogetherScreen(
                     is ServerUrlValidationResult.Valid -> res.normalizedUrl != customServer
                     is ServerUrlValidationResult.Invalid -> true
                 }
-                if (isDirty) {
+                val showActions = customServer.isNotBlank() || isDirty
+                if (showActions) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(
-                            onClick = saveServerUrl,
-                            enabled = !busy && !state.inParty,
-                        ) {
-                            Text(stringResource(R.string.save))
+                        if (customServer.isNotBlank()) {
+                            TextButton(
+                                onClick = disconnectServer,
+                                enabled = !busy && !state.inParty,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.disconnect),
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                        if (isDirty) {
+                            if (customServer.isNotBlank()) {
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            TextButton(
+                                onClick = saveServerUrl,
+                                enabled = !busy && !state.inParty,
+                            ) {
+                                Text(stringResource(R.string.save))
+                            }
                         }
                     }
                 }

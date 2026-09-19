@@ -43,7 +43,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	// REST endpoints
-	mux.HandleFunc("GET /", handleRoot)
+	mux.HandleFunc("GET /{$}", handleRoot)
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /api/time", handleTime)
 	mux.HandleFunc("POST /api/parties", handleCreateParty)
@@ -198,6 +198,10 @@ func parseBearerToken(r *http.Request) string {
 // REST Handlers
 
 func handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"service":    "bitchord-listen-together",
 		"maxMembers": config.MaxMembers,

@@ -18,7 +18,7 @@ import (
 
 func setupTestServer() *httptest.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", handleRoot)
+	mux.HandleFunc("GET /{$}", handleRoot)
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /api/time", handleTime)
 	mux.HandleFunc("POST /api/parties", handleCreateParty)
@@ -44,6 +44,16 @@ func TestRESTEndpoints(t *testing.T) {
 	_ = json.NewDecoder(res.Body).Decode(&health)
 	if health["ok"] != true {
 		t.Fatalf("Expected ok: true in healthz")
+	}
+
+	// 1b. Non-existent subpaths must return 404, not root 200
+	resBogusHealth, err := http.Get(ts.URL + "/1324/healthz")
+	if err != nil || resBogusHealth.StatusCode != http.StatusNotFound {
+		t.Fatalf("Expected 404 for /1324/healthz, got %v, err %v", resBogusHealth.StatusCode, err)
+	}
+	resBogusPath, err := http.Get(ts.URL + "/1324")
+	if err != nil || resBogusPath.StatusCode != http.StatusNotFound {
+		t.Fatalf("Expected 404 for /1324, got %v, err %v", resBogusPath.StatusCode, err)
 	}
 
 	// 2. Server time

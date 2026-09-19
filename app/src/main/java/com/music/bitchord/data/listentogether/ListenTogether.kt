@@ -64,6 +64,7 @@ sealed interface ServerUrlError {
     data object InvalidScheme : ServerUrlError
     data object InvalidHost : ServerUrlError
     data object InvalidPort : ServerUrlError
+    data object InvalidPath : ServerUrlError
     data object HasPath : ServerUrlError
     data object HasQuery : ServerUrlError
     data object HasFragment : ServerUrlError
@@ -281,10 +282,13 @@ object ListenTogether {
             return ServerUrlValidationResult.Invalid(ServerUrlError.HasFragment)
         }
 
-        val path = uri.rawPath.orEmpty()
-        if (path.isNotEmpty() && path.any { it != '/' }) {
-            return ServerUrlValidationResult.Invalid(ServerUrlError.HasPath)
+        val pathSegments = uri.rawPath.orEmpty().split('/').filter { it.isNotEmpty() }
+        for (segment in pathSegments) {
+            if (segment == "." || segment == "..") {
+                return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidPath)
+            }
         }
+        val canonicalPath = if (pathSegments.isEmpty()) "" else "/" + pathSegments.joinToString("/")
 
         val port = uri.port
         if (port != -1 && port !in 1..65535) {
@@ -332,7 +336,7 @@ object ListenTogether {
         }
 
         val portSuffix = if (port != -1) ":$port" else ""
-        return ServerUrlValidationResult.Valid("${scheme.lowercase()}://$canonicalHost$portSuffix")
+        return ServerUrlValidationResult.Valid("${scheme.lowercase()}://$canonicalHost$portSuffix$canonicalPath")
     }
 
     private val _customServer = MutableStateFlow("")
@@ -522,9 +526,12 @@ object ListenTogether {
         if (raw.isBlank()) return ProbeResult(isOnline = false, latencyMs = 0L)
         val start = ServerClock.localNowMs()
         val isOnline = runCatching {
-            http.get("$raw/healthz") {
+            val response = http.get("$raw/healthz") {
                 timeout { requestTimeoutMillis = timeoutMs }
-            }.status.isSuccess()
+            }
+            if (!response.status.isSuccess()) return@runCatching false
+            val body = runCatching { response.bodyAsText() }.getOrDefault("")
+            body.contains("\"ok\":true")
         }.getOrElse {
             Log.w(TAG, "health check failed for ${redact(raw)}: ${redact(it.message)}")
             false

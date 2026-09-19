@@ -298,6 +298,14 @@ class JamInviteLinkTest {
         assertValid("http://[::1]", "http://[::1]")
         assertValid("http://[::1]:8080", "http://[::1]:8080")
         assertValid("HTTP://[2001:DB8::1]:8080", "http://[2001:db8::1]:8080")
+
+        // Paths & subpaths
+        assertValid("https://example.com/path", "https://example.com/path")
+        assertValid("https://example.com//path", "https://example.com/path")
+        assertValid("https://example.com/path/to/party/", "https://example.com/path/to/party")
+        assertValid("example.com/custom/subpath", "https://example.com/custom/subpath")
+        assertValid("http://192.168.1.50:8080/nested/path/", "http://192.168.1.50:8080/nested/path")
+        assertValid("https://[::1]:8080/subpath", "https://[::1]:8080/subpath")
     }
 
     @Test
@@ -311,9 +319,10 @@ class JamInviteLinkTest {
         assertInvalid("http://foo bar.com", ServerUrlError.Whitespace)
         assertInvalid("random shit", ServerUrlError.Whitespace)
 
-        // Paths
-        assertInvalid("https://example.com/path", ServerUrlError.HasPath)
-        assertInvalid("https://example.com//path", ServerUrlError.HasPath)
+        // Path traversal
+        assertInvalid("https://example.com/../etc", ServerUrlError.InvalidPath)
+        assertInvalid("https://example.com/path/./sub", ServerUrlError.InvalidPath)
+        assertInvalid("https://example.com/path/../sub", ServerUrlError.InvalidPath)
 
         // Query & Fragment
         assertInvalid("https://example.com?foo=bar", ServerUrlError.HasQuery)
@@ -420,6 +429,26 @@ class JamInviteLinkTest {
         assertNull(state.latencyMs)
         assertFalse(state.isFallback)
         assertEquals(ListenTogether.Health.OFFLINE, state.health)
+    }
+
+    @Test
+    fun `probe payload validation - fake 200 without ok true is rejected`() {
+        fun validatePayload(statusIsSuccess: Boolean, body: String): Boolean {
+            if (!statusIsSuccess) return false
+            return body.contains("\"ok\":true")
+        }
+
+        // Real healthz response
+        assertTrue(validatePayload(true, """{"ok":true,"serverMs":1789836652479}"""))
+
+        // Catch-all root response (from invalid subpath like /1324/healthz)
+        assertFalse(validatePayload(true, """{"maxMembers":5,"parties":0,"serverMs":1789836644489,"service":"bitchord-listen-together"}"""))
+
+        // Captive portal / proxy HTML response
+        assertFalse(validatePayload(true, "<!DOCTYPE html><html><body>Login Required</body></html>"))
+
+        // HTTP 404 or 500
+        assertFalse(validatePayload(false, """{"ok":true}"""))
     }
 
     // -------------------------------------------------------------------------
