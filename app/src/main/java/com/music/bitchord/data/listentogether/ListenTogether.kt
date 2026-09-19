@@ -137,7 +137,7 @@ object ListenTogether {
 
     sealed interface SwitchPartyResult {
         data class Success(val partyCode: String) : SwitchPartyResult
-        data class TargetFailedStayedInCurrentParty(val partyCode: String, val targetError: String) : SwitchPartyResult
+        data class TargetFailedRecovered(val partyCode: String, val targetError: String) : SwitchPartyResult
         data class TargetFailedNoParty(val targetError: String) : SwitchPartyResult
     }
 
@@ -350,28 +350,13 @@ object ListenTogether {
     }
 
     suspend fun joinParty(code: String, nickname: String = nickname()): Result<String> = switchMutex.withLock {
-        val previousCode = _state.value.code
-        val previousToken = token
-        val result = enter(nickname) { who ->
+        enter(nickname) { who ->
             val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
             if (cleaned.length != CODE_LENGTH) {
                 throw PartyException("bad_code", "A party code is six letters or digits.")
             }
             post("${httpBase()}/api/parties/$cleaned/join", JoinRequest(who.userId, who.deviceId, who.name, who.avatar))
         }
-        // A deep link can arrive while this device is already jamming. Join the
-        // new party first so a bad/full/expired invite does not eject it from
-        // the old one, then give the old slot back after the switch succeeds.
-        val joinedCode = result.getOrNull()
-        if (
-            joinedCode != null &&
-            previousCode != null &&
-            previousToken != null &&
-            !previousCode.equals(joinedCode, ignoreCase = true)
-        ) {
-            releaseStaleSlot(previousCode, previousToken)
-        }
-        result
     }
 
     /**
@@ -394,7 +379,7 @@ object ListenTogether {
         withContext(Dispatchers.IO) {
             val who = identity(nickname)
                 ?: return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedStayedInCurrentParty(_state.value.code.orEmpty(), "Sign in to listen together.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Sign in to listen together.")
                 } else {
                     SwitchPartyResult.TargetFailedNoParty("Sign in to listen together.")
                 }
@@ -402,7 +387,7 @@ object ListenTogether {
             val targetBase = resolveHttpBase(targetCustomServer)
             if (targetBase.isBlank()) {
                 return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedStayedInCurrentParty(_state.value.code.orEmpty(), "Target server address is invalid or missing.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Target server address is invalid or missing.")
                 } else {
                     SwitchPartyResult.TargetFailedNoParty("Target server address is invalid or missing.")
                 }
@@ -411,7 +396,7 @@ object ListenTogether {
             val cleanedTargetCode = targetCode.filter { it.isLetterOrDigit() }.uppercase()
             if (cleanedTargetCode.length != CODE_LENGTH) {
                 return@withContext if (_state.value.inParty) {
-                    SwitchPartyResult.TargetFailedStayedInCurrentParty(_state.value.code.orEmpty(), "A party code is six letters or digits.")
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "A party code is six letters or digits.")
                 } else {
                     SwitchPartyResult.TargetFailedNoParty("A party code is six letters or digits.")
                 }
@@ -433,7 +418,7 @@ object ListenTogether {
                 Log.w(TAG, "failed to join target party: ${redact(failure.message)}")
                 val errorMsg = failure.displayMessage()
                 return@withContext if (oldCode != null) {
-                    SwitchPartyResult.TargetFailedStayedInCurrentParty(oldCode, errorMsg)
+                    SwitchPartyResult.TargetFailedRecovered(oldCode, errorMsg)
                 } else {
                     SwitchPartyResult.TargetFailedNoParty(errorMsg)
                 }
@@ -471,8 +456,10 @@ object ListenTogether {
                     playback = membership.party.playback,
                     connection = Connection.CONNECTING,
                 )
-                connect()
             }
+
+            // Outside NonCancellable: establish socket connection
+            connect()
 
             SwitchPartyResult.Success(membership.code)
         }
@@ -491,20 +478,22 @@ object ListenTogether {
             }
             runCatching { request(who) }
                 .onSuccess { membership ->
-                    token = membership.token
-                    prefs.edit()
-                        .putString(KEY_CODE, membership.code)
-                        .putString(KEY_TOKEN, membership.token)
-                        .apply()
-                    clock.reset()
-                    _state.value = State(
-                        code = membership.code,
-                        you = membership.you,
-                        members = membership.party.members,
-                        maxMembers = membership.party.maxMembers,
-                        playback = membership.party.playback,
-                        connection = Connection.CONNECTING,
-                    )
+                    withContext(NonCancellable) {
+                        token = membership.token
+                        prefs.edit()
+                            .putString(KEY_CODE, membership.code)
+                            .putString(KEY_TOKEN, membership.token)
+                            .apply()
+                        clock.reset()
+                        _state.value = State(
+                            code = membership.code,
+                            you = membership.you,
+                            members = membership.party.members,
+                            maxMembers = membership.party.maxMembers,
+                            playback = membership.party.playback,
+                            connection = Connection.CONNECTING,
+                        )
+                    }
                     connect()
                 }
                 .onFailure { failure ->

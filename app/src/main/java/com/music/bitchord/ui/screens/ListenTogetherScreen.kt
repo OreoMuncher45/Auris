@@ -110,7 +110,7 @@ fun ListenTogetherScreen(
     signedIn: Boolean,
     inviteCode: String? = null,
     inviteServer: String? = null,
-    onInviteJoined: () -> Unit = {},
+    onInviteHandled: () -> Unit = {},
     onSignIn: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
@@ -146,11 +146,10 @@ fun ListenTogetherScreen(
     }
 
     // A link tap is already an explicit request to join. Signed-out users keep
-    // the populated code while the sign-in page is open. joinParty switches an
-    // existing membership without dropping it first if the invite is invalid.
+    // the populated code while the sign-in page is open.
     LaunchedEffect(inviteCode, inviteServer, signedIn) {
         val code = inviteCode ?: return@LaunchedEffect
-        if (!signedIn) return@LaunchedEffect
+        if (!signedIn || busy) return@LaunchedEffect
 
         val activeServer = ListenTogether.activeServerUrl().trim().trimEnd('/')
         val targetServer = inviteServer?.trim()?.trimEnd('/')
@@ -166,19 +165,44 @@ fun ListenTogetherScreen(
         }
 
         if (state.code.equals(code, ignoreCase = true)) {
-            onInviteJoined()
+            onInviteHandled()
             return@LaunchedEffect
         }
 
         busy = true
         failure = null
-        val result = ListenTogether.joinParty(code)
-        failure = result.exceptionOrNull()?.message
-        if (result.isSuccess) {
-            codeInput = ""
-            onInviteJoined()
+        try {
+            if (state.inParty) {
+                when (val result = ListenTogether.switchPartyWithRecovery(customServer, code)) {
+                    is ListenTogether.SwitchPartyResult.Success -> {
+                        codeInput = ""
+                    }
+                    is ListenTogether.SwitchPartyResult.TargetFailedRecovered -> {
+                        failure = context.getString(
+                            R.string.listen_together_switch_failed_stayed_in_party,
+                            result.targetError.trimEnd('.'),
+                            result.partyCode,
+                        )
+                    }
+                    is ListenTogether.SwitchPartyResult.TargetFailedNoParty -> {
+                        failure = context.getString(
+                            R.string.listen_together_switch_failed,
+                            result.targetError.trimEnd('.'),
+                        )
+                    }
+                }
+            } else {
+                val result = ListenTogether.joinParty(code)
+                if (result.isSuccess) {
+                    codeInput = ""
+                } else {
+                    failure = result.exceptionOrNull()?.message
+                }
+            }
+        } finally {
+            busy = false
+            onInviteHandled()
         }
-        busy = false
     }
 
     pendingServerSwitchInvite?.let { (codeToJoin, serverToSet) ->
@@ -186,7 +210,7 @@ fun ListenTogetherScreen(
         AlertDialog(
             onDismissRequest = {
                 pendingServerSwitchInvite = null
-                onInviteJoined()
+                onInviteHandled()
             },
             title = {
                 Text(
@@ -223,29 +247,30 @@ fun ListenTogetherScreen(
                         busy = true
                         failure = null
                         scope.launch {
-                            when (val result = ListenTogether.switchPartyWithRecovery(toSet, toJoin)) {
-                                is ListenTogether.SwitchPartyResult.Success -> {
-                                    serverInput = toSet
-                                    codeInput = ""
-                                    onInviteJoined()
+                            try {
+                                when (val result = ListenTogether.switchPartyWithRecovery(toSet, toJoin)) {
+                                    is ListenTogether.SwitchPartyResult.Success -> {
+                                        serverInput = toSet
+                                        codeInput = ""
+                                    }
+                                    is ListenTogether.SwitchPartyResult.TargetFailedRecovered -> {
+                                        failure = context.getString(
+                                            R.string.listen_together_switch_failed_stayed_in_party,
+                                            result.targetError.trimEnd('.'),
+                                            result.partyCode,
+                                        )
+                                    }
+                                    is ListenTogether.SwitchPartyResult.TargetFailedNoParty -> {
+                                        failure = context.getString(
+                                            R.string.listen_together_switch_failed,
+                                            result.targetError.trimEnd('.'),
+                                        )
+                                    }
                                 }
-                                is ListenTogether.SwitchPartyResult.TargetFailedStayedInCurrentParty -> {
-                                    failure = context.getString(
-                                        R.string.listen_together_switch_failed_stayed_in_party,
-                                        result.targetError.trimEnd('.'),
-                                        result.partyCode,
-                                    )
-                                    onInviteJoined()
-                                }
-                                is ListenTogether.SwitchPartyResult.TargetFailedNoParty -> {
-                                    failure = context.getString(
-                                        R.string.listen_together_switch_failed,
-                                        result.targetError.trimEnd('.'),
-                                    )
-                                    onInviteJoined()
-                                }
+                            } finally {
+                                busy = false
+                                onInviteHandled()
                             }
-                            busy = false
                         }
                     },
                 ) {
@@ -260,7 +285,7 @@ fun ListenTogetherScreen(
                 TextButton(
                     onClick = {
                         pendingServerSwitchInvite = null
-                        onInviteJoined()
+                        onInviteHandled()
                     },
                 ) {
                     Text(stringResource(R.string.cancel))

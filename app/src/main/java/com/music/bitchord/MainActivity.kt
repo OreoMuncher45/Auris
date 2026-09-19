@@ -2219,7 +2219,7 @@ private fun BitChordApp(
                             signedIn = signedIn,
                             inviteCode = activeJamInviteCode,
                             inviteServer = activeJamInviteServer,
-                            onInviteJoined = {
+                            onInviteHandled = {
                                 activeJamInviteCode = null
                                 activeJamInviteServer = null
                             },

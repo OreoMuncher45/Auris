@@ -94,4 +94,20 @@ class JamInviteLinkTest {
         assertEquals("ABC123", invite?.code)
         assertEquals("https://custom.example.com", invite?.serverUrl)
     }
+
+    @Test
+    fun `switch party result sealed hierarchy holds expected properties`() {
+        val success: com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult =
+            com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.Success("ABC123")
+        val recovered: com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult =
+            com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.TargetFailedRecovered("OLD123", "Party full")
+        val noParty: com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult =
+            com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.TargetFailedNoParty("Connection refused")
+
+        assertEquals("ABC123", (success as com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.Success).partyCode)
+        assertEquals("OLD123", (recovered as com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.TargetFailedRecovered).partyCode)
+        assertEquals("Party full", recovered.targetError)
+        assertEquals("Connection refused", (noParty as com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.TargetFailedNoParty).targetError)
+    }
 }
+
