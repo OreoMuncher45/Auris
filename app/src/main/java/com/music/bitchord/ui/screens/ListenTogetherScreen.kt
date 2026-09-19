@@ -172,6 +172,8 @@ fun ListenTogetherScreen(
         busy = true
         failure = null
         try {
+            // Live listeners use switchPartyWithRecovery to guarantee Party A and playback
+            // remain intact if the target invite fails. Idle listeners use joinParty directly.
             if (state.inParty) {
                 when (val result = ListenTogether.switchPartyWithRecovery(customServer, code)) {
                     is ListenTogether.SwitchPartyResult.Success -> {

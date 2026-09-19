@@ -349,6 +349,18 @@ object ListenTogether {
         }
     }
 
+    /**
+     * Joins a party from the currently active server.
+     *
+     * Architectural contract:
+     * - Precondition: IDLE only.
+     * - Used by manual party-code entry.
+     * - Performs a direct Idle -> Live transition.
+     *
+     * Do not merge this with [switchPartyWithRecovery]. Deep-link invites
+     * require target-first transactional semantics and recovery guarantees
+     * that are intentionally not part of this API.
+     */
     suspend fun joinParty(code: String, nickname: String = nickname()): Result<String> = switchMutex.withLock {
         enter(nickname) { who ->
             val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
@@ -360,16 +372,27 @@ object ListenTogether {
     }
 
     /**
-     * Atomically switches from the current party / server to a target party on [targetCustomServer].
+     * Transactionally transitions to an invite target.
      *
-     * Implements "Join Target First, Commit & Leave Old Second":
-     * - The current party connection stays active and audio continues playing while the HTTP
-     *   join request is sent to the target server.
-     * - If the target join fails (404, 409, timeout, offline, etc.), no local state or server
-     *   configuration is mutated. The user stays in their current party.
-     * - If the target join succeeds, the switch is committed inside a NonCancellable block:
-     *   the old slot is freed on the old server, the new server address is saved, and the
-     *   WebSocket connects to the target party.
+     * Architectural contract:
+     *
+     * Before successful target `/join`, this method must not mutate the current
+     * party membership, current token, or persisted server preference.
+     *
+     * Phase 1 — Target join (cancellable):
+     * - Target /join is attempted before mutating the current party or
+     *   persisted server preference.
+     * - If the target fails, the current party remains untouched.
+     *
+     * Phase 2 — Local commit (NonCancellable):
+     * - Begins only after the target join succeeds.
+     * - Commits the target server/token and local CONNECTING state.
+     * - Dispatches old-party cleanup asynchronously.
+     * - Target WebSocket establishment occurs outside the commit boundary.
+     *
+     * This API is intentionally separate from [joinParty]. It is the
+     * deep-link transition state machine and may begin from either IDLE
+     * or LIVE.
      */
     suspend fun switchPartyWithRecovery(
         targetCustomServer: String,
