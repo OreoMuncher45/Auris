@@ -212,7 +212,7 @@ class BluetoothAudioTracker(private val context: Context) {
                     _telemetry.value = BluetoothTelemetry(
                         isConnected = true,
                         deviceName = name,
-                        codecName = "Bluetooth A2DP",
+                        codecName = "System Managed",
                         bitrateLabel = "Not exposed by Android",
                         isAuthoritative = false,
                         lastUpdatedMs = SystemClock.elapsedRealtime(),
@@ -259,7 +259,7 @@ class BluetoothAudioTracker(private val context: Context) {
             _telemetry.value = BluetoothTelemetry(
                 isConnected = true,
                 deviceName = deviceName,
-                codecName = "Bluetooth A2DP",
+                codecName = "System Managed",
                 bitrateLabel = "Not exposed by Android",
                 isAuthoritative = false,
                 lastUpdatedMs = SystemClock.elapsedRealtime(),

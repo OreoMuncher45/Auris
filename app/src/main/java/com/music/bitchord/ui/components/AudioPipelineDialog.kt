@@ -331,19 +331,32 @@ fun AudioPipelineDialog(
                         }
 
                         outputStatus.usbEndpointFormat?.let {
-                            PipelineRow("USB Advertised Capability", it)
+                            PipelineRow("USB Device Capability", formatUsbCapability(it))
+                            PipelineNote("Reported by Android for the connected USB device. This describes device capabilities and may differ from the active playback format.")
                         }
 
                         if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
                             val bt = outputStatus.bluetoothTelemetry
+                            PipelineRow("Bluetooth", "A2DP")
                             if (bt != null && bt.isConnected) {
-                                PipelineRow("Bluetooth Codec", bt.codecName)
+                                val codecText = if (bt.isAuthoritative &&
+                                    bt.codecName != "A2DP Standard" &&
+                                    bt.codecName != "Bluetooth A2DP" &&
+                                    bt.codecName != "System Managed" &&
+                                    bt.codecName != "Unknown" &&
+                                    bt.codecName.isNotBlank()
+                                ) {
+                                    bt.codecName
+                                } else {
+                                    "System Managed"
+                                }
+                                PipelineRow("Codec", codecText)
                                 bt.bitDepth?.let { PipelineRow("Codec Bits", "$it-bit") }
                                 bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", "$it Hz") }
                                 PipelineRow("Codec Bitrate", bt.bitrateLabel)
                                 bt.mode?.let { PipelineRow("Codec Mode", it) }
                             } else {
-                                PipelineRow("Bluetooth Codec", "A2DP Standard")
+                                PipelineRow("Codec", "System Managed")
                             }
                         }
 
@@ -460,4 +473,47 @@ private fun PipelineDoneAction(label: String, onClick: () -> Unit) {
             color = Color.White,
         )
     }
+}
+
+@Composable
+private fun PipelineNote(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall.copy(
+            fontSize = 11.sp,
+            lineHeight = 14.sp,
+            color = Color.White.copy(alpha = 0.60f),
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 1.dp, bottom = 4.dp),
+    )
+}
+
+internal fun formatUsbCapability(raw: String): String {
+    var formatted = raw
+        .replace("PCM32", "PCM 32-bit")
+        .replace("PCM24", "PCM 24-bit")
+        .replace("PCM16", "PCM 16-bit")
+        .replace("Float32", "Float 32-bit")
+
+    val hzRegex = Regex("""(\d+)\s*Hz""")
+    formatted = hzRegex.replace(formatted) { matchResult ->
+        val hz = matchResult.groupValues[1].toIntOrNull()
+        if (hz != null) {
+            if (hz % 1000 == 0) {
+                "${hz / 1000} kHz"
+            } else {
+                val kHz = hz / 1000.0
+                if (kHz == kHz.toLong().toDouble()) {
+                    "${kHz.toLong()} kHz"
+                } else {
+                    "$kHz kHz"
+                }
+            }
+        } else {
+            matchResult.value
+        }
+    }
+    return formatted
 }

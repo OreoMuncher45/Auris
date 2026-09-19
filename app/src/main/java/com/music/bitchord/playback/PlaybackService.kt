@@ -4423,14 +4423,27 @@ class PlaybackService : MediaLibraryService() {
         val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
 
         val format = currentAudioInputFormat
-        val sampleRate = format?.sampleRate?.takeIf { it > 0 } ?: 48000
-        val channels = format?.channelCount?.takeIf { it > 0 } ?: 2
-        val directSupport = DirectAudioProbe.probeDirectSupport(
-            audioManager = manager,
-            sampleRateHz = sampleRate,
-            channelCount = channels,
-            activeDevice = activeDevice,
-        )
+        val measured = format?.measure()
+        val sampleRate = format?.sampleRate?.takeIf { it > 0 }
+            ?: measured?.sampleRateHz?.takeIf { it > 0 }
+            ?: NerdStats.current.value?.sampleRateHz?.takeIf { it > 0 }
+            ?: AudioOutputStatus.current.value.actualSampleRateHz?.takeIf { it > 0 }
+            ?: AudioOutputStatus.current.value.negotiationResult?.output?.sampleRateHz?.takeIf { it > 0 }
+        val channels = format?.channelCount?.takeIf { it > 0 }
+            ?: measured?.channels?.takeIf { it > 0 }
+            ?: NerdStats.current.value?.channels?.takeIf { it > 0 }
+            ?: AudioOutputStatus.current.value.negotiationResult?.output?.channelCount?.takeIf { it > 0 }
+            ?: 2
+        val directSupport = if (sampleRate != null && sampleRate > 0) {
+            DirectAudioProbe.probeDirectSupport(
+                audioManager = manager,
+                sampleRateHz = sampleRate,
+                channelCount = channels,
+                activeDevice = activeDevice,
+            )
+        } else {
+            DirectAudioProbe.DirectSupport.NONE
+        }
         val btTelemetry = if (routeKind == AudioRouting.Kind.BLUETOOTH) bluetoothTracker.telemetry.value else null
 
         AudioOutputStatus.publish(
@@ -4460,14 +4473,31 @@ class PlaybackService : MediaLibraryService() {
         }
 
         val inputFormat = currentAudioInputFormat ?: format
+        val measuredFormat = format.measure()
+        val measuredInput = inputFormat.measure()
+
         val sampleRate = format.sampleRate.takeIf { it > 0 }
             ?: inputFormat.sampleRate.takeIf { it > 0 }
-            ?: 48000
+            ?: measuredFormat.sampleRateHz?.takeIf { it > 0 }
+            ?: measuredInput.sampleRateHz?.takeIf { it > 0 }
+            ?: NerdStats.current.value?.sampleRateHz?.takeIf { it > 0 }
+            ?: AudioOutputStatus.current.value.actualSampleRateHz?.takeIf { it > 0 }
+            ?: AudioOutputStatus.current.value.negotiationResult?.output?.sampleRateHz?.takeIf { it > 0 }
+
+        if (sampleRate == null || sampleRate <= 0) {
+            return null
+        }
+
         val channels = format.channelCount.takeIf { it > 0 }
             ?: inputFormat.channelCount.takeIf { it > 0 }
+            ?: measuredFormat.channels?.takeIf { it > 0 }
+            ?: measuredInput.channels?.takeIf { it > 0 }
+            ?: NerdStats.current.value?.channels?.takeIf { it > 0 }
+            ?: AudioOutputStatus.current.value.negotiationResult?.output?.channelCount?.takeIf { it > 0 }
             ?: 2
-        val measured = inputFormat.measure()
-        val bitDepth = measured.bitDepth ?: when (inputFormat.pcmEncoding) {
+        val bitDepth = measuredFormat.bitDepth
+            ?: measuredInput.bitDepth
+            ?: NerdStats.current.value?.bitDepth ?: when (inputFormat.pcmEncoding) {
             C.ENCODING_PCM_32BIT -> 32
             C.ENCODING_PCM_24BIT -> 24
             C.ENCODING_PCM_FLOAT -> 32
