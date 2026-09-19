@@ -454,40 +454,40 @@ private fun BitChordApp(
      * signing in, or picking a channel in YouTube Music's own Accounts list.
      */
     var webSession by remember { mutableStateOf<WebSessionMode?>(null) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
     // has to reveal what it was opened from.
-    var showReplay by remember { mutableStateOf(false) }
-    var replayStory by remember { mutableStateOf<ReplayStoryPage?>(null) }
-    var showReplayShare by remember { mutableStateOf(false) }
+    var showReplay by rememberSaveable { mutableStateOf(false) }
+    var replayStory by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
+    var showReplayShare by rememberSaveable { mutableStateOf(false) }
     /** Which story card the share sheet is for, or null for the whole Replay. */
-    var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
-    var showAccountScrobbling by remember { mutableStateOf(false) }
-    var showSources by remember { mutableStateOf(false) }
-    var showListenTogether by remember { mutableStateOf(false) }
-    var showEqualizer by remember { mutableStateOf(false) }
-    var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
+    var replaySharePage by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
+    var showAccountScrobbling by rememberSaveable { mutableStateOf(false) }
+    var showSources by rememberSaveable { mutableStateOf(false) }
+    var showListenTogether by rememberSaveable { mutableStateOf(false) }
+    var showEqualizer by rememberSaveable { mutableStateOf(false) }
+    var showSpotifyCanvasAuth by rememberSaveable { mutableStateOf(false) }
 
     // Hosted here rather than inside SourcesScreen so its frosted card has
     // something to blur: that screen is drawn inside the `hazeSource` subtree,
     // and a haze effect sampling the layer it is itself part of renders with no
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
-    var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
-    var showHistory by remember { mutableStateOf(false) }
+    var editingSource by rememberSaveable { mutableStateOf<SourceConfig?>(null) }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
     var libraryShowAll by remember { mutableStateOf<HomeShelf?>(null) }
     var detailActiveShelf by remember { mutableStateOf<HomeShelf?>(null) }
     var librarySortMenuOpen by remember { mutableStateOf(false) }
-    var showLyricsSources by remember { mutableStateOf(false) }
-    var showAppLanguage by remember { mutableStateOf(false) }
-    var showTranslationLanguage by remember { mutableStateOf(false) }
-    var showAccountSelector by remember { mutableStateOf(false) }
-    var showListenBrainzLogin by remember { mutableStateOf(false) }
-    var showLastfmLogin by remember { mutableStateOf(false) }
+    var showLyricsSources by rememberSaveable { mutableStateOf(false) }
+    var showAppLanguage by rememberSaveable { mutableStateOf(false) }
+    var showTranslationLanguage by rememberSaveable { mutableStateOf(false) }
+    var showAccountSelector by rememberSaveable { mutableStateOf(false) }
+    var showListenBrainzLogin by rememberSaveable { mutableStateOf(false) }
+    var showLastfmLogin by rememberSaveable { mutableStateOf(false) }
     /**
      * Whether the download manager is open.
      *
@@ -2873,13 +2873,6 @@ private fun BitChordApp(
 
                 // One tab handler, whichever bar is drawing it.
                 val onTabSelected: (Int) -> Unit = { index ->
-                    // Every search tab tap resets the field, focuses it, and opens
-                    // the keyboard through SearchScreen's focus request.
-                    if (index == TAB_SEARCH) {
-                        viewModel.onQueryChange("")
-                        searchFocusRequested = true
-                    }
-
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
                     showSettings = false
@@ -2891,6 +2884,13 @@ private fun BitChordApp(
                     showHistory = false
                     libraryShowAll = null
                     selectedTab = index
+
+                    // Every search tab tap resets the field, focuses it, and opens
+                    // the keyboard through SearchScreen's focus request.
+                    if (index == TAB_SEARCH) {
+                        viewModel.onQueryChange("")
+                        searchFocusRequested = true
+                    }
                 }
 
                 if (glassActive) Column(
