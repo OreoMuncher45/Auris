@@ -551,9 +551,9 @@ private fun BitChordApp(
     // following radio items carry radioName in their MediaItem extras.
     var activeRadioSeed by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    // The player fills the screen with dark artwork whichever theme is on, so
-    // it keeps light glyphs; every other surface follows the theme. Replay's
-    // page and stories are the same case — dark artwork either way.
+    // The modal player owns light status glyphs and its own contrast scrim.
+    // Every other surface follows the theme; Replay's page and stories remain
+    // dark artwork either way.
     SystemBarIcons(dark = !darkTheme && !showNowPlaying && !showReplay && replayStory == null)
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
