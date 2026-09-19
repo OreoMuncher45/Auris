@@ -842,7 +842,7 @@ object InnertubeParser {
         // separate sentences, and running them together would weld the artist
         // onto the word that says this is a release at all.
         val parts = lines.flatMap { line ->
-            line.joinToString("") { it.s("text").orEmpty() }.split(" • ").map(String::trim)
+            line.joinToString("") { it.s("text").orEmpty() }.split(" • ", " · ").map(String::trim)
         }
         if (parts.none { it.lowercase(Locale.ROOT) in RELEASE_WORDS }) return Credits()
 
