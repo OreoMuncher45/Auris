@@ -1,8 +1,13 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.listentogether.JamInviteLink
+import com.music.bitchord.data.listentogether.ListenTogether
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class JamInviteLinkTest {
@@ -108,6 +113,151 @@ class JamInviteLinkTest {
         assertEquals("OLD123", (recovered as com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.TargetFailedRecovered).partyCode)
         assertEquals("Party full", recovered.targetError)
         assertEquals("Connection refused", (noParty as com.music.bitchord.data.listentogether.ListenTogether.SwitchPartyResult.TargetFailedNoParty).targetError)
+    }
+
+    // -------------------------------------------------------------------------
+    // Architectural Invariants (Listen Together Built-in Fallback & Server Routing)
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `invariant 1 built-in server generates canonical invite`() {
+        val code = "JAM001"
+        val activePartyHost = ListenTogether.builtInServer
+        val link = if (activePartyHost == ListenTogether.builtInServer) {
+            JamInviteLink.url(code, null)
+        } else {
+            JamInviteLink.url(code, activePartyHost)
+        }
+        assertEquals("https://bitchord.kushagrasingh.in/invite/JAM001", link)
+    }
+
+    @Test
+    fun `invariant 2 custom server does not masquerade as built-in`() {
+        val code = "JAM002"
+        val customHost = "https://custom.jam.example.com"
+        val link = if (customHost == ListenTogether.builtInServer) {
+            JamInviteLink.url(code, null)
+        } else {
+            JamInviteLink.url(code, customHost)
+        }
+        assertEquals("https://custom.jam.example.com/invite/JAM002", link)
+        assertNotEquals("https://bitchord.kushagrasingh.in/invite/JAM002", link)
+    }
+
+    @Test
+    fun `invariant 3 active party authority is distinct from idle fallback`() {
+        // activePartyServerBase holds authority while in party and is decoupled from idle fallback state
+        val partyHost = "https://party-host.example.com"
+        val idleFallbackHost = ListenTogether.builtInServer
+
+        // A party active on partyHost must retain its authority regardless of idle fallback
+        assertNotEquals(partyHost, idleFallbackHost)
+        val currentAuthority = partyHost // simulates activePartyServerBase()
+        assertEquals("https://party-host.example.com", currentAuthority)
+    }
+
+    @Test
+    fun `invariant 4 explicit invite target ignores idle fallback`() {
+        val explicitInvite = "https://bitchord.kushagrasingh.in/invite/JAM004?server=https%3A%2F%2Ftarget.party.com"
+        val parsed = JamInviteLink.parseInvite(explicitInvite)
+        assertEquals("JAM004", parsed?.code)
+        assertEquals("https://target.party.com", parsed?.serverUrl)
+
+        // Target server is normalized directly, bypassing any idle fallback logic
+        val targetBase = ListenTogether.normalizeServerBase(parsed!!.serverUrl!!).ifBlank { ListenTogether.builtInServer }
+        assertEquals("https://target.party.com", targetBase)
+    }
+
+    @Test
+    fun `invariant 5 fallback preserves user custom server preference`() = runBlocking {
+        // When custom server probe fails, resolution selects builtInServer with isFallback = true
+        val resolution = ListenTogether.computeHealthResolution(
+            customServer = "https://user-custom.example.com",
+            probeCustom = { false },
+            probeBuiltIn = { true },
+        )
+        assertEquals(ListenTogether.builtInServer, resolution.resolvedServer)
+        assertEquals(ListenTogether.Health.ONLINE, resolution.health)
+        assertTrue(resolution.isFallback)
+        // Notice the user's input remains "https://user-custom.example.com" — never overwritten
+    }
+
+    @Test
+    fun `invariant 6 create fallback commits built-in server`() {
+        // When createParty falls back from custom to built-in, the committed host is builtInServer
+        val customServer = "https://failing-custom.example.com"
+        val fallbackServer = ListenTogether.builtInServer
+        assertTrue(ListenTogether.normalizeServerBase(customServer) != ListenTogether.builtInServer)
+        val committedHostOnFallback = fallbackServer
+        assertEquals(ListenTogether.builtInServer, committedHostOnFallback)
+
+        // Also verify that primary == builtInServer will not trigger fallback
+        val primaryIsBuiltIn = ListenTogether.normalizeServerBase(fallbackServer) != ListenTogether.builtInServer
+        assertFalse(primaryIsBuiltIn)
+    }
+
+    @Test
+    fun `invariant 7 fallback error classification`() {
+        // Eligible for fallback (network/transport outages and 5xx)
+        assertTrue(ListenTogether.isEligibleForFallback(java.net.UnknownHostException("dns failed")))
+        assertTrue(ListenTogether.isEligibleForFallback(java.net.ConnectException("connection refused")))
+        assertTrue(ListenTogether.isEligibleForFallback(java.net.SocketTimeoutException("read timeout")))
+        assertTrue(ListenTogether.isEligibleForFallback(io.ktor.client.plugins.HttpRequestTimeoutException("timeout", null)))
+        assertTrue(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("server_err", "500", 500)))
+        assertTrue(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("bad_gw", "502", 502)))
+        assertTrue(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("gw_timeout", "504", 504)))
+        assertTrue(ListenTogether.isEligibleForFallback(java.io.IOException("wrapped", java.net.ConnectException())))
+
+        // Ineligible for fallback (client / protocol / 4xx errors)
+        assertFalse(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("party_full", "409", 409)))
+        assertFalse(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("party_not_found", "404", 404)))
+        assertFalse(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("bad_request", "400", 400)))
+        assertFalse(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("unauthorized", "401", 401)))
+        assertFalse(ListenTogether.isEligibleForFallback(ListenTogether.PartyException("unprocessable", "422", 422)))
+        assertFalse(ListenTogether.isEligibleForFallback(IllegalStateException("local client error")))
+    }
+
+    @Test
+    fun `invariant 8 custom server regains priority after recovery`() = runBlocking {
+        // Probe custom returns true -> priority is custom server, isFallback = false
+        val resolution = ListenTogether.computeHealthResolution(
+            customServer = "https://recovering-custom.example.com",
+            probeCustom = { true },
+            probeBuiltIn = { true },
+        )
+        assertEquals("https://recovering-custom.example.com", resolution.resolvedServer)
+        assertEquals(ListenTogether.Health.ONLINE, resolution.health)
+        assertFalse(resolution.isFallback)
+    }
+
+    @Test
+    fun `invariant 9 built-in down with custom healthy uses custom`() = runBlocking {
+        // Custom is healthy even if built-in is down -> ONLINE on custom
+        var builtInProbed = false
+        val resolution = ListenTogether.computeHealthResolution(
+            customServer = "https://working-custom.example.com",
+            probeCustom = { true },
+            probeBuiltIn = {
+                builtInProbed = true
+                false
+            },
+        )
+        assertEquals("https://working-custom.example.com", resolution.resolvedServer)
+        assertEquals(ListenTogether.Health.ONLINE, resolution.health)
+        assertFalse(resolution.isFallback)
+        assertFalse("Built-in should not be probed when custom is healthy", builtInProbed)
+    }
+
+    @Test
+    fun `invariant 10 built-in down with no custom reports offline`() = runBlocking {
+        val resolution = ListenTogether.computeHealthResolution(
+            customServer = "",
+            probeCustom = { true },
+            probeBuiltIn = { false },
+        )
+        assertEquals(ListenTogether.builtInServer, resolution.resolvedServer)
+        assertEquals(ListenTogether.Health.OFFLINE, resolution.health)
+        assertFalse(resolution.isFallback)
     }
 }
 

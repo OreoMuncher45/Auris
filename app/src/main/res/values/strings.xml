@@ -844,6 +844,7 @@
     <string name="listen_together_sign_in_footer">Listening together needs an account, so everyone in the party can see who else is in it.</string>
     <string name="listen_together_server">Party server</string>
     <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_online_fallback">Online (built-in fallback) · %1$d ms</string>
     <string name="listen_together_server_offline">Can’t be reached right now</string>
     <string name="listen_together_server_checking">Checking…</string>
     <string name="listen_together_server_unknown">Tap to check</string>

@@ -1095,5 +1095,6 @@
     <string name="audio_pipeline_subtitle">Live signal path, decoder to output</string>
     <string name="song_added_to_playlist">Added to playlist</string>
     <string name="song_already_in_playlist">Already in playlist</string>
+    <string name="listen_together_server_online_fallback">Trực tuyến (dự phòng tích hợp) · %1$d ms</string>
 
 </resources>

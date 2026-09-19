@@ -50,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -135,13 +136,10 @@ fun ListenTogetherScreen(
     // the screen is looked at — rather than on every cold start — is what keeps
     // a feature nobody is currently using off the radio.
     LaunchedEffect(Unit) { ListenTogether.ensureConnected() }
-    // This page owns the health polling: the latency badge belongs to Listen
-    // together, so it refreshes while this page is visible and stops when the
-    // composable leaves the screen.
-    LaunchedEffect(customServer) {
-        while (true) {
-            ListenTogether.refreshServerHealth()
-            delay(10_000)
+    DisposableEffect(Unit) {
+        ListenTogether.setScreenActive(true)
+        onDispose {
+            ListenTogether.setScreenActive(false)
         }
     }
 
@@ -151,7 +149,7 @@ fun ListenTogetherScreen(
         val code = inviteCode ?: return@LaunchedEffect
         if (!signedIn || busy) return@LaunchedEffect
 
-        val activeServer = ListenTogether.activeServerUrl().trim().trimEnd('/')
+        val activeServer = (ListenTogether.activePartyServerBase() ?: ListenTogether.effectiveIdleServerBase()).trim().trimEnd('/')
         val targetServer = inviteServer?.trim()?.trimEnd('/')
 
         if (!targetServer.isNullOrBlank()) {
@@ -175,7 +173,8 @@ fun ListenTogetherScreen(
             // Live listeners use switchPartyWithRecovery to guarantee Party A and playback
             // remain intact if the target invite fails. Idle listeners use joinParty directly.
             if (state.inParty) {
-                when (val result = ListenTogether.switchPartyWithRecovery(customServer, code)) {
+                val target = targetServer ?: customServer
+                when (val result = ListenTogether.switchPartyWithRecovery(target, code)) {
                     is ListenTogether.SwitchPartyResult.Success -> {
                         codeInput = ""
                     }
@@ -360,7 +359,14 @@ fun ListenTogetherScreen(
                 onCopy = { clipboard.setText(AnnotatedString(state.code.orEmpty())) },
                 onShare = {
                     val code = state.code ?: return@InAParty
-                    val link = JamInviteLink.url(code, customServer.takeIf { it.isNotBlank() })
+                    val host = requireNotNull(ListenTogether.activePartyServerBase()) {
+                        "activePartyServerBase must not be null while in a party"
+                    }
+                    val link = if (host == ListenTogether.builtInServer) {
+                        JamInviteLink.url(code, null)
+                    } else {
+                        JamInviteLink.url(code, host)
+                    }
                     val message = "$link\n\n${context.getString(R.string.listen_together_share_text, code)}"
                     context.startActivity(
                         Intent.createChooser(
@@ -476,7 +482,11 @@ private fun ServerHealthRow(
             title = stringResource(R.string.listen_together_server),
             subtitle = when (status.health) {
                 ListenTogether.Health.ONLINE ->
-                    stringResource(R.string.listen_together_server_online, status.latencyMs)
+                    if (status.isFallback) {
+                        stringResource(R.string.listen_together_server_online_fallback, status.latencyMs)
+                    } else {
+                        stringResource(R.string.listen_together_server_online, status.latencyMs)
+                    }
                 ListenTogether.Health.OFFLINE ->
                     stringResource(R.string.listen_together_server_offline)
                 ListenTogether.Health.CHECKING ->

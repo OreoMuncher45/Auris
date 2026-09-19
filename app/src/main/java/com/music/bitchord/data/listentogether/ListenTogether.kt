@@ -2,6 +2,9 @@ package com.music.bitchord.data.listentogether
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import com.music.bitchord.BitChordApplication
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.DebugLog as Log
@@ -133,7 +136,7 @@ object ListenTogether {
     }
 
     /** A refusal from the server, carrying the machine-readable half. */
-    class PartyException(val code: String, message: String) : Exception(message)
+    class PartyException(val code: String, message: String, val statusCode: Int? = null) : Exception(message)
 
     sealed interface SwitchPartyResult {
         data class Success(val partyCode: String) : SwitchPartyResult
@@ -195,57 +198,168 @@ object ListenTogether {
     private val _customServer = MutableStateFlow("")
     val customServerUrl: StateFlow<String> = _customServer.asStateFlow()
 
-    /** Whether a party can be reached at all — a built-in or a custom address. */
-    val hasServer: Boolean get() = httpBase().isNotBlank()
+    /**
+     * The built-in party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
+     * in `local.properties` or build environment.
+     */
+    val builtInServer: String = normalizeServerBase(BuildConfig.LISTEN_TOGETHER_SERVER)
 
-    /** The resolved active server URL: custom override if present, else build default. */
-    fun activeServerUrl(): String = httpBase()
+    /**
+     * The dynamic server currently determined to be healthy and available for IDLE operations.
+     * Probes custom server first if configured; falls back to [builtInServer] if custom is down.
+     */
+    private val _effectiveIdleServer = MutableStateFlow(builtInServer)
+    fun effectiveIdleServerBase(): String = _effectiveIdleServer.value
+
+    /**
+     * The actual server hosting the active party session. Non-null while [State.inParty] is true.
+     * Immutable during the party session and never mutated by idle health checks.
+     */
+    @Volatile
+    private var activePartyServerBase: String? = null
+    fun activePartyServerBase(): String? = activePartyServerBase
+
+    /** Whether idle operations are currently falling back to the built-in server. */
+    val isUsingBuiltInFallback: Boolean
+        get() {
+            val configured = normalizeServerBase(_customServer.value)
+            return configured.isNotBlank() &&
+                effectiveIdleServerBase() == builtInServer &&
+                configured != builtInServer
+        }
+
+    /** Whether a party can be reached at all — a built-in or a custom address. */
+    val hasServer: Boolean get() = effectiveIdleServerBase().isNotBlank()
 
     enum class Health { UNKNOWN, CHECKING, ONLINE, OFFLINE }
 
-    /**
-     * What `/healthz` last said, and how long it took to say it.
-     *
-     * Worth showing before anything else on the screen, because every other
-     * failure here looks the same to a listener — a code that will not create, a
-     * join that hangs — and most of the time the answer is simply that the
-     * server is asleep. A free instance spins down when idle and takes the best
-     * part of a minute to come back, which is why [refreshServerHealth] waits so
-     * patiently rather than calling that a failure.
-     */
-    data class ServerStatus(val health: Health = Health.UNKNOWN, val latencyMs: Long = 0)
+    data class ServerStatus(
+        val health: Health = Health.UNKNOWN,
+        val latencyMs: Long = 0,
+        val isFallback: Boolean = false,
+    )
 
     private val _serverStatus = MutableStateFlow(ServerStatus())
     val serverStatus: StateFlow<ServerStatus> = _serverStatus.asStateFlow()
 
-    private var healthJob: Job? = null
+    fun isEligibleForFallback(error: Throwable): Boolean = when (error) {
+        is java.net.UnknownHostException,
+        is java.net.ConnectException,
+        is java.net.NoRouteToHostException,
+        is java.net.PortUnreachableException,
+        is java.net.SocketTimeoutException,
+        is io.ktor.client.plugins.HttpRequestTimeoutException,
+        is io.ktor.client.network.sockets.SocketTimeoutException,
+        is io.ktor.client.network.sockets.ConnectTimeoutException -> true
+        is PartyException -> (error.statusCode ?: 0) in 500..599
+        else -> {
+            val cause = error.cause
+            if (cause != null && cause !== error && isEligibleForFallback(cause)) true
+            else false
+        }
+    }
+
+    private var isScreenActive: Boolean = false
+    private var healthMonitorJob: Job? = null
+    private val healthMutex = Mutex()
+    private var healthGeneration = 0L
+
+    fun setScreenActive(active: Boolean) {
+        isScreenActive = active
+        if (active) {
+            refreshServerHealth()
+        }
+    }
+
+    private fun startHealthMonitor() {
+        healthMonitorJob?.cancel()
+        healthMonitorJob = scope.launch {
+            while (isActive) {
+                val delayMs = if (isScreenActive) 10_000L else 30_000L
+                delay(delayMs)
+                refreshServerHealth()
+            }
+        }
+    }
+
+    data class HealthResolution(
+        val resolvedServer: String,
+        val health: Health,
+        val isFallback: Boolean,
+    )
+
+    suspend fun computeHealthResolution(
+        customServer: String,
+        probeCustom: suspend () -> Boolean,
+        probeBuiltIn: suspend () -> Boolean,
+    ): HealthResolution {
+        val custom = normalizeServerBase(customServer)
+        val hasCustom = custom.isNotBlank()
+        return if (hasCustom) {
+            if (probeCustom()) {
+                HealthResolution(resolvedServer = custom, health = Health.ONLINE, isFallback = false)
+            } else if (probeBuiltIn()) {
+                HealthResolution(resolvedServer = builtInServer, health = Health.ONLINE, isFallback = true)
+            } else {
+                HealthResolution(resolvedServer = builtInServer, health = Health.OFFLINE, isFallback = false)
+            }
+        } else {
+            if (probeBuiltIn()) {
+                HealthResolution(resolvedServer = builtInServer, health = Health.ONLINE, isFallback = false)
+            } else {
+                HealthResolution(resolvedServer = builtInServer, health = Health.OFFLINE, isFallback = false)
+            }
+        }
+    }
 
     fun refreshServerHealth() {
-        if (healthJob?.isActive == true) return
-        healthJob = scope.launch {
-            val base = httpBase()
-            if (base.isBlank()) {
-                _serverStatus.value = ServerStatus(Health.OFFLINE)
-                return@launch
+        scope.launch {
+            healthMutex.withLock {
+                val generation = synchronized(this@ListenTogether) { ++healthGeneration }
+                val custom = normalizeServerBase(_customServer.value)
+
+                _serverStatus.value = ServerStatus(Health.CHECKING)
+                val startedAt = ServerClock.localNowMs()
+                var probeStart = startedAt
+
+                val resolution = computeHealthResolution(
+                    customServer = custom,
+                    probeCustom = {
+                        probeStart = ServerClock.localNowMs()
+                        probeHealth(custom)
+                    },
+                    probeBuiltIn = {
+                        probeStart = ServerClock.localNowMs()
+                        probeHealth(builtInServer)
+                    },
+                )
+
+                val latency = if (resolution.health == Health.ONLINE) {
+                    ServerClock.localNowMs() - probeStart
+                } else 0L
+
+                if (generation == healthGeneration) {
+                    _effectiveIdleServer.value = resolution.resolvedServer
+                    _serverStatus.value = ServerStatus(
+                        health = resolution.health,
+                        latencyMs = latency,
+                        isFallback = resolution.isFallback,
+                    )
+                }
             }
-            _serverStatus.value = ServerStatus(Health.CHECKING)
-            val startedAt = ServerClock.localNowMs()
-            val ok = runCatching {
-                http.get("$base/healthz") {
-                    // Generous on purpose: a sleeping free instance answers in
-                    // about thirty seconds, and reporting that as "offline"
-                    // would be wrong in the one case somebody most needs the
-                    // truth — they are waiting for it to wake up.
-                    timeout { requestTimeoutMillis = HEALTH_TIMEOUT_MS }
-                }.status.isSuccess()
-            }.getOrElse {
-                Log.w(TAG, "health check failed: ${redact(it.message)}")
-                false
-            }
-            _serverStatus.value = ServerStatus(
-                health = if (ok) Health.ONLINE else Health.OFFLINE,
-                latencyMs = ServerClock.localNowMs() - startedAt,
-            )
+        }
+    }
+
+    private suspend fun probeHealth(baseUrl: String): Boolean {
+        val raw = resolveHttpBase(baseUrl)
+        if (raw.isBlank()) return false
+        return runCatching {
+            http.get("$raw/healthz") {
+                timeout { requestTimeoutMillis = HEALTH_TIMEOUT_MS }
+            }.status.isSuccess()
+        }.getOrElse {
+            Log.w(TAG, "health check failed for ${redact(raw)}: ${redact(it.message)}")
+            false
         }
     }
 
@@ -258,38 +372,51 @@ object ListenTogether {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        // Only ever an override. Blank is the normal state and means the
-        // built-in server, which is resolved at the point of use in [httpBase]
-        // rather than copied in here — so there is no moment at which the
-        // address this build ships with is sitting in a flow the UI can read.
         _customServer.value = prefs.getString(KEY_SERVER, null)?.trim().orEmpty()
-        // A membership does not survive the app being closed. Anything still on
-        // disk here belongs to a process that is gone, so this launch starts out
-        // of the party rather than silently back in one — which is what the
-        // stored token used to do, and it surprised people: reopening the app
-        // days later put music back on four other devices.
-        //
-        // Cleared before the release is attempted, not after. The slot is worth
-        // handing back promptly, but a launch must not depend on a network call
-        // to a server that may well be asleep: fail that and this device is
-        // stranded in a party its own screen says it has left.
+        _effectiveIdleServer.value = if (_customServer.value.isNotBlank()) {
+            normalizeServerBase(_customServer.value)
+        } else {
+            builtInServer
+        }
+
         val code = prefs.getString(KEY_CODE, null)
         val saved = prefs.getString(KEY_TOKEN, null)
         prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
         if (!code.isNullOrBlank() && !saved.isNullOrBlank()) {
             releaseStaleSlot(code, saved)
         }
+
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        if (manager != null) {
+            runCatching {
+                manager.registerDefaultNetworkCallback(
+                    object : ConnectivityManager.NetworkCallback() {
+                        override fun onAvailable(network: Network) {
+                            refreshServerHealth()
+                        }
+                        override fun onLost(network: Network) {
+                            _serverStatus.value = ServerStatus(Health.OFFLINE)
+                        }
+                        override fun onCapabilitiesChanged(
+                            network: Network,
+                            capabilities: NetworkCapabilities,
+                        ) {
+                            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                                refreshServerHealth()
+                            }
+                        }
+                    }
+                )
+            }
+        }
+
+        startHealthMonitor()
+        refreshServerHealth()
     }
 
     /**
      * Hands a previous process's slot back, so the others see them leave now
      * rather than when the server's disconnect grace sweeps it.
-     *
-     * Entirely best-effort and deliberately unobserved: nothing on this device
-     * is waiting on the answer, and there is no state left for it to change.
-     * The party is five devices wide, so the difference between giving a slot
-     * up immediately and forty-five seconds later is the difference between a
-     * friend being able to join and being told the party is full.
      */
     private fun releaseStaleSlotOnServer(serverBase: String, code: String, held: String) {
         if (serverBase.isBlank() || code.isBlank() || held.isBlank()) return
@@ -305,14 +432,16 @@ object ListenTogether {
     }
 
     private fun releaseStaleSlot(code: String, held: String) {
-        releaseStaleSlotOnServer(httpBase(), code, held)
+        val server = activePartyServerBase ?: resolveHttpBase(effectiveIdleServerBase())
+        releaseStaleSlotOnServer(server, code, held)
     }
 
     /** Points this install at another server, or back at the built-in one if blank. */
     fun setCustomServerUrl(value: String) {
-        val cleaned = value.trim().trimEnd('/')
+        val cleaned = normalizeServerBase(value)
         _customServer.value = cleaned
         prefs.edit().putString(KEY_SERVER, cleaned).apply()
+        refreshServerHealth()
     }
 
     /** Whether this device has an account it can jam as. */
@@ -326,11 +455,6 @@ object ListenTogether {
 
     /**
      * Opens the socket for a membership that was restored from storage.
-     *
-     * Called by the screen rather than from [init], deliberately: a party this
-     * device is a member of is worth reconnecting to when somebody is looking
-     * at it or listening with it, and is not worth holding a socket open for on
-     * every cold start of the app.
      */
     fun ensureConnected() {
         if (_state.value.code == null || token == null) return
@@ -341,12 +465,66 @@ object ListenTogether {
     // ------------------------------------------------------------ joining --
 
     suspend fun createParty(nickname: String = nickname(), maxMembers: Int = 5): Result<String> = switchMutex.withLock {
-        enter(nickname) { who ->
-            post("${httpBase()}/api/parties", JoinRequest(
+        val primary = effectiveIdleServerBase()
+        val primaryNormalized = resolveHttpBase(primary)
+        val attempt = runCatching {
+            doCreateOnServer(primaryNormalized, nickname, maxMembers)
+        }
+
+        if (attempt.isSuccess) {
+            return@withLock Result.success(attempt.getOrThrow())
+        }
+
+        val failure = attempt.exceptionOrNull() ?: return@withLock Result.failure(IllegalStateException("Unknown create failure"))
+
+        if (normalizeServerBase(primary) != builtInServer && isEligibleForFallback(failure)) {
+            Log.w(TAG, "createParty failed on custom server, falling back to built-in: ${redact(failure.message)}")
+            val fallbackNormalized = resolveHttpBase(builtInServer)
+            val fallbackAttempt = runCatching {
+                doCreateOnServer(fallbackNormalized, nickname, maxMembers)
+            }
+            if (fallbackAttempt.isSuccess) {
+                return@withLock Result.success(fallbackAttempt.getOrThrow())
+            }
+            val fallbackFailure = fallbackAttempt.exceptionOrNull() ?: failure
+            _state.update { it.copy(error = fallbackFailure.displayMessage()) }
+            return@withLock Result.failure(fallbackFailure)
+        }
+
+        _state.update { it.copy(error = failure.displayMessage()) }
+        Result.failure(failure)
+    }
+
+    private suspend fun doCreateOnServer(serverBase: String, nickname: String, maxMembers: Int): String {
+        val who = identity(nickname) ?: throw PartyException("not_signed_in", "Sign in to listen together.")
+        if (serverBase.isBlank()) throw PartyException("no_server", "Set the party server address first.")
+        val membership = post(
+            "$serverBase/api/parties",
+            JoinRequest(
                 who.userId, who.deviceId, who.name, who.avatar, maxMembers,
                 autoplayEnabled = AppSettings.autoplay.value,
-            ))
+            ),
+        )
+
+        withContext(NonCancellable) {
+            activePartyServerBase = serverBase
+            token = membership.token
+            prefs.edit()
+                .putString(KEY_CODE, membership.code)
+                .putString(KEY_TOKEN, membership.token)
+                .apply()
+            clock.reset()
+            _state.value = State(
+                code = membership.code,
+                you = membership.you,
+                members = membership.party.members,
+                maxMembers = membership.party.maxMembers,
+                playback = membership.party.playback,
+                connection = Connection.CONNECTING,
+            )
         }
+        connect()
+        return membership.code
     }
 
     /**
@@ -362,13 +540,46 @@ object ListenTogether {
      * that are intentionally not part of this API.
      */
     suspend fun joinParty(code: String, nickname: String = nickname()): Result<String> = switchMutex.withLock {
-        enter(nickname) { who ->
-            val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
-            if (cleaned.length != CODE_LENGTH) {
-                throw PartyException("bad_code", "A party code is six letters or digits.")
-            }
-            post("${httpBase()}/api/parties/$cleaned/join", JoinRequest(who.userId, who.deviceId, who.name, who.avatar))
+        val targetServer = resolveHttpBase(effectiveIdleServerBase())
+        runCatching {
+            doJoinOnServer(targetServer, code, nickname)
+        }.onFailure { failure ->
+            Log.w(TAG, "could not enter a party: ${redact(failure.message)}")
+            _state.update { it.copy(error = failure.displayMessage()) }
         }
+    }
+
+    private suspend fun doJoinOnServer(serverBase: String, code: String, nickname: String): String {
+        val who = identity(nickname) ?: throw PartyException("not_signed_in", "Sign in to listen together.")
+        if (serverBase.isBlank()) throw PartyException("no_server", "Set the party server address first.")
+        val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
+        if (cleaned.length != CODE_LENGTH) {
+            throw PartyException("bad_code", "A party code is six letters or digits.")
+        }
+        val membership = post(
+            "$serverBase/api/parties/$cleaned/join",
+            JoinRequest(who.userId, who.deviceId, who.name, who.avatar),
+        )
+
+        withContext(NonCancellable) {
+            activePartyServerBase = serverBase
+            token = membership.token
+            prefs.edit()
+                .putString(KEY_CODE, membership.code)
+                .putString(KEY_TOKEN, membership.token)
+                .apply()
+            clock.reset()
+            _state.value = State(
+                code = membership.code,
+                you = membership.you,
+                members = membership.party.members,
+                maxMembers = membership.party.maxMembers,
+                playback = membership.party.playback,
+                connection = Connection.CONNECTING,
+            )
+        }
+        connect()
+        return membership.code
     }
 
     /**
@@ -392,7 +603,8 @@ object ListenTogether {
      *
      * This API is intentionally separate from [joinParty]. It is the
      * deep-link transition state machine and may begin from either IDLE
-     * or LIVE.
+     * or LIVE. It strictly contacts [targetCustomServer] and NEVER queries
+     * or triggers idle fallback.
      */
     suspend fun switchPartyWithRecovery(
         targetCustomServer: String,
@@ -425,7 +637,7 @@ object ListenTogether {
                 }
             }
 
-            val oldServerBase = httpBase()
+            val oldServerBase = activePartyServerBase ?: resolveHttpBase(_customServer.value)
             val oldCode = _state.value.code
             val oldToken = token
 
@@ -461,6 +673,9 @@ object ListenTogether {
                 socketJob = null
                 session = null
 
+                // Commit active party server authority
+                activePartyServerBase = targetBase
+
                 // Commit new server URL setting
                 setCustomServerUrl(targetCustomServer)
 
@@ -488,62 +703,22 @@ object ListenTogether {
         }
     }
 
-    private suspend fun enter(nickname: String, request: suspend (Identity) -> PartyMembership): Result<String> =
-        withContext(Dispatchers.IO) {
-            val who = identity(nickname)
-                ?: return@withContext Result.failure(
-                    PartyException("not_signed_in", "Sign in to listen together."),
-                )
-            if (httpBase().isBlank()) {
-                return@withContext Result.failure(
-                    PartyException("no_server", "Set the party server address first."),
-                )
-            }
-            runCatching { request(who) }
-                .onSuccess { membership ->
-                    withContext(NonCancellable) {
-                        token = membership.token
-                        prefs.edit()
-                            .putString(KEY_CODE, membership.code)
-                            .putString(KEY_TOKEN, membership.token)
-                            .apply()
-                        clock.reset()
-                        _state.value = State(
-                            code = membership.code,
-                            you = membership.you,
-                            members = membership.party.members,
-                            maxMembers = membership.party.maxMembers,
-                            playback = membership.party.playback,
-                            connection = Connection.CONNECTING,
-                        )
-                    }
-                    connect()
-                }
-                .onFailure { failure ->
-                    Log.w(TAG, "could not enter a party: ${redact(failure.message)}")
-                    _state.update { it.copy(error = failure.displayMessage()) }
-                }
-                .map { it.code }
-        }
-
     /** Give up this device's slot. The party carries on without it. */
     suspend fun leaveParty() = switchMutex.withLock {
         withContext(Dispatchers.IO) {
             val code = _state.value.code
             val held = token
+            val currentServer = activePartyServerBase ?: resolveHttpBase(effectiveIdleServerBase())
             socketJob?.cancel()
             socketJob = null
             session = null
             clock.reset()
             token = null
+            activePartyServerBase = null
             prefs.edit().remove(KEY_CODE).remove(KEY_TOKEN).apply()
             _state.value = State()
             if (code != null && held != null) {
-                // Best effort, and after the local state is already clear: a leave
-                // that fails must not strand this device in a party its own screen
-                // says it has left. The server's disconnect grace collects the slot
-                // either way.
-                releaseStaleSlot(code, held)
+                releaseStaleSlotOnServer(currentServer, code, held)
             }
         }
     }
@@ -948,27 +1123,21 @@ object ListenTogether {
                 // mean the account layer handed over something blank.
                 ?: if (status.value == 422) "This account can't be used to jam."
                 else "The party server said ${status.value}.",
+            statusCode = status.value,
         )
     }
 
+    fun normalizeServerBase(value: String): String =
+        value.trim().trimEnd('/')
+
     /**
-     * The address requests actually go to: the user's override, or the built-in
-     * one. Private, and the only place the built-in address is read.
+     * Resolves the given custom server (or built-in server if blank) to a fully qualified HTTP base URL.
      */
-    /**
-     * Resolves the given custom server (or default server if blank) to a fully qualified HTTP base URL.
-     */
-    private fun resolveHttpBase(customServer: String): String {
-        val raw = customServer.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
+    private fun resolveHttpBase(server: String): String {
+        val raw = normalizeServerBase(server).ifBlank { builtInServer }
         if (raw.isBlank()) return ""
         return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
     }
-
-    /**
-     * The address requests actually go to: the user's override, or the built-in
-     * one. Private, and the only place the built-in address is read.
-     */
-    private fun httpBase(): String = resolveHttpBase(_customServer.value)
 
     /**
      * A message with every server address taken out of it.
@@ -978,16 +1147,11 @@ object ListenTogether {
      * places that must not carry it: logcat, and the error line on the Listen
      * Together screen. So nothing from below this class reaches either without
      * passing through here.
-     *
-     * Belt and braces on purpose. The known addresses are replaced by name, and
-     * then *any* remaining absolute URL is replaced too, because the thing being
-     * guarded against is precisely a message shaped in a way this code did not
-     * anticipate — a redirect, a proxy, a DNS error naming a CDN hostname.
      */
     private fun redact(text: String?): String {
         var out = text.orEmpty()
         if (out.isEmpty()) return out
-        listOf(DEFAULT_SERVER, _customServer.value)
+        listOfNotNull(builtInServer, _customServer.value, activePartyServerBase)
             .filter { it.isNotBlank() }
             .flatMap { listOf(it, it.substringAfter("://")) }
             .sortedByDescending(String::length)
@@ -997,21 +1161,18 @@ object ListenTogether {
 
     /**
      * What the listener is told when the transport fails.
-     *
-     * Deliberately not the exception's own words even after redaction: a
-     * connection failure's message is written for whoever wrote the networking
-     * library, and "Failed to connect to <server>/34.x.x.x:443" tells a listener
-     * nothing they can act on while still handing out an address. Refusals the
-     * server itself issued are ours, already phrased for a person, and kept.
      */
     private fun Throwable.displayMessage(): String = when (this) {
         is PartyException -> message ?: UNREACHABLE
         else -> UNREACHABLE
     }
 
-    private fun wsBase(): String = httpBase()
-        .replaceFirst("https://", "wss://")
-        .replaceFirst("http://", "ws://")
+    private fun wsBase(): String {
+        val base = activePartyServerBase ?: effectiveIdleServerBase()
+        return resolveHttpBase(base)
+            .replaceFirst("https://", "wss://")
+            .replaceFirst("http://", "ws://")
+    }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray())
@@ -1028,23 +1189,12 @@ object ListenTogether {
 
     private const val UNREACHABLE = "Couldn’t reach the party server."
 
-    private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
+    private val ABSOLUTE_URL = Regex(""" (?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
     private const val KEY_CODE = "party_code"
     private const val KEY_TOKEN = "party_token"
     private const val KEY_DEVICE = "device_id"
     private const val KEY_NICKNAME = "party_nickname"
 
-    /**
-     * The party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
-     * in `local.properties` (see app/build.gradle.kts).
-     *
-     * Only a default. It seeds the address box on the Listen Together screen and
-     * is then overridden by anything typed there, which persists — so somebody
-     * running their own copy of `backend/` is never fighting this value. Empty
-     * is a supported state: a checkout without that line builds fine and simply
-     * asks for an address.
-     */
-    private val DEFAULT_SERVER: String = BuildConfig.LISTEN_TOGETHER_SERVER
     private const val PING_INTERVAL_MS = 15_000L
     private const val REPORT_INTERVAL_MS = 10_000L
     private const val HEALTH_TIMEOUT_MS = 45_000L
