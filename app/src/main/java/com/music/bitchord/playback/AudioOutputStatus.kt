@@ -75,6 +75,14 @@ object AudioOutputStatus {
         val halFormat: String? = null,
         val usbEndpointFormat: String? = null,
         val bluetoothTelemetry: BluetoothTelemetry? = null,
+        /**
+         * The Bluetooth transport profile the active sink actually uses ("A2DP",
+         * "LE Audio"), or null when the route is not Bluetooth. [routeKind] alone
+         * cannot answer this: BLUETOOTH covers classic A2DP and every LE Audio
+         * device type, so naming the profile off the route kind mislabels LE
+         * Audio earbuds and hearing aids as A2DP.
+         */
+        val bluetoothProfile: String? = null,
         val negotiationResult: OutputNegotiationResult? = null,
     ) {
         override fun equals(other: Any?): Boolean {
@@ -111,6 +119,7 @@ object AudioOutputStatus {
                 halFormat == other.halFormat &&
                 usbEndpointFormat == other.usbEndpointFormat &&
                 bluetoothTelemetry == other.bluetoothTelemetry &&
+                bluetoothProfile == other.bluetoothProfile &&
                 negotiationResult == other.negotiationResult
         }
 
@@ -146,6 +155,7 @@ object AudioOutputStatus {
             result = 31 * result + (halFormat?.hashCode() ?: 0)
             result = 31 * result + (usbEndpointFormat?.hashCode() ?: 0)
             result = 31 * result + (bluetoothTelemetry?.hashCode() ?: 0)
+            result = 31 * result + (bluetoothProfile?.hashCode() ?: 0)
             result = 31 * result + (negotiationResult?.hashCode() ?: 0)
             return result
         }
@@ -193,6 +203,16 @@ object AudioOutputStatus {
             else -> AudioRouting.Kind.PHONE
         }
 
+        val bluetoothProfile = when (device?.type) {
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "A2DP"
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER,
+            AudioDeviceInfo.TYPE_BLE_BROADCAST,
+            -> "LE Audio"
+            AudioDeviceInfo.TYPE_HEARING_AID -> "Hearing Aid"
+            else -> null
+        }
+
         val isDirectUsbViable = directUsbProbe?.isViable == true && isUsbDevice
         val isDirectAudioTrack = directSupport?.isDirectSupported == true && computedRouteKind != AudioRouting.Kind.PHONE
         val transport = when {
@@ -228,6 +248,7 @@ object AudioOutputStatus {
             sampleRatesHz = device?.sampleRates ?: IntArray(0),
             encodings = device?.encodings ?: IntArray(0),
             isUsb = isUsbDevice,
+            bluetoothProfile = bluetoothProfile,
             routeKind = computedRouteKind,
             requestedTransportType = transport,
             transportType = transport,
@@ -256,7 +277,7 @@ object AudioOutputStatus {
             directPlaybackDetail = result.route.directSupport.description,
             directSupport = result.route.directSupport,
             deviceName = if (result.route.deviceName.isNotBlank()) result.route.deviceName else current.value.deviceName,
-            isUsb = result.route.kind == AudioRouting.Kind.USB || current.value.isUsb,
+            isUsb = result.route.kind == AudioRouting.Kind.USB,
             sampleRatesHz = if (result.route.advertisedSampleRates.isNotEmpty()) {
                 result.route.advertisedSampleRates.toIntArray()
             } else {
@@ -342,6 +363,27 @@ object AudioOutputStatus {
                 null -> null
             }
 
+        val sampleRates = if (snapshot.sampleRatesHz.isNotEmpty()) {
+            snapshot.sampleRatesHz
+        } else {
+            snapshot.negotiationResult?.route?.advertisedSampleRates?.toIntArray() ?: intArrayOf()
+        }
+        val encodings = if (snapshot.encodings.isNotEmpty()) {
+            snapshot.encodings
+        } else {
+            snapshot.negotiationResult?.route?.advertisedEncodings?.toIntArray() ?: intArrayOf()
+        }
+
+        // An unresolved rate/encoding means "not measured yet", not "unsupported":
+        // vetoing direct playback here would flash a false rejection before the
+        // first AudioTrack publish lands.
+        val rateMatchesDescriptors = sampleRates.isEmpty() ||
+            sampleRate == null ||
+            sampleRates.contains(sampleRate)
+        val encodingMatchesDescriptors = encodings.isEmpty() ||
+            encoding == null ||
+            encodings.contains(encoding)
+
         val defaultMixerRate = snapshot.systemMixerRateHz ?: 48000
 
         return when (snapshot.routeKind) {
@@ -358,27 +400,11 @@ object AudioOutputStatus {
                 )
             }
             AudioRouting.Kind.USB -> {
-                val directSupportObj = snapshot.directSupport
-                    ?: snapshot.negotiationResult?.route?.directSupport
-                val isDirectSupported = directSupportObj?.isDirectSupported == true
-
-                val sampleRates = if (snapshot.sampleRatesHz.isNotEmpty()) {
-                    snapshot.sampleRatesHz
-                } else {
-                    snapshot.negotiationResult?.route?.advertisedSampleRates?.toIntArray() ?: intArrayOf()
-                }
-                val encodings = if (snapshot.encodings.isNotEmpty()) {
-                    snapshot.encodings
-                } else {
-                    snapshot.negotiationResult?.route?.advertisedEncodings?.toIntArray() ?: intArrayOf()
-                }
-
-                val sampleRateSupported = sampleRates.isEmpty() ||
-                    (sampleRate != null && sampleRates.contains(sampleRate)) ||
-                    isDirectSupported
-                val encodingSupported = encodings.isEmpty() ||
-                    (encoding != null && encodings.contains(encoding)) ||
-                    isDirectSupported
+                // A runtime direct-support probe outranks the device's static USB
+                // descriptors: the descriptors cap what the device claims, the probe
+                // reports what AudioPolicy will actually accept.
+                val sampleRateSupported = rateMatchesDescriptors || directSupported
+                val encodingSupported = encodingMatchesDescriptors || directSupported
                 val isFloatPcm = encoding == AudioFormat.ENCODING_PCM_FLOAT
 
                 val maxUsbRate = sampleRates.maxOrNull() ?: 48000
@@ -392,7 +418,7 @@ object AudioOutputStatus {
                 val usbEndpointStr = "$usbEnc / $maxUsbRate Hz"
 
                 val isGenuineDirect = requestedDirect &&
-                    isDirectSupported &&
+                    directSupported &&
                     sampleRateSupported &&
                     encodingSupported &&
                     !isFloatPcm
@@ -408,7 +434,7 @@ object AudioOutputStatus {
                         halFormat = null,
                         usbEndpointFormat = usbEndpointStr,
                     )
-                } else if (requestedDirect || isDirectSupported) {
+                } else if (requestedDirect || directSupported) {
                     snapshot.copy(
                         transportType = TransportType.AUDIO_TRACK,
                         directPlaybackRequested = true,
@@ -447,16 +473,9 @@ object AudioOutputStatus {
                 )
             }
             else -> {
-                val directSupportObj = snapshot.directSupport ?: snapshot.negotiationResult?.route?.directSupport
-                val sampleRates = if (snapshot.sampleRatesHz.isNotEmpty()) {
-                    snapshot.sampleRatesHz
-                } else {
-                    snapshot.negotiationResult?.route?.advertisedSampleRates?.toIntArray() ?: intArrayOf()
-                }
-                val sampleRateSupported = sampleRates.isEmpty() || (sampleRate != null && sampleRates.contains(sampleRate))
                 val isGenuineDirect = requestedDirect &&
-                    directSupportObj?.isDirectSupported == true &&
-                    sampleRateSupported
+                    directSupported &&
+                    rateMatchesDescriptors
 
                 if (isGenuineDirect) {
                     snapshot.copy(

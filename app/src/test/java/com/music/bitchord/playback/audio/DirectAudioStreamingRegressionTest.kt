@@ -676,4 +676,40 @@ class DirectAudioStreamingRegressionTest {
         assertNull(result.output.systemMixerRateHz)
         assertEquals("Float32", result.dsp.format)
     }
+
+    // 19. Leaving a USB route clears isUsb, rather than latching it on forever
+    @Test
+    fun publishNegotiationClearsIsUsbWhenRouteLeavesUsb() {
+        val usbResult = OutputNegotiator.negotiate(
+            source = streamingSource(96000),
+            decoderName = "c2.android.flac.decoder",
+            sampleRateHz = 96000,
+            channelCount = 2,
+            routeKind = AudioRouting.Kind.USB,
+            deviceName = "Chu2 DSP",
+            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_24BIT_PACKED),
+            advertisedSampleRates = listOf(44100, 48000, 96000),
+            requestedMode = OutputPcmMode.FLOAT_32,
+        )
+        AudioOutputStatus.publishNegotiation(usbResult)
+        assertTrue("USB route must set isUsb", AudioOutputStatus.current.value.isUsb)
+
+        val bluetoothResult = OutputNegotiator.negotiate(
+            source = streamingSource(48000, bitDepth = 16),
+            decoderName = "c2.android.flac.decoder",
+            sampleRateHz = 48000,
+            channelCount = 2,
+            routeKind = AudioRouting.Kind.BLUETOOTH,
+            deviceName = "Buds",
+            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT),
+            advertisedSampleRates = listOf(44100, 48000),
+            requestedMode = OutputPcmMode.FLOAT_32,
+        )
+        AudioOutputStatus.publishNegotiation(bluetoothResult)
+
+        assertFalse(
+            "isUsb must clear once the route is no longer USB",
+            AudioOutputStatus.current.value.isUsb,
+        )
+    }
 }
