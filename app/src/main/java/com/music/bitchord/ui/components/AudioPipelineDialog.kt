@@ -52,6 +52,7 @@ import com.music.bitchord.playback.AudioOutputStatus
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import java.util.Locale
 
 private val PIPELINE_CARD_SHAPE = RoundedCornerShape(ALERT_CORNER)
 private val PIPELINE_SCRIM_COLOR = Color.Black.copy(alpha = 0.4f)
@@ -337,20 +338,9 @@ fun AudioPipelineDialog(
 
                         if (outputStatus.routeKind == com.music.bitchord.playback.AudioRouting.Kind.BLUETOOTH) {
                             val bt = outputStatus.bluetoothTelemetry
-                            PipelineRow("Bluetooth", "A2DP")
+                            outputStatus.bluetoothProfile?.let { PipelineRow("Bluetooth", it) }
                             if (bt != null && bt.isConnected) {
-                                val codecText = if (bt.isAuthoritative &&
-                                    bt.codecName != "A2DP Standard" &&
-                                    bt.codecName != "Bluetooth A2DP" &&
-                                    bt.codecName != "System Managed" &&
-                                    bt.codecName != "Unknown" &&
-                                    bt.codecName.isNotBlank()
-                                ) {
-                                    bt.codecName
-                                } else {
-                                    "System Managed"
-                                }
-                                PipelineRow("Codec", codecText)
+                                PipelineRow("Codec", if (bt.hasNamedCodec) bt.codecName else "System Managed")
                                 bt.bitDepth?.let { PipelineRow("Codec Bits", "$it-bit") }
                                 bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", "$it Hz") }
                                 PipelineRow("Codec Bitrate", bt.bitrateLabel)
@@ -500,20 +490,8 @@ internal fun formatUsbCapability(raw: String): String {
     val hzRegex = Regex("""(\d+)\s*Hz""")
     formatted = hzRegex.replace(formatted) { matchResult ->
         val hz = matchResult.groupValues[1].toIntOrNull()
-        if (hz != null) {
-            if (hz % 1000 == 0) {
-                "${hz / 1000} kHz"
-            } else {
-                val kHz = hz / 1000.0
-                if (kHz == kHz.toLong().toDouble()) {
-                    "${kHz.toLong()} kHz"
-                } else {
-                    "$kHz kHz"
-                }
-            }
-        } else {
-            matchResult.value
-        }
+            ?: return@replace matchResult.value
+        "${"%.1f".format(Locale.ROOT, hz / 1000f).removeSuffix(".0")} kHz"
     }
     return formatted
 }

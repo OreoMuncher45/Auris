@@ -44,6 +44,14 @@ data class BluetoothTelemetry(
     val isHighRes: Boolean
         get() = (sampleRateHz != null && sampleRateHz > 48000) || (bitDepth != null && bitDepth > 16)
 
+    /**
+     * Whether [codecName] names a codec Android actually reported. False for every
+     * placeholder ("System Managed", "Unknown"), so callers never render a stand-in
+     * string as if it were a negotiated codec.
+     */
+    val hasNamedCodec: Boolean
+        get() = isAuthoritative && codecName.isNotBlank() && codecName != "Unknown"
+
     fun formattedSummary(): String = buildString {
         if (!isConnected) {
             append("Disconnected")

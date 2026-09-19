@@ -170,6 +170,32 @@ class AudioTelemetryHardeningTest {
     }
 
     @Test
+    fun unknownSampleRateDoesNotRejectDirectPlaybackOnWiredRoute() {
+        // Between a route change and the first AudioTrack publish there is no
+        // measured rate yet. "Not measured" must not read as "unsupported".
+        val pending = AudioOutputStatus.Snapshot(
+            deviceName = "Hi-Res Wired DAC",
+            routeKind = AudioRouting.Kind.WIRED,
+            sampleRatesHz = intArrayOf(44100, 48000, 96000),
+            requestedTransportType = TransportType.AUDIO_TRACK_DIRECT,
+            directSupport = DirectAudioProbe.DirectSupport(
+                isDirectSupported = true,
+                isOffloadSupported = false,
+                supportsFloat = false,
+                supportsPcm24 = true,
+                supportsPcm16 = true,
+                description = "Direct PCM supported: 24-bit @ 96000 Hz",
+            ),
+            actualSampleRateHz = null,
+        )
+
+        val evaluated = AudioOutputStatus.evaluateActualPath(pending)
+
+        assertTrue("Direct playback must survive an unmeasured rate", evaluated.directPlaybackActual)
+        assertFalse("Direct playback must not be rejected", evaluated.directPlaybackRejected)
+    }
+
+    @Test
     fun usbDeviceCapabilityFormattingIsHumanReadable() {
         assertEquals(
             "PCM 24-bit / 96 kHz",

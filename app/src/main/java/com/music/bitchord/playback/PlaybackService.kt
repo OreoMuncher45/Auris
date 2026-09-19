@@ -4407,6 +4407,25 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * What the pipeline last reported, for when the live [Format] carries no
+     * usable rate or channel count of its own. Guessing 48 kHz here is what made
+     * a 176.4 kHz stream negotiate itself down, so the real last-known value is
+     * worth reaching for before giving up.
+     */
+    private fun lastReportedSampleRateHz(): Int? {
+        val status = AudioOutputStatus.current.value
+        return NerdStats.current.value?.sampleRateHz?.takeIf { it > 0 }
+            ?: status.actualSampleRateHz?.takeIf { it > 0 }
+            ?: status.negotiationResult?.output?.sampleRateHz?.takeIf { it > 0 }
+    }
+
+    private fun lastReportedChannelCount(): Int? {
+        val status = AudioOutputStatus.current.value
+        return NerdStats.current.value?.channels?.takeIf { it > 0 }
+            ?: status.negotiationResult?.output?.channelCount?.takeIf { it > 0 }
+    }
+
+    /**
      * Applies the user's USB-DAC preference through the public Android routing
      * API. This does not bypass the system USB driver: it intentionally lets
      * Android negotiate only formats the connected DAC actually advertises.
@@ -4423,18 +4442,15 @@ class PlaybackService : MediaLibraryService() {
         val directUsbProbe = if (routeKind == AudioRouting.Kind.USB) UsbDirectManager.probe(this) else null
 
         val format = currentAudioInputFormat
-        val measured = format?.measure()
+        val measured by lazy(LazyThreadSafetyMode.NONE) { format?.measure() }
         val sampleRate = format?.sampleRate?.takeIf { it > 0 }
             ?: measured?.sampleRateHz?.takeIf { it > 0 }
-            ?: NerdStats.current.value?.sampleRateHz?.takeIf { it > 0 }
-            ?: AudioOutputStatus.current.value.actualSampleRateHz?.takeIf { it > 0 }
-            ?: AudioOutputStatus.current.value.negotiationResult?.output?.sampleRateHz?.takeIf { it > 0 }
+            ?: lastReportedSampleRateHz()
         val channels = format?.channelCount?.takeIf { it > 0 }
             ?: measured?.channels?.takeIf { it > 0 }
-            ?: NerdStats.current.value?.channels?.takeIf { it > 0 }
-            ?: AudioOutputStatus.current.value.negotiationResult?.output?.channelCount?.takeIf { it > 0 }
+            ?: lastReportedChannelCount()
             ?: 2
-        val directSupport = if (sampleRate != null && sampleRate > 0) {
+        val directSupport = if (sampleRate != null) {
             DirectAudioProbe.probeDirectSupport(
                 audioManager = manager,
                 sampleRateHz = sampleRate,
@@ -4474,26 +4490,25 @@ class PlaybackService : MediaLibraryService() {
 
         val inputFormat = currentAudioInputFormat ?: format
         val measuredFormat = format.measure()
-        val measuredInput = inputFormat.measure()
+        val measuredInput by lazy(LazyThreadSafetyMode.NONE) {
+            if (inputFormat === format) measuredFormat else inputFormat.measure()
+        }
 
+        // No rate from the stream and none ever reported means nothing is known
+        // yet: negotiating against a guessed rate would publish that guess as
+        // fact. Leave the encoding to the sink's own fallback instead.
         val sampleRate = format.sampleRate.takeIf { it > 0 }
             ?: inputFormat.sampleRate.takeIf { it > 0 }
             ?: measuredFormat.sampleRateHz?.takeIf { it > 0 }
             ?: measuredInput.sampleRateHz?.takeIf { it > 0 }
-            ?: NerdStats.current.value?.sampleRateHz?.takeIf { it > 0 }
-            ?: AudioOutputStatus.current.value.actualSampleRateHz?.takeIf { it > 0 }
-            ?: AudioOutputStatus.current.value.negotiationResult?.output?.sampleRateHz?.takeIf { it > 0 }
-
-        if (sampleRate == null || sampleRate <= 0) {
-            return null
-        }
+            ?: lastReportedSampleRateHz()
+            ?: return null
 
         val channels = format.channelCount.takeIf { it > 0 }
             ?: inputFormat.channelCount.takeIf { it > 0 }
             ?: measuredFormat.channels?.takeIf { it > 0 }
             ?: measuredInput.channels?.takeIf { it > 0 }
-            ?: NerdStats.current.value?.channels?.takeIf { it > 0 }
-            ?: AudioOutputStatus.current.value.negotiationResult?.output?.channelCount?.takeIf { it > 0 }
+            ?: lastReportedChannelCount()
             ?: 2
         val bitDepth = measuredFormat.bitDepth
             ?: measuredInput.bitDepth
