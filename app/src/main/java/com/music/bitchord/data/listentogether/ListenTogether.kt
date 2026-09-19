@@ -199,16 +199,16 @@ object ListenTogether {
     val customServerUrl: StateFlow<String> = _customServer.asStateFlow()
 
     /**
-     * The built-in party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
+     * The default party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
      * in `local.properties` or build environment.
      */
-    val builtInServer: String = normalizeServerBase(BuildConfig.LISTEN_TOGETHER_SERVER)
+    val defaultServer: String = normalizeServerBase(BuildConfig.LISTEN_TOGETHER_SERVER)
 
     /**
      * The dynamic server currently determined to be healthy and available for IDLE operations.
-     * Probes custom server first if configured; falls back to [builtInServer] if custom is down.
+     * Probes custom server first if configured; falls back to [defaultServer] if custom is down.
      */
-    private val _effectiveIdleServer = MutableStateFlow(builtInServer)
+    private val _effectiveIdleServer = MutableStateFlow(defaultServer)
     fun effectiveIdleServerBase(): String = _effectiveIdleServer.value
 
     /**
@@ -219,13 +219,13 @@ object ListenTogether {
     private var activePartyServerBase: String? = null
     fun activePartyServerBase(): String? = activePartyServerBase
 
-    /** Whether idle operations are currently falling back to the built-in server. */
-    val isUsingBuiltInFallback: Boolean
+    /** Whether idle operations are currently falling back to the default server. */
+    val isUsingDefaultFallback: Boolean
         get() {
             val configured = normalizeServerBase(_customServer.value)
             return configured.isNotBlank() &&
-                effectiveIdleServerBase() == builtInServer &&
-                configured != builtInServer
+                effectiveIdleServerBase() == defaultServer &&
+                configured != defaultServer
         }
 
     /** Whether a party can be reached at all — a built-in or a custom address. */
@@ -291,23 +291,23 @@ object ListenTogether {
     suspend fun computeHealthResolution(
         customServer: String,
         probeCustom: suspend () -> Boolean,
-        probeBuiltIn: suspend () -> Boolean,
+        probeDefault: suspend () -> Boolean,
     ): HealthResolution {
         val custom = normalizeServerBase(customServer)
         val hasCustom = custom.isNotBlank()
         return if (hasCustom) {
             if (probeCustom()) {
                 HealthResolution(resolvedServer = custom, health = Health.ONLINE, isFallback = false)
-            } else if (probeBuiltIn()) {
-                HealthResolution(resolvedServer = builtInServer, health = Health.ONLINE, isFallback = true)
+            } else if (probeDefault()) {
+                HealthResolution(resolvedServer = defaultServer, health = Health.ONLINE, isFallback = true)
             } else {
-                HealthResolution(resolvedServer = builtInServer, health = Health.OFFLINE, isFallback = false)
+                HealthResolution(resolvedServer = defaultServer, health = Health.OFFLINE, isFallback = false)
             }
         } else {
-            if (probeBuiltIn()) {
-                HealthResolution(resolvedServer = builtInServer, health = Health.ONLINE, isFallback = false)
+            if (probeDefault()) {
+                HealthResolution(resolvedServer = defaultServer, health = Health.ONLINE, isFallback = false)
             } else {
-                HealthResolution(resolvedServer = builtInServer, health = Health.OFFLINE, isFallback = false)
+                HealthResolution(resolvedServer = defaultServer, health = Health.OFFLINE, isFallback = false)
             }
         }
     }
@@ -328,9 +328,9 @@ object ListenTogether {
                         probeStart = ServerClock.localNowMs()
                         probeHealth(custom)
                     },
-                    probeBuiltIn = {
+                    probeDefault = {
                         probeStart = ServerClock.localNowMs()
-                        probeHealth(builtInServer)
+                        probeHealth(defaultServer)
                     },
                 )
 
@@ -376,7 +376,7 @@ object ListenTogether {
         _effectiveIdleServer.value = if (_customServer.value.isNotBlank()) {
             normalizeServerBase(_customServer.value)
         } else {
-            builtInServer
+            defaultServer
         }
 
         val code = prefs.getString(KEY_CODE, null)
@@ -436,7 +436,7 @@ object ListenTogether {
         releaseStaleSlotOnServer(server, code, held)
     }
 
-    /** Points this install at another server, or back at the built-in one if blank. */
+    /** Points this install at another server, or back at the default one if blank. */
     fun setCustomServerUrl(value: String) {
         val cleaned = normalizeServerBase(value)
         _customServer.value = cleaned
@@ -477,9 +477,9 @@ object ListenTogether {
 
         val failure = attempt.exceptionOrNull() ?: return@withLock Result.failure(IllegalStateException("Unknown create failure"))
 
-        if (normalizeServerBase(primary) != builtInServer && isEligibleForFallback(failure)) {
-            Log.w(TAG, "createParty failed on custom server, falling back to built-in: ${redact(failure.message)}")
-            val fallbackNormalized = resolveHttpBase(builtInServer)
+        if (normalizeServerBase(primary) != defaultServer && isEligibleForFallback(failure)) {
+            Log.w(TAG, "createParty failed on custom server, falling back to default: ${redact(failure.message)}")
+            val fallbackNormalized = resolveHttpBase(defaultServer)
             val fallbackAttempt = runCatching {
                 doCreateOnServer(fallbackNormalized, nickname, maxMembers)
             }
@@ -1131,10 +1131,10 @@ object ListenTogether {
         value.trim().trimEnd('/')
 
     /**
-     * Resolves the given custom server (or built-in server if blank) to a fully qualified HTTP base URL.
+     * Resolves the given custom server (or default server if blank) to a fully qualified HTTP base URL.
      */
     private fun resolveHttpBase(server: String): String {
-        val raw = normalizeServerBase(server).ifBlank { builtInServer }
+        val raw = normalizeServerBase(server).ifBlank { defaultServer }
         if (raw.isBlank()) return ""
         return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
     }
@@ -1151,7 +1151,7 @@ object ListenTogether {
     private fun redact(text: String?): String {
         var out = text.orEmpty()
         if (out.isEmpty()) return out
-        listOfNotNull(builtInServer, _customServer.value, activePartyServerBase)
+        listOfNotNull(defaultServer, _customServer.value, activePartyServerBase)
             .filter { it.isNotBlank() }
             .flatMap { listOf(it, it.substringAfter("://")) }
             .sortedByDescending(String::length)

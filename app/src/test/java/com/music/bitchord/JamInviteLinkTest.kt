@@ -116,14 +116,14 @@ class JamInviteLinkTest {
     }
 
     // -------------------------------------------------------------------------
-    // Architectural Invariants (Listen Together Built-in Fallback & Server Routing)
+    // Architectural Invariants (Listen Together Default Fallback & Server Routing)
     // -------------------------------------------------------------------------
 
     @Test
-    fun `invariant 1 built-in server generates canonical invite`() {
+    fun `invariant 1 default server generates canonical invite`() {
         val code = "JAM001"
-        val activePartyHost = ListenTogether.builtInServer
-        val link = if (activePartyHost == ListenTogether.builtInServer) {
+        val activePartyHost = ListenTogether.defaultServer
+        val link = if (activePartyHost == ListenTogether.defaultServer) {
             JamInviteLink.url(code, null)
         } else {
             JamInviteLink.url(code, activePartyHost)
@@ -132,10 +132,10 @@ class JamInviteLinkTest {
     }
 
     @Test
-    fun `invariant 2 custom server does not masquerade as built-in`() {
+    fun `invariant 2 custom server does not masquerade as default`() {
         val code = "JAM002"
         val customHost = "https://custom.jam.example.com"
-        val link = if (customHost == ListenTogether.builtInServer) {
+        val link = if (customHost == ListenTogether.defaultServer) {
             JamInviteLink.url(code, null)
         } else {
             JamInviteLink.url(code, customHost)
@@ -148,7 +148,7 @@ class JamInviteLinkTest {
     fun `invariant 3 active party authority is distinct from idle fallback`() {
         // activePartyServerBase holds authority while in party and is decoupled from idle fallback state
         val partyHost = "https://party-host.example.com"
-        val idleFallbackHost = ListenTogether.builtInServer
+        val idleFallbackHost = ListenTogether.defaultServer
 
         // A party active on partyHost must retain its authority regardless of idle fallback
         assertNotEquals(partyHost, idleFallbackHost)
@@ -164,36 +164,36 @@ class JamInviteLinkTest {
         assertEquals("https://target.party.com", parsed?.serverUrl)
 
         // Target server is normalized directly, bypassing any idle fallback logic
-        val targetBase = ListenTogether.normalizeServerBase(parsed!!.serverUrl!!).ifBlank { ListenTogether.builtInServer }
+        val targetBase = ListenTogether.normalizeServerBase(parsed!!.serverUrl!!).ifBlank { ListenTogether.defaultServer }
         assertEquals("https://target.party.com", targetBase)
     }
 
     @Test
     fun `invariant 5 fallback preserves user custom server preference`() = runBlocking {
-        // When custom server probe fails, resolution selects builtInServer with isFallback = true
+        // When custom server probe fails, resolution selects defaultServer with isFallback = true
         val resolution = ListenTogether.computeHealthResolution(
             customServer = "https://user-custom.example.com",
             probeCustom = { false },
-            probeBuiltIn = { true },
+            probeDefault = { true },
         )
-        assertEquals(ListenTogether.builtInServer, resolution.resolvedServer)
+        assertEquals(ListenTogether.defaultServer, resolution.resolvedServer)
         assertEquals(ListenTogether.Health.ONLINE, resolution.health)
         assertTrue(resolution.isFallback)
         // Notice the user's input remains "https://user-custom.example.com" — never overwritten
     }
 
     @Test
-    fun `invariant 6 create fallback commits built-in server`() {
-        // When createParty falls back from custom to built-in, the committed host is builtInServer
+    fun `invariant 6 create fallback commits default server`() {
+        // When createParty falls back from custom to default, the committed host is defaultServer
         val customServer = "https://failing-custom.example.com"
-        val fallbackServer = ListenTogether.builtInServer
-        assertTrue(ListenTogether.normalizeServerBase(customServer) != ListenTogether.builtInServer)
+        val fallbackServer = ListenTogether.defaultServer
+        assertTrue(ListenTogether.normalizeServerBase(customServer) != ListenTogether.defaultServer)
         val committedHostOnFallback = fallbackServer
-        assertEquals(ListenTogether.builtInServer, committedHostOnFallback)
+        assertEquals(ListenTogether.defaultServer, committedHostOnFallback)
 
-        // Also verify that primary == builtInServer will not trigger fallback
-        val primaryIsBuiltIn = ListenTogether.normalizeServerBase(fallbackServer) != ListenTogether.builtInServer
-        assertFalse(primaryIsBuiltIn)
+        // Also verify that primary == defaultServer will not trigger fallback
+        val primaryIsDefault = ListenTogether.normalizeServerBase(fallbackServer) != ListenTogether.defaultServer
+        assertFalse(primaryIsDefault)
     }
 
     @Test
@@ -223,7 +223,7 @@ class JamInviteLinkTest {
         val resolution = ListenTogether.computeHealthResolution(
             customServer = "https://recovering-custom.example.com",
             probeCustom = { true },
-            probeBuiltIn = { true },
+            probeDefault = { true },
         )
         assertEquals("https://recovering-custom.example.com", resolution.resolvedServer)
         assertEquals(ListenTogether.Health.ONLINE, resolution.health)
@@ -231,31 +231,31 @@ class JamInviteLinkTest {
     }
 
     @Test
-    fun `invariant 9 built-in down with custom healthy uses custom`() = runBlocking {
-        // Custom is healthy even if built-in is down -> ONLINE on custom
-        var builtInProbed = false
+    fun `invariant 9 default server down with custom healthy uses custom`() = runBlocking {
+        // Custom is healthy even if default server is down -> ONLINE on custom
+        var defaultProbed = false
         val resolution = ListenTogether.computeHealthResolution(
             customServer = "https://working-custom.example.com",
             probeCustom = { true },
-            probeBuiltIn = {
-                builtInProbed = true
+            probeDefault = {
+                defaultProbed = true
                 false
             },
         )
         assertEquals("https://working-custom.example.com", resolution.resolvedServer)
         assertEquals(ListenTogether.Health.ONLINE, resolution.health)
         assertFalse(resolution.isFallback)
-        assertFalse("Built-in should not be probed when custom is healthy", builtInProbed)
+        assertFalse("Default server should not be probed when custom is healthy", defaultProbed)
     }
 
     @Test
-    fun `invariant 10 built-in down with no custom reports offline`() = runBlocking {
+    fun `invariant 10 default server down with no custom reports offline`() = runBlocking {
         val resolution = ListenTogether.computeHealthResolution(
             customServer = "",
             probeCustom = { true },
-            probeBuiltIn = { false },
+            probeDefault = { false },
         )
-        assertEquals(ListenTogether.builtInServer, resolution.resolvedServer)
+        assertEquals(ListenTogether.defaultServer, resolution.resolvedServer)
         assertEquals(ListenTogether.Health.OFFLINE, resolution.health)
         assertFalse(resolution.isFallback)
     }

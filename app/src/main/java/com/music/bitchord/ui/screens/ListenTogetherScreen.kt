@@ -362,7 +362,7 @@ fun ListenTogetherScreen(
                     val host = requireNotNull(ListenTogether.activePartyServerBase()) {
                         "activePartyServerBase must not be null while in a party"
                     }
-                    val link = if (host == ListenTogether.builtInServer) {
+                    val link = if (host == ListenTogether.defaultServer) {
                         JamInviteLink.url(code, null)
                     } else {
                         JamInviteLink.url(code, host)
@@ -415,10 +415,10 @@ fun ListenTogetherScreen(
                     PillTextField(
                         value = serverInput,
                         onValueChange = { serverInput = it },
-                        // Never the built-in address, even as a hint: this box
+                        // Never the default address, even as a hint: this box
                         // exists to take somebody else's server, and the one
                         // this build uses is not shown anywhere.
-                        placeholder = stringResource(R.string.listen_together_using_builtin),
+                        placeholder = stringResource(R.string.listen_together_using_default),
                         // Not the field's own default: the card it is sitting in
                         // is surfaceVariant too, so the default would paint the
                         // box in exactly the colour behind it.
