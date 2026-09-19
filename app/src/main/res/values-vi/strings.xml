@@ -613,6 +613,7 @@
     <string name="running">Đang chạy</string>
     <string name="automix_analysis_status">Automix · bài này: %1$s · tiếp theo: %2$s</string>
     <string name="automix_not_supported_video">Automix không được hỗ trợ trên các bài hát dạng video</string>
+    <string name="automix_stopped_in_party">Automix: đã dừng trong Listen together</string>
     <string name="analysis_complete">đã phân tích</string>
     <string name="analysis_refining">đã phân tích, đang tinh chỉnh…</string>
     <string name="analysis_in_progress">đang phân tích…</string>
@@ -1091,5 +1092,8 @@
     <string name="listen_together_switch_failed_stayed_in_party">Couldn’t join party: %1$s. Remaining in party %2$s.</string>
     <string name="listen_together_switch_failed">Couldn’t join party: %1$s.</string>
     <string name="listen_together_open_count">Listening together · %1$d</string>
+    <string name="audio_pipeline_subtitle">Live signal path, decoder to output</string>
+    <string name="song_added_to_playlist">Added to playlist</string>
+    <string name="song_already_in_playlist">Already in playlist</string>
 
 </resources>
