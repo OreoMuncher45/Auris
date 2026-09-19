@@ -2,6 +2,7 @@ package com.music.bitchord.ui.screens
 
 import android.content.Intent
 import android.text.format.DateFormat
+import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -404,6 +405,18 @@ fun ListenTogetherScreen(
             footer = stringResource(R.string.listen_together_custom_server_footer),
         ) {
             Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
+                val saveServerUrl: () -> Unit = {
+                    val trimmed = serverInput.trim().trimEnd('/')
+                    if (trimmed != customServer) {
+                        ListenTogether.setCustomServerUrl(trimmed)
+                        val messageRes = if (trimmed.isEmpty()) {
+                            R.string.listen_together_switched_to_default
+                        } else {
+                            R.string.listen_together_custom_server_saved
+                        }
+                        Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         Icons.Rounded.Dns,
@@ -433,7 +446,7 @@ fun ListenTogetherScreen(
                             imeAction = ImeAction.Done,
                         ),
                         keyboardActions = KeyboardActions(
-                            onDone = { ListenTogether.setCustomServerUrl(serverInput) },
+                            onDone = { saveServerUrl() },
                         ),
                         modifier = Modifier.weight(1f),
                     )
@@ -443,7 +456,7 @@ fun ListenTogetherScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        TextButton(onClick = { ListenTogether.setCustomServerUrl(serverInput) }) {
+                        TextButton(onClick = saveServerUrl) {
                             Text(stringResource(R.string.save))
                         }
                     }
