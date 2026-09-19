@@ -254,6 +254,19 @@ object AudioOutputStatus {
             directPlaybackSupported = result.route.directSupport.isDirectSupported,
             directPlaybackSelected = result.output.isDirect && result.output.transport != TransportType.DIRECT_USB,
             directPlaybackDetail = result.route.directSupport.description,
+            directSupport = result.route.directSupport,
+            deviceName = if (result.route.deviceName.isNotBlank()) result.route.deviceName else current.value.deviceName,
+            isUsb = result.route.kind == AudioRouting.Kind.USB || current.value.isUsb,
+            sampleRatesHz = if (result.route.advertisedSampleRates.isNotEmpty()) {
+                result.route.advertisedSampleRates.toIntArray()
+            } else {
+                current.value.sampleRatesHz
+            },
+            encodings = if (result.route.advertisedEncodings.isNotEmpty()) {
+                result.route.advertisedEncodings.toIntArray()
+            } else {
+                current.value.encodings
+            },
             bluetoothTelemetry = result.route.bluetoothTelemetry,
             fallbackReason = result.output.fallbackReason,
             fallbackDetail = result.output.fallbackDetail,
@@ -306,14 +319,19 @@ object AudioOutputStatus {
             )
         }
 
+        val directSupport = snapshot.directSupport
+            ?: snapshot.negotiationResult?.route?.directSupport
+
+        val directSupported = directSupport?.isDirectSupported == true
+
         val requestedDirect = snapshot.requestedTransportType == TransportType.AUDIO_TRACK_DIRECT ||
             snapshot.directPlaybackSelected ||
-            (snapshot.directSupport?.isDirectSupported == true && snapshot.routeKind != AudioRouting.Kind.PHONE)
+            snapshot.negotiationResult?.output?.isDirect == true ||
+            (directSupported && snapshot.routeKind != AudioRouting.Kind.PHONE)
 
         val sampleRate = snapshot.actualSampleRateHz
             ?: snapshot.negotiationResult?.output?.sampleRateHz
             ?: snapshot.negotiationResult?.source?.sampleRateHz
-            ?: 48000
 
         val encoding = snapshot.actualEncoding
             ?: when (snapshot.negotiationResult?.output?.encoding) {
@@ -340,27 +358,41 @@ object AudioOutputStatus {
                 )
             }
             AudioRouting.Kind.USB -> {
-                val directSupported = snapshot.directSupport?.isDirectSupported == true
-                val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() ||
-                    snapshot.sampleRatesHz.contains(sampleRate) ||
-                    directSupported
-                val encodingSupported = snapshot.encodings.isEmpty() ||
-                    (encoding != null && snapshot.encodings.contains(encoding)) ||
-                    directSupported
+                val directSupportObj = snapshot.directSupport
+                    ?: snapshot.negotiationResult?.route?.directSupport
+                val isDirectSupported = directSupportObj?.isDirectSupported == true
+
+                val sampleRates = if (snapshot.sampleRatesHz.isNotEmpty()) {
+                    snapshot.sampleRatesHz
+                } else {
+                    snapshot.negotiationResult?.route?.advertisedSampleRates?.toIntArray() ?: intArrayOf()
+                }
+                val encodings = if (snapshot.encodings.isNotEmpty()) {
+                    snapshot.encodings
+                } else {
+                    snapshot.negotiationResult?.route?.advertisedEncodings?.toIntArray() ?: intArrayOf()
+                }
+
+                val sampleRateSupported = sampleRates.isEmpty() ||
+                    (sampleRate != null && sampleRates.contains(sampleRate)) ||
+                    isDirectSupported
+                val encodingSupported = encodings.isEmpty() ||
+                    (encoding != null && encodings.contains(encoding)) ||
+                    isDirectSupported
                 val isFloatPcm = encoding == AudioFormat.ENCODING_PCM_FLOAT
 
-                val maxUsbRate = snapshot.sampleRatesHz.maxOrNull() ?: 48000
+                val maxUsbRate = sampleRates.maxOrNull() ?: 48000
                 val usbEnc = when {
-                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_32BIT) -> "PCM32"
-                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED) -> "PCM24"
-                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_FLOAT) -> "Float32"
-                    snapshot.encodings.contains(AudioFormat.ENCODING_PCM_16BIT) -> "PCM16"
+                    encodings.contains(AudioFormat.ENCODING_PCM_32BIT) -> "PCM32"
+                    encodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED) -> "PCM24"
+                    encodings.contains(AudioFormat.ENCODING_PCM_FLOAT) -> "Float32"
+                    encodings.contains(AudioFormat.ENCODING_PCM_16BIT) -> "PCM16"
                     else -> "PCM16"
                 }
                 val usbEndpointStr = "$usbEnc / $maxUsbRate Hz"
 
                 val isGenuineDirect = requestedDirect &&
-                    directSupported &&
+                    isDirectSupported &&
                     sampleRateSupported &&
                     encodingSupported &&
                     !isFloatPcm
@@ -376,7 +408,7 @@ object AudioOutputStatus {
                         halFormat = null,
                         usbEndpointFormat = usbEndpointStr,
                     )
-                } else if (requestedDirect || snapshot.directSupport?.isDirectSupported == true) {
+                } else if (requestedDirect || isDirectSupported) {
                     snapshot.copy(
                         transportType = TransportType.AUDIO_TRACK,
                         directPlaybackRequested = true,
@@ -415,9 +447,15 @@ object AudioOutputStatus {
                 )
             }
             else -> {
-                val sampleRateSupported = snapshot.sampleRatesHz.isEmpty() || snapshot.sampleRatesHz.contains(sampleRate)
+                val directSupportObj = snapshot.directSupport ?: snapshot.negotiationResult?.route?.directSupport
+                val sampleRates = if (snapshot.sampleRatesHz.isNotEmpty()) {
+                    snapshot.sampleRatesHz
+                } else {
+                    snapshot.negotiationResult?.route?.advertisedSampleRates?.toIntArray() ?: intArrayOf()
+                }
+                val sampleRateSupported = sampleRates.isEmpty() || (sampleRate != null && sampleRates.contains(sampleRate))
                 val isGenuineDirect = requestedDirect &&
-                    snapshot.directSupport?.isDirectSupported == true &&
+                    directSupportObj?.isDirectSupported == true &&
                     sampleRateSupported
 
                 if (isGenuineDirect) {
