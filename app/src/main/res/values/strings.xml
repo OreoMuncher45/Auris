@@ -906,6 +906,20 @@
     <string name="listen_together_official_server_dialog_message">This party is hosted on the official BitChord server.\n\nDo you want to switch back to the official server and join party %1$s?</string>
     <string name="listen_together_switch_failed_stayed_in_party">Couldn’t join party: %1$s. Remaining in party %2$s.</string>
     <string name="listen_together_switch_failed">Couldn’t join party: %1$s.</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">Invalid server URL. Please enter a valid address (e.g. https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">Server URLs cannot contain spaces</string>
+    <string name="listen_together_err_no_path">Server URL must not include a path</string>
+    <string name="listen_together_err_no_query">Server URL must not include query parameters</string>
+    <string name="listen_together_err_no_fragment">Server URL must not include fragments</string>
+    <string name="listen_together_err_invalid_port">Server port must be between 1 and 65535</string>
+    <string name="listen_together_custom_server_connected">Connected to custom server</string>
+    <string name="listen_together_custom_server_unreachable_fallback">Custom server unreachable. Using default server fallback.</string>
+    <string name="listen_together_status_custom_online">Connected to custom server · %1$d ms</string>
+    <string name="listen_together_status_custom_fallback">Custom server unreachable · Using default fallback (%1$d ms)</string>
+    <string name="listen_together_status_all_offline">Both custom server and default server are offline</string>
+    <string name="listen_together_top_bar_fallback">Fallback · %1$s</string>
 
     <string name="vietnamese">Vietnamese</string>
 

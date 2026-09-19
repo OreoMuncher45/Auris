@@ -2,6 +2,13 @@ package com.music.bitchord
 
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.ProbeResult
+import com.music.bitchord.data.listentogether.ServerConnectionState
+import com.music.bitchord.data.listentogether.ServerUrlError
+import com.music.bitchord.data.listentogether.ServerUrlValidationResult
+import com.music.bitchord.data.listentogether.health
+import com.music.bitchord.data.listentogether.isFallback
+import com.music.bitchord.data.listentogether.latencyMs
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -258,6 +265,249 @@ class JamInviteLinkTest {
         assertEquals(ListenTogether.defaultServer, resolution.resolvedServer)
         assertEquals(ListenTogether.Health.OFFLINE, resolution.health)
         assertFalse(resolution.isFallback)
+    }
+
+    // -------------------------------------------------------------------------
+    // URL Validation Matrix Tests
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `url validation matrix - valid inputs`() {
+        fun assertValid(input: String, expected: String) {
+            val result = ListenTogether.parseAndNormalizeServerUrl(input)
+            assertEquals("Expected Valid('$expected') for input '$input'", ServerUrlValidationResult.Valid(expected), result)
+        }
+
+        // Empty & surrounding whitespace
+        assertValid("", "")
+        assertValid("  ", "")
+        assertValid(" my-server.com ", "https://my-server.com")
+
+        // Trailing slashes
+        assertValid("https://my-server.com/", "https://my-server.com")
+        assertValid("https://my-server.com///", "https://my-server.com")
+
+        // Schemes & case normalization
+        assertValid("HTTP://my-server.com", "http://my-server.com")
+        assertValid("HTTP://LOCALHOST:8080", "http://localhost:8080")
+        assertValid("HTTPS://EXAMPLE.COM", "https://example.com")
+        assertValid("http://localhost", "http://localhost")
+        assertValid("http://127.0.0.1:8080", "http://127.0.0.1:8080")
+
+        // IPv6
+        assertValid("http://[::1]", "http://[::1]")
+        assertValid("http://[::1]:8080", "http://[::1]:8080")
+        assertValid("HTTP://[2001:DB8::1]:8080", "http://[2001:db8::1]:8080")
+    }
+
+    @Test
+    fun `url validation matrix - invalid inputs`() {
+        fun assertInvalid(input: String, expectedError: ServerUrlError) {
+            val result = ListenTogether.parseAndNormalizeServerUrl(input)
+            assertEquals("Expected Invalid($expectedError) for input '$input'", ServerUrlValidationResult.Invalid(expectedError), result)
+        }
+
+        // Whitespace (internal)
+        assertInvalid("http://foo bar.com", ServerUrlError.Whitespace)
+        assertInvalid("random shit", ServerUrlError.Whitespace)
+
+        // Paths
+        assertInvalid("https://example.com/path", ServerUrlError.HasPath)
+        assertInvalid("https://example.com//path", ServerUrlError.HasPath)
+
+        // Query & Fragment
+        assertInvalid("https://example.com?foo=bar", ServerUrlError.HasQuery)
+        assertInvalid("https://example.com#anchor", ServerUrlError.HasFragment)
+
+        // Host errors
+        assertInvalid("https://", ServerUrlError.InvalidHost)
+        assertInvalid("http://.", ServerUrlError.InvalidHost)
+        assertInvalid("http://foo_bar.com", ServerUrlError.InvalidHost)
+        assertInvalid("https://-example.com", ServerUrlError.InvalidHost)
+        assertInvalid("https://example-.com", ServerUrlError.InvalidHost)
+        assertInvalid("https://foo.-bar.com", ServerUrlError.InvalidHost)
+        assertInvalid("https://foo..com", ServerUrlError.InvalidHost)
+        assertInvalid("https://.foo.com", ServerUrlError.InvalidHost)
+        assertInvalid("https://foo.com.", ServerUrlError.InvalidHost)
+        assertInvalid("randomshit", ServerUrlError.InvalidHost)
+        assertInvalid("example", ServerUrlError.InvalidHost)
+
+        // Ports
+        assertInvalid("http://localhost:99999", ServerUrlError.InvalidPort)
+    }
+
+    // -------------------------------------------------------------------------
+    // Probe Order Invariant Tests
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `probe order invariant - custom succeeds skips default probe`() = runBlocking {
+        var defaultProbed = false
+        val (effective, state) = ListenTogether.resolveServerConnection(
+            customServer = "https://healthy-custom.example.com",
+            defaultServer = "https://default.example.com",
+            probeCustom = { ProbeResult(isOnline = true, latencyMs = 42L) },
+            probeDefault = {
+                defaultProbed = true
+                ProbeResult(isOnline = true, latencyMs = 99L)
+            },
+        )
+        assertFalse("Default server must NEVER be probed when custom succeeds", defaultProbed)
+        assertEquals("https://healthy-custom.example.com", effective)
+        assertEquals(ServerConnectionState.CustomOnline(42L), state)
+        assertEquals(42L, state.latencyMs)
+        assertFalse(state.isFallback)
+        assertEquals(ListenTogether.Health.ONLINE, state.health)
+    }
+
+    @Test
+    fun `probe order invariant - custom fails probes default exactly once`() = runBlocking {
+        var defaultProbeCount = 0
+        val (effective, state) = ListenTogether.resolveServerConnection(
+            customServer = "https://failing-custom.example.com",
+            defaultServer = "https://default.example.com",
+            probeCustom = { ProbeResult(isOnline = false) },
+            probeDefault = {
+                defaultProbeCount++
+                ProbeResult(isOnline = true, latencyMs = 115L)
+            },
+        )
+        assertEquals("Default server must be probed exactly once", 1, defaultProbeCount)
+        assertEquals("https://default.example.com", effective)
+        assertEquals(ServerConnectionState.CustomFallback(115L), state)
+        assertEquals(115L, state.latencyMs)
+        assertTrue(state.isFallback)
+        assertEquals(ListenTogether.Health.ONLINE, state.health)
+    }
+
+    @Test
+    fun `probe order invariant - custom equal to default probes once`() = runBlocking {
+        var customProbeCount = 0
+        var defaultProbeCount = 0
+        val (effective, state) = ListenTogether.resolveServerConnection(
+            customServer = "https://default.example.com",
+            defaultServer = "https://default.example.com",
+            probeCustom = {
+                customProbeCount++
+                ProbeResult(isOnline = true, latencyMs = 50L)
+            },
+            probeDefault = {
+                defaultProbeCount++
+                ProbeResult(isOnline = true, latencyMs = 50L)
+            },
+        )
+        assertEquals("Custom probe must not be called when custom matches default", 0, customProbeCount)
+        assertEquals("Default probe must be called exactly once", 1, defaultProbeCount)
+        assertEquals("https://default.example.com", effective)
+        assertEquals(ServerConnectionState.DefaultOnline(50L), state)
+        assertFalse(state.isFallback)
+    }
+
+    // -------------------------------------------------------------------------
+    // Latency & Resolution Invariants
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `resolution invariant - both offline reports offline`() = runBlocking {
+        val (effective, state) = ListenTogether.resolveServerConnection(
+            customServer = "https://dead-custom.example.com",
+            defaultServer = "https://default.example.com",
+            probeCustom = { ProbeResult(isOnline = false) },
+            probeDefault = { ProbeResult(isOnline = false) },
+        )
+        assertEquals("https://default.example.com", effective)
+        assertEquals(ServerConnectionState.Offline, state)
+        assertNull(state.latencyMs)
+        assertFalse(state.isFallback)
+        assertEquals(ListenTogether.Health.OFFLINE, state.health)
+    }
+
+    // -------------------------------------------------------------------------
+    // 4-Phase Configuration vs Effective Server Invariant
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `4-phase configuration immutability invariant`() = runBlocking {
+        val userConfiguredCustom = "https://user-custom.example.com"
+        val defaultServer = "https://default.example.com"
+        var persistedPreference = userConfiguredCustom
+
+        // Phase 1: Custom Online
+        val (eff1, state1) = ListenTogether.resolveServerConnection(
+            customServer = persistedPreference,
+            defaultServer = defaultServer,
+            probeCustom = { ProbeResult(isOnline = true, latencyMs = 40L) },
+            probeDefault = { error("Should not be probed") },
+        )
+        assertEquals(userConfiguredCustom, eff1)
+        assertEquals(ServerConnectionState.CustomOnline(40L), state1)
+        assertEquals(userConfiguredCustom, persistedPreference)
+
+        // Phase 2: Custom Offline, Default Online (Fallback)
+        val (eff2, state2) = ListenTogether.resolveServerConnection(
+            customServer = persistedPreference,
+            defaultServer = defaultServer,
+            probeCustom = { ProbeResult(isOnline = false) },
+            probeDefault = { ProbeResult(isOnline = true, latencyMs = 95L) },
+        )
+        assertEquals(defaultServer, eff2)
+        assertEquals(ServerConnectionState.CustomFallback(95L), state2)
+        // INVARIANT: Persisted preference remains unchanged!
+        assertEquals("Persisted preference must NOT be overwritten by fallback", userConfiguredCustom, persistedPreference)
+
+        // Phase 3: Both Custom and Default Offline
+        val (eff3, state3) = ListenTogether.resolveServerConnection(
+            customServer = persistedPreference,
+            defaultServer = defaultServer,
+            probeCustom = { ProbeResult(isOnline = false) },
+            probeDefault = { ProbeResult(isOnline = false) },
+        )
+        assertEquals(defaultServer, eff3)
+        assertEquals(ServerConnectionState.Offline, state3)
+        assertEquals("Persisted preference must NOT be cleared when offline", userConfiguredCustom, persistedPreference)
+
+        // Phase 4: Custom Recovers Online
+        val (eff4, state4) = ListenTogether.resolveServerConnection(
+            customServer = persistedPreference,
+            defaultServer = defaultServer,
+            probeCustom = { ProbeResult(isOnline = true, latencyMs = 35L) },
+            probeDefault = { error("Should not be probed") },
+        )
+        assertEquals(userConfiguredCustom, eff4)
+        assertEquals(ServerConnectionState.CustomOnline(35L), state4)
+        assertEquals(userConfiguredCustom, persistedPreference)
+    }
+
+    // -------------------------------------------------------------------------
+    // Stale-Result Publication Barrier Invariant
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `stale-result publication barrier drops superseded resolution`() {
+        var currentEffective = "https://initial.example.com"
+        var currentState: ServerConnectionState = ServerConnectionState.Checking
+        var resolutionGeneration = 0L
+
+        // Job A starts with gen 1
+        val jobAGeneration = ++resolutionGeneration
+
+        // Job B starts with gen 2
+        val jobBGeneration = ++resolutionGeneration
+
+        // Job B completes first and publishes
+        if (jobBGeneration == resolutionGeneration) {
+            currentEffective = "https://server-b.example.com"
+            currentState = ServerConnectionState.CustomOnline(25L)
+        }
+
+        // Job A completes late and attempts to publish
+        if (jobAGeneration == resolutionGeneration) {
+            currentEffective = "https://stale-server-a.example.com"
+            currentState = ServerConnectionState.CustomOnline(999L)
+        }
+
+        assertEquals("Job A's late publication must be dropped", "https://server-b.example.com", currentEffective)
+        assertEquals(ServerConnectionState.CustomOnline(25L), currentState)
     }
 }
 

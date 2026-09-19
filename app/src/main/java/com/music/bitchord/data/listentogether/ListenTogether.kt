@@ -52,9 +52,58 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import java.net.URI
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
+
+sealed interface ServerUrlError {
+    data object Whitespace : ServerUrlError
+    data object InvalidScheme : ServerUrlError
+    data object InvalidHost : ServerUrlError
+    data object InvalidPort : ServerUrlError
+    data object HasPath : ServerUrlError
+    data object HasQuery : ServerUrlError
+    data object HasFragment : ServerUrlError
+    data object Malformed : ServerUrlError
+}
+
+sealed interface ServerUrlValidationResult {
+    data class Valid(val normalizedUrl: String) : ServerUrlValidationResult
+    data class Invalid(val error: ServerUrlError) : ServerUrlValidationResult
+}
+
+sealed interface ServerConnectionState {
+    data object Checking : ServerConnectionState
+    data class DefaultOnline(val latencyMs: Long) : ServerConnectionState
+    data class CustomOnline(val latencyMs: Long) : ServerConnectionState
+    data class CustomFallback(val latencyMs: Long) : ServerConnectionState
+    data object Offline : ServerConnectionState
+}
+
+data class ProbeResult(val isOnline: Boolean, val latencyMs: Long = 0L)
+
+val ServerConnectionState.latencyMs: Long?
+    get() = when (this) {
+        is ServerConnectionState.DefaultOnline -> latencyMs
+        is ServerConnectionState.CustomOnline -> latencyMs
+        is ServerConnectionState.CustomFallback -> latencyMs
+        ServerConnectionState.Checking, ServerConnectionState.Offline -> null
+    }
+
+val ServerConnectionState.isFallback: Boolean
+    get() = this is ServerConnectionState.CustomFallback
+
+val ServerConnectionState.health: ListenTogether.Health
+    get() = when (this) {
+        ServerConnectionState.Checking -> ListenTogether.Health.CHECKING
+        is ServerConnectionState.DefaultOnline,
+        is ServerConnectionState.CustomOnline,
+        is ServerConnectionState.CustomFallback -> ListenTogether.Health.ONLINE
+        ServerConnectionState.Offline -> ListenTogether.Health.OFFLINE
+    }
 
 /**
  * Listen together: one party, shared by up to five signed-in devices.
@@ -195,6 +244,97 @@ object ListenTogether {
      * not in a log. See [redact]. So this is the only server address the app
      * will ever show back, because it is the only one the user typed.
      */
+    fun parseAndNormalizeServerUrl(raw: String): ServerUrlValidationResult {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return ServerUrlValidationResult.Valid("")
+        if (trimmed.any { it.isWhitespace() }) return ServerUrlValidationResult.Invalid(ServerUrlError.Whitespace)
+
+        val candidate = if (trimmed.contains("://")) trimmed else "https://$trimmed"
+
+        val uri = try {
+            URI(candidate)
+        } catch (_: Exception) {
+            val authority = candidate.substringAfter("://").substringBefore("/").substringBefore("?").substringBefore("#")
+            if (authority.isEmpty()) {
+                return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+            }
+            val portStr = authority.substringAfterLast(':', "")
+            if (portStr.isNotEmpty() && portStr.all { it.isDigit() }) {
+                val portNum = portStr.toLongOrNull()
+                if (portNum != null && portNum !in 1..65535) {
+                    return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidPort)
+                }
+            }
+            return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+        }
+
+        val scheme = uri.scheme?.lowercase() ?: return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidScheme)
+        if (scheme != "http" && scheme != "https") {
+            return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidScheme)
+        }
+
+        if (!uri.rawQuery.isNullOrEmpty() || candidate.contains("?")) {
+            return ServerUrlValidationResult.Invalid(ServerUrlError.HasQuery)
+        }
+
+        if (!uri.rawFragment.isNullOrEmpty() || candidate.contains("#")) {
+            return ServerUrlValidationResult.Invalid(ServerUrlError.HasFragment)
+        }
+
+        val path = uri.rawPath.orEmpty()
+        if (path.isNotEmpty() && path.any { it != '/' }) {
+            return ServerUrlValidationResult.Invalid(ServerUrlError.HasPath)
+        }
+
+        val port = uri.port
+        if (port != -1 && port !in 1..65535) {
+            return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidPort)
+        }
+        val authority = candidate.substringAfter("://").substringBefore("/").substringBefore("?").substringBefore("#")
+        val portStr = authority.substringAfterLast(':', "")
+        if (portStr.isNotEmpty() && portStr.all { it.isDigit() } && authority.contains(":")) {
+            val portNum = portStr.toLongOrNull()
+            if (portNum != null && portNum !in 1..65535) {
+                return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidPort)
+            }
+        }
+
+        val rawHost = uri.host ?: return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+        if (rawHost.isEmpty()) return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+
+        val canonicalHost: String = when {
+            rawHost.startsWith("[") && rawHost.endsWith("]") -> {
+                val unbracketed = rawHost.substring(1, rawHost.length - 1)
+                if (!unbracketed.contains(":")) return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+                "[${unbracketed.lowercase()}]"
+            }
+            rawHost.contains(":") -> {
+                "[${rawHost.lowercase()}]"
+            }
+            rawHost.equals("localhost", ignoreCase = true) -> {
+                "localhost"
+            }
+            else -> {
+                if (rawHost.length > 253) return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+                if (rawHost.startsWith(".") || rawHost.endsWith(".")) {
+                    return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+                }
+                val labels = rawHost.split('.')
+                if (labels.size < 2) return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+                val labelRegex = Regex("^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$")
+                for (label in labels) {
+                    if (label.isEmpty() || label.length > 63 || !label.matches(labelRegex)) {
+                        return ServerUrlValidationResult.Invalid(ServerUrlError.InvalidHost)
+                    }
+                }
+                rawHost.lowercase()
+            }
+        }
+
+        val portSuffix = if (port != -1) ":$port" else ""
+        return ServerUrlValidationResult.Valid("${scheme.lowercase()}://$canonicalHost$portSuffix")
+    }
+
     private val _customServer = MutableStateFlow("")
     val customServerUrl: StateFlow<String> = _customServer.asStateFlow()
 
@@ -202,7 +342,10 @@ object ListenTogether {
      * The default party server this build ships pointed at, from `LISTEN_TOGETHER_SERVER`
      * in `local.properties` or build environment.
      */
-    val defaultServer: String = normalizeServerBase(BuildConfig.LISTEN_TOGETHER_SERVER)
+    val defaultServer: String = when (val res = parseAndNormalizeServerUrl(BuildConfig.LISTEN_TOGETHER_SERVER)) {
+        is ServerUrlValidationResult.Valid -> res.normalizedUrl
+        is ServerUrlValidationResult.Invalid -> error("Invalid BuildConfig.LISTEN_TOGETHER_SERVER: ${BuildConfig.LISTEN_TOGETHER_SERVER}")
+    }
 
     /**
      * The dynamic server currently determined to be healthy and available for IDLE operations.
@@ -222,7 +365,7 @@ object ListenTogether {
     /** Whether idle operations are currently falling back to the default server. */
     val isUsingDefaultFallback: Boolean
         get() {
-            val configured = normalizeServerBase(_customServer.value)
+            val configured = _customServer.value
             return configured.isNotBlank() &&
                 effectiveIdleServerBase() == defaultServer &&
                 configured != defaultServer
@@ -238,6 +381,9 @@ object ListenTogether {
         val latencyMs: Long = 0,
         val isFallback: Boolean = false,
     )
+
+    private val _serverConnectionState = MutableStateFlow<ServerConnectionState>(ServerConnectionState.Checking)
+    val serverConnectionState: StateFlow<ServerConnectionState> = _serverConnectionState.asStateFlow()
 
     private val _serverStatus = MutableStateFlow(ServerStatus())
     val serverStatus: StateFlow<ServerStatus> = _serverStatus.asStateFlow()
@@ -259,15 +405,19 @@ object ListenTogether {
         }
     }
 
+    const val CUSTOM_SERVER_TIMEOUT_MS = 6_000L
+    const val DEFAULT_SERVER_TIMEOUT_MS = 30_000L
+
     private var isScreenActive: Boolean = false
     private var healthMonitorJob: Job? = null
-    private val healthMutex = Mutex()
-    private var healthGeneration = 0L
+    private val resolutionMutex = Mutex()
+    private var activeResolutionJob: Job? = null
+    private var resolutionGeneration = 0L
 
     fun setScreenActive(active: Boolean) {
         isScreenActive = active
         if (active) {
-            refreshServerHealth()
+            refreshServerHealth(showChecking = false)
         }
     }
 
@@ -277,10 +427,114 @@ object ListenTogether {
             while (isActive) {
                 val delayMs = if (isScreenActive) 10_000L else 30_000L
                 delay(delayMs)
-                refreshServerHealth()
+                refreshServerHealth(showChecking = false)
             }
         }
     }
+
+    suspend fun resolveServerConnection(
+        customServer: String,
+        defaultServer: String,
+        probeCustom: suspend () -> ProbeResult,
+        probeDefault: suspend () -> ProbeResult,
+    ): Pair<String, ServerConnectionState> {
+        val normCustom = when (val res = parseAndNormalizeServerUrl(customServer)) {
+            is ServerUrlValidationResult.Valid -> res.normalizedUrl
+            is ServerUrlValidationResult.Invalid -> ""
+        }
+        val hasCustom = normCustom.isNotBlank() && normCustom != defaultServer
+
+        return if (hasCustom) {
+            val customProbe = probeCustom()
+            if (customProbe.isOnline) {
+                normCustom to ServerConnectionState.CustomOnline(customProbe.latencyMs)
+            } else {
+                val defaultProbe = probeDefault()
+                if (defaultProbe.isOnline) {
+                    // Invariant: CustomFallback latency is strictly the default server's latency
+                    defaultServer to ServerConnectionState.CustomFallback(defaultProbe.latencyMs)
+                } else {
+                    defaultServer to ServerConnectionState.Offline
+                }
+            }
+        } else {
+            val defaultProbe = probeDefault()
+            if (defaultProbe.isOnline) {
+                defaultServer to ServerConnectionState.DefaultOnline(defaultProbe.latencyMs)
+            } else {
+                defaultServer to ServerConnectionState.Offline
+            }
+        }
+    }
+
+    private suspend fun resolveServerConnectionSerialized(
+        showChecking: Boolean = false,
+        targetGeneration: Long? = null,
+    ): ServerConnectionState {
+        if (showChecking) {
+            resolutionMutex.withLock {
+                if (targetGeneration == null || targetGeneration == resolutionGeneration) {
+                    _serverConnectionState.value = ServerConnectionState.Checking
+                    _serverStatus.value = ServerStatus(Health.CHECKING)
+                }
+            }
+        }
+
+        val custom = _customServer.value
+        val (effectiveServer, state) = resolveServerConnection(
+            customServer = custom,
+            defaultServer = defaultServer,
+            probeCustom = { probeHealthWithLatency(custom, CUSTOM_SERVER_TIMEOUT_MS) },
+            probeDefault = { probeHealthWithLatency(defaultServer, DEFAULT_SERVER_TIMEOUT_MS) },
+        )
+
+        resolutionMutex.withLock {
+            if (targetGeneration == null || targetGeneration == resolutionGeneration) {
+                _effectiveIdleServer.value = effectiveServer
+                _serverConnectionState.value = state
+                _serverStatus.value = ServerStatus(
+                    health = state.health,
+                    latencyMs = state.latencyMs ?: 0L,
+                    isFallback = state.isFallback,
+                )
+            }
+        }
+        return state
+    }
+
+    fun refreshServerHealth(showChecking: Boolean = false) {
+        scope.launch {
+            val (job, _) = resolutionMutex.withLock {
+                activeResolutionJob?.cancel()
+                val nextGen = ++resolutionGeneration
+                val newJob = scope.async(start = CoroutineStart.LAZY) {
+                    resolveServerConnectionSerialized(showChecking = showChecking, targetGeneration = nextGen)
+                }
+                activeResolutionJob = newJob
+                Pair(newJob, nextGen)
+            }
+            job.start()
+        }
+    }
+
+    suspend fun probeHealthWithLatency(serverUrl: String, timeoutMs: Long): ProbeResult {
+        val raw = resolveHttpBase(serverUrl)
+        if (raw.isBlank()) return ProbeResult(isOnline = false, latencyMs = 0L)
+        val start = ServerClock.localNowMs()
+        val isOnline = runCatching {
+            http.get("$raw/healthz") {
+                timeout { requestTimeoutMillis = timeoutMs }
+            }.status.isSuccess()
+        }.getOrElse {
+            Log.w(TAG, "health check failed for ${redact(raw)}: ${redact(it.message)}")
+            false
+        }
+        val elapsed = ServerClock.localNowMs() - start
+        return ProbeResult(isOnline = isOnline, latencyMs = if (isOnline) elapsed.coerceAtLeast(0L) else 0L)
+    }
+
+    private suspend fun probeHealth(baseUrl: String): Boolean =
+        probeHealthWithLatency(baseUrl, HEALTH_TIMEOUT_MS).isOnline
 
     data class HealthResolution(
         val resolvedServer: String,
@@ -294,7 +548,7 @@ object ListenTogether {
         probeDefault: suspend () -> Boolean,
     ): HealthResolution {
         val custom = normalizeServerBase(customServer)
-        val hasCustom = custom.isNotBlank()
+        val hasCustom = custom.isNotBlank() && custom != defaultServer
         return if (hasCustom) {
             if (probeCustom()) {
                 HealthResolution(resolvedServer = custom, health = Health.ONLINE, isFallback = false)
@@ -312,57 +566,6 @@ object ListenTogether {
         }
     }
 
-    fun refreshServerHealth() {
-        scope.launch {
-            healthMutex.withLock {
-                val generation = synchronized(this@ListenTogether) { ++healthGeneration }
-                val custom = normalizeServerBase(_customServer.value)
-
-                _serverStatus.value = ServerStatus(Health.CHECKING)
-                val startedAt = ServerClock.localNowMs()
-                var probeStart = startedAt
-
-                val resolution = computeHealthResolution(
-                    customServer = custom,
-                    probeCustom = {
-                        probeStart = ServerClock.localNowMs()
-                        probeHealth(custom)
-                    },
-                    probeDefault = {
-                        probeStart = ServerClock.localNowMs()
-                        probeHealth(defaultServer)
-                    },
-                )
-
-                val latency = if (resolution.health == Health.ONLINE) {
-                    ServerClock.localNowMs() - probeStart
-                } else 0L
-
-                if (generation == healthGeneration) {
-                    _effectiveIdleServer.value = resolution.resolvedServer
-                    _serverStatus.value = ServerStatus(
-                        health = resolution.health,
-                        latencyMs = latency,
-                        isFallback = resolution.isFallback,
-                    )
-                }
-            }
-        }
-    }
-
-    private suspend fun probeHealth(baseUrl: String): Boolean {
-        val raw = resolveHttpBase(baseUrl)
-        if (raw.isBlank()) return false
-        return runCatching {
-            http.get("$raw/healthz") {
-                timeout { requestTimeoutMillis = HEALTH_TIMEOUT_MS }
-            }.status.isSuccess()
-        }.getOrElse {
-            Log.w(TAG, "health check failed for ${redact(raw)}: ${redact(it.message)}")
-            false
-        }
-    }
-
     private lateinit var prefs: SharedPreferences
     private var token: String? = null
 
@@ -372,9 +575,14 @@ object ListenTogether {
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        _customServer.value = prefs.getString(KEY_SERVER, null)?.trim().orEmpty()
-        _effectiveIdleServer.value = if (_customServer.value.isNotBlank()) {
-            normalizeServerBase(_customServer.value)
+        val rawSaved = prefs.getString(KEY_SERVER, null)?.trim().orEmpty()
+        val normalizedSaved = when (val res = parseAndNormalizeServerUrl(rawSaved)) {
+            is ServerUrlValidationResult.Valid -> res.normalizedUrl
+            is ServerUrlValidationResult.Invalid -> ""
+        }
+        _customServer.value = normalizedSaved
+        _effectiveIdleServer.value = if (normalizedSaved.isNotBlank()) {
+            normalizedSaved
         } else {
             defaultServer
         }
@@ -392,9 +600,10 @@ object ListenTogether {
                 manager.registerDefaultNetworkCallback(
                     object : ConnectivityManager.NetworkCallback() {
                         override fun onAvailable(network: Network) {
-                            refreshServerHealth()
+                            refreshServerHealth(showChecking = false)
                         }
                         override fun onLost(network: Network) {
+                            _serverConnectionState.value = ServerConnectionState.Offline
                             _serverStatus.value = ServerStatus(Health.OFFLINE)
                         }
                         override fun onCapabilitiesChanged(
@@ -402,7 +611,7 @@ object ListenTogether {
                             capabilities: NetworkCapabilities,
                         ) {
                             if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                                refreshServerHealth()
+                                refreshServerHealth(showChecking = false)
                             }
                         }
                     }
@@ -411,7 +620,7 @@ object ListenTogether {
         }
 
         startHealthMonitor()
-        refreshServerHealth()
+        refreshServerHealth(showChecking = true)
     }
 
     /**
@@ -437,11 +646,25 @@ object ListenTogether {
     }
 
     /** Points this install at another server, or back at the default one if blank. */
-    fun setCustomServerUrl(value: String) {
-        val cleaned = normalizeServerBase(value)
-        _customServer.value = cleaned
-        prefs.edit().putString(KEY_SERVER, cleaned).apply()
-        refreshServerHealth()
+    suspend fun setCustomServerUrl(normalizedUrl: String): ServerConnectionState {
+        require(parseAndNormalizeServerUrl(normalizedUrl) == ServerUrlValidationResult.Valid(normalizedUrl)) {
+            "setCustomServerUrl accepts only canonical URLs produced by parseAndNormalizeServerUrl"
+        }
+
+        prefs.edit().putString(KEY_SERVER, normalizedUrl).apply()
+        _customServer.value = normalizedUrl
+
+        val (job, _) = resolutionMutex.withLock {
+            activeResolutionJob?.cancel()
+            val nextGen = ++resolutionGeneration
+            val newJob = scope.async(start = CoroutineStart.LAZY) {
+                resolveServerConnectionSerialized(showChecking = true, targetGeneration = nextGen)
+            }
+            activeResolutionJob = newJob
+            Pair(newJob, nextGen)
+        }
+        job.start()
+        return job.await()
     }
 
     /** Whether this device has an account it can jam as. */
@@ -619,7 +842,16 @@ object ListenTogether {
                     SwitchPartyResult.TargetFailedNoParty("Sign in to listen together.")
                 }
 
-            val targetBase = resolveHttpBase(targetCustomServer)
+            val normTarget = when (val res = parseAndNormalizeServerUrl(targetCustomServer)) {
+                is ServerUrlValidationResult.Valid -> res.normalizedUrl
+                is ServerUrlValidationResult.Invalid -> return@withContext if (_state.value.inParty) {
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Target server address is invalid.")
+                } else {
+                    SwitchPartyResult.TargetFailedNoParty("Target server address is invalid.")
+                }
+            }
+
+            val targetBase = resolveHttpBase(normTarget)
             if (targetBase.isBlank()) {
                 return@withContext if (_state.value.inParty) {
                     SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "Target server address is invalid or missing.")
@@ -677,7 +909,7 @@ object ListenTogether {
                 activePartyServerBase = targetBase
 
                 // Commit new server URL setting
-                setCustomServerUrl(targetCustomServer)
+                setCustomServerUrl(normTarget)
 
                 // Commit new party session
                 token = membership.token

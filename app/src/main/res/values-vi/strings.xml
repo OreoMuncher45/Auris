@@ -1098,5 +1098,19 @@
     <string name="song_added_to_playlist">Added to playlist</string>
     <string name="song_already_in_playlist">Already in playlist</string>
     <string name="listen_together_server_online_fallback">Trực tuyến (dự phòng mặc định) · %1$d ms</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">URL máy chủ không hợp lệ. Vui lòng nhập địa chỉ hợp lệ (ví dụ: https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">URL máy chủ không được chứa khoảng trắng</string>
+    <string name="listen_together_err_no_path">URL máy chủ không được bao gồm đường dẫn</string>
+    <string name="listen_together_err_no_query">URL máy chủ không được bao gồm tham số truy vấn</string>
+    <string name="listen_together_err_no_fragment">URL máy chủ không được bao gồm phân đoạn (fragment)</string>
+    <string name="listen_together_err_invalid_port">Cổng máy chủ phải nằm trong khoảng từ 1 đến 65535</string>
+    <string name="listen_together_custom_server_connected">Đã kết nối với máy chủ tùy chỉnh</string>
+    <string name="listen_together_custom_server_unreachable_fallback">Không thể kết nối máy chủ tùy chỉnh. Đang sử dụng máy chủ mặc định dự phòng.</string>
+    <string name="listen_together_status_custom_online">Đã kết nối với máy chủ tùy chỉnh · %1$d ms</string>
+    <string name="listen_together_status_custom_fallback">Máy chủ tùy chỉnh không thể kết nối · Đang dùng mặc định dự phòng (%1$d ms)</string>
+    <string name="listen_together_status_all_offline">Cả máy chủ tùy chỉnh và máy chủ mặc định đều ngoại tuyến</string>
+    <string name="listen_together_top_bar_fallback">Dự phòng · %1$s</string>
 
 </resources>

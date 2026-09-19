@@ -88,8 +88,25 @@ import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.PartyActivity
 import com.music.bitchord.ui.components.PillTextField
+import com.music.bitchord.data.listentogether.ServerConnectionState
+import com.music.bitchord.data.listentogether.ServerUrlError
+import com.music.bitchord.data.listentogether.ServerUrlValidationResult
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.coroutines.coroutineContext
+
+private fun ServerUrlError.toMessageRes(): Int = when (this) {
+    ServerUrlError.Whitespace -> R.string.listen_together_err_whitespace
+    ServerUrlError.InvalidScheme -> R.string.listen_together_invalid_server_url
+    ServerUrlError.InvalidHost -> R.string.listen_together_invalid_server_url
+    ServerUrlError.InvalidPort -> R.string.listen_together_err_invalid_port
+    ServerUrlError.HasPath -> R.string.listen_together_err_no_path
+    ServerUrlError.HasQuery -> R.string.listen_together_err_no_query
+    ServerUrlError.HasFragment -> R.string.listen_together_err_no_fragment
+    ServerUrlError.Malformed -> R.string.listen_together_invalid_server_url
+}
 
 /**
  * Listen together: one party, one code, up to five signed-in devices.
@@ -123,9 +140,11 @@ fun ListenTogetherScreen(
 
     val state by ListenTogether.state.collectAsStateWithLifecycle()
     val customServer by ListenTogether.customServerUrl.collectAsStateWithLifecycle()
+    val connectionState by ListenTogether.serverConnectionState.collectAsStateWithLifecycle()
     val activity by ListenTogether.activity.collectAsStateWithLifecycle()
 
     var serverInput by remember(customServer) { mutableStateOf(customServer) }
+    var pendingSaveJob by remember { mutableStateOf<Job?>(null) }
     var codeInput by remember(inviteCode) { mutableStateOf(inviteCode.orEmpty()) }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -406,15 +425,45 @@ fun ListenTogetherScreen(
         ) {
             Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
                 val saveServerUrl: () -> Unit = {
-                    val trimmed = serverInput.trim().trimEnd('/')
-                    if (trimmed != customServer) {
-                        ListenTogether.setCustomServerUrl(trimmed)
-                        val messageRes = if (trimmed.isEmpty()) {
-                            R.string.listen_together_switched_to_default
-                        } else {
-                            R.string.listen_together_custom_server_saved
+                    val raw = serverInput
+                    when (val validation = ListenTogether.parseAndNormalizeServerUrl(raw)) {
+                        is ServerUrlValidationResult.Invalid -> {
+                            val errorMsgRes = validation.error.toMessageRes()
+                            Toast.makeText(context, context.getString(errorMsgRes), Toast.LENGTH_SHORT).show()
                         }
-                        Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
+                        is ServerUrlValidationResult.Valid -> {
+                            val submittedUrl = validation.normalizedUrl
+                            pendingSaveJob?.cancel()
+                            pendingSaveJob = scope.launch {
+                                busy = true
+                                try {
+                                    val newState = ListenTogether.setCustomServerUrl(submittedUrl)
+                                    if (ListenTogether.customServerUrl.value == submittedUrl) {
+                                        serverInput = submittedUrl
+                                    }
+                                    val messageRes = when (newState) {
+                                        is ServerConnectionState.CustomOnline -> R.string.listen_together_custom_server_connected
+                                        is ServerConnectionState.CustomFallback -> R.string.listen_together_custom_server_unreachable_fallback
+                                        is ServerConnectionState.DefaultOnline -> R.string.listen_together_switched_to_default
+                                        is ServerConnectionState.Offline -> if (ListenTogether.customServerUrl.value.isNotBlank()) {
+                                            R.string.listen_together_status_all_offline
+                                        } else {
+                                            R.string.listen_together_server_offline
+                                        }
+                                        ServerConnectionState.Checking -> null
+                                    }
+                                    if (messageRes != null) {
+                                        Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
+                                    }
+                                } catch (_: CancellationException) {
+                                    // Superseded by newer save operation
+                                } finally {
+                                    if (pendingSaveJob === coroutineContext[Job]) {
+                                        busy = false
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -451,12 +500,81 @@ fun ListenTogetherScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
-                if (serverInput.trim().trimEnd('/') != customServer) {
+                if (customServer.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(start = ICON_SIZE + ICON_GAP),
+                    ) {
+                        when (val conn = connectionState) {
+                            ServerConnectionState.Checking -> {
+                                Spinner(modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.listen_together_server_checking),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            is ServerConnectionState.CustomOnline -> {
+                                Icon(
+                                    Icons.Rounded.CloudDone,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.listen_together_status_custom_online, conn.latencyMs),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                            is ServerConnectionState.CustomFallback -> {
+                                Icon(
+                                    Icons.Rounded.CloudOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.listen_together_status_custom_fallback, conn.latencyMs),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            ServerConnectionState.Offline -> {
+                                Icon(
+                                    Icons.Rounded.CloudOff,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.listen_together_status_all_offline),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            is ServerConnectionState.DefaultOnline -> {}
+                        }
+                    }
+                }
+                val isDirty = when (val res = ListenTogether.parseAndNormalizeServerUrl(serverInput)) {
+                    is ServerUrlValidationResult.Valid -> res.normalizedUrl != customServer
+                    is ServerUrlValidationResult.Invalid -> true
+                }
+                if (isDirty) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End,
                     ) {
-                        TextButton(onClick = saveServerUrl) {
+                        TextButton(
+                            onClick = saveServerUrl,
+                            enabled = !busy && !state.inParty,
+                        ) {
                             Text(stringResource(R.string.save))
                         }
                     }
@@ -990,11 +1108,11 @@ private fun PartyActivityList(entries: List<PartyActivity>) {
 }
 
 @Composable
-private fun Spinner() {
+private fun Spinner(modifier: Modifier = Modifier.size(18.dp)) {
     CircularProgressIndicator(
         strokeWidth = 2.dp,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.size(18.dp),
+        modifier = modifier,
     )
 }
 
