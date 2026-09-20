@@ -934,6 +934,42 @@
 
     <string name="prefer_usb_dac">Prefer USB DAC</string>
 
+    <string name="loudness_normalization">Loudness normalization</string>
+
+    <string name="loudness_normalization_subtitle">Levels every track to the same loudness</string>
+
+    <string name="loudness_target">Target loudness</string>
+
+    <string name="loudness_target_subtitle">Quieter suits headphones; louder suits a car or a phone speaker</string>
+
+    <string name="loudness_target_value">%1$s LUFS</string>
+
+    <string name="bit_perfect_mode">Bit-perfect</string>
+
+    <string name="bit_perfect_mode_subtitle">Sends decoded audio to the output untouched</string>
+
+    <string name="bit_perfect_disables_dsp">Turns off loudness, EQ and spatial audio while on</string>
+
+    <string name="disabled_by_bit_perfect">Unavailable while Bit-perfect is on</string>
+
+    <string name="bit_perfect_active">Exact</string>
+
+    <string name="bit_perfect_converted">Converted</string>
+
+    <string name="pipeline_loudness">Loudness</string>
+
+    <string name="pipeline_loudness_gain">Gain</string>
+
+    <string name="pipeline_loudness_measured">Measured</string>
+
+    <string name="pipeline_bit_exact">Bit-exact</string>
+
+    <string name="loudness_measuring">Measuring…</string>
+
+    <string name="loudness_gain_db">%1$s dB</string>
+
+    <string name="loudness_lufs">%1$s LUFS</string>
+
     <string name="blur_unfocused_lyrics">Blur unfocused lyrics</string>
 
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
