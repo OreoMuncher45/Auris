@@ -116,12 +116,25 @@ class LoudnessMeter {
 
     /**
      * Integrated loudness in LUFS, or null while too little has been heard for
-     * the figure to mean anything — fewer than [MIN_BLOCKS], or nothing at all
-     * above the absolute gate, which is what a track that opens on silence
-     * looks like.
+     * the figure to mean anything at all — fewer than [EARLY_BLOCKS], or
+     * nothing above the absolute gate, which is what a track that opens on
+     * silence looks like.
+     *
+     * From [EARLY_BLOCKS] to [MIN_BLOCKS] the figure is real but drawn from
+     * under a second of audio, so it describes the opening rather than the
+     * recording; [trusted] is how a caller tells the two apart. It is offered
+     * that early on purpose: a correction applied in a track's first moments
+     * is one nobody hears arrive, and waiting for a settled figure is what
+     * turns a correction into an audible step three seconds in.
      */
     var integratedLufs: Double? = null
         private set
+
+    /**
+     * Whether [integratedLufs] has heard enough of the track to be taken at
+     * face value rather than treated as an opening estimate.
+     */
+    val trusted: Boolean get() = blockCount >= MIN_BLOCKS
 
     /**
      * Sizes the meter for a stream and derives the K-weighting for its rate.
@@ -288,7 +301,13 @@ class LoudnessMeter {
         }
         blockCount++
 
-        if (blockCount >= MIN_BLOCKS && blockCount % REFRESH_EVERY_BLOCKS == 0) {
+        // Every block until the figure is trusted, and once a second after
+        // that. The early blocks are where the number moves, and they are the
+        // ones a listener is least able to hear it move in; re-integrating
+        // over at most thirty blocks costs nothing worth saving.
+        if (blockCount >= EARLY_BLOCKS &&
+            (blockCount < MIN_BLOCKS || blockCount % REFRESH_EVERY_BLOCKS == 0)
+        ) {
             integratedLufs = computeIntegrated()
         }
     }
@@ -373,9 +392,22 @@ class LoudnessMeter {
         const val BLOCK_STEP_SECONDS = 1.0 / SUB_BLOCKS_PER_SECOND
 
         /**
-         * Roughly three seconds before a figure is offered at all. Short
-         * enough that a track is corrected early, long enough that the answer
-         * is not being drawn from one bar of an intro.
+         * The first figure, at seven hundred milliseconds of audio — a 400 ms
+         * gating block and three more 100 ms steps.
+         *
+         * Too little to be the final word on a recording, and that is not what
+         * it is for: it is what lets the correction be applied while the track
+         * is still opening, where a level that arrives already correct is the
+         * only level the listener ever knows. Everything after it is a
+         * refinement of a track already playing at roughly the right volume,
+         * which is a change small enough and slow enough to be inaudible.
+         */
+        const val EARLY_BLOCKS = 4
+
+        /**
+         * Roughly three seconds, past which the figure is no longer an
+         * estimate of the opening but a measurement of the recording. Long
+         * enough that the answer is not being drawn from one bar of an intro.
          */
         const val MIN_BLOCKS = 30
 

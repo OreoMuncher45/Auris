@@ -177,6 +177,8 @@ import com.music.bitchord.ui.components.BrowseTarget
 import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
 import com.music.bitchord.ui.components.SongActionsSheet
+import androidx.media3.session.MediaController
+import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.MainViewModel
@@ -3259,6 +3261,12 @@ private fun BitChordApp(
                         // Already there, and the menu says so with the row
                         // below instead.
                         song.videoId !in pinnedToOriginal &&
+                        // And the same for a track that got back here without
+                        // the listener asking: an upgrade that failed to prove
+                        // itself is reverted automatically and pins nothing, so
+                        // this row was being offered for a track already on
+                        // YouTube's own stream, where it does nothing.
+                        !playingYouTubesOwn(song.videoId, controller) &&
                         controller?.currentMediaItem?.mediaId == song.videoId
                     ) {
                         rollback@{
@@ -3284,10 +3292,19 @@ private fun BitChordApp(
                     } else {
                         null
                     },
-                    // The way back, and the only one: a pinned track is held
-                    // off the automatic search on purpose, so nothing but this
-                    // will ever offer it a better copy again.
-                    onUpgradeQuality = if (fromPlayer && song.videoId in pinnedToOriginal &&
+                    // The way back, and for a pinned track the only one: it is
+                    // held off the automatic search on purpose, so nothing but
+                    // this will ever offer it a better copy again. Also shown
+                    // for a track whose upgrade failed and was reverted, which
+                    // is likewise sitting on YouTube's own stream with nothing
+                    // due to look at it again — [QualityUpgrade.refuseUpgrades]
+                    // takes a broken track off the automatic path for the rest
+                    // of the session, and `askByHand` is what clears that.
+                    onUpgradeQuality = if (fromPlayer &&
+                        (
+                            song.videoId in pinnedToOriginal ||
+                                playingYouTubesOwn(song.videoId, controller)
+                            ) &&
                         // A track playing off a file the listener saved is not
                         // playing a stream anything could upgrade — the pin on
                         // it is only waiting for the day it is streamed again.
@@ -4010,6 +4027,23 @@ private fun SongSort.localizedLabel(): String = when (this) {
  */
 private fun String?.isDeviceFolder(): Boolean =
     this != null && startsWith("local:") && !startsWith(Downloads.PLAYLIST_PREFIX)
+
+/**
+ * Whether [videoId] is the track playing, and is known to be playing YouTube's
+ * own copy — which decides whether the player menu leads with "Revert to
+ * original" or with "Upgrade quality".
+ *
+ * See [QualityUpgrade.isKnownToBePlayingYouTubesOwn] for why "known" is doing
+ * real work here: an unresolved track playing off the disk cache answers false,
+ * and keeps the revert on offer.
+ */
+private fun playingYouTubesOwn(videoId: String, controller: MediaController?): Boolean {
+    val item = controller?.currentMediaItem?.takeIf { it.mediaId == videoId } ?: return false
+    return QualityUpgrade.isKnownToBePlayingYouTubesOwn(
+        videoId,
+        item.localConfiguration?.uri?.let(QualityUpgrade::cacheTag),
+    )
+}
 
 /** `M:SS`/`H:MM:SS`, the same shape [String?.durationMillis] parses back. */
 private fun formatDurationText(ms: Long): String {

@@ -2153,6 +2153,16 @@ class PlaybackService : MediaLibraryService() {
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].
         mediaItem?.mediaId?.let(TrackLog::onTrackStarted)
+        // A play beginning is what ends the last one's upgrade verdict. Here
+        // rather than in [QualityUpgrade.forget] because that runs on the
+        // failure and rollback paths, where a previous "no" is exactly what
+        // should be kept.
+        mediaItem?.mediaId?.let {
+            QualityUpgrade.onPlaybackStarted(
+                it,
+                mediaItem.localConfiguration?.uri?.let(QualityUpgrade::cacheTag),
+            )
+        }
         TrackLog.d(
             "BitChord",
             "TIMING track selected: ${mediaItem?.mediaId} (reason=$reason)",
@@ -6673,10 +6683,12 @@ class PlaybackService : MediaLibraryService() {
          * How much of a track must have been measured before its gain is
          * worth storing.
          *
-         * The gain is *applied* long before this — about three seconds in,
-         * which is [com.music.bitchord.playback.audio.LoudnessMeter.MIN_BLOCKS]
-         * — because a roughly right level now beats a precisely right one two
-         * verses later. Storing is a different question: a figure written down
+         * The gain is *applied* long before this — inside the first second,
+         * at [com.music.bitchord.playback.audio.LoudnessMeter.EARLY_BLOCKS] —
+         * because a roughly right level while the track is still opening beats
+         * a precisely right one two verses later, which would have to arrive
+         * as a change the listener hears. Storing is a different question: a
+         * figure written down
          * is the one every future play opens on without checking, so it should
          * come from enough of the track to have seen more than an intro.
          * Thirty seconds reaches a first chorus on most songs, which is where

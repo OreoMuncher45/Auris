@@ -3,8 +3,8 @@ package com.music.bitchord.playback
 import com.music.bitchord.playback.audio.AudioBlock
 import com.music.bitchord.playback.audio.FloatAudioProcessor
 import com.music.bitchord.playback.audio.LoudnessMeter
-import kotlin.math.exp
 import kotlin.math.log10
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -32,11 +32,36 @@ import kotlin.math.pow
  *   first frame and the meter never runs. A gain measured on a previous play
  *   describes the same recording, so re-deriving it would spend CPU to arrive
  *   back where it started.
- * - **New track** — the meter runs, no gain is applied until it has heard
- *   [LoudnessMeter.MIN_BLOCKS] worth of audio, and the gain then glides in over
- *   a few hundred milliseconds. The measurement keeps refining as the track
- *   plays and [snapshot] keeps offering the better figure, which is what fills
- *   the cache for next time.
+ * - **New track** — the meter runs, and the gain is applied as soon as the
+ *   meter has a figure at all: [LoudnessMeter.EARLY_BLOCKS], seven hundred
+ *   milliseconds in, while the track is still opening. The measurement keeps
+ *   refining as the track plays and [snapshot] keeps offering the better
+ *   figure, which is what fills the cache for next time.
+ *
+ * ## Why the level never steps
+ *
+ * A correction is only inaudible if the listener never hears it *arrive*, and
+ * there are exactly two moments where that is true: before a frame has played,
+ * and inside the track's first second, where nothing has yet been established
+ * for the new level to contradict. So the gain moves at two speeds, and which
+ * one it is using is the whole of the ramp logic in [process]:
+ *
+ * - **[OPENING_SECONDS] of a track, and a toggle of [enabled]** — [OPENING_SLEW_DB_PER_SECOND],
+ *   fast enough to be done inside the opening. This is where the first
+ *   measured gain lands, and it is deliberately the only fast move the feature
+ *   ever makes.
+ * - **Everything after** — [REFINE_SLEW_DB_PER_SECOND], a creep. The
+ *   measurement goes on improving for the rest of the track, the peak cap goes
+ *   on tightening, and a listener two minutes into a song would hear either of
+ *   those as the volume moving if they arrived at any speed worth noticing.
+ *   Half a decibel per second is under the rate at which a level change
+ *   registers as one.
+ *
+ * The estimate the opening is corrected by is drawn from under a second of
+ * audio, so it can be wrong — a hushed intro reads as a quiet recording. That
+ * is what [PROVISIONAL_MAX_GAIN_DB] is for: until the meter is
+ * [LoudnessMeter.trusted] the boost is held to a modest one, so the distance
+ * the creep has to walk back when the band comes in is small.
  *
  * ## Surviving a quality upgrade
  *
@@ -44,7 +69,7 @@ import kotlin.math.pow
  * playing track, which reconfigures the sink and therefore this processor. It
  * must not sound like anything. [prime] is idempotent for a track already
  * being handled — re-priming with the same key leaves the meter, the measured
- * gain and the glide exactly where they were — and [configure] keeps the
+ * gain and the ramp exactly where they were — and [configure] keeps the
  * meter's history across the rate change the new rendition usually brings. So
  * the swap's short break in audio is all the listener hears; the level on the
  * other side of it is the level that went in.
@@ -100,14 +125,45 @@ class LoudnessProcessor : FloatAudioProcessor {
     private var currentGain = 1f
     private var targetGain = 1f
 
-    /** Per-sample one-pole coefficient, derived from the rate in [configure]. */
-    private var glide = 0f
+    /**
+     * The highest gain the measured peak allows without clipping. A gain above
+     * this is unsafe *now*, not eventually, so [process] leaves the creep for
+     * as long as it takes to get back under it. See [recomputeTarget].
+     */
+    private var peakSafeGain = Float.MAX_VALUE
+
+    /**
+     * Per-sample multipliers for the two ramp speeds, derived from the rate
+     * and the channel count in [configure]. A gain multiplied by one of these
+     * once per sample moves at a fixed number of decibels per second, which is
+     * the shape a level change has to have to go unnoticed — a one-pole glide
+     * crosses most of its distance in its first instants, which is the part a
+     * listener hears.
+     */
+    private var openingSlew = 1f
+    private var refineSlew = 1f
 
     private var sampleRate = 0
     private var channelCount = 0
 
     /** Blocks processed since the target was last recomputed. */
     private var sinceRecompute = 0
+
+    /** Frames of this track that have played, for the opening window. */
+    private var trackFrames = 0L
+
+    /** Frames in [OPENING_SECONDS] at the live rate. */
+    private var openingFrames = 0L
+
+    /** Whether a measured figure has been turned into a target yet. */
+    private var hasMeasuredTarget = false
+
+    /**
+     * The value of [enabled] the ramp is currently working towards, so a
+     * toggle can be told apart from a refinement and given the fast ramp.
+     */
+    private var rampingSetting = false
+    private var appliedEnabled = true
 
     /**
      * Declares which track is playing and what is already known about its
@@ -125,9 +181,15 @@ class LoudnessProcessor : FloatAudioProcessor {
     override fun configure(sampleRate: Int, channelCount: Int) {
         this.sampleRate = sampleRate
         this.channelCount = channelCount
-        if (sampleRate > 0) {
+        if (sampleRate > 0 && channelCount > 0) {
             meter.configure(sampleRate, channelCount)
-            glide = (1.0 - exp(-1.0 / (GLIDE_TAU_SECONDS * sampleRate))).toFloat()
+            // Per sample, not per frame: the ramp advances once for every
+            // value it multiplies, so a stereo stream would otherwise move at
+            // twice the decibels per second a mono one does.
+            val perSecond = sampleRate.toDouble() * channelCount
+            openingSlew = 10.0.pow(OPENING_SLEW_DB_PER_SECOND / (20.0 * perSecond)).toFloat()
+            refineSlew = 10.0.pow(REFINE_SLEW_DB_PER_SECOND / (20.0 * perSecond)).toFloat()
+            openingFrames = (OPENING_SECONDS * sampleRate).toLong()
         }
     }
 
@@ -141,31 +203,57 @@ class LoudnessProcessor : FloatAudioProcessor {
 
         if (metering && enabled) {
             meter.process(block.samples, frameCount)
-            if (++sinceRecompute >= RECOMPUTE_EVERY_BLOCKS) {
+            // Every block until there is a target, so the first figure the
+            // meter offers is acted on within a block or two of arriving
+            // rather than up to [RECOMPUTE_EVERY_BLOCKS] later — the whole
+            // point of the early figure is that it lands inside the opening.
+            if (++sinceRecompute >= RECOMPUTE_EVERY_BLOCKS || !hasMeasuredTarget) {
                 sinceRecompute = 0
                 recomputeTarget()
             }
         }
 
-        // Off is a glide to unity rather than a bypass, so switching the
+        // Off is a ramp to unity rather than a bypass, so switching the
         // feature off mid-track releases the gain the way every other control
         // here releases one instead of stepping the level.
         val aim = if (enabled) targetGain else 1f
+        if (enabled != appliedEnabled) {
+            appliedEnabled = enabled
+            rampingSetting = true
+        }
+
+        val opening = trackFrames < openingFrames
+        trackFrames += frameCount
 
         // The common steady state: nothing to move towards and nothing being
         // applied. Costs one comparison and touches no samples, which is what
         // keeps a disabled or unity-gain track bit-transparent through here.
-        if (aim == 1f && currentGain == 1f) return
+        if (aim == 1f && currentGain == 1f) {
+            rampingSetting = false
+            return
+        }
+
+        // A gain the peak cap has overtaken is clipping until it comes down,
+        // so it comes down at the opening rate rather than creeping.
+        val overPeak = enabled && currentGain > peakSafeGain
+        val step = if (opening || rampingSetting || overPeak) openingSlew else refineSlew
+        val rising = currentGain < aim
+        val perSample = if (rising) step else 1f / step
 
         var gain = currentGain
-        val rate = glide
-        for (i in 0 until sampleCount) {
-            gain += (aim - gain) * rate
-            block.samples[i] *= gain
+        if (rising) {
+            for (i in 0 until sampleCount) {
+                gain = min(gain * perSample, aim)
+                block.samples[i] *= gain
+            }
+        } else {
+            for (i in 0 until sampleCount) {
+                gain = max(gain * perSample, aim)
+                block.samples[i] *= gain
+            }
         }
-        // Snap once the glide is within a hair of its aim, so `currentGain`
-        // reaches exactly 1f and the fast path above can engage again.
-        currentGain = if (kotlin.math.abs(aim - gain) < GLIDE_SETTLED) aim else gain
+        currentGain = gain
+        if (gain == aim) rampingSetting = false
     }
 
     private fun applyPendingPrime() {
@@ -176,6 +264,11 @@ class LoudnessProcessor : FloatAudioProcessor {
         activeKey = prime.key
         meter.reset()
         sinceRecompute = 0
+        trackFrames = 0
+        hasMeasuredTarget = false
+        rampingSetting = false
+        appliedEnabled = enabled
+        peakSafeGain = Float.MAX_VALUE
 
         val cached = prime.cachedGainDb
         if (cached != null) {
@@ -187,7 +280,7 @@ class LoudnessProcessor : FloatAudioProcessor {
             metering = true
             targetGain = 1f
         }
-        // Snapped rather than glided, because a new track has nothing to glide
+        // Snapped rather than ramped, because a new track has nothing to ramp
         // *from* — the level is either known before a frame plays or not known
         // at all, and a ramp would just make a known-good track open at the
         // wrong volume.
@@ -217,17 +310,34 @@ class LoudnessProcessor : FloatAudioProcessor {
      * The cap only ever tightens: the peak the meter reports never decreases,
      * so a chorus arriving with higher peaks than the verse that was measured
      * first pulls the gain down rather than clipping. Downwards is the safe
-     * direction for that to move in, and at a few hundred milliseconds of
-     * glide it is not a thing anyone hears.
+     * direction for that to move in.
+     *
+     * It is also the one move [process] does not creep towards. Everything
+     * else the measurement changes can afford to take a few seconds, because
+     * the cost of being a decibel out for those seconds is nothing; being a
+     * decibel over the ceiling for them is a run of clipped transients. So
+     * [peakSafeGain] is published here as well, and a gain currently above it
+     * comes down at the opening rate until it is under it again — which is
+     * only ever the excess, since [targetGain] already sits at or below the
+     * cap.
      */
     private fun recomputeTarget() {
         val lufs = meter.integratedLufs ?: return
-        val gainDb = (targetLufs - lufs).toFloat().coerceIn(MIN_GAIN_DB, MAX_GAIN_DB)
+        hasMeasuredTarget = true
+        // A boost asked for by an untrusted figure is held back, because the
+        // figure it came from heard the opening and not the song: a quiet
+        // intro reads as a quiet recording, and a +12 dB answer to one would
+        // have to be walked back over the following minute. An attenuation is
+        // not held back — it cannot clip, and a track that measures loud in
+        // its first second is essentially never a quiet one.
+        val ceiling = if (meter.trusted) MAX_GAIN_DB else PROVISIONAL_MAX_GAIN_DB
+        val gainDb = (targetLufs - lufs).toFloat().coerceIn(MIN_GAIN_DB, ceiling)
         var gain = 10f.pow(gainDb / 20f)
 
         val peak = meter.peak
         if (peak > 0f) {
-            gain = min(gain, PEAK_CEILING / peak)
+            peakSafeGain = PEAK_CEILING / peak
+            gain = min(gain, peakSafeGain)
         }
         targetGain = gain
         publishSnapshot()
@@ -241,7 +351,7 @@ class LoudnessProcessor : FloatAudioProcessor {
      * is an allocation and the steady-state audio callback does not make
      * those. The consequence is that [Snapshot.appliedGainDb] names the gain
      * being *aimed at* rather than the instantaneous value part-way through a
-     * glide, which is the right figure for both of its readers: the cache
+     * ramp, which is the right figure for both of its readers: the cache
      * wants the track's gain, and the pipeline readout wants what the track
      * settles at, not a number moving too fast to read.
      */
@@ -297,6 +407,10 @@ class LoudnessProcessor : FloatAudioProcessor {
         currentGain = 1f
         targetGain = 1f
         sinceRecompute = 0
+        trackFrames = 0
+        hasMeasuredTarget = false
+        rampingSetting = false
+        peakSafeGain = Float.MAX_VALUE
         publishSnapshot()
     }
 
@@ -320,11 +434,26 @@ class LoudnessProcessor : FloatAudioProcessor {
         /** -1 dBFS. What the loudest sample is allowed to reach after gain. */
         val PEAK_CEILING = 10f.pow(-1f / 20f)
 
-        /** Glide time constant. Long enough to be inaudible, short enough to settle. */
-        const val GLIDE_TAU_SECONDS = 0.25
+        /**
+         * How long a track counts as still opening, and so how long a gain may
+         * move fast. Comfortably past [LoudnessMeter.EARLY_BLOCKS], so the
+         * first measured figure is applied at the fast rate and has settled
+         * well inside it.
+         */
+        const val OPENING_SECONDS = 1.5
 
-        /** Close enough to the aim to snap, so the unity fast path can re-engage. */
-        const val GLIDE_SETTLED = 1e-5f
+        /** The opening ramp: six decibels in a quarter of a second. */
+        const val OPENING_SLEW_DB_PER_SECOND = 24.0
+
+        /**
+         * Everything after the opening. Slow enough that a refinement, or a
+         * peak cap tightening under a chorus, reads as nothing at all rather
+         * than as the volume moving.
+         */
+        const val REFINE_SLEW_DB_PER_SECOND = 0.5
+
+        /** The most an untrusted opening estimate may boost by. */
+        const val PROVISIONAL_MAX_GAIN_DB = 6f
 
         /** Recompute the target every few blocks rather than on every one. */
         const val RECOMPUTE_EVERY_BLOCKS = 8

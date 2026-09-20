@@ -192,6 +192,112 @@ class LoudnessProcessorTest {
         assertEquals(-6f, quieter.snapshot.appliedGainDb, 0.2f)
     }
 
+    // ---- When the correction arrives, and how fast -------------------------
+
+    /**
+     * The failure this exists to prevent: a first play that opens at the
+     * recording's own level, runs for a few seconds, and then steps to the
+     * corrected one loudly enough to reach for the volume control.
+     *
+     * A track nobody has measured is corrected inside its opening instead,
+     * where there is no established level for the new one to contradict.
+     */
+    @Test
+    fun `an unmeasured track is corrected inside its opening`() {
+        val processor = newProcessor(targetLufs = -14f)
+        processor.prime("new", cachedGainDb = null)
+
+        feedSine(processor, dbfs(-20.0), seconds = LoudnessProcessor.OPENING_SECONDS)
+
+        // -20 LUFS wants +6 dB, which is also the most an opening estimate is
+        // allowed to ask for, so the ramp should be there or all but there.
+        assertEquals(6f, gainDb(probeGain(processor)), 1f)
+    }
+
+    /**
+     * And what it may not do once the opening is over. The measurement goes on
+     * improving for the whole track and the peak cap goes on tightening, so
+     * the gain keeps moving; past the opening it may only creep, because by
+     * then the listener has a level in their ear to compare it against.
+     */
+    @Test
+    fun `past the opening the gain creeps rather than steps`() {
+        val processor = newProcessor(targetLufs = -14f)
+        processor.prime("new", cachedGainDb = null)
+
+        // Settled on a quiet opening: +6 dB.
+        feedSine(processor, dbfs(-20.0), seconds = 5.0)
+        val settled = gainDb(probeGain(processor))
+        assertEquals(6f, settled, 1f)
+
+        // The band comes in twelve decibels louder, which pulls the target
+        // most of the way back to unity. One second of that may move the level
+        // by the slew rate and not a decibel more.
+        feedSine(processor, dbfs(-8.0), seconds = 1.0)
+        val moved = settled - gainDb(probeGain(processor))
+
+        assertTrue("the gain should be tracking the new measurement", moved > 0f)
+        assertTrue(
+            "the gain moved $moved dB in a second, which is a step",
+            moved <= LoudnessProcessor.REFINE_SLEW_DB_PER_SECOND.toFloat() + 0.1f,
+        )
+    }
+
+    /**
+     * An opening estimate is drawn from under a second of audio, so a hushed
+     * intro reads as a quiet recording. It is corrected on that basis anyway —
+     * a roughly right level now is worth more than a precise one later — but
+     * only as far as [LoudnessProcessor.PROVISIONAL_MAX_GAIN_DB], so the creep
+     * back has a short distance to walk when the track opens up.
+     */
+    @Test
+    fun `an opening estimate cannot boost as far as a measured one`() {
+        val processor = newProcessor(targetLufs = -14f)
+        processor.prime("hushed", cachedGainDb = null)
+
+        // Quiet enough to ask for the full +12 dB the processor allows.
+        feedSine(processor, dbfs(-32.0), seconds = 1.0)
+        assertTrue(
+            "an opening estimate asked for ${processor.snapshot.appliedGainDb} dB",
+            processor.snapshot.appliedGainDb <= LoudnessProcessor.PROVISIONAL_MAX_GAIN_DB + 1e-3f,
+        )
+
+        // Once the same level has been heard for long enough to be trusted,
+        // the full range is available again.
+        feedSine(processor, dbfs(-32.0), seconds = 5.0)
+        assertEquals(12f, processor.snapshot.appliedGainDb, 0.2f)
+    }
+
+    /**
+     * The one correction that may not creep. A transient arriving late in a
+     * boosted track pulls the peak cap down past the gain being applied, and
+     * every sample until the gain follows is one the encode clamps. So that
+     * descent is taken at the opening rate however far into the track it
+     * happens.
+     */
+    @Test
+    fun `a late peak brings the gain down without waiting`() {
+        val processor = newProcessor(targetLufs = -14f)
+        processor.prime("peaky", cachedGainDb = null)
+
+        // Quiet enough to earn the full boost, and nothing loud in it yet.
+        // Long enough for the creep to have walked the whole way there, since
+        // past the opening the last six decibels of it arrive at half a
+        // decibel a second.
+        feedSine(processor, dbfs(-32.0), seconds = 25.0)
+        assertEquals(12f, gainDb(probeGain(processor)), 0.5f)
+
+        // Then a half-scale transient, which the ceiling only allows about
+        // five decibels of gain over.
+        feedSine(processor, dbfs(-32.0), seconds = 1.5, spike = 0.5f)
+
+        val safe = gainDb(LoudnessProcessor.PEAK_CEILING / 0.5f)
+        assertTrue(
+            "still at ${gainDb(probeGain(processor))} dB, which clips a 0.5 sample",
+            gainDb(probeGain(processor)) <= safe + 0.5f,
+        )
+    }
+
     // ---- Off ---------------------------------------------------------------
 
     /**
@@ -241,6 +347,24 @@ class LoudnessProcessorTest {
     }
 
     private fun dbfs(db: Double): Double = 10.0.pow(db / 20.0)
+
+    private fun gainDb(gain: Float): Float = (20.0 * kotlin.math.log10(gain.toDouble())).toFloat()
+
+    /**
+     * Reads back the gain the processor is applying *right now*, rather than
+     * the one it is aiming at — which is the only way to see a ramp, since
+     * [LoudnessProcessor.Snapshot.appliedGainDb] reports the target.
+     *
+     * A brief, very quiet block: too short to complete a 100 ms sub-block and
+     * far below anything the meter's peak limit or gates react to, so reading
+     * the level does not change it.
+     */
+    private fun probeGain(processor: LoudnessProcessor): Float {
+        val amplitude = 1e-3f
+        val block = constantBlock(amplitude, frames = 64)
+        processor.process(block)
+        return block.samples[0] / amplitude
+    }
 
     private fun constantBlock(value: Float, frames: Int = 1024): AudioBlock =
         AudioBlock(channelCount = 2, capacityFrames = frames).apply {

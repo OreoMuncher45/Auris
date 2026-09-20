@@ -15,8 +15,9 @@ import java.util.concurrent.ConcurrentHashMap
  * ## Why it is worth keeping
  *
  * A gain measured live can only arrive once enough of the track has been
- * heard — about three seconds — so a first play opens at the recording's own
- * level and glides to the corrected one. That is acceptable once. It is not
+ * heard — the better part of a second — so a first play opens at the
+ * recording's own level and ramps to the corrected one during its opening.
+ * That is acceptable once. It is not
  * acceptable every time someone replays a song, and it is precisely what a
  * stored figure removes: [LoudnessProcessor.prime] hands the cached value in
  * before a frame is rendered and the meter never runs at all.
@@ -148,8 +149,8 @@ class LoudnessStore(private val context: Context) {
      *
      * Arbitrary rather than least-recently-used: entries carry no timestamp,
      * and adding one to make eviction fair would double the file for a
-     * decision whose cost when it goes wrong is three seconds of a glide on
-     * one track. The cap exists to bound the file, not to be clever.
+     * decision whose cost when it goes wrong is one track opening on a ramp
+     * instead of on its final level. The cap exists to bound the file, not to be clever.
      */
     private fun prune() {
         if (gains.size <= MAX_ENTRIES) return
