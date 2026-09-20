@@ -852,10 +852,7 @@
     <string name="listen_together_custom_server">Use your own server</string>
     <string name="listen_together_custom_server_footer">Leave this empty to use the default server. If you run your own copy, everyone in the party has to be pointed at the same one.</string>
     <string name="listen_together_using_default">Using default server</string>
-    <string name="listen_together_server_url_label">Server address</string>
     <string name="listen_together_remove_server">Remove server</string>
-    <string name="listen_together_remove_server_subtitle">Go back to the default server</string>
-    <string name="listen_together_remove_server_message">Parties will use the default server again. You can add your own back at any time.</string>
     <string name="listen_together_switched_to_default">Switched to default server</string>
     <string name="listen_together_custom_server_saved">Custom server saved</string>
     <string name="listen_together_create">Create a party</string>

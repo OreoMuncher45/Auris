@@ -144,6 +144,7 @@ import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.ListenTogetherScreen
+import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
@@ -478,6 +479,7 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
+    var editingPartyServer by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
     // A Library shelf's "Show all" — the shelf it was opened from, so its own
     // cards can be laid out again as a full-screen grid. See [LibraryGridPage].
@@ -2075,6 +2077,7 @@ private fun BitChordApp(
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
         BackHandler(enabled = discordDialog != null) { discordDialog = null }
         BackHandler(enabled = editingSource != null) { editingSource = null }
+        BackHandler(enabled = editingPartyServer) { editingPartyServer = false }
         BackHandler(enabled = showHistory) { showHistory = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
@@ -2294,6 +2297,7 @@ private fun BitChordApp(
                                 webSession = WebSessionMode.SIGN_IN
                             },
                             contentPadding = listPadding,
+                            onEditServer = { editingPartyServer = true },
                         )
                     } else if (key == "equalizer") {
                         EqualizerScreen(contentPadding = listPadding)
@@ -3836,6 +3840,16 @@ private fun BitChordApp(
                 which = which,
                 hazeState = hazeState,
                 onDismiss = { discordDialog = null },
+            )
+        }
+
+        // At the root with the source editor, and for the same two reasons: it
+        // is a haze card that has to sample the backdrop it is *not* inside,
+        // and a full-window scrim that has to be full-window.
+        if (editingPartyServer) {
+            PartyServerEditor(
+                hazeState = hazeState,
+                onDismiss = { editingPartyServer = false },
             )
         }
 

@@ -1030,10 +1030,7 @@
     <string name="listen_together_custom_server_footer">Để trống mục này để sử dụng máy chủ mặc định. Nếu bạn chạy bản sao riêng, mọi người trong nhóm phải trỏ đến cùng một máy chủ.</string>
 
     <string name="listen_together_using_default">Đang sử dụng máy chủ mặc định</string>
-    <string name="listen_together_server_url_label">Địa chỉ máy chủ</string>
     <string name="listen_together_remove_server">Xóa máy chủ</string>
-    <string name="listen_together_remove_server_subtitle">Quay lại máy chủ mặc định</string>
-    <string name="listen_together_remove_server_message">Các bữa tiệc sẽ dùng lại máy chủ mặc định. Bạn có thể thêm máy chủ của mình trở lại bất cứ lúc nào.</string>
     <string name="listen_together_switched_to_default">Đã chuyển sang máy chủ mặc định</string>
     <string name="listen_together_custom_server_saved">Đã lưu máy chủ tùy chỉnh</string>
 

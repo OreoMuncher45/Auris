@@ -49,11 +49,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -80,7 +80,6 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -96,14 +95,10 @@ import com.music.bitchord.data.listentogether.PartyActivity
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.ServerConnectionState
 import com.music.bitchord.data.listentogether.ServerUrlError
-import com.music.bitchord.data.listentogether.ServerUrlValidationResult
-import kotlin.coroutines.coroutineContext
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private fun ServerUrlError.toMessageRes(): Int = when (this) {
+internal fun ServerUrlError.toMessageRes(): Int = when (this) {
     ServerUrlError.Whitespace -> R.string.listen_together_err_whitespace
     ServerUrlError.InvalidScheme -> R.string.listen_together_invalid_server_url
     ServerUrlError.InvalidHost -> R.string.listen_together_invalid_server_url
@@ -140,6 +135,12 @@ fun ListenTogetherScreen(
     onInviteHandled: () -> Unit = {},
     onSignIn: () -> Unit,
     contentPadding: PaddingValues,
+    /**
+     * Opens the server editor, which is mounted at the root rather than here.
+     *
+     * @see PartyServerEditor for why it cannot live on this screen.
+     */
+    onEditServer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -151,8 +152,6 @@ fun ListenTogetherScreen(
     val connectionState by ListenTogether.serverConnectionState.collectAsStateWithLifecycle()
     val activity by ListenTogether.activity.collectAsStateWithLifecycle()
 
-    var serverInput by remember(customServer) { mutableStateOf(customServer) }
-    var pendingSaveJob by remember { mutableStateOf<Job?>(null) }
     var codeInput by remember(inviteCode) { mutableStateOf(inviteCode.orEmpty()) }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -160,7 +159,34 @@ fun ListenTogetherScreen(
     var maxMembers by remember { mutableIntStateOf(5) }
     var pendingServerSwitchInvite by remember { mutableStateOf<Pair<String, String>?>(null) }
     var sheet by remember { mutableStateOf<PartySheet?>(null) }
-    var serverDialog by remember { mutableStateOf<ServerDialog?>(null) }
+
+    // Hoisted so a sheet can be *animated* away rather than dropped out of the
+    // composition, which is the only way one sheet can hand over to another:
+    // see the invite that follows a create.
+    val sheetState = rememberModalBottomSheetState()
+
+    /**
+     * Hands the create sheet over to the invite sheet, with the party page
+     * visible in between.
+     *
+     * Three separate things, and the order is the whole point. The create sheet
+     * is *animated* down rather than dropped out of the composition, because
+     * swapping one sheet's contents for another's under a drawer that never
+     * moved is a swap, and a swap is the one thing that does not read as a new
+     * sheet arriving. Then a beat with nothing over the page at all: what is
+     * underneath has just become a different page — a code, a member list — and
+     * an invite that rises immediately means nobody ever sees that it did. Only
+     * then the invite, from a fresh mount, so it slides.
+     */
+    val showInviteAfterCreate: suspend () -> Unit = {
+        runCatching { sheetState.hide() }
+        sheet = null
+        delay(INVITE_SHEET_DELAY_MS)
+        // A second is long enough to have gone and opened something else in,
+        // and being interrupted by a drawer nobody asked for is worse than not
+        // being offered the link.
+        if (sheet == null) sheet = PartySheet.Invite
+    }
 
     /** The invite URL for a code, pointing at whichever server holds the party. */
     val inviteLinkFor: (String) -> String = { partyCode ->
@@ -204,82 +230,6 @@ fun ListenTogetherScreen(
                 .onSuccess { sheet = PartySheet.Confirm(it, previewServer) }
                 .onFailure { failure = it.message }
             busy = false
-        }
-    }
-
-    /**
-     * Validates an address and, if it holds up, makes it this device's server.
-     *
-     * An invalid address leaves the dialog open on purpose: the toast says what
-     * is wrong with what was typed, and closing the box that holds it would
-     * throw the typing away along with the explanation.
-     */
-    val saveServerUrl: (String) -> Unit = { raw ->
-        when (val validation = ListenTogether.parseAndNormalizeServerUrl(raw)) {
-            is ServerUrlValidationResult.Invalid -> {
-                Toast.makeText(
-                    context,
-                    context.getString(validation.error.toMessageRes()),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-            is ServerUrlValidationResult.Valid -> {
-                val submittedUrl = validation.normalizedUrl
-                serverDialog = null
-                pendingSaveJob?.cancel()
-                pendingSaveJob = scope.launch {
-                    busy = true
-                    try {
-                        val newState = ListenTogether.setCustomServerUrl(submittedUrl)
-                        if (ListenTogether.customServerUrl.value == submittedUrl) {
-                            serverInput = submittedUrl
-                        }
-                        val messageRes = when (newState) {
-                            is ServerConnectionState.CustomOnline -> R.string.listen_together_custom_server_connected
-                            is ServerConnectionState.CustomFallback -> R.string.listen_together_custom_server_unreachable_fallback
-                            is ServerConnectionState.DefaultOnline -> R.string.listen_together_switched_to_default
-                            is ServerConnectionState.Offline -> if (ListenTogether.customServerUrl.value.isNotBlank()) {
-                                R.string.listen_together_status_all_offline
-                            } else {
-                                R.string.listen_together_server_offline
-                            }
-                            ServerConnectionState.Checking -> null
-                        }
-                        if (messageRes != null) {
-                            Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
-                        }
-                    } catch (_: CancellationException) {
-                        // Superseded by newer save operation
-                    } finally {
-                        if (pendingSaveJob === coroutineContext[Job]) {
-                            busy = false
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /** Drops the custom address and puts this device back on the built-in one. */
-    val disconnectServer: () -> Unit = {
-        serverInput = ""
-        serverDialog = null
-        pendingSaveJob?.cancel()
-        pendingSaveJob = scope.launch {
-            busy = true
-            try {
-                ListenTogether.setCustomServerUrl("")
-                Toast.makeText(
-                    context,
-                    context.getString(R.string.listen_together_switched_to_default),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            } catch (_: CancellationException) {
-            } finally {
-                if (pendingSaveJob === coroutineContext[Job]) {
-                    busy = false
-                }
-            }
         }
     }
 
@@ -410,7 +360,6 @@ fun ListenTogetherScreen(
                             try {
                                 when (val result = ListenTogether.switchPartyWithRecovery(toSet, toJoin)) {
                                     is ListenTogether.SwitchPartyResult.Success -> {
-                                        serverInput = toSet
                                         codeInput = ""
                                     }
                                     is ListenTogether.SwitchPartyResult.TargetFailedRecovered -> {
@@ -455,67 +404,6 @@ fun ListenTogetherScreen(
         )
     }
 
-    when (serverDialog) {
-        ServerDialog.Edit -> {
-            AlertDialog(
-                onDismissRequest = { serverDialog = null },
-                title = { Text(stringResource(R.string.listen_together_custom_server)) },
-                text = {
-                    OutlinedTextField(
-                        value = serverInput,
-                        onValueChange = { serverInput = it },
-                        // Never the default address, even as a hint: this box
-                        // exists to take somebody else's server, and the one
-                        // this build uses is not shown anywhere.
-                        label = { Text(stringResource(R.string.listen_together_server_url_label)) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { saveServerUrl(serverInput) }),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = { saveServerUrl(serverInput) }) {
-                        Text(stringResource(R.string.save))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { serverDialog = null }) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                },
-                containerColor = MaterialTheme.colorScheme.surface,
-            )
-        }
-
-        ServerDialog.Remove -> {
-            AlertDialog(
-                onDismissRequest = { serverDialog = null },
-                title = { Text(stringResource(R.string.listen_together_remove_server)) },
-                text = { Text(stringResource(R.string.listen_together_remove_server_message)) },
-                confirmButton = {
-                    TextButton(onClick = disconnectServer) {
-                        Text(
-                            text = stringResource(R.string.remove),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { serverDialog = null }) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                },
-                containerColor = MaterialTheme.colorScheme.surface,
-            )
-        }
-
-        null -> {}
-    }
-
     sheet?.let { open ->
         ModalBottomSheet(
             onDismissRequest = {
@@ -525,6 +413,7 @@ fun ListenTogetherScreen(
                 // sheet that is no longer there.
                 failure = null
             },
+            sheetState = sheetState,
             containerColor = MaterialTheme.colorScheme.background,
         ) {
             when (open) {
@@ -547,13 +436,7 @@ fun ListenTogetherScreen(
                             failure = ListenTogether.createParty(nickname, maxMembers)
                                 .exceptionOrNull()?.message
                             busy = false
-                            // Straight into the invite, without a stop at the
-                            // party page. A party of one is not a party; the
-                            // very next thing anybody who just made one wants
-                            // is the link, and making them find the share
-                            // button to get it is a step that exists only
-                            // because the sheet closed itself.
-                            if (failure == null) sheet = PartySheet.Invite
+                            if (failure == null) showInviteAfterCreate()
                         }
                     },
                 )
@@ -685,6 +568,11 @@ fun ListenTogetherScreen(
                 onSetHostOnlyControl = ListenTogether::setHostOnlyControl,
                 onKick = ListenTogether::kick,
             )
+            // Inside the party branch on purpose. A log of who skipped what is
+            // a thing to look back over while a party is running; on the page
+            // that offers to start one it is a list of somebody else's evening,
+            // under a button that has not been pressed yet.
+            PartyActivityList(activity)
         }
 
         // Only when nothing is covering it. A sheet is a drawer over the bottom
@@ -701,8 +589,6 @@ fun ListenTogetherScreen(
                 )
             }
         }
-
-        PartyActivityList(activity)
 
         // Last, and empty by default. Nobody setting up a party needs to think
         // about an address — there is one built in — so this is where somebody
@@ -742,22 +628,9 @@ fun ListenTogetherScreen(
                 // server it no longer talks to, and the party unable to say
                 // why it went quiet.
                 enabled = !state.inParty && !busy,
-                onClick = {
-                    serverInput = customServer
-                    serverDialog = ServerDialog.Edit
-                },
+                onClick = onEditServer,
                 trailing = if (busy) ({ Spinner() }) else null,
             )
-            if (customServer.isNotBlank()) {
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.CloudOff,
-                    title = stringResource(R.string.listen_together_remove_server),
-                    subtitle = stringResource(R.string.listen_together_remove_server_subtitle),
-                    enabled = !state.inParty && !busy,
-                    onClick = { serverDialog = ServerDialog.Remove },
-                )
-            }
         }
 
         Spacer(Modifier.height(32.dp))
@@ -810,16 +683,6 @@ private fun ServerHealthRow(
 }
 
 /**
- * Which of the custom-server dialogs is up, if any.
- *
- * Editing and removing are one row apart and a mis-tap away from each other, so
- * they must not be two booleans that can both be true: a confirm-to-remove box
- * stacked on top of a half-typed address is a way to throw the address away
- * without having agreed to.
- */
-private enum class ServerDialog { Edit, Remove }
-
-/**
  * Whether the address that was typed is actually answering.
  *
  * Under the address rather than in a toast, because the interesting case is the
@@ -870,6 +733,14 @@ private fun ServerConnectionLine(connection: ServerConnectionState) {
         )
     }
 }
+
+/**
+ * How long the newly made party sits on screen before the invite rises over it.
+ *
+ * Long enough to be a page that was arrived at rather than a frame that flashed
+ * past, short enough that nobody has started reading the member list yet.
+ */
+private const val INVITE_SHEET_DELAY_MS = 1_000L
 
 /** The six cells of [PartyCodeField], and the Join button under them. */
 internal val CODE_CELL_SHAPE = RoundedCornerShape(12.dp)
