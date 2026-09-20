@@ -808,7 +808,9 @@ func handleSocketFrame(p *party.Party, member *party.Member, sc *hub.SafeConn, f
 				hubInst.Broadcast(p.Code, queueFrame(p), "")
 			}
 			hubInst.Broadcast(p.Code, stateFrame(p), "")
-			if action == protocol.ActionKick || action == protocol.ActionSetMaxMembers {
+			if action == protocol.ActionKick ||
+				action == protocol.ActionSetMaxMembers ||
+				action == protocol.ActionSetHostOnlyControl {
 				hubInst.Broadcast(p.Code, membersFrame(p), "")
 			}
 			hubInst.Broadcast(p.Code, activityFrame(member, action, frame), "")
@@ -823,6 +825,14 @@ func handleSocketFrame(p *party.Party, member *party.Member, sc *hub.SafeConn, f
 }
 
 func applyControl(p *party.Party, member *party.Member, action string, frame map[string]interface{}) (bool, string, string) {
+	// Enforced here rather than left to the clients. An app that hides its own
+	// next button is a courtesy; this is what actually stops a listener's
+	// device — a stale build, a backgrounded one still echoing an old intent,
+	// or something else entirely — from moving the music for everybody.
+	if protocol.ControlActions[action] && !p.MayControl(member) {
+		return false, "host_only", "Only the host can control the music in this party."
+	}
+
 	var posPtr *int64
 	if pos, ok := frame["positionMs"].(float64); ok {
 		pVal := int64(pos)
@@ -977,6 +987,17 @@ func applyControl(p *party.Party, member *party.Member, action string, frame map
 		p.Playback.SetAutoplay(&member.MemberId, enabled)
 		return true, "", ""
 
+	case protocol.ActionSetHostOnlyControl:
+		enabled, ok := frame["enabled"].(bool)
+		if !ok {
+			return false, "invalid_control_policy", "Host-only control must be enabled or disabled."
+		}
+		if err := p.SetHostOnlyControl(member, enabled); err != nil {
+			pe := err.(*party.PartyError)
+			return false, pe.Code, pe.Message
+		}
+		return true, "", ""
+
 	case protocol.ActionKick:
 		targetID, _ := frame["memberId"].(string)
 		if !member.IsHost { return false, "host_only", "Only the host can remove listeners." }
@@ -1049,10 +1070,11 @@ func membersFrame(p *party.Party) map[string]interface{} {
 		membersList = append(membersList, m.ToWire())
 	}
 	return map[string]interface{}{
-		"type":       protocol.FrameMembers,
-		"members":    membersList,
-		"maxMembers": p.MaxMembers,
-		"serverMs":   clock.NowMs(),
+		"type":            protocol.FrameMembers,
+		"members":         membersList,
+		"maxMembers":      p.MaxMembers,
+		"hostOnlyControl": p.HostOnlyControl,
+		"serverMs":        clock.NowMs(),
 	}
 }
 

@@ -167,6 +167,8 @@ object ListenTogether {
         val you: PartyMember? = null,
         val members: List<PartyMember> = emptyList(),
         val maxMembers: Int = 5,
+        /** @see controlsLocked */
+        val hostOnlyControl: Boolean = false,
         val playback: PartyPlayback = PartyPlayback(),
         /**
          * Held separately from [playback] because it arrives separately: the
@@ -183,6 +185,21 @@ object ListenTogether {
     ) {
         val inParty: Boolean get() = code != null
         val isFull: Boolean get() = members.size >= maxMembers
+
+        /**
+         * Whether this device may not drive the music.
+         *
+         * True only for a listener in a party whose host has taken control of
+         * it — the host is never locked out of their own party, and a device
+         * that is not in one is not in this feature's business at all. The
+         * server enforces the same rule, so this is what the app shows rather
+         * than what makes it true; see `backend/party.MayControl`.
+         *
+         * Host is reassigned when a host leaves, so this can go false under a
+         * listener mid-party. Everything reading it has to follow.
+         */
+        val controlsLocked: Boolean
+            get() = inParty && hostOnlyControl && you?.isHost != true
     }
 
     /** A refusal from the server, carrying the machine-readable half. */
@@ -750,6 +767,7 @@ object ListenTogether {
                 members = membership.party.members,
                 maxMembers = membership.party.maxMembers,
                 playback = membership.party.playback,
+                queue = membership.party.queue,
                 connection = Connection.CONNECTING,
             )
         }
@@ -805,6 +823,7 @@ object ListenTogether {
                 members = membership.party.members,
                 maxMembers = membership.party.maxMembers,
                 playback = membership.party.playback,
+                queue = membership.party.queue,
                 connection = Connection.CONNECTING,
             )
         }
@@ -931,6 +950,7 @@ object ListenTogether {
                     members = membership.party.members,
                     maxMembers = membership.party.maxMembers,
                     playback = membership.party.playback,
+                    queue = membership.party.queue,
                     connection = Connection.CONNECTING,
                 )
             }
@@ -964,8 +984,10 @@ object ListenTogether {
 
     // ------------------------------------------------------------ controls --
     //
-    // Any member may send any of these. There is no host privilege in this
-    // feature, on either side of the wire.
+    // Any member may send any of these, unless the host has taken control of
+    // the party — see [State.controlsLocked] and [setHostOnlyControl]. The
+    // server enforces that independently of anything the app does, so a control
+    // sent anyway comes back refused rather than quietly obeyed.
 
     fun play(positionMs: Long? = null) = control("play") { positionMs?.let { put("positionMs", it) } }
 
@@ -1012,6 +1034,10 @@ object ListenTogether {
 
     fun setAutoplay(enabled: Boolean) = control("setAutoplay") { put("enabled", enabled) }
 
+    /** Host only, and refused by the server from anybody else. @see State.controlsLocked */
+    fun setHostOnlyControl(enabled: Boolean) =
+        control("setHostOnlyControl") { put("enabled", enabled) }
+
     private fun control(action: String, body: kotlinx.serialization.json.JsonObjectBuilder.() -> Unit) {
         val frame = buildJsonObject {
             put("type", "control")
@@ -1027,6 +1053,27 @@ object ListenTogether {
             runCatching { live.send(Frame.Text(frame.toString())) }
                 .onFailure { Log.w(TAG, "control not sent: ${redact(it.message)}") }
         }
+    }
+
+    /**
+     * A resume this device has accepted but is not allowed to perform yet.
+     *
+     * In a party a local `play()` is withheld and performed later, on the
+     * instant the server schedules for everyone — see `PartySync.shouldDeferPlay`.
+     * Nothing about the player moves during that wait, so a play button reading
+     * `isPlaying` sat on "play" and then snapped to "pause" once the echo landed,
+     * which reads as a glitch rather than as the deliberate wait it is.
+     *
+     * Written only by `PartySync`, which owns the wait; held here because the
+     * player screen is the only thing that needs to see it and the playback
+     * service is not something the UI can reach.
+     */
+    private val _awaitingStart = MutableStateFlow(false)
+    val awaitingStart: StateFlow<Boolean> = _awaitingStart.asStateFlow()
+
+    /** @see awaitingStart */
+    fun setAwaitingStart(value: Boolean) {
+        _awaitingStart.value = value
     }
 
     // --------------------------------------------------------- the playhead --
@@ -1191,6 +1238,7 @@ object ListenTogether {
                     you = you ?: it.you,
                     members = party.members,
                     maxMembers = party.maxMembers,
+                    hostOnlyControl = party.hostOnlyControl,
                     playback = party.playback,
                     // A snapshot is the one message that carries the queue
                     // unconditionally — a device that has just arrived has no
@@ -1248,7 +1296,28 @@ object ListenTogether {
                     }.getOrNull()
                 } ?: return
                 val maxMembers = frame["maxMembers"]?.jsonPrimitive?.content?.toIntOrNull() ?: _state.value.maxMembers
-                _state.update { it.copy(members = members, maxMembers = maxMembers) }
+                // Absent on a server that predates the setting, which is not
+                // the same as "off": keeping the value already held means an
+                // upgrade mid-party does not silently unlock the party.
+                val hostOnly = frame["hostOnlyControl"]?.jsonPrimitive?.content?.toBooleanStrictOrNull()
+                    ?: _state.value.hostOnlyControl
+                _state.update { current ->
+                    current.copy(
+                        members = members,
+                        maxMembers = maxMembers,
+                        hostOnlyControl = hostOnly,
+                        // This frame is the only place a promotion is ever
+                        // announced — the server hands the role to an arbitrary
+                        // survivor when a host leaves and says so nowhere else.
+                        // Left unread, [State.you] keeps saying "not the host"
+                        // for the rest of the party, which hides the host's own
+                        // controls from them and, with [hostOnlyControl] on,
+                        // locks them out of a party they now own.
+                        you = current.you
+                            ?.let { mine -> members.firstOrNull { it.memberId == mine.memberId } }
+                            ?: current.you,
+                    )
+                }
             }
 
             "activity" -> {
@@ -1323,6 +1392,15 @@ object ListenTogether {
             avatar = profile?.avatar?.takeIf { it.startsWith("http") },
         )
     }
+
+    /**
+     * The picture the rest of the party will see against this device's name.
+     *
+     * Read off [identity] rather than the account directly, so the settings
+     * screen shows what will actually be sent rather than a second guess at it
+     * — including answering null in the cases a party cannot be joined at all.
+     */
+    fun myAvatarUrl(): String? = identity()?.avatar
 
     /**
      * This install's identity to the party, independent of who is signed in.

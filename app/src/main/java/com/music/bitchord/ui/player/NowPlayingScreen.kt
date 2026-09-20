@@ -907,6 +907,13 @@ fun NowPlayingScreen(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
+    /**
+     * A control the host has taken away was reached for anyway.
+     *
+     * The buttons are gone while a party is locked, but a swipe has no button
+     * to remove — so the gesture answers instead of silently doing nothing.
+     */
+    onBlockedControl: () -> Unit,
     onSeek: (Long) -> Unit,
     /**
      * Seek to a fraction of the track, for the scrubber.
@@ -991,6 +998,9 @@ fun NowPlayingScreen(
     var showAudioOutput by remember { mutableStateOf(false) }
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
     val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
+    // Listening in a party whose host has taken the controls: the transport
+    // keeps only play/pause, which from here moves this device alone.
+    val controlsLocked = rememberControlsLocked()
     var showListenTogetherMembers by remember { mutableStateOf(false) }
     // Who's actually in the party is worth a look before the settings page —
     // see [ListenTogetherMembersSheet]. Only meaningful once there is a party
@@ -1979,6 +1989,7 @@ fun NowPlayingScreen(
             onOpenOutput = openAudioOutput,
             onListenTogether = onListenTogether,
             onOpenListenTogetherMembers = openListenTogetherMembers,
+            controlsLocked = controlsLocked,
             lyricsOpen = lyricsOpen,
             queueOpen = queueOpen,
             onToggleLyrics = toggleLyrics,
@@ -2213,7 +2224,7 @@ fun NowPlayingScreen(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
-                .pointerInput(showAudioPipeline, panelScrolling) {
+                .pointerInput(showAudioPipeline, panelScrolling, controlsLocked) {
                     if (showAudioPipeline || panelScrolling) return@pointerInput
                     var total = 0f
                     detectHorizontalDragGestures(
@@ -2223,7 +2234,12 @@ fun NowPlayingScreen(
                             // The same two buzzes the transport glyphs give, so
                             // swiping the sleeve and tapping skip feel like one
                             // gesture with two spellings.
+                            val crossed = total <= -swipeThreshold || total >= swipeThreshold
                             when {
+                                // Still tracks the finger and still springs
+                                // back, so the sleeve does not feel dead —
+                                // it just says why it did not move on.
+                                controlsLocked -> if (crossed) onBlockedControl()
                                 total <= -swipeThreshold -> {
                                     haptics.play(Haptic.SkipNext)
                                     onNext()
@@ -3269,16 +3285,21 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TransportGlyph(
-                    icon = R.drawable.ic_player_previous,
-                    contentDescription = stringResource(R.string.widget_previous),
-                    size = 48.dp,
-                    onClick = onPrevious,
-                    // Lit whenever back has something to do — either a track to
-                    // step to, or enough elapsed for it to restart this one.
-                    enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
-                    haptic = Haptic.SkipPrevious,
-                )
+                // Gone rather than greyed out while the host holds the
+                // controls: a disabled skip button invites tapping it to find
+                // out why, and the answer never changes until the host says so.
+                if (!controlsLocked) {
+                    TransportGlyph(
+                        icon = R.drawable.ic_player_previous,
+                        contentDescription = stringResource(R.string.widget_previous),
+                        size = 48.dp,
+                        onClick = onPrevious,
+                        // Lit whenever back has something to do — either a track to
+                        // step to, or enough elapsed for it to restart this one.
+                        enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
+                        haptic = Haptic.SkipPrevious,
+                    )
+                }
                 // While the stream URL resolves and buffers, the play glyph
                 // would be a lie — show progress instead.
                 if (isLoading || audioVersionSwitching) {
@@ -3301,14 +3322,16 @@ fun NowPlayingScreen(
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
                     )
                 }
-                TransportGlyph(
-                    icon = R.drawable.ic_player_next,
-                    contentDescription = stringResource(R.string.widget_next),
-                    size = 48.dp,
-                    onClick = onNext,
-                    enabled = hasNext,
-                    haptic = Haptic.SkipNext,
-                )
+                if (!controlsLocked) {
+                    TransportGlyph(
+                        icon = R.drawable.ic_player_next,
+                        contentDescription = stringResource(R.string.widget_next),
+                        size = 48.dp,
+                        onClick = onNext,
+                        enabled = hasNext,
+                        haptic = Haptic.SkipNext,
+                    )
+                }
             }
 
             // Keep the volume slot's full footprint when its contents are
@@ -3658,6 +3681,8 @@ private fun WidePlayerControls(
     onListenTogether: () -> Unit,
     /** Opens [ListenTogetherMembersSheet] rather than settings directly — see [NowPlayingScreen]. */
     onOpenListenTogetherMembers: () -> Unit,
+    /** @see ListenTogether.State.controlsLocked */
+    controlsLocked: Boolean,
     lyricsOpen: Boolean,
     queueOpen: Boolean,
     onToggleLyrics: () -> Unit,
@@ -3786,14 +3811,16 @@ private fun WidePlayerControls(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TransportGlyph(
-                    icon = R.drawable.ic_player_previous,
-                    contentDescription = stringResource(R.string.widget_previous),
-                    size = 48.dp,
-                    onClick = onPrevious,
-                    enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
-                    haptic = Haptic.SkipPrevious,
-                )
+                if (!controlsLocked) {
+                    TransportGlyph(
+                        icon = R.drawable.ic_player_previous,
+                        contentDescription = stringResource(R.string.widget_previous),
+                        size = 48.dp,
+                        onClick = onPrevious,
+                        enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
+                        haptic = Haptic.SkipPrevious,
+                    )
+                }
                 if (isLoading) {
                     Box(Modifier.size(100.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(
@@ -3814,14 +3841,16 @@ private fun WidePlayerControls(
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
                     )
                 }
-                TransportGlyph(
-                    icon = R.drawable.ic_player_next,
-                    contentDescription = stringResource(R.string.widget_next),
-                    size = 48.dp,
-                    onClick = onNext,
-                    enabled = hasNext,
-                    haptic = Haptic.SkipNext,
-                )
+                if (!controlsLocked) {
+                    TransportGlyph(
+                        icon = R.drawable.ic_player_next,
+                        contentDescription = stringResource(R.string.widget_next),
+                        size = 48.dp,
+                        onClick = onNext,
+                        enabled = hasNext,
+                        haptic = Haptic.SkipNext,
+                    )
+                }
             }
 
             // Preserve the same vertical rhythm whether the volume control is
@@ -6369,6 +6398,25 @@ private fun ListenTogether.State.badge(): PartyBadge = PartyBadge(
         ?.firstOrNull()
         ?.takeIf { it.isNotBlank() },
 )
+
+/**
+ * Whether the host has taken control of the party this device is listening in.
+ *
+ * Same `distinctUntilChanged` treatment as [rememberPartyBadge], and for the
+ * same reason: this answer changes about twice a party, while the state it is
+ * read from is replaced every few seconds.
+ *
+ * @see ListenTogether.State.controlsLocked
+ */
+@Composable
+internal fun rememberControlsLocked(): Boolean {
+    val locked = remember {
+        ListenTogether.state.map { it.controlsLocked }.distinctUntilChanged()
+    }
+    return locked
+        .collectAsStateWithLifecycle(initialValue = ListenTogether.state.value.controlsLocked)
+        .value
+}
 
 /**
  * [PartyBadge] as it changes, and only when it actually does.

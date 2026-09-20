@@ -720,6 +720,17 @@ private fun BitChordApp(
 
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
+    // A resume in a party is performed on the instant the server schedules, not
+    // when it was pressed, and nothing about the player moves in between — so
+    // the transport spends that round trip drawn as though the tap never landed.
+    // Folded into the buffering flag every play button already answers to, since
+    // to a listener the two are the same fact: it is coming, wait.
+    val awaitingPartyStart by ListenTogether.awaitingStart.collectAsStateWithLifecycle()
+    val playPauseBusy = player.isLoading || awaitingPartyStart
+    // Listening in a party whose host has taken the controls. Read once here
+    // and handed to every surface, so the player, the mini player and the glass
+    // bar can never disagree about whether this device may drive the music.
+    val controlsLocked = partyState.controlsLocked
     var queueNotice by remember { mutableStateOf<QueueActionNotice?>(null) }
     var queueNoticeId by remember { mutableIntStateOf(0) }
     val showQueueNotice: (String) -> Unit = { message ->
@@ -731,6 +742,11 @@ private fun BitChordApp(
         delay(3_000)
         if (queueNotice?.id == shown.id) queueNotice = null
     }
+    // Why a control did nothing, on the same strip above the mini player that
+    // already answers "added to queue". Reached from every surface that had a
+    // control taken away — see [ListenTogether.State.controlsLocked].
+    val hostOnlyMessage = stringResource(R.string.listen_together_host_only_notice)
+    val showHostOnlyNotice: () -> Unit = { showQueueNotice(hostOnlyMessage) }
     val shuffleEnabled by QueueShuffle.enabled.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
     // A conversion is deliberately scoped to the current listening session.
@@ -936,6 +952,14 @@ private fun BitChordApp(
         playRequestGeneration++
         activeRadioSeed = null
         scope.launch {
+            // Choosing a song is choosing what the party hears, so it is
+            // refused at the player while the host holds the controls. Caught
+            // here as well so the tap says why instead of doing nothing —
+            // this is the one path that reaches playback from everywhere.
+            if (ListenTogether.state.value.controlsLocked) {
+                showHostOnlyNotice()
+                return@launch
+            }
             controller?.playSongs(
                 songs.map {
                     it.copy(
@@ -1089,6 +1113,12 @@ private fun BitChordApp(
     }
     val addToQueue: (Song) -> Unit = { song ->
         scope.launch {
+            // Refused further down at the player anyway — this is so the
+            // tap says why rather than appearing to do nothing.
+            if (ListenTogether.state.value.controlsLocked) {
+                showHostOnlyNotice()
+                return@launch
+            }
             // The end of what the user queued, not the end of the queue: a song
             // asked for by name outranks whatever AutoPlay lined up behind it.
             controller?.let {
@@ -1113,6 +1143,12 @@ private fun BitChordApp(
     }
     val playNext: (Song) -> Unit = { song ->
         scope.launch {
+            // Refused further down at the player anyway — this is so the
+            // tap says why rather than appearing to do nothing.
+            if (ListenTogether.state.value.controlsLocked) {
+                showHostOnlyNotice()
+                return@launch
+            }
             controller?.let {
                 if (ListenTogether.state.value.inParty) {
                     val upcoming = (it.mediaItemCount - (it.currentMediaItemIndex + 1)).coerceAtLeast(0)
@@ -1216,6 +1252,10 @@ private fun BitChordApp(
     val queueSongs: (List<Song>, Boolean) -> Unit = { songs, next ->
         if (songs.isNotEmpty()) {
             scope.launch {
+                if (ListenTogether.state.value.controlsLocked) {
+                    showHostOnlyNotice()
+                    return@launch
+                }
                 val c = controller
                 if (c == null || c.mediaItemCount == 0) {
                     // Nothing to queue behind. "Add to queue" on a silent
@@ -1736,7 +1776,7 @@ private fun BitChordApp(
             windowWidth = windowWidth,
             windowHeight = windowHeight,
             isPlaying = player.isPlaying,
-            isLoading = player.isLoading,
+            isLoading = playPauseBusy,
             positionMs = player.position.positionMs,
             durationMs = player.durationMs,
             isAudioVersion = convertedAudioId == song.videoId,
@@ -1768,6 +1808,7 @@ private fun BitChordApp(
             },
             onNext = { controller?.seekToNextMediaItem() },
             onPrevious = { controller?.seekToPrevious() },
+            onBlockedControl = showHostOnlyNotice,
             onSeekFraction = { fraction ->
                 controller?.let { player ->
                     // Read at the moment of the seek, not from the
@@ -2961,13 +3002,15 @@ private fun BitChordApp(
                         scrollConnection = navBarScroll,
                         song = player.song?.takeUnless { playerDocked },
                         isPlaying = player.isPlaying,
-                        isLoading = player.isLoading,
+                        isLoading = playPauseBusy,
                         onPlayPause = {
                             controller?.let { if (it.isPlaying) it.pause() else it.play() }
                         },
                         onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
                         onExpand = { showNowPlaying = true },
+                        controlsLocked = controlsLocked,
+                        onBlockedControl = showHostOnlyNotice,
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else Column(
@@ -2991,7 +3034,7 @@ private fun BitChordApp(
                         MiniPlayer(
                             song = song,
                             isPlaying = player.isPlaying,
-                            isLoading = player.isLoading,
+                            isLoading = playPauseBusy,
                             hazeState = hazeState,
                             onPlayPause = {
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
@@ -2999,6 +3042,8 @@ private fun BitChordApp(
                             onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
                             onExpand = { showNowPlaying = true },
+                            controlsLocked = controlsLocked,
+                            onBlockedControl = showHostOnlyNotice,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(Modifier.height(8.dp))

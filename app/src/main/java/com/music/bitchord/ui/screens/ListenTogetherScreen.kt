@@ -38,15 +38,19 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.GroupAdd
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Logout
 import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.font.FontWeight
@@ -66,6 +70,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -78,6 +83,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -401,6 +407,7 @@ fun ListenTogetherScreen(
                 },
                 onLeave = { scope.launch { ListenTogether.leaveParty() } },
                 onSetCapacity = ListenTogether::setMaxMembers,
+                onSetHostOnlyControl = ListenTogether::setHostOnlyControl,
                 onKick = ListenTogether::kick,
             )
         }
@@ -688,14 +695,22 @@ private fun NotInAParty(
 
     SettingsGroup(header = stringResource(R.string.listen_together_profile)) {
         Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
-            PillTextField(
-                value = nickname,
-                onValueChange = onNicknameChange,
-                placeholder = stringResource(R.string.listen_together_nickname_hint),
-                container = MaterialTheme.colorScheme.background,
-                enabled = ready,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            )
+            // The picture rides alongside the name to the party, so it belongs
+            // beside the field that sets the name — in the slot the server row
+            // below puts its own glyph in, for the same reason: it says what
+            // this row is about before the field is read.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PartyAvatar(url = ListenTogether.myAvatarUrl())
+                Spacer(Modifier.width(ICON_GAP))
+                PillTextField(
+                    value = nickname,
+                    onValueChange = onNicknameChange,
+                    placeholder = stringResource(R.string.listen_together_nickname_hint),
+                    container = MaterialTheme.colorScheme.background,
+                    enabled = ready,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                )
+            }
         }
     }
 
@@ -910,6 +925,7 @@ private fun InAParty(
     onShare: () -> Unit,
     onLeave: () -> Unit,
     onSetCapacity: (Int) -> Unit,
+    onSetHostOnlyControl: (Boolean) -> Unit,
     onKick: (String) -> Unit,
 ) {
     SettingsGroup(
@@ -969,6 +985,23 @@ private fun InAParty(
                 Text("${state.maxMembers}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
                 TextButton(onClick = { onSetCapacity(state.maxMembers + 1) }, enabled = state.maxMembers < 10) { Text("+", color = MaterialTheme.colorScheme.onSurface) }
             }
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Lock,
+                title = stringResource(R.string.listen_together_host_only),
+                subtitle = stringResource(R.string.listen_together_host_only_subtitle),
+                trailing = {
+                    Switch(
+                        checked = state.hostOnlyControl,
+                        onCheckedChange = onSetHostOnlyControl,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { onSetHostOnlyControl(!state.hostOnlyControl) },
+            )
             RowDivider()
         }
         state.members.forEachIndexed { index, member ->
@@ -1049,6 +1082,30 @@ private fun connectionLine(state: ListenTogether.State): String = when {
     // saying so is more use than a spinner.
     !state.clockSynced -> stringResource(R.string.listen_together_syncing_clock)
     else -> stringResource(R.string.listen_together_in_sync, state.roundTripMs)
+}
+
+/**
+ * This device's own party picture, drawn in the slot the rows around it give
+ * their glyphs — so the field beside it starts on the same line as every other
+ * field on the screen.
+ */
+@Composable
+private fun PartyAvatar(url: String?, size: Dp = ICON_SIZE) {
+    if (url != null) {
+        AsyncImage(
+            model = url,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(size).clip(CircleShape),
+        )
+    } else {
+        Icon(
+            Icons.Rounded.Person,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.size(size),
+        )
+    }
 }
 
 @Composable

@@ -115,6 +115,13 @@ data class PartySnapshot(
     val code: String = "",
     val createdAtMs: Long = 0,
     val maxMembers: Int = 5,
+    /**
+     * Whether only the host may drive the music here.
+     *
+     * Defaulted false so a party on a server that predates the setting reads as
+     * the shared free-for-all this feature shipped as, rather than as locked.
+     */
+    val hostOnlyControl: Boolean = false,
     val members: List<PartyMember> = emptyList(),
     val playback: PartyPlayback = PartyPlayback(),
     val queue: PartyQueue = PartyQueue(),

@@ -1488,6 +1488,7 @@ class PlaybackService : MediaLibraryService() {
                 controller,
                 onUserIntent = { partySync?.onLocalIntent() },
             deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
             ) { lastPublishedSubtitle },
             MediaLibraryCallback(),
         )
@@ -1975,6 +1976,7 @@ class PlaybackService : MediaLibraryService() {
             requireNotNull(crossfade),
             onUserIntent = { partySync?.onLocalIntent() },
             deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         ) { lastPublishedSubtitle }
 
         // The queue moving on used to arrive here as an item transition on the
@@ -4754,6 +4756,7 @@ class PlaybackService : MediaLibraryService() {
             newCrossfade,
             onUserIntent = { partySync?.onLocalIntent() },
             deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
         ) { lastPublishedSubtitle }
         applyOutputRoute()
         if (items.isNotEmpty()) newActive.prepare()
@@ -5589,10 +5592,31 @@ class PlaybackService : MediaLibraryService() {
         private val onUserIntent: () -> Unit,
         /** @see PartySync.shouldDeferPlay */
         private val deferPlayToParty: () -> Boolean,
+        /** @see PartySync.onLockedTransport */
+        private val lockedTransport: (Boolean) -> Boolean,
         private val getSubtitle: () -> String?,
     ) : ForwardingPlayer(player) {
 
+        /**
+         * Whether this device is a listener in a party its host has taken
+         * control of — see [ListenTogether.State.controlsLocked].
+         *
+         * Checked here, at the door, rather than only in the app: the
+         * notification, a headset button and Android Auto all arrive through
+         * this wrapper too, and a listener who can skip the party's track from
+         * their lock screen is not restricted at all.
+         *
+         * What this is not is the enforcement. The server refuses these actions
+         * from a listener independently; this is what stops a surface from
+         * appearing to work and then being silently overruled.
+         */
+        private fun locked(): Boolean = ListenTogether.state.value.controlsLocked
+
         override fun play() {
+            // Locked, this plays only here — the party carries on untouched and
+            // this device rejoins it wherever it has got to. See
+            // [PartySync.onLockedTransport], which owns that catch-up.
+            if (lockedTransport(true)) return
             onUserIntent()
             // Held back only when a party will schedule the start for everyone
             // at once — see [PartySync.shouldDeferPlay], which starts the player
@@ -5601,27 +5625,70 @@ class PlaybackService : MediaLibraryService() {
             if (deferPlayToParty()) return
             super.play()
         }
-        override fun pause() { onUserIntent(); super.pause() }
-        override fun stop() { onUserIntent(); super.stop() }
+
+        override fun pause() {
+            if (lockedTransport(false)) return
+            onUserIntent()
+            super.pause()
+        }
+
+        // Not blocked when locked: stopping is this device going quiet, which
+        // is the listener's own business, and the lifecycle paths that call it
+        // are not asking to move the party.
+        override fun stop() {
+            if (locked()) { super.stop(); return }
+            onUserIntent()
+            super.stop()
+        }
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
+            if (lockedTransport(playWhenReady)) return
             onUserIntent()
             if (playWhenReady && deferPlayToParty()) return
             super.setPlayWhenReady(playWhenReady)
         }
 
-        override fun seekTo(positionMs: Long) { onUserIntent(); super.seekTo(positionMs) }
-        override fun seekBack() { onUserIntent(); super.seekBack() }
-        override fun seekForward() { onUserIntent(); super.seekForward() }
-        override fun seekToPrevious() { onUserIntent(); super.seekToPrevious() }
-        override fun seekToDefaultPosition() { onUserIntent(); super.seekToDefaultPosition() }
+        // The playhead belongs to the party while locked: it goes where the
+        // host puts it, and a local seek would only be dragged back by the next
+        // reconcile anyway.
+        override fun seekTo(positionMs: Long) {
+            if (locked()) return
+            onUserIntent()
+            super.seekTo(positionMs)
+        }
+
+        override fun seekBack() {
+            if (locked()) return
+            onUserIntent()
+            super.seekBack()
+        }
+
+        override fun seekForward() {
+            if (locked()) return
+            onUserIntent()
+            super.seekForward()
+        }
+
+        override fun seekToPrevious() {
+            if (locked()) return
+            onUserIntent()
+            super.seekToPrevious()
+        }
+
+        override fun seekToDefaultPosition() {
+            if (locked()) return
+            onUserIntent()
+            super.seekToDefaultPosition()
+        }
 
         override fun seekToDefaultPosition(mediaItemIndex: Int) {
+            if (locked()) return
             onUserIntent()
             super.seekToDefaultPosition(mediaItemIndex)
         }
 
         override fun setMediaItems(mediaItems: List<MediaItem>, resetPosition: Boolean) {
+            if (locked()) return
             onUserIntent()
             super.setMediaItems(mediaItems, resetPosition)
         }
@@ -5631,6 +5698,7 @@ class PlaybackService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long,
         ) {
+            if (locked()) return
             onUserIntent()
             super.setMediaItems(mediaItems, startIndex, startPositionMs)
         }
@@ -5639,32 +5707,41 @@ class PlaybackService : MediaLibraryService() {
         // Add to queue, removing a row, dragging one. None of these move the
         // playhead, so before they were reported the party's copy of the queue
         // silently went stale and only caught up at the next track change.
+        //
+        // All refused while locked: the queue is what plays next, so a listener
+        // who can reorder it is still choosing the music.
         override fun addMediaItems(index: Int, mediaItems: List<MediaItem>) {
+            if (locked()) return
             onUserIntent()
             super.addMediaItems(index, mediaItems)
         }
 
         override fun addMediaItems(mediaItems: List<MediaItem>) {
+            if (locked()) return
             onUserIntent()
             super.addMediaItems(mediaItems)
         }
 
         override fun removeMediaItem(index: Int) {
+            if (locked()) return
             onUserIntent()
             super.removeMediaItem(index)
         }
 
         override fun removeMediaItems(fromIndex: Int, toIndex: Int) {
+            if (locked()) return
             onUserIntent()
             super.removeMediaItems(fromIndex, toIndex)
         }
 
         override fun moveMediaItem(currentIndex: Int, newIndex: Int) {
+            if (locked()) return
             onUserIntent()
             super.moveMediaItem(currentIndex, newIndex)
         }
 
         override fun moveMediaItems(fromIndex: Int, toIndex: Int, newIndex: Int) {
+            if (locked()) return
             onUserIntent()
             super.moveMediaItems(fromIndex, toIndex, newIndex)
         }
@@ -5674,11 +5751,13 @@ class PlaybackService : MediaLibraryService() {
             toIndex: Int,
             mediaItems: List<MediaItem>,
         ) {
+            if (locked()) return
             onUserIntent()
             super.replaceMediaItems(fromIndex, toIndex, mediaItems)
         }
 
         override fun clearMediaItems() {
+            if (locked()) return
             onUserIntent()
             super.clearMediaItems()
         }
@@ -5694,6 +5773,7 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+            if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
             val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
@@ -5711,18 +5791,21 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun seekToPreviousMediaItem() {
+            if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
             wrappedPlayer.seekToPrevious()
         }
 
         override fun seekToNextMediaItem() {
+            if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNextMediaItem()
         }
 
         override fun seekToNext() {
+            if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
             wrappedPlayer.seekToNext()

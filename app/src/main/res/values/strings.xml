@@ -892,6 +892,9 @@
     <string name="listen_together_host">Host</string>
     <string name="listen_together_away">Away — their slot is held</string>
     <string name="listen_together_manage">Manage</string>
+    <string name="listen_together_host_only">Only I control the music</string>
+    <string name="listen_together_host_only_subtitle">Everyone else listens along and can pause on their own device</string>
+    <string name="listen_together_host_only_notice">Only the host can control the music</string>
     <string name="listen_together_leave">Leave the party</string>
     <string name="listen_together_leave_subtitle">The others carry on listening</string>
     <string name="listen_together_reconnecting">Reconnecting…</string>
