@@ -15,6 +15,7 @@
     <string name="search">Tìm kiếm</string>
     <string name="clear_search">Xóa tìm kiếm</string>
     <string name="library">Thư viện</string>
+    <string name="home">Trang chủ</string>
     <string name="play">Phát</string>
     <string name="explore">Khám phá</string>
     <string name="listen_now">Nghe ngay</string>
@@ -693,6 +694,20 @@
     <string name="export_compatible_downloads">Xuất bản tải xuống tương thích</string>
     <string name="output_precision">Độ chính xác đầu ra</string>
     <string name="prefer_usb_dac">Ưu tiên DAC USB</string>
+    <string name="loudness_normalization">Chuẩn hóa âm lượng</string>
+    <string name="loudness_normalization_subtitle">Cân bằng âm lượng giữa các bài hát</string>
+    <string name="loudness_target">Âm lượng mục tiêu</string>
+    <string name="loudness_target_subtitle">Nhỏ hơn hợp với tai nghe; lớn hơn hợp với ô tô hoặc loa điện thoại</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="bit_perfect_mode">Bit-perfect</string>
+    <string name="bit_perfect_mode_subtitle">Gửi âm thanh đã giải mã đến đầu ra mà không thay đổi</string>
+    <string name="bit_perfect_disables_dsp">Tắt chuẩn hóa âm lượng, EQ và âm thanh không gian khi bật</string>
+    <string name="disabled_by_bit_perfect">Không khả dụng khi Bit-perfect đang bật</string>
+    <string name="bit_perfect_active">Chính xác</string>
+    <string name="bit_perfect_converted">Đã chuyển đổi</string>
+    <string name="loudness_measuring">Đang đo…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
     <string name="blur_unfocused_lyrics">Làm mờ lời không tập trung</string>
     <string name="blur_unfocused_lyrics_subtitle">Tập trung vào câu hát hiện tại</string>
     <string name="advanced_options">Tùy chọn nâng cao</string>
@@ -940,6 +955,14 @@
 
     <string name="pipeline_pcm_format">PCM Format</string>
 
+    <string name="pipeline_loudness">Loudness</string>
+
+    <string name="pipeline_loudness_gain">Gain</string>
+
+    <string name="pipeline_loudness_measured">Measured</string>
+
+    <string name="pipeline_bit_exact">Bit-exact</string>
+
     <string name="pipeline_eq_preset">EQ Preset</string>
 
     <string name="pipeline_stereo_expand">Stereo Expand</string>
@@ -1043,6 +1066,8 @@
     <string name="listen_together_host">Host</string>
 
     <string name="listen_together_away">Away — their slot is held</string>
+
+    <string name="listen_together_manage">Quản lý</string>
 
     <string name="listen_together_leave">Leave the party</string>
 

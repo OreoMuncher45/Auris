@@ -84,6 +84,24 @@ object AudioOutputStatus {
          */
         val bluetoothProfile: String? = null,
         val negotiationResult: OutputNegotiationResult? = null,
+        /**
+         * Whether decoder samples are currently reaching AudioTrack unaltered.
+         *
+         * Distinct from the *setting* being on. Bit-perfect mode takes
+         * BitChord's DSP chain out of the path unconditionally, but the route
+         * still has to be able to open a track in the decoder's own encoding —
+         * see [PrecisionAudioSink.publishBitPerfectVerdict] — and this is
+         * false when it cannot, with [bitPerfectDetail] saying why.
+         */
+        val bitPerfectActive: Boolean = false,
+        val bitPerfectDetail: String? = null,
+        /**
+         * Gain loudness normalization is applying to the playing track, in dB,
+         * or null when it is off, bypassed, or has not measured enough yet.
+         */
+        val loudnessGainDb: Float? = null,
+        /** Measured integrated loudness of the playing track in LUFS, when known. */
+        val loudnessLufs: Float? = null,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -120,7 +138,11 @@ object AudioOutputStatus {
                 usbEndpointFormat == other.usbEndpointFormat &&
                 bluetoothTelemetry == other.bluetoothTelemetry &&
                 bluetoothProfile == other.bluetoothProfile &&
-                negotiationResult == other.negotiationResult
+                negotiationResult == other.negotiationResult &&
+                bitPerfectActive == other.bitPerfectActive &&
+                bitPerfectDetail == other.bitPerfectDetail &&
+                loudnessGainDb == other.loudnessGainDb &&
+                loudnessLufs == other.loudnessLufs
         }
 
         override fun hashCode(): Int {
@@ -157,6 +179,10 @@ object AudioOutputStatus {
             result = 31 * result + (bluetoothTelemetry?.hashCode() ?: 0)
             result = 31 * result + (bluetoothProfile?.hashCode() ?: 0)
             result = 31 * result + (negotiationResult?.hashCode() ?: 0)
+            result = 31 * result + bitPerfectActive.hashCode()
+            result = 31 * result + (bitPerfectDetail?.hashCode() ?: 0)
+            result = 31 * result + (loudnessGainDb?.hashCode() ?: 0)
+            result = 31 * result + (loudnessLufs?.hashCode() ?: 0)
             return result
         }
     }
@@ -307,6 +333,25 @@ object AudioOutputStatus {
             decoderOutputEncoding = decoderOutputEncoding,
             dspFormat = dspFormat,
         )
+    }
+
+    /** Whether samples are reaching AudioTrack unaltered, and why not when they aren't. */
+    fun publishBitPerfect(active: Boolean, detail: String?) {
+        current.value = current.value.copy(
+            bitPerfectActive = active,
+            bitPerfectDetail = detail,
+        )
+    }
+
+    /**
+     * What loudness normalization is doing to the playing track. Nulls mean
+     * "nothing" — off, bypassed by bit-perfect mode, or not yet measured — and
+     * are what the readout shows as inactive.
+     */
+    fun publishLoudness(gainDb: Float?, lufs: Float?) {
+        val snapshot = current.value
+        if (snapshot.loudnessGainDb == gainDb && snapshot.loudnessLufs == lufs) return
+        current.value = snapshot.copy(loudnessGainDb = gainDb, loudnessLufs = lufs)
     }
 
     fun publishAudioTrack(encoding: Int, sampleRateHz: Int, bufferSize: Int? = null) {

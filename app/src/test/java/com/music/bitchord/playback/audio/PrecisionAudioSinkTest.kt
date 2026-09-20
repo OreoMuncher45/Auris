@@ -8,6 +8,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioSink
+import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.EqualizerProcessor
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
@@ -132,13 +133,226 @@ class PrecisionAudioSinkTest {
     private fun createSink(
         delegate: AudioSink,
         enableFloatOutput: Boolean = true,
-        dspChain: DspChain = DspChain(SpatialAudioProcessor(), EqualizerProcessor(), TransitionFilterProcessor()),
+        dspChain: DspChain = DspChain(spatial = SpatialAudioProcessor(), equalizer = EqualizerProcessor(), transition = TransitionFilterProcessor()),
+        bitPerfect: Boolean = false,
     ): PrecisionAudioSink {
         return PrecisionAudioSink(
             delegate = delegate,
             dspChain = dspChain,
             enableFloatOutput = enableFloatOutput,
+            bitPerfect = bitPerfect,
         )
+    }
+
+    private fun rawFormat(pcmEncoding: Int): Format = Format.Builder()
+        .setSampleMimeType(MimeTypes.AUDIO_RAW)
+        .setPcmEncoding(pcmEncoding)
+        .setChannelCount(2)
+        .setSampleRate(48000)
+        .build()
+
+    // ---- Bit-perfect -------------------------------------------------------
+    //
+    // These assert on the *samples handed to the delegate*, not on flags.
+    // The claim the mode makes is that the numbers arriving at AudioTrack are
+    // the numbers the decoder produced, so that is the thing checked: every
+    // test below builds a buffer of awkward integers, pushes it through a sink
+    // whose DSP is deliberately left switched on and set to something audible,
+    // and compares what came out against what went in.
+
+    /**
+     * A DSP chain that would wreck the audio if it ran at all: the equaliser
+     * hard-panned right, which zeroes the left channel, and spatial widening on
+     * top of it.
+     */
+    private fun loudDspChain(): DspChain = DspChain(
+        loudness = com.music.bitchord.playback.LoudnessProcessor().apply {
+            enabled = true
+            // A track whose gain is already known, so normalization would
+            // apply -6 dB from the very first frame if it ran at all.
+            prime("track", cachedGainDb = -6f)
+        },
+        spatial = SpatialAudioProcessor().apply { enabled = true },
+        equalizer = EqualizerProcessor().apply {
+            setTuning(enabled = true, curve = com.music.bitchord.playback.EqCurve.FLAT, balance = 1f)
+        },
+        transition = TransitionFilterProcessor().apply {
+            // A closed low-pass, which would gut everything above 200 Hz.
+            setCutoffs(lowPassHz = 200f, highPassHz = 20f)
+        },
+        bitPerfect = true,
+    )
+
+    /**
+     * 16-bit in, 16-bit out, every sample identical — with the equaliser and
+     * spatial audio switched on the whole time.
+     *
+     * This is the assertion the mode lives or dies on. The DSP chain is not
+     * merely "off"; it is on and configured to do something obvious, and the
+     * output still has to match bit for bit. A listener who leaves an
+     * equaliser curve set and then asks for bit-perfect gets bit-perfect.
+     */
+    @Test
+    fun `bit-perfect 16-bit round trip is exact with EQ and spatial on`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, dspChain = loudDspChain(), bitPerfect = true)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+
+        assertEquals(PcmEncoding.PCM_16BIT, sink.targetOutputEncoding)
+
+        // An even count: these are stereo frames, and a trailing half-frame is
+        // deliberately dropped by the sink rather than padded.
+        val samples = shortArrayOf(
+            0, 1, -1, 1000, -1000, 32767, -32768, 12345, -12345, 255, -256, 4096,
+        )
+        val input = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.nativeOrder())
+        samples.forEach(input::putShort)
+        input.flip()
+
+        sink.handleBuffer(input, 0L, 1)
+
+        val handed = fakeDelegate.lastHandledBuffer!!.order(ByteOrder.nativeOrder())
+        handed.rewind()
+        samples.forEachIndexed { i, expected ->
+            assertEquals("sample $i altered", expected, handed.getShort())
+        }
+    }
+
+    /**
+     * 24-bit in, float out, and the float carries the original integer exactly.
+     *
+     * Float is not a compromise here, it is the only container Media3 will
+     * open an AudioTrack with that holds 24 bits — `DefaultAudioSink` has just
+     * two linear-PCM output encodings, float and 16-bit. int24 fits inside
+     * float32's 24-bit significand, and `PcmBoundary` scales by 8388608, a
+     * power of two, so the value survives exactly and can be read straight
+     * back out.
+     */
+    @Test
+    fun `bit-perfect 24-bit goes to float and survives exactly`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, dspChain = loudDspChain(), bitPerfect = true)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_24BIT)).build())
+
+        assertEquals(PcmEncoding.PCM_24BIT_PACKED, sink.inputPcmEncoding)
+        assertEquals(PcmEncoding.PCM_FLOAT, sink.targetOutputEncoding)
+        assertEquals(C.ENCODING_PCM_FLOAT, fakeDelegate.configuredConfig!!.format.pcmEncoding)
+
+        // Including the extremes and values whose low byte would vanish under
+        // any sloppier conversion.
+        val samples = intArrayOf(0, 1, -1, 8388607, -8388608, 0x0000FF, 0x7FFFFF, -0x7FFFFF)
+        val input = ByteBuffer.allocate(samples.size * 3).order(ByteOrder.nativeOrder())
+        samples.forEach {
+            input.put((it and 0xFF).toByte())
+            input.put(((it shr 8) and 0xFF).toByte())
+            input.put(((it shr 16) and 0xFF).toByte())
+        }
+        input.flip()
+
+        sink.handleBuffer(input, 0L, 1)
+
+        val handed = fakeDelegate.lastHandledBuffer!!.order(ByteOrder.nativeOrder())
+        handed.rewind()
+        samples.forEachIndexed { i, expected ->
+            // Back to the integer domain the sample started in.
+            val recovered = Math.round(handed.getFloat() * 8388608.0f)
+            assertEquals("sample $i altered", expected, recovered)
+        }
+    }
+
+    /**
+     * On a route that will not open a float track, a 24-bit source has to come
+     * down to 16-bit — Media3 offers nothing in between — and the mode must
+     * say so rather than claim a guarantee it is not keeping.
+     */
+    @Test
+    fun `bit-perfect reports inexact when the route refuses float`() {
+        val fakeDelegate = FakeAudioSink()
+        // What DefaultAudioSink answers with float output off: it rewrites the
+        // float format to 16-bit and reports transcoding rather than refusing.
+        fakeDelegate.formatSupportReturn = AudioSink.SINK_FORMAT_SUPPORTED_WITH_TRANSCODING
+        val sink = createSink(fakeDelegate, dspChain = loudDspChain(), bitPerfect = true)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_24BIT)).build())
+
+        assertEquals(PcmEncoding.PCM_16BIT, sink.targetOutputEncoding)
+        assertFalse(AudioOutputStatus.current.value.bitPerfectActive)
+    }
+
+    /**
+     * `supportsFormat` is not a strong enough gate to pick float on, and this
+     * pins that down: with float output off, `DefaultAudioSink.getFormatSupport`
+     * rewrites a float format to 16-bit and still answers
+     * SUPPORTED_WITH_TRANSCODING, so `supportsFormat` returns true about a
+     * track it is about to downconvert. Only SUPPORTED_DIRECTLY means "yes,
+     * natively".
+     */
+    @Test
+    fun `bit-perfect only takes float when the delegate supports it directly`() {
+        val transcoding = FakeAudioSink().apply {
+            formatSupportReturn = AudioSink.SINK_FORMAT_SUPPORTED_WITH_TRANSCODING
+            supportsFormatReturn = true
+        }
+        val direct = FakeAudioSink().apply {
+            formatSupportReturn = AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
+        }
+
+        createSink(transcoding, dspChain = loudDspChain(), bitPerfect = true).also {
+            it.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_24BIT)).build())
+            assertEquals(PcmEncoding.PCM_16BIT, it.targetOutputEncoding)
+        }
+        createSink(direct, dspChain = loudDspChain(), bitPerfect = true).also {
+            it.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_24BIT)).build())
+            assertEquals(PcmEncoding.PCM_FLOAT, it.targetOutputEncoding)
+        }
+    }
+
+    /**
+     * 32-bit integer PCM is reported as inexact, because it is.
+     *
+     * Float32 carries 24 bits of significand and `DefaultAudioSink` will not
+     * open a 32-bit integer track, so eight bits are lost whatever this app
+     * does. An earlier version of this mode claimed to fix that; it could not,
+     * and the readout now says so instead.
+     */
+    @Test
+    fun `bit-perfect admits 32-bit PCM cannot be exact`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, dspChain = loudDspChain(), bitPerfect = true)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_32BIT)).build())
+
+        assertFalse(AudioOutputStatus.current.value.bitPerfectActive)
+        assertTrue(
+            AudioOutputStatus.current.value.bitPerfectDetail.orEmpty().contains("8 bits lost"),
+        )
+    }
+
+    /** With the mode off, the DSP chain is reached and does colour the audio. */
+    @Test
+    fun `without bit-perfect the DSP chain is reached`() {
+        val equalizer = EqualizerProcessor().apply {
+            setTuning(enabled = true, curve = com.music.bitchord.playback.EqCurve.FLAT, balance = 1f)
+        }
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(equalizer = equalizer),
+            bitPerfect = false,
+        )
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+
+        val input = ByteBuffer.allocate(8).order(ByteOrder.nativeOrder())
+        shortArrayOf(8000, 8000, 8000, 8000).forEach(input::putShort)
+        input.flip()
+
+        sink.handleBuffer(input, 0L, 1)
+
+        val handed = fakeDelegate.lastHandledBuffer!!.order(ByteOrder.nativeOrder())
+        handed.rewind()
+        // Hard-right balance silences the left channel. If this ever starts
+        // matching the input, the chain has stopped being reached and the
+        // bit-perfect tests above are no longer proving anything.
+        assertEquals(0.toShort(), handed.getShort())
     }
 
     @Test
@@ -894,7 +1108,7 @@ class PrecisionAudioSinkTest {
         val fakeDelegate = FakeAudioSink()
         val sink = PrecisionAudioSink(
             delegate = fakeDelegate,
-            dspChain = DspChain(SpatialAudioProcessor(), EqualizerProcessor(), TransitionFilterProcessor()),
+            dspChain = DspChain(spatial = SpatialAudioProcessor(), equalizer = EqualizerProcessor(), transition = TransitionFilterProcessor()),
             enableFloatOutput = true,
             preferredOutputEncodingProvider = { format -> PcmEncoding.PCM_24BIT_PACKED },
         )
@@ -918,7 +1132,7 @@ class PrecisionAudioSinkTest {
         val fakeDelegate = FakeAudioSink()
         val sink = PrecisionAudioSink(
             delegate = fakeDelegate,
-            dspChain = DspChain(SpatialAudioProcessor(), EqualizerProcessor(), TransitionFilterProcessor()),
+            dspChain = DspChain(spatial = SpatialAudioProcessor(), equalizer = EqualizerProcessor(), transition = TransitionFilterProcessor()),
             enableFloatOutput = true,
             preferredOutputEncodingProvider = { format -> PcmEncoding.PCM_16BIT },
         )

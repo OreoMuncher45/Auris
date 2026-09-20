@@ -39,6 +39,30 @@ internal object AudioOutputPolicy {
         return advertisesPcmFloat
     }
 
+    /**
+     * Whether bit-perfect mode may open a PCM-float AudioTrack on this route.
+     *
+     * Float is not a *preference* here, which is why this does not consult
+     * [OutputPcmMode] the way [shouldUseFloatOutput] does. Media3's
+     * `DefaultAudioSink` has exactly two linear-PCM output encodings: float,
+     * and 16-bit. Its `configure` puts `ToInt16PcmAudioProcessor` in the chain
+     * for every input encoding whenever float output is off — so on a 24-bit
+     * source, "don't use float" does not mean "pass 24-bit through", it means
+     * "downconvert to 16-bit". Float is the only container that carries a
+     * 24-bit sample to AudioTrack intact (int24 fits exactly in float32's
+     * 24-bit significand), so bit-perfect mode has to ask for it.
+     *
+     * The route guard from [shouldUseFloatOutput] still applies, and for the
+     * same reason: a built-in speaker path that accepts a float AudioTrack and
+     * then converts it in AudioFlinger produces distortion on affected OEM
+     * devices. A phone speaker therefore gets 16-bit, which is bit-exact for a
+     * 16-bit source and honestly reported as inexact for anything above it.
+     */
+    fun allowsFloatForBitPerfect(
+        routeKind: AudioRouting.Kind,
+        advertisesPcmFloat: Boolean,
+    ): Boolean = routeKind != AudioRouting.Kind.PHONE && advertisesPcmFloat
+
     /** Samsung's vendor FLAC decoder emits invalid timestamps with PCM float. */
     fun isUnsafeFloatFlacDecoder(name: String): Boolean {
         val normalized = name.lowercase()

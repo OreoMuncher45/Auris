@@ -35,6 +35,22 @@ import java.nio.ByteOrder
  * - In Fallback/Legacy Mode (for non-linear PCM or unsupported channel counts/sample rates):
  *   decoder buffers pass straight through to [DefaultAudioSink].
  *
+ * - In Bit-Perfect Mode ([bitPerfect]): precision stays active, the [DspChain] is bypassed
+ *   wholesale, and the output encoding is chosen to preserve the source rather than to suit a
+ *   preference — see [bitPerfectTargetEncoding].
+ *
+ *   Keeping the precision path is deliberate, and the opposite of the obvious approach.
+ *   Handing raw decoder buffers to [DefaultAudioSink] *looks* more faithful, but it delegates
+ *   the conversion to Media3, which has only two linear-PCM output encodings — float and
+ *   16-bit — and picks between them on a flag rather than on what the source needs. With float
+ *   output off it inserts `ToInt16PcmAudioProcessor` unconditionally, so "pass it through
+ *   untouched" is in practice "downconvert everything to 16-bit". Staying on the precision path
+ *   means [PcmBoundary] does the conversion instead, at power-of-two scale factors that
+ *   provably round-trip 16- and 24-bit integers unchanged.
+ *
+ *   What the mode cannot do is make 32-bit integer PCM exact: float32 carries 24 bits of
+ *   significand, and nothing between here and AudioTrack carries more.
+ *
  * Threading & Buffer Contract:
  * - Steady-state execution avoids heap allocations by reusing an audio-thread-owned [AudioBlock]
  *   and a native-order [outputByteBuffer].
@@ -48,6 +64,13 @@ class PrecisionAudioSink(
     private val enableFloatOutput: Boolean,
     val directAudioOutput: DirectAudioOutput? = null,
     private val preferredOutputEncodingProvider: ((Format) -> PcmEncoding?)? = null,
+    /**
+     * Hands decoder buffers to [delegate] untouched. Fixed for the lifetime of
+     * the sink rather than a live flag: changing it means changing what the
+     * delegate was configured for, so the service rebuilds both players when
+     * the setting moves — see `PlaybackService.rebuildPlayersForOutput`.
+     */
+    private val bitPerfect: Boolean = false,
 ) : ForwardingAudioSink(delegate) {
 
     /** Whether the precision Float32 DSP path is currently active for the configured format. */
@@ -108,12 +131,16 @@ class PrecisionAudioSink(
                 val preferredEncoding = preferredOutputEncodingProvider?.invoke(format)
                 val isHighResSource = encoding.bitDepth > 16
 
-                val targetEncoding = when {
-                    preferredEncoding == PcmEncoding.PCM_FLOAT && delegate.supportsFormat(floatFormat) -> PcmEncoding.PCM_FLOAT
-                    preferredEncoding == PcmEncoding.PCM_24BIT_PACKED && delegate.supportsFormat(pcm24Format) -> PcmEncoding.PCM_24BIT_PACKED
-                    preferredEncoding == PcmEncoding.PCM_16BIT -> PcmEncoding.PCM_16BIT
-                    preferredEncoding == null && enableFloatOutput && delegate.supportsFormat(floatFormat) -> PcmEncoding.PCM_FLOAT
-                    else -> PcmEncoding.PCM_16BIT
+                val targetEncoding = if (bitPerfect) {
+                    bitPerfectTargetEncoding(encoding, floatFormat)
+                } else {
+                    when {
+                        preferredEncoding == PcmEncoding.PCM_FLOAT && delegate.supportsFormat(floatFormat) -> PcmEncoding.PCM_FLOAT
+                        preferredEncoding == PcmEncoding.PCM_24BIT_PACKED && delegate.supportsFormat(pcm24Format) -> PcmEncoding.PCM_24BIT_PACKED
+                        preferredEncoding == PcmEncoding.PCM_16BIT -> PcmEncoding.PCM_16BIT
+                        preferredEncoding == null && enableFloatOutput && delegate.supportsFormat(floatFormat) -> PcmEncoding.PCM_FLOAT
+                        else -> PcmEncoding.PCM_16BIT
+                    }
                 }
 
                 // 4. Configure delegate DefaultAudioSink
@@ -180,10 +207,19 @@ class PrecisionAudioSink(
             }
         }
 
-        // Fallback / legacy mode: forward configuration unchanged
+        // Fallback / legacy mode: forward configuration unchanged. Reached in
+        // bit-perfect mode too, for a non-linear-PCM stream that precision
+        // cannot handle either way — in which case nothing here is altering
+        // samples, but nothing here can vouch for what Media3 does with them.
         isPrecisionActive = false
         inputPcmEncoding = null
         targetOutputEncoding = null
+        if (bitPerfect) {
+            AudioOutputStatus.publishBitPerfect(
+                active = false,
+                detail = "${encodingLabel(format.pcmEncoding)} is not linear PCM",
+            )
+        }
         AudioOutputStatus.publishDsp(decoderOutputEncoding = null, dspFormat = "Legacy PCM")
         delegate.configure(audioSinkConfig)
         logConfig(
@@ -327,6 +363,7 @@ class PrecisionAudioSink(
         inputPcmEncoding = null
         targetOutputEncoding = null
         activeFormat = null
+        AudioOutputStatus.publishBitPerfect(active = false, detail = null)
         AudioOutputStatus.publishDsp(decoderOutputEncoding = null, dspFormat = "Float32")
         delegate.reset()
     }
@@ -418,18 +455,93 @@ class PrecisionAudioSink(
         outputByteBuffer.flip()
     }
 
+    /**
+     * The output encoding bit-perfect mode asks the delegate for.
+     *
+     * Constrained by what [DefaultAudioSink] can actually open a track in,
+     * which is only ever PCM float or PCM 16-bit for linear PCM — its
+     * `configure` inserts `ToInt16PcmAudioProcessor` for every input encoding
+     * whenever float output is off, and `ToFloatPcmAudioProcessor` when it is
+     * on. There is no 24-bit or 32-bit AudioTrack path through it, so asking
+     * for one gets a silent downconvert rather than what was asked for.
+     *
+     * That leaves two honest choices:
+     * - A 16-bit source asks for 16-bit, which is exact on any route.
+     * - Anything above 16 bits asks for float, because float32's 24-bit
+     *   significand is the only thing here that holds a 24-bit sample whole.
+     *
+     * The float request is checked with [AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY]
+     * rather than `supportsFormat`, which is too weak to be a gate: with float
+     * output disabled, `getFormatSupport` rewrites a float format to 16-bit
+     * and still answers SUPPORTED_WITH_TRANSCODING, so `supportsFormat` says
+     * "yes" about a track it is going to downconvert.
+     */
+    private fun bitPerfectTargetEncoding(source: PcmEncoding, floatFormat: Format): PcmEncoding {
+        if (source == PcmEncoding.PCM_16BIT) return PcmEncoding.PCM_16BIT
+        val floatIsNative =
+            delegate.getFormatSupport(floatFormat) == AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
+        return if (floatIsNative) PcmEncoding.PCM_FLOAT else PcmEncoding.PCM_16BIT
+    }
+
+    /**
+     * Reports whether bit-perfect mode is actually getting what it asked for.
+     *
+     * Bypassing the DSP chain is only half the promise; the other half is
+     * whether the samples survive the trip to AudioTrack, and that depends on
+     * the route. The combinations that are genuinely lossless:
+     *
+     * - 16-bit source to a 16-bit track. `PcmBoundary` scales by 32768, a
+     *   power of two, so the float round trip recovers every original integer.
+     * - 24-bit source to a float track. Scaled by 8388608, likewise exact, and
+     *   float32 has the 24 bits of significand to hold the result.
+     * - A float source to a float track, which is a copy.
+     *
+     * Everything else is reported as inexact, and there are two of those worth
+     * naming. A hi-res source on a route that will not open a float track gets
+     * 16-bit, because Media3 offers nothing between. And **32-bit integer PCM
+     * cannot be delivered exactly at all** — float32 carries 24 bits of
+     * significand, so eight bits go regardless of route, and no setting in
+     * this app can change that while `DefaultAudioSink` is doing the writing.
+     */
+    private fun publishBitPerfectVerdict(source: PcmEncoding, target: PcmEncoding) {
+        val exact = when (source) {
+            PcmEncoding.PCM_16BIT -> target == PcmEncoding.PCM_16BIT
+            PcmEncoding.PCM_24BIT_PACKED -> target == PcmEncoding.PCM_FLOAT
+            PcmEncoding.PCM_FLOAT -> target == PcmEncoding.PCM_FLOAT
+            // 24 bits of significand cannot hold 32.
+            PcmEncoding.PCM_32BIT -> false
+        }
+        val sourceLabel = encodingLabel(mapFromPcmEncoding(source))
+        val detail = when {
+            exact -> "$sourceLabel → ${encodingLabel(mapFromPcmEncoding(target))}"
+            source == PcmEncoding.PCM_32BIT ->
+                "32-bit PCM exceeds what AudioTrack can carry; 8 bits lost"
+            else -> "$sourceLabel → 16-bit; this route cannot open a float track"
+        }
+        AudioOutputStatus.publishBitPerfect(active = exact, detail = detail)
+        AudioOutputStatus.publishDsp(
+            decoderOutputEncoding = sourceLabel,
+            dspFormat = if (exact) "Bit-perfect" else "Bit-perfect (converted)",
+        )
+    }
+
     private fun publishTelemetry(
         inEncoding: PcmEncoding,
         outEncoding: PcmEncoding,
         isPrecisionActive: Boolean,
     ) {
         if (isPrecisionActive) {
+            if (bitPerfect) {
+                publishBitPerfectVerdict(inEncoding, outEncoding)
+                return
+            }
             val label = when (inEncoding) {
                 PcmEncoding.PCM_FLOAT -> "Float32"
                 PcmEncoding.PCM_24BIT_PACKED -> "24-bit PCM"
                 PcmEncoding.PCM_32BIT -> "32-bit PCM"
                 PcmEncoding.PCM_16BIT -> "16-bit PCM"
             }
+            AudioOutputStatus.publishBitPerfect(active = false, detail = null)
             AudioOutputStatus.publishDsp(decoderOutputEncoding = label, dspFormat = "Float32")
         } else {
             AudioOutputStatus.publishDsp(decoderOutputEncoding = null, dspFormat = "Legacy PCM")
@@ -459,6 +571,15 @@ class PrecisionAudioSink(
     companion object {
         private const val TAG = "PrecisionAudioSink"
         const val DEFAULT_CAPACITY_FRAMES: Int = 4096
+
+        /** Human-readable name for a Media3 PCM encoding constant. */
+        fun encodingLabel(pcmEncoding: Int): String = when (pcmEncoding) {
+            C.ENCODING_PCM_16BIT -> "16-bit PCM"
+            C.ENCODING_PCM_24BIT -> "24-bit PCM"
+            C.ENCODING_PCM_32BIT -> "32-bit PCM"
+            C.ENCODING_PCM_FLOAT -> "Float32"
+            else -> "Non-PCM"
+        }
 
         fun mapToPcmEncoding(pcmEncoding: Int): PcmEncoding? = when (pcmEncoding) {
             C.ENCODING_PCM_16BIT -> PcmEncoding.PCM_16BIT
