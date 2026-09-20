@@ -26,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.ScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
@@ -90,6 +91,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -341,8 +343,18 @@ fun SettingsScreen(
 
     // What is left after a keystroke is a different list, and the offset the
     // last one was scrolled to means nothing in it.
-    val scrollState = rememberScrollState()
-    LaunchedEffect(searchQuery) { scrollState.scrollTo(0) }
+    val scrollState = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
+    var isFirstSearchComposition by remember { mutableStateOf(true) }
+    LaunchedEffect(searchQuery) {
+        if (isFirstSearchComposition && searchQuery.isEmpty()) {
+            // Skip the initial composition during Activity recreation:
+            // rememberSaveable already restored the scroll position.
+            isFirstSearchComposition = false
+        } else {
+            isFirstSearchComposition = false
+            scrollState.scrollTo(0)
+        }
+    }
 
     Column(
         modifier = modifier

@@ -456,7 +456,7 @@ private fun BitChordApp(
      * signing in, or picking a channel in YouTube Music's own Accounts list.
      */
     var webSession by remember { mutableStateOf<WebSessionMode?>(null) }
-    var showSettings by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
@@ -2923,13 +2923,6 @@ private fun BitChordApp(
 
                 // One tab handler, whichever bar is drawing it.
                 val onTabSelected: (Int) -> Unit = { index ->
-                    // Every search tab tap resets the field, focuses it, and opens
-                    // the keyboard through SearchScreen's focus request.
-                    if (index == TAB_SEARCH) {
-                        viewModel.onQueryChange("")
-                        searchFocusRequested = true
-                    }
-
                     viewModel.clearDetail()
                     viewModel.closeMoodGenre()
                     showSettings = false
@@ -2941,6 +2934,13 @@ private fun BitChordApp(
                     showHistory = false
                     libraryShowAll = null
                     selectedTab = index
+
+                    // Every search tab tap resets the field, focuses it, and opens
+                    // the keyboard through SearchScreen's focus request.
+                    if (index == TAB_SEARCH) {
+                        viewModel.onQueryChange("")
+                        searchFocusRequested = true
+                    }
                 }
 
                 if (glassActive) Column(
