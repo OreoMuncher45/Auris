@@ -891,6 +891,7 @@
     <string name="listen_together_you">You</string>
     <string name="listen_together_host">Host</string>
     <string name="listen_together_away">Away — their slot is held</string>
+    <string name="listen_together_manage">Manage</string>
     <string name="listen_together_leave">Leave the party</string>
     <string name="listen_together_leave_subtitle">The others carry on listening</string>
     <string name="listen_together_reconnecting">Reconnecting…</string>

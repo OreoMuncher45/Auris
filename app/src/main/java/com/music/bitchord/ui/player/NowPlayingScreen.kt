@@ -991,6 +991,12 @@ fun NowPlayingScreen(
     var showAudioOutput by remember { mutableStateOf(false) }
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
     val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
+    var showListenTogetherMembers by remember { mutableStateOf(false) }
+    // Who's actually in the party is worth a look before the settings page —
+    // see [ListenTogetherMembersSheet]. Only meaningful once there is a party
+    // to show, so the pill and the caption fall back to [onListenTogether]
+    // itself (create/join) when there isn't one.
+    val openListenTogetherMembers: () -> Unit = { showListenTogetherMembers = true }
 
     val syncedLyricsEnabled by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val lyricsOffsetMs by AppSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
@@ -1298,6 +1304,19 @@ fun NowPlayingScreen(
         DisposableEffect(view, showAudioOutput) {
             val callback = if (showAudioOutput) {
                 OverlayBack.register(view) { showAudioOutput = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
+    BackHandler(enabled = showListenTogetherMembers) { showListenTogetherMembers = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, showListenTogetherMembers) {
+            val callback = if (showListenTogetherMembers) {
+                OverlayBack.register(view) { showListenTogetherMembers = false }
             } else {
                 null
             }
@@ -1959,6 +1978,7 @@ fun NowPlayingScreen(
             onOpenArtist = onOpenArtist,
             onOpenOutput = openAudioOutput,
             onListenTogether = onListenTogether,
+            onOpenListenTogetherMembers = openListenTogetherMembers,
             lyricsOpen = lyricsOpen,
             queueOpen = queueOpen,
             onToggleLyrics = toggleLyrics,
@@ -1993,6 +2013,16 @@ fun NowPlayingScreen(
             AudioPipelineDialog(
                 hazeState = playerHaze,
                 onDismiss = { showAudioPipeline = false },
+            )
+        }
+        if (showListenTogetherMembers) {
+            ListenTogetherMembersSheet(
+                hazeState = playerHaze,
+                onDismiss = { showListenTogetherMembers = false },
+                onManage = {
+                    showListenTogetherMembers = false
+                    onListenTogether()
+                },
             )
         }
         if (lyricsOffsetOpen) {
@@ -3420,6 +3450,7 @@ fun NowPlayingScreen(
                         OutputPartyPill(
                             onOutput = openAudioOutput,
                             onParty = onListenTogether,
+                            onOpenMembers = openListenTogetherMembers,
                         )
                     }
                 }
@@ -3444,7 +3475,7 @@ fun NowPlayingScreen(
                 OutputCaption(
                     accountName = accountName,
                     onOpenOutput = openAudioOutput,
-                    onOpenParty = onListenTogether,
+                    onOpenMembers = openListenTogetherMembers,
                 )
             }
             Spacer(Modifier.height(18.dp))
@@ -3465,6 +3496,16 @@ fun NowPlayingScreen(
             AudioPipelineDialog(
                 hazeState = playerHaze,
                 onDismiss = { showAudioPipeline = false },
+            )
+        }
+        if (showListenTogetherMembers) {
+            ListenTogetherMembersSheet(
+                hazeState = playerHaze,
+                onDismiss = { showListenTogetherMembers = false },
+                onManage = {
+                    showListenTogetherMembers = false
+                    onListenTogether()
+                },
             )
         }
         if (lyricsOffsetOpen) {
@@ -3615,6 +3656,8 @@ private fun WidePlayerControls(
     onOpenArtist: (String) -> Unit,
     onOpenOutput: () -> Unit,
     onListenTogether: () -> Unit,
+    /** Opens [ListenTogetherMembersSheet] rather than settings directly — see [NowPlayingScreen]. */
+    onOpenListenTogetherMembers: () -> Unit,
     lyricsOpen: Boolean,
     queueOpen: Boolean,
     onToggleLyrics: () -> Unit,
@@ -3917,7 +3960,11 @@ private fun WidePlayerControls(
                                 )
                             }
                         } else {
-                            OutputPartyPill(onOutput = onOpenOutput, onParty = onListenTogether)
+                            OutputPartyPill(
+                                onOutput = onOpenOutput,
+                                onParty = onListenTogether,
+                                onOpenMembers = onOpenListenTogetherMembers,
+                            )
                         }
                     }
                     BottomGlyph(
@@ -3945,7 +3992,7 @@ private fun WidePlayerControls(
                 OutputCaption(
                     accountName = accountName,
                     onOpenOutput = onOpenOutput,
-                    onOpenParty = onListenTogether,
+                    onOpenMembers = onOpenListenTogetherMembers,
                 )
             }
         }
@@ -6133,6 +6180,8 @@ private fun PillDivider() {
 private fun OutputPartyPill(
     onOutput: () -> Unit,
     onParty: () -> Unit,
+    /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
+    onOpenMembers: () -> Unit,
 ) {
     val badge = rememberPartyBadge()
     Pill {
@@ -6157,7 +6206,10 @@ private fun OutputPartyPill(
             } else {
                 stringResource(R.string.listen_together_open)
             },
-            onClick = onParty,
+            // Already in a party, this opens who's in it rather than the
+            // settings page directly; there is nothing to create or join once
+            // there is a party, so [onParty] only ever fires beforehand.
+            onClick = if (badge.inParty) onOpenMembers else onParty,
             highlighted = badge.inParty,
             trailingLabel = badge.members.takeIf { badge.inParty }?.toString(),
         )
@@ -6250,7 +6302,8 @@ private fun PillSegment(
 private fun OutputCaption(
     accountName: String?,
     onOpenOutput: () -> Unit,
-    onOpenParty: () -> Unit,
+    /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
+    onOpenMembers: () -> Unit,
 ) {
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
@@ -6275,7 +6328,7 @@ private fun OutputCaption(
         ?: stringResource(R.string.listen_together_jam_unnamed)
     val captionModifier = Modifier
         .fillMaxWidth(0.65f)
-        .clickable { if (badge.inParty) onOpenParty() else onOpenOutput() }
+        .clickable { if (badge.inParty) onOpenMembers() else onOpenOutput() }
     if (!badge.inParty && isHiResOutput) {
         ShimmerText(
             text = outputName,
