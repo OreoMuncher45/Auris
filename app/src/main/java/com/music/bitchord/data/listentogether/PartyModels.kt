@@ -128,6 +128,30 @@ data class PartySnapshot(
     val serverMs: Long = 0,
 )
 
+/**
+ * Who is in a party, to somebody who has not joined it.
+ *
+ * Deliberately smaller than [PartySnapshot]: enough to show a face and a name
+ * before committing a device slot, and nothing that would let the holder of a
+ * code act on a party they are not in.
+ */
+@Serializable
+data class PartyPreview(
+    val code: String = "",
+    val hostName: String = "",
+    val memberCount: Int = 0,
+    val maxMembers: Int = 5,
+    val isFull: Boolean = false,
+    val members: List<PartyPreviewMember> = emptyList(),
+)
+
+@Serializable
+data class PartyPreviewMember(
+    val displayName: String = "",
+    val avatarUrl: String? = null,
+    val isHost: Boolean = false,
+)
+
 /** The answer to a create or a join: the code, and this device's key to it. */
 @Serializable
 data class PartyMembership(

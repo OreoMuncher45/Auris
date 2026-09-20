@@ -410,19 +410,20 @@ private fun GlassNowPlaying(
             // Dropped inline: the collapsed row is sharing its width with the
             // tab pill and the Search circle, and the title is what has to
             // survive that, not a second transport button.
-            if (!isInline && !controlsLocked) {
+            if (!isInline) {
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = {
                         haptics.play(Haptic.SkipNext)
                         onNext()
                     },
+                    enabled = !controlsLocked,
                     modifier = Modifier.size(glyphSlot),
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.SkipNext,
                         contentDescription = stringResource(R.string.widget_next),
-                        tint = contentColor,
+                        tint = contentColor.copy(alpha = if (controlsLocked) 0.3f else 1f),
                         modifier = Modifier.size(glyphSize),
                     )
                 }

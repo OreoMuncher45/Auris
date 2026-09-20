@@ -1942,6 +1942,7 @@ fun NowPlayingScreen(
                     queue = queue,
                     currentIndex = queueIndex,
                     autoplayEnabled = autoplayEnabled,
+                    controlsLocked = controlsLocked,
                     onJumpTo = onJumpTo,
                     onRemove = onRemoveFromQueue,
                     onMove = onMoveInQueue,
@@ -3073,6 +3074,7 @@ fun NowPlayingScreen(
                             queue = queue,
                             currentIndex = queueIndex,
                             autoplayEnabled = autoplayEnabled,
+                            controlsLocked = controlsLocked,
                             onJumpTo = onJumpTo,
                             onRemove = onRemoveFromQueue,
                             onMove = onMoveInQueue,
@@ -3285,21 +3287,19 @@ fun NowPlayingScreen(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                // Gone rather than greyed out while the host holds the
-                // controls: a disabled skip button invites tapping it to find
-                // out why, and the answer never changes until the host says so.
-                if (!controlsLocked) {
-                    TransportGlyph(
-                        icon = R.drawable.ic_player_previous,
-                        contentDescription = stringResource(R.string.widget_previous),
-                        size = 48.dp,
-                        onClick = onPrevious,
-                        // Lit whenever back has something to do — either a track to
-                        // step to, or enough elapsed for it to restart this one.
-                        enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
-                        haptic = Haptic.SkipPrevious,
-                    )
-                }
+                TransportGlyph(
+                    icon = R.drawable.ic_player_previous,
+                    contentDescription = stringResource(R.string.widget_previous),
+                    size = 48.dp,
+                    onClick = onPrevious,
+                    // Lit whenever back has something to do — either a track to
+                    // step to, or enough elapsed for it to restart this one.
+                    // Faded and inert, not removed, while the host holds the
+                    // controls: the transport keeps its shape either way.
+                    enabled = !controlsLocked &&
+                        (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
+                    haptic = Haptic.SkipPrevious,
+                )
                 // While the stream URL resolves and buffers, the play glyph
                 // would be a lie — show progress instead.
                 if (isLoading || audioVersionSwitching) {
@@ -3322,16 +3322,14 @@ fun NowPlayingScreen(
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
                     )
                 }
-                if (!controlsLocked) {
-                    TransportGlyph(
-                        icon = R.drawable.ic_player_next,
-                        contentDescription = stringResource(R.string.widget_next),
-                        size = 48.dp,
-                        onClick = onNext,
-                        enabled = hasNext,
-                        haptic = Haptic.SkipNext,
-                    )
-                }
+                TransportGlyph(
+                    icon = R.drawable.ic_player_next,
+                    contentDescription = stringResource(R.string.widget_next),
+                    size = 48.dp,
+                    onClick = onNext,
+                    enabled = !controlsLocked && hasNext,
+                    haptic = Haptic.SkipNext,
+                )
             }
 
             // Keep the volume slot's full footprint when its contents are
@@ -3811,16 +3809,15 @@ private fun WidePlayerControls(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (!controlsLocked) {
-                    TransportGlyph(
-                        icon = R.drawable.ic_player_previous,
-                        contentDescription = stringResource(R.string.widget_previous),
-                        size = 48.dp,
-                        onClick = onPrevious,
-                        enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
-                        haptic = Haptic.SkipPrevious,
-                    )
-                }
+                TransportGlyph(
+                    icon = R.drawable.ic_player_previous,
+                    contentDescription = stringResource(R.string.widget_previous),
+                    size = 48.dp,
+                    onClick = onPrevious,
+                    enabled = !controlsLocked &&
+                        (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
+                    haptic = Haptic.SkipPrevious,
+                )
                 if (isLoading) {
                     Box(Modifier.size(100.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(
@@ -3841,16 +3838,14 @@ private fun WidePlayerControls(
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
                     )
                 }
-                if (!controlsLocked) {
-                    TransportGlyph(
-                        icon = R.drawable.ic_player_next,
-                        contentDescription = stringResource(R.string.widget_next),
-                        size = 48.dp,
-                        onClick = onNext,
-                        enabled = hasNext,
-                        haptic = Haptic.SkipNext,
-                    )
-                }
+                TransportGlyph(
+                    icon = R.drawable.ic_player_next,
+                    contentDescription = stringResource(R.string.widget_next),
+                    size = 48.dp,
+                    onClick = onNext,
+                    enabled = !controlsLocked && hasNext,
+                    haptic = Haptic.SkipNext,
+                )
             }
 
             // Preserve the same vertical rhythm whether the volume control is
@@ -6724,6 +6719,11 @@ private fun InlineQueue(
     queue: List<Song>,
     currentIndex: Int,
     autoplayEnabled: Boolean,
+    /**
+     * Read-only: the party's running order is the host's while this is set, so
+     * the queue is here to be looked at and scrolled, not worked.
+     */
+    controlsLocked: Boolean,
     onJumpTo: (Int) -> Unit,
     onRemove: (Int) -> Unit,
     onMove: (Int, Int) -> Unit,
@@ -6817,10 +6817,10 @@ private fun InlineQueue(
             Text(
                 text = stringResource(R.string.clear),
                 style = MaterialTheme.typography.titleMedium,
-                color = Color.White.copy(alpha = 0.75f),
+                color = Color.White.copy(alpha = if (controlsLocked) 0.25f else 0.75f),
                 modifier = Modifier
                     .clip(RoundedCornerShape(percent = 50))
-                    .clickable(onClick = onClear)
+                    .clickable(enabled = !controlsLocked, onClick = onClear)
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
@@ -6849,10 +6849,11 @@ private fun InlineQueue(
                     isCurrent = index == currentIndex,
                     onClick = { onJumpTo(index) },
                     onRemove = { onRemove(index) },
+                    locked = controlsLocked,
                     // Only what's still queued ahead. The playing track and
                     // everything already played sit above the line a drag
                     // can't cross.
-                    draggable = index >= firstMovable,
+                    draggable = !controlsLocked && index >= firstMovable,
                     dragging = dragging,
                     onDragStart = { manualDrag.onDragStart(key) },
                     onDrag = manualDrag::onDrag,
@@ -6916,7 +6917,8 @@ private fun InlineQueue(
                     isCurrent = at == currentIndex,
                     onClick = { onJumpTo(at) },
                     onRemove = { onRemove(at) },
-                    draggable = true,
+                    locked = controlsLocked,
+                    draggable = !controlsLocked,
                     dragging = dragging,
                     onDragStart = { autoplayDrag.onDragStart(key) },
                     onDrag = autoplayDrag::onDrag,
@@ -7326,6 +7328,8 @@ private fun InlineQueueRow(
     isCurrent: Boolean,
     onClick: () -> Unit,
     onRemove: () -> Unit,
+    /** @see InlineQueue */
+    locked: Boolean = false,
     modifier: Modifier = Modifier,
     draggable: Boolean = false,
     dragging: Boolean = false,
@@ -7353,7 +7357,10 @@ private fun InlineQueueRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
             .background(if (dragging) Color.White.copy(alpha = 0.06f) else Color.Transparent)
-            .clickable(onClick = onClick)
+            // Disabled rather than merely ignored: a clickable that answers a
+            // tap with a ripple and then does nothing reads as the app having
+            // missed the tap, which is what this looked like while locked.
+            .clickable(enabled = !locked, onClick = onClick)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -7415,19 +7422,21 @@ private fun InlineQueueRow(
             )
             Spacer(Modifier.width(10.dp))
         }
-        Box(
-            modifier = Modifier
-                .size(32.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onRemove),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Rounded.Close,
-                contentDescription = stringResource(R.string.remove_from_queue),
-                tint = Color.White.copy(alpha = 0.55f),
-                modifier = Modifier.size(18.dp),
-            )
+        if (!locked) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.remove_from_queue),
+                    tint = Color.White.copy(alpha = 0.55f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }

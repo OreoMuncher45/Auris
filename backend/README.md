@@ -159,6 +159,11 @@ snapshot; it is deliberately not on the state frame, which rides the heartbeat.
 Absent from either — an older server — it reads as `false`, which is the
 behaviour the feature shipped with.
 
+A `bye` frame carries a `reason`: `left` when a member gives up their own slot,
+`kicked` when the host removes them. The server holds no grudge — a removed
+device may rejoin immediately as far as it is concerned — but the reason lets a
+client shut its own door, which is what the Android app does for 24 hours.
+
 A `track` is `{videoId, title, artist, thumbnailUrl, durationMs, fromAutoplay}` — enough to
 identify and to *show* a song, and nothing more. Stream URLs, sources, quality
 and download state stay each device's own business, so two people in a party can

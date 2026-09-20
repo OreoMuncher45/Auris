@@ -5536,17 +5536,19 @@ class PlaybackService : MediaLibraryService() {
 
         if (subtitleText != lastPublishedSubtitle) {
             lastPublishedSubtitle = subtitleText
-            val metadata = MediaMetadata.Builder()
-                .setTitle(currentSong.title)
-                .setArtist(currentSong.artist)
+            // buildUpon() off the metadata that's already playing, not a fresh
+            // Builder() — a synced lyric line can advance every second or two,
+            // and re-stating setArtworkUri() on every tick made media3 treat
+            // the cover as newly changed that often, racing its own artwork
+            // decode/cache against the legacy MediaSession broadcast and
+            // crashing with "cannot use a recycled source in createBitmap".
+            // Carrying the existing artwork field forward keeps that field
+            // untouched while still firing onMediaMetadataChanged for the
+            // subtitle itself.
+            exoPlayer.playlistMetadata = exoPlayer.mediaMetadata
+                .buildUpon()
                 .setSubtitle(subtitleText)
-                .setAlbumTitle(currentSong.albumName)
-                .setArtworkUri(currentSong.artworkAt(NOTIFICATION_ART_PX)?.toUri())
-                .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                .setIsPlayable(true)
-                .setIsBrowsable(false)
                 .build()
-            exoPlayer.playlistMetadata = metadata
         }
     }
 

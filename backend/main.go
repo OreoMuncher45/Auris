@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,7 @@ func main() {
 	mux.HandleFunc("POST /api/parties", handleCreateParty)
 	mux.HandleFunc("POST /api/parties/{code}/join", handleJoinParty)
 	mux.HandleFunc("GET /api/parties/{code}", handleGetParty)
+	mux.HandleFunc("GET /api/parties/{code}/preview", handlePreviewParty)
 	mux.HandleFunc("POST /api/parties/{code}/leave", handleLeaveParty)
 
 	// Web invite endpoint
@@ -324,6 +326,66 @@ func handleJoinParty(w http.ResponseWriter, r *http.Request) {
 		"you":   youWire,
 		"party": partyWire,
 	})
+}
+
+// handlePreviewParty answers who is in a party, without a token and without
+// joining it.
+//
+// Deliberately unauthenticated: the whole point is to let somebody who has been
+// handed a code see who they would be joining before they commit a device slot
+// to it. What it discloses — display names, avatars, how full the party is — is
+// exactly what joining would disclose a second later, and anyone holding a code
+// can join. What it does not disclose is what the party is playing, its queue,
+// member or user ids, or anything that would let a caller act on the party.
+//
+// Not rate-limited beyond the service-wide limits: it takes no locks it does
+// not release, allocates a short slice, and creates nothing.
+func handlePreviewParty(w http.ResponseWriter, r *http.Request) {
+	code := r.PathValue("code")
+	p, err := store.Get(code)
+	if err != nil {
+		if pe, ok := err.(*party.PartyError); ok {
+			jsonError(w, pe.Status, pe.Code, pe.Message)
+			return
+		}
+		jsonError(w, http.StatusNotFound, "no_such_party", "No party with that code.")
+		return
+	}
+
+	p.Lock()
+	// Joined order, as the snapshot uses: the caller draws the first few faces
+	// and counts the rest, so which faces those are must not change between two
+	// reads of an unchanged party.
+	ordered := make([]*party.Member, 0, len(p.Members))
+	for _, m := range p.Members {
+		ordered = append(ordered, m)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].JoinedAtMs < ordered[j].JoinedAtMs
+	})
+	members := make([]map[string]interface{}, 0, len(ordered))
+	hostName := ""
+	for _, m := range ordered {
+		members = append(members, map[string]interface{}{
+			"displayName": m.DisplayName,
+			"avatarUrl":   m.AvatarUrl,
+			"isHost":      m.IsHost,
+		})
+		if m.IsHost {
+			hostName = m.DisplayName
+		}
+	}
+	preview := map[string]interface{}{
+		"code":        p.Code,
+		"hostName":    hostName,
+		"memberCount": len(p.Members),
+		"maxMembers":  p.MaxMembers,
+		"isFull":      len(p.Members) >= p.MaxMembers,
+		"members":     members,
+	}
+	p.Unlock()
+
+	jsonResponse(w, http.StatusOK, preview)
 }
 
 func handleGetParty(w http.ResponseWriter, r *http.Request) {
@@ -1003,7 +1065,11 @@ func applyControl(p *party.Party, member *party.Member, action string, frame map
 		if !member.IsHost { return false, "host_only", "Only the host can remove listeners." }
 		if targetID == "" || targetID == member.MemberId { return false, "invalid_member", "Choose another listener to remove." }
 		if p.Remove(targetID) == nil { return false, "not_found", "That listener is no longer in this party." }
-		hubInst.Send(p.Code, targetID, map[string]interface{}{ "type": protocol.FrameBye, "message": "The host removed you from this party." })
+		hubInst.Send(p.Code, targetID, map[string]interface{}{
+			"type":    protocol.FrameBye,
+			"reason":  "kicked",
+			"message": "The host removed you from this party.",
+		})
 		hubInst.CloseMember(p.Code, targetID)
 		return true, "", ""
 

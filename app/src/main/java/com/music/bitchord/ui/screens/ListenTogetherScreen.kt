@@ -37,7 +37,6 @@ import androidx.compose.material.icons.rounded.CloudDone
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Dns
-import androidx.compose.material.icons.rounded.GroupAdd
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Login
 import androidx.compose.material.icons.rounded.Logout
@@ -45,21 +44,22 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,6 +77,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -91,17 +92,16 @@ import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
-import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.PartyActivity
-import com.music.bitchord.ui.components.PillTextField
+import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.ServerConnectionState
 import com.music.bitchord.data.listentogether.ServerUrlError
 import com.music.bitchord.data.listentogether.ServerUrlValidationResult
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.coroutines.coroutineContext
 
 private fun ServerUrlError.toMessageRes(): Int = when (this) {
     ServerUrlError.Whitespace -> R.string.listen_together_err_whitespace
@@ -131,6 +131,7 @@ private fun ServerUrlError.toMessageRes(): Int = when (this) {
  * [ListenTogether.partyPositionMs][com.music.bitchord.data.listentogether.ListenTogether.partyPositionMs]
  * exists.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ListenTogetherScreen(
     signedIn: Boolean,
@@ -158,6 +159,129 @@ fun ListenTogetherScreen(
     var nickname by remember { mutableStateOf(ListenTogether.nickname()) }
     var maxMembers by remember { mutableIntStateOf(5) }
     var pendingServerSwitchInvite by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var sheet by remember { mutableStateOf<PartySheet?>(null) }
+    var serverDialog by remember { mutableStateOf<ServerDialog?>(null) }
+
+    /** The invite URL for a code, pointing at whichever server holds the party. */
+    val inviteLinkFor: (String) -> String = { partyCode ->
+        val host = ListenTogether.activePartyServerBase()
+        if (host == null || host == ListenTogether.defaultServer) {
+            JamInviteLink.url(partyCode, null)
+        } else {
+            JamInviteLink.url(partyCode, host)
+        }
+    }
+
+    /** The system chooser, with the link and the spoken-aloud code together. */
+    val shareInvite: () -> Unit = {
+        state.code?.let { partyCode ->
+            val message = inviteLinkFor(partyCode) +
+                System.lineSeparator() + System.lineSeparator() +
+                context.getString(R.string.listen_together_share_text, partyCode)
+            context.startActivity(
+                Intent.createChooser(
+                    Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, message)
+                    },
+                    null,
+                ),
+            )
+        }
+    }
+
+    /**
+     * Looks a party up and puts its faces on screen, rather than joining it.
+     *
+     * Both doors in — a tapped link and six characters typed — come through
+     * here, so what the listener agrees to is the same picture either way.
+     */
+    val openPartyPreview: (String, String?) -> Unit = { previewCode, previewServer ->
+        busy = true
+        failure = null
+        scope.launch {
+            ListenTogether.previewParty(previewCode, previewServer)
+                .onSuccess { sheet = PartySheet.Confirm(it, previewServer) }
+                .onFailure { failure = it.message }
+            busy = false
+        }
+    }
+
+    /**
+     * Validates an address and, if it holds up, makes it this device's server.
+     *
+     * An invalid address leaves the dialog open on purpose: the toast says what
+     * is wrong with what was typed, and closing the box that holds it would
+     * throw the typing away along with the explanation.
+     */
+    val saveServerUrl: (String) -> Unit = { raw ->
+        when (val validation = ListenTogether.parseAndNormalizeServerUrl(raw)) {
+            is ServerUrlValidationResult.Invalid -> {
+                Toast.makeText(
+                    context,
+                    context.getString(validation.error.toMessageRes()),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            is ServerUrlValidationResult.Valid -> {
+                val submittedUrl = validation.normalizedUrl
+                serverDialog = null
+                pendingSaveJob?.cancel()
+                pendingSaveJob = scope.launch {
+                    busy = true
+                    try {
+                        val newState = ListenTogether.setCustomServerUrl(submittedUrl)
+                        if (ListenTogether.customServerUrl.value == submittedUrl) {
+                            serverInput = submittedUrl
+                        }
+                        val messageRes = when (newState) {
+                            is ServerConnectionState.CustomOnline -> R.string.listen_together_custom_server_connected
+                            is ServerConnectionState.CustomFallback -> R.string.listen_together_custom_server_unreachable_fallback
+                            is ServerConnectionState.DefaultOnline -> R.string.listen_together_switched_to_default
+                            is ServerConnectionState.Offline -> if (ListenTogether.customServerUrl.value.isNotBlank()) {
+                                R.string.listen_together_status_all_offline
+                            } else {
+                                R.string.listen_together_server_offline
+                            }
+                            ServerConnectionState.Checking -> null
+                        }
+                        if (messageRes != null) {
+                            Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (_: CancellationException) {
+                        // Superseded by newer save operation
+                    } finally {
+                        if (pendingSaveJob === coroutineContext[Job]) {
+                            busy = false
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Drops the custom address and puts this device back on the built-in one. */
+    val disconnectServer: () -> Unit = {
+        serverInput = ""
+        serverDialog = null
+        pendingSaveJob?.cancel()
+        pendingSaveJob = scope.launch {
+            busy = true
+            try {
+                ListenTogether.setCustomServerUrl("")
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.listen_together_switched_to_default),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } catch (_: CancellationException) {
+            } finally {
+                if (pendingSaveJob === coroutineContext[Job]) {
+                    busy = false
+                }
+            }
+        }
+    }
 
     // A membership outlives the process; the socket does not. Opening it when
     // the screen is looked at — rather than on every cold start — is what keeps
@@ -190,6 +314,14 @@ fun ListenTogetherScreen(
         }
 
         if (state.code.equals(code, ignoreCase = true)) {
+            onInviteHandled()
+            return@LaunchedEffect
+        }
+
+        // A link says which party, not that this device has agreed to join it.
+        // The faces come first; the confirm sheet is what actually joins.
+        if (!state.inParty) {
+            openPartyPreview(code, targetServer)
             onInviteHandled()
             return@LaunchedEffect
         }
@@ -323,6 +455,187 @@ fun ListenTogetherScreen(
         )
     }
 
+    when (serverDialog) {
+        ServerDialog.Edit -> {
+            AlertDialog(
+                onDismissRequest = { serverDialog = null },
+                title = { Text(stringResource(R.string.listen_together_custom_server)) },
+                text = {
+                    OutlinedTextField(
+                        value = serverInput,
+                        onValueChange = { serverInput = it },
+                        // Never the default address, even as a hint: this box
+                        // exists to take somebody else's server, and the one
+                        // this build uses is not shown anywhere.
+                        label = { Text(stringResource(R.string.listen_together_server_url_label)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Uri,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { saveServerUrl(serverInput) }),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { saveServerUrl(serverInput) }) {
+                        Text(stringResource(R.string.save))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { serverDialog = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface,
+            )
+        }
+
+        ServerDialog.Remove -> {
+            AlertDialog(
+                onDismissRequest = { serverDialog = null },
+                title = { Text(stringResource(R.string.listen_together_remove_server)) },
+                text = { Text(stringResource(R.string.listen_together_remove_server_message)) },
+                confirmButton = {
+                    TextButton(onClick = disconnectServer) {
+                        Text(
+                            text = stringResource(R.string.remove),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { serverDialog = null }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface,
+            )
+        }
+
+        null -> {}
+    }
+
+    sheet?.let { open ->
+        ModalBottomSheet(
+            onDismissRequest = {
+                sheet = null
+                // Closed with the message unread is still read: leaving it set
+                // would surface it on the page underneath, as a line about a
+                // sheet that is no longer there.
+                failure = null
+            },
+            containerColor = MaterialTheme.colorScheme.background,
+        ) {
+            when (open) {
+                PartySheet.Create -> CreatePartySheet(
+                    avatarUrl = ListenTogether.myAvatarUrl(),
+                    nickname = nickname,
+                    onNicknameChange = {
+                        nickname = it.take(80)
+                        ListenTogether.setNickname(nickname)
+                    },
+                    maxMembers = maxMembers,
+                    onMaxMembersChange = { maxMembers = it.coerceIn(2, 10) },
+                    busy = busy,
+                    enabled = signedIn && ListenTogether.hasServer,
+                    error = failure,
+                    onCreate = {
+                        busy = true
+                        failure = null
+                        scope.launch {
+                            failure = ListenTogether.createParty(nickname, maxMembers)
+                                .exceptionOrNull()?.message
+                            busy = false
+                            // Straight into the invite, without a stop at the
+                            // party page. A party of one is not a party; the
+                            // very next thing anybody who just made one wants
+                            // is the link, and making them find the share
+                            // button to get it is a step that exists only
+                            // because the sheet closed itself.
+                            if (failure == null) sheet = PartySheet.Invite
+                        }
+                    },
+                )
+
+                PartySheet.JoinCode -> JoinPartySheet(
+                    code = codeInput,
+                    onCodeChange = { typed ->
+                        codeInput = typed.filter(Char::isLetterOrDigit)
+                            .uppercase()
+                            .take(ListenTogether.CODE_LENGTH)
+                        // Typing is the retry. Keeping "no party with that
+                        // code" on screen while the code is being corrected
+                        // makes it read as a verdict on what is there now.
+                        failure = null
+                    },
+                    busy = busy,
+                    enabled = signedIn && ListenTogether.hasServer,
+                    error = failure,
+                    onSubmit = { openPartyPreview(codeInput, null) },
+                )
+
+                is PartySheet.Confirm -> JoinConfirmSheet(
+                    preview = open.preview,
+                    busy = busy,
+                    error = failure,
+                    onDismiss = {
+                        sheet = null
+                        failure = null
+                    },
+                    onJoin = {
+                        busy = true
+                        failure = null
+                        scope.launch {
+                            // Already in one: the switch keeps this device
+                            // where it is if the new party turns it away.
+                            val problem = if (state.inParty) {
+                                when (
+                                    val switched = ListenTogether.switchPartyWithRecovery(
+                                        open.server ?: customServer,
+                                        open.preview.code,
+                                    )
+                                ) {
+                                    is ListenTogether.SwitchPartyResult.Success -> null
+                                    is ListenTogether.SwitchPartyResult.TargetFailedRecovered ->
+                                        switched.targetError
+                                    is ListenTogether.SwitchPartyResult.TargetFailedNoParty ->
+                                        switched.targetError
+                                }
+                            } else {
+                                ListenTogether.joinParty(open.preview.code, nickname)
+                                    .exceptionOrNull()?.message
+                            }
+                            failure = problem
+                            busy = false
+                            if (problem == null) {
+                                codeInput = ""
+                                sheet = null
+                            }
+                        }
+                    },
+                )
+
+                PartySheet.Invite -> InviteSheet(
+                    code = state.code.orEmpty(),
+                    link = inviteLinkFor(state.code.orEmpty()),
+                    onShareLink = {
+                        sheet = null
+                        shareInvite()
+                    },
+                    onCopyCode = {
+                        clipboard.setText(AnnotatedString(state.code.orEmpty()))
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.copy_code),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                )
+            }
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -348,63 +661,25 @@ fun ListenTogetherScreen(
         }
 
         if (!state.inParty) {
-            NotInAParty(
-                signedIn = signedIn,
-                hasServer = ListenTogether.hasServer,
-                codeInput = codeInput,
-                onCodeInput = { typed ->
-                    codeInput = typed.filter(Char::isLetterOrDigit)
-                        .uppercase()
-                        .take(ListenTogether.CODE_LENGTH)
-                },
-                busy = busy,
-                nickname = nickname,
-                onNicknameChange = { nickname = it.take(80); ListenTogether.setNickname(nickname) },
-                maxMembers = maxMembers,
-                onMaxMembersChange = { maxMembers = it.coerceIn(2, 10) },
+            PartyLanding(
+                avatarUrl = ListenTogether.myAvatarUrl(),
+                enabled = signedIn && ListenTogether.hasServer && !busy,
+                // The last attempt's message does not belong on the next one.
                 onCreate = {
-                    busy = true
                     failure = null
-                    scope.launch {
-                        failure = ListenTogether.createParty(nickname, maxMembers).exceptionOrNull()?.message
-                        busy = false
-                    }
+                    sheet = PartySheet.Create
                 },
                 onJoin = {
-                    busy = true
                     failure = null
-                    scope.launch {
-                        failure = ListenTogether.joinParty(codeInput, nickname).exceptionOrNull()?.message
-                        if (failure == null) codeInput = ""
-                        busy = false
-                    }
+                    sheet = PartySheet.JoinCode
                 },
             )
         } else {
             InAParty(
                 state = state,
                 onCopy = { clipboard.setText(AnnotatedString(state.code.orEmpty())) },
-                onShare = {
-                    val code = state.code ?: return@InAParty
-                    val host = requireNotNull(ListenTogether.activePartyServerBase()) {
-                        "activePartyServerBase must not be null while in a party"
-                    }
-                    val link = if (host == ListenTogether.defaultServer) {
-                        JamInviteLink.url(code, null)
-                    } else {
-                        JamInviteLink.url(code, host)
-                    }
-                    val message = "$link\n\n${context.getString(R.string.listen_together_share_text, code)}"
-                    context.startActivity(
-                        Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, message)
-                            },
-                            null,
-                        ),
-                    )
-                },
+                onShare = { sheet = PartySheet.Invite },
+                onShareLink = shareInvite,
                 onLeave = { scope.launch { ListenTogether.leaveParty() } },
                 onSetCapacity = ListenTogether::setMaxMembers,
                 onSetHostOnlyControl = ListenTogether::setHostOnlyControl,
@@ -412,13 +687,19 @@ fun ListenTogetherScreen(
             )
         }
 
-        (failure ?: state.error)?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(start = GROUP_INSET + 4.dp, end = GROUP_INSET + 4.dp, top = 12.dp),
-            )
+        // Only when nothing is covering it. A sheet is a drawer over the bottom
+        // of this page, and every failure it can produce is already shown
+        // inside it — printing the same line down here as well means printing
+        // it where it cannot be read.
+        if (sheet == null) {
+            (failure ?: state.error)?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(start = GROUP_INSET + 4.dp, end = GROUP_INSET + 4.dp, top = 12.dp),
+                )
+            }
         }
 
         PartyActivityList(activity)
@@ -427,204 +708,55 @@ fun ListenTogetherScreen(
         // about an address — there is one built in — so this is where somebody
         // running their own server comes looking, rather than the first thing
         // everybody else has to read past.
+        //
+        // A row and a dialog rather than a box sitting open on the page. An
+        // address is typed once and then never again, and a field left on
+        // screen has to explain itself continuously: what the Save beside it
+        // applies to, why it greys out, what becomes of a half-typed address
+        // when the page is scrolled away from. Behind a row there is nothing
+        // half-typed to explain — the same shape as the ListenBrainz token.
         SettingsGroup(
             header = stringResource(R.string.listen_together_custom_server),
             footer = stringResource(R.string.listen_together_custom_server_footer),
         ) {
-            Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
-                val saveServerUrl: () -> Unit = {
-                    val raw = serverInput
-                    when (val validation = ListenTogether.parseAndNormalizeServerUrl(raw)) {
-                        is ServerUrlValidationResult.Invalid -> {
-                            val errorMsgRes = validation.error.toMessageRes()
-                            Toast.makeText(context, context.getString(errorMsgRes), Toast.LENGTH_SHORT).show()
-                        }
-                        is ServerUrlValidationResult.Valid -> {
-                            val submittedUrl = validation.normalizedUrl
-                            pendingSaveJob?.cancel()
-                            pendingSaveJob = scope.launch {
-                                busy = true
-                                try {
-                                    val newState = ListenTogether.setCustomServerUrl(submittedUrl)
-                                    if (ListenTogether.customServerUrl.value == submittedUrl) {
-                                        serverInput = submittedUrl
-                                    }
-                                    val messageRes = when (newState) {
-                                        is ServerConnectionState.CustomOnline -> R.string.listen_together_custom_server_connected
-                                        is ServerConnectionState.CustomFallback -> R.string.listen_together_custom_server_unreachable_fallback
-                                        is ServerConnectionState.DefaultOnline -> R.string.listen_together_switched_to_default
-                                        is ServerConnectionState.Offline -> if (ListenTogether.customServerUrl.value.isNotBlank()) {
-                                            R.string.listen_together_status_all_offline
-                                        } else {
-                                            R.string.listen_together_server_offline
-                                        }
-                                        ServerConnectionState.Checking -> null
-                                    }
-                                    if (messageRes != null) {
-                                        Toast.makeText(context, context.getString(messageRes), Toast.LENGTH_SHORT).show()
-                                    }
-                                } catch (_: CancellationException) {
-                                    // Superseded by newer save operation
-                                } finally {
-                                    if (pendingSaveJob === coroutineContext[Job]) {
-                                        busy = false
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                val disconnectServer: () -> Unit = {
-                    serverInput = ""
-                    pendingSaveJob?.cancel()
-                    pendingSaveJob = scope.launch {
-                        busy = true
-                        try {
-                            ListenTogether.setCustomServerUrl("")
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.listen_together_switched_to_default),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        } catch (_: CancellationException) {
-                        } finally {
-                            if (pendingSaveJob === coroutineContext[Job]) {
-                                busy = false
-                            }
-                        }
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.Dns,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(ICON_SIZE),
+            SettingsRow(
+                icon = Icons.Rounded.Dns,
+                title = stringResource(R.string.listen_together_custom_server),
+                subtitleContent = {
+                    Text(
+                        text = customServer.ifBlank {
+                            stringResource(R.string.listen_together_using_default)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.width(ICON_GAP))
-                    PillTextField(
-                        value = serverInput,
-                        onValueChange = { serverInput = it },
-                        // Never the default address, even as a hint: this box
-                        // exists to take somebody else's server, and the one
-                        // this build uses is not shown anywhere.
-                        placeholder = stringResource(R.string.listen_together_using_default),
-                        // Not the field's own default: the card it is sitting in
-                        // is surfaceVariant too, so the default would paint the
-                        // box in exactly the colour behind it.
-                        container = MaterialTheme.colorScheme.background,
-                        // Locked while in a party: changing the address under a
-                        // live membership would leave this device holding a
-                        // token for a server it no longer talks to, and the
-                        // party unable to say why it went quiet.
-                        enabled = !state.inParty,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Uri,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = { saveServerUrl() },
-                        ),
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                if (customServer.isNotBlank()) {
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(start = ICON_SIZE + ICON_GAP),
-                    ) {
-                        when (val conn = connectionState) {
-                            ServerConnectionState.Checking -> {
-                                Spinner(modifier = Modifier.size(14.dp))
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.listen_together_server_checking),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            is ServerConnectionState.CustomOnline -> {
-                                Icon(
-                                    Icons.Rounded.CloudDone,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.listen_together_status_custom_online, conn.latencyMs),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                            is ServerConnectionState.CustomFallback -> {
-                                Icon(
-                                    Icons.Rounded.CloudOff,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.listen_together_status_custom_fallback, conn.latencyMs),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                            ServerConnectionState.Offline -> {
-                                Icon(
-                                    Icons.Rounded.CloudOff,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = stringResource(R.string.listen_together_status_all_offline),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                            is ServerConnectionState.DefaultOnline -> {}
-                        }
+                    if (customServer.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        ServerConnectionLine(connectionState)
                     }
-                }
-                val isDirty = when (val res = ListenTogether.parseAndNormalizeServerUrl(serverInput)) {
-                    is ServerUrlValidationResult.Valid -> res.normalizedUrl != customServer
-                    is ServerUrlValidationResult.Invalid -> true
-                }
-                val showActions = customServer.isNotBlank() || isDirty
-                if (showActions) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (customServer.isNotBlank()) {
-                            TextButton(
-                                onClick = disconnectServer,
-                                enabled = !busy && !state.inParty,
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.disconnect),
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                        if (isDirty) {
-                            if (customServer.isNotBlank()) {
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            TextButton(
-                                onClick = saveServerUrl,
-                                enabled = !busy && !state.inParty,
-                            ) {
-                                Text(stringResource(R.string.save))
-                            }
-                        }
-                    }
-                }
+                },
+                // Locked while in a party: changing the address under a live
+                // membership would leave this device holding a token for a
+                // server it no longer talks to, and the party unable to say
+                // why it went quiet.
+                enabled = !state.inParty && !busy,
+                onClick = {
+                    serverInput = customServer
+                    serverDialog = ServerDialog.Edit
+                },
+                trailing = if (busy) ({ Spinner() }) else null,
+            )
+            if (customServer.isNotBlank()) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.CloudOff,
+                    title = stringResource(R.string.listen_together_remove_server),
+                    subtitle = stringResource(R.string.listen_together_remove_server_subtitle),
+                    enabled = !state.inParty && !busy,
+                    onClick = { serverDialog = ServerDialog.Remove },
+                )
             }
         }
 
@@ -677,111 +809,70 @@ private fun ServerHealthRow(
     }
 }
 
+/**
+ * Which of the custom-server dialogs is up, if any.
+ *
+ * Editing and removing are one row apart and a mis-tap away from each other, so
+ * they must not be two booleans that can both be true: a confirm-to-remove box
+ * stacked on top of a half-typed address is a way to throw the address away
+ * without having agreed to.
+ */
+private enum class ServerDialog { Edit, Remove }
+
+/**
+ * Whether the address that was typed is actually answering.
+ *
+ * Under the address rather than in a toast, because the interesting case is the
+ * one nobody is watching for: a server that answered when it was saved and has
+ * since gone quiet. A toast for that would have to fire at a moment nobody
+ * asked anything, so it does not fire at all — this line simply reads
+ * differently the next time the page is opened.
+ */
 @Composable
-private fun NotInAParty(
-    signedIn: Boolean,
-    hasServer: Boolean,
-    codeInput: String,
-    onCodeInput: (String) -> Unit,
-    busy: Boolean,
-    nickname: String,
-    onNicknameChange: (String) -> Unit,
-    maxMembers: Int,
-    onMaxMembersChange: (Int) -> Unit,
-    onCreate: () -> Unit,
-    onJoin: () -> Unit,
-) {
-    val ready = signedIn && hasServer && !busy
-
-    SettingsGroup(header = stringResource(R.string.listen_together_profile)) {
-        Column(Modifier.padding(horizontal = ROW_INSET, vertical = 14.dp)) {
-            // The picture rides alongside the name to the party, so it belongs
-            // beside the field that sets the name — in the slot the server row
-            // below puts its own glyph in, for the same reason: it says what
-            // this row is about before the field is read.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PartyAvatar(url = ListenTogether.myAvatarUrl())
-                Spacer(Modifier.width(ICON_GAP))
-                PillTextField(
-                    value = nickname,
-                    onValueChange = onNicknameChange,
-                    placeholder = stringResource(R.string.listen_together_nickname_hint),
-                    container = MaterialTheme.colorScheme.background,
-                    enabled = ready,
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                )
-            }
-        }
-    }
-
-    SettingsGroup(footer = stringResource(R.string.listen_together_create_footer, maxMembers)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = ROW_INSET, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.listen_together_party_size),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(stringResource(R.string.listen_together_party_size_subtitle), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(onClick = { onMaxMembersChange(maxMembers - 1) }, enabled = ready && maxMembers > 2) { Text("−", color = MaterialTheme.colorScheme.onSurface) }
-            Text("$maxMembers", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.width(28.dp), textAlign = TextAlign.Center)
-            TextButton(onClick = { onMaxMembersChange(maxMembers + 1) }, enabled = ready && maxMembers < 10) { Text("+", color = MaterialTheme.colorScheme.onSurface) }
-        }
-        RowDivider()
-        SettingsRow(
-            icon = Icons.Rounded.GroupAdd,
-            title = stringResource(R.string.listen_together_create),
-            subtitle = stringResource(R.string.listen_together_create_subtitle),
-            enabled = ready,
-            onClick = onCreate,
-            trailing = if (busy) ({ Spinner() }) else null,
+private fun ServerConnectionLine(connection: ServerConnectionState) {
+    val (icon, tint, label) = when (connection) {
+        ServerConnectionState.Checking -> Triple(
+            null,
+            MaterialTheme.colorScheme.onSurfaceVariant,
+            stringResource(R.string.listen_together_server_checking),
         )
+        is ServerConnectionState.CustomOnline -> Triple(
+            Icons.Rounded.CloudDone,
+            MaterialTheme.colorScheme.primary,
+            stringResource(R.string.listen_together_status_custom_online, connection.latencyMs),
+        )
+        is ServerConnectionState.CustomFallback -> Triple(
+            Icons.Rounded.CloudOff,
+            MaterialTheme.colorScheme.error,
+            stringResource(R.string.listen_together_status_custom_fallback, connection.latencyMs),
+        )
+        ServerConnectionState.Offline -> Triple(
+            Icons.Rounded.CloudOff,
+            MaterialTheme.colorScheme.error,
+            stringResource(R.string.listen_together_status_all_offline),
+        )
+        // Nothing to say: the row above already reads "using the built-in one".
+        is ServerConnectionState.DefaultOnline -> return
     }
-
-    // The hint moved out of the box and under the card. Six cells already say
-    // how many characters are wanted; what they cannot say is what may go in
-    // them, and there is no longer a placeholder line to put that on.
-    SettingsGroup(
-        header = stringResource(R.string.listen_together_join),
-        footer = stringResource(R.string.listen_together_code_hint),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = ROW_INSET, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            PartyCodeField(
-                code = codeInput,
-                onCodeChange = onCodeInput,
-                enabled = ready,
-                onSubmit = onJoin,
-            )
-            // Full width and filled, because on this card it is the one thing
-            // to press: the row above it is a keyboard target rather than a
-            // control, and a text button tucked into the corner gave the
-            // section no obvious end.
-            Button(
-                onClick = onJoin,
-                enabled = ready && codeInput.length == ListenTogether.CODE_LENGTH,
-                shape = CODE_CELL_SHAPE,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.listen_together_join_action),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-            }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (icon == null) {
+            Spinner(modifier = Modifier.size(14.dp))
+        } else {
+            Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
         }
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
 /** The six cells of [PartyCodeField], and the Join button under them. */
-private val CODE_CELL_SHAPE = RoundedCornerShape(12.dp)
+internal val CODE_CELL_SHAPE = RoundedCornerShape(12.dp)
 
 /**
  * The party code, entered as six cells rather than one box.
@@ -799,7 +890,7 @@ private val CODE_CELL_SHAPE = RoundedCornerShape(12.dp)
  * are only ever a picture of what it holds.
  */
 @Composable
-private fun PartyCodeField(
+internal fun PartyCodeField(
     code: String,
     onCodeChange: (String) -> Unit,
     enabled: Boolean,
@@ -864,22 +955,26 @@ private fun CodeCell(
     // Animated because the ring moves cell to cell as the code is typed, and a
     // border that simply appears one box to the right on each keystroke reads
     // as flicker rather than as travel.
+    //
+    // Every cell keeps a ring; only its colour changes. Lighting one and
+    // leaving the other five with nothing at all is what turned six boxes into
+    // a single floating square — there has to be a row of somewhere-to-type
+    // first, or the lit one is not "the cell you are on", it is the only cell.
     val ring by animateColorAsState(
         targetValue = when {
-            !enabled -> Color.Transparent
+            !enabled -> MaterialTheme.colorScheme.outline
             active -> MaterialTheme.colorScheme.primary
-            char != null -> MaterialTheme.colorScheme.outline
-            else -> Color.Transparent
+            else -> MaterialTheme.colorScheme.outline
         },
         label = "party code cell ring",
     )
     Box(
         modifier = modifier
             .height(52.dp)
-            // The page background, not surfaceVariant: the card these sit in is
-            // surfaceVariant, so six cells in that colour would be six cells
+            // surfaceVariant, because these now live in a sheet whose container
+            // is the page background: a cell painted in that colour is a cell
             // nobody can see.
-            .background(MaterialTheme.colorScheme.background, CODE_CELL_SHAPE)
+            .background(MaterialTheme.colorScheme.surfaceVariant, CODE_CELL_SHAPE)
             .border(1.5.dp, ring, CODE_CELL_SHAPE),
         contentAlignment = Alignment.Center,
     ) {
@@ -923,6 +1018,7 @@ private fun InAParty(
     state: ListenTogether.State,
     onCopy: () -> Unit,
     onShare: () -> Unit,
+    onShareLink: () -> Unit,
     onLeave: () -> Unit,
     onSetCapacity: (Int) -> Unit,
     onSetHostOnlyControl: (Boolean) -> Unit,

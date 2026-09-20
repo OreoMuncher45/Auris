@@ -270,22 +270,24 @@ fun MiniPlayer(
                     )
                 }
             }
-            if (!controlsLocked) {
-                Spacer(Modifier.width(TRANSPORT_GAP))
-                IconButton(
-                    onClick = {
-                        haptics.play(Haptic.SkipNext)
-                        onNext()
-                    },
-                    modifier = Modifier.size(GLYPH_SLOT),
-                ) {
-                    Icon(
-                        Icons.Rounded.SkipNext,
-                        contentDescription = stringResource(R.string.widget_next),
-                        tint = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.size(GLYPH_SIZE),
-                    )
-                }
+            Spacer(Modifier.width(TRANSPORT_GAP))
+            // Faded and inert rather than removed while the host holds the
+            // controls, so the bar keeps its shape — see [controlsLocked].
+            IconButton(
+                onClick = {
+                    haptics.play(Haptic.SkipNext)
+                    onNext()
+                },
+                enabled = !controlsLocked,
+                modifier = Modifier.size(GLYPH_SLOT),
+            ) {
+                Icon(
+                    Icons.Rounded.SkipNext,
+                    contentDescription = stringResource(R.string.widget_next),
+                    tint = MaterialTheme.colorScheme.onBackground
+                        .copy(alpha = if (controlsLocked) 0.3f else 1f),
+                    modifier = Modifier.size(GLYPH_SIZE),
+                )
             }
         }
     }

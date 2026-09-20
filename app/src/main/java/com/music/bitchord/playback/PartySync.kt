@@ -332,12 +332,18 @@ class PartySync(
      * device performs on its own behalf while locked.
      */
     fun onLockedTransport(playing: Boolean): Boolean {
-        if (!ListenTogether.state.value.controlsLocked) return false
+        val party = ListenTogether.state.value
+        if (!party.controlsLocked) return false
         val exo = player() ?: return false
         if (playing) {
             locallyPaused = false
+            // Nothing to join while the party itself is paused. Starting here
+            // would play alone for the one tick it takes [reconcile] to notice
+            // and pause again — which is what a listener saw as the music
+            // starting and immediately stopping.
+            if (!party.playback.isPlaying) return true
             ListenTogether.partyPositionMs()
-                ?.takeIf { ListenTogether.state.value.clockSynced }
+                ?.takeIf { party.clockSynced }
                 ?.let(exo::seekTo)
             exo.play()
         } else {

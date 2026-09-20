@@ -37,6 +37,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -804,6 +806,7 @@ object ListenTogether {
         if (cleaned.length != CODE_LENGTH) {
             throw PartyException("bad_code", "A party code is six letters or digits.")
         }
+        refuseIfRecentlyKicked(cleaned)
         val membership = post(
             "$serverBase/api/parties/$cleaned/join",
             JoinRequest(who.userId, who.deviceId, who.name, who.avatar),
@@ -892,6 +895,15 @@ object ListenTogether {
                     SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), "A party code is six letters or digits.")
                 } else {
                     SwitchPartyResult.TargetFailedNoParty("A party code is six letters or digits.")
+                }
+            }
+
+            if (recentKicks().containsKey(cleanedTargetCode)) {
+                val refusal = "Couldn’t let you in — you’ve recently been kicked out of this party."
+                return@withContext if (_state.value.inParty) {
+                    SwitchPartyResult.TargetFailedRecovered(_state.value.code.orEmpty(), refusal)
+                } else {
+                    SwitchPartyResult.TargetFailedNoParty(refusal)
                 }
             }
 
@@ -1347,6 +1359,13 @@ object ListenTogether {
                 // The server has let this membership go — the slot was swept, or
                 // the party ended. Reconnecting would be answered with 4401
                 // forever, so the loop is stopped rather than left spinning.
+                //
+                // A removal is the one kind worth remembering: the code goes on
+                // this device's own shut-out list before the state carrying it
+                // is torn down. See [recentKicks].
+                if (frame["reason"]?.jsonPrimitive?.content == "kicked") {
+                    _state.value.code?.let(::recordKick)
+                }
                 scope.launch { leaveParty() }
             }
         }
@@ -1393,6 +1412,66 @@ object ListenTogether {
         )
     }
 
+    // ------------------------------------------------------- recent kicks --
+
+    /**
+     * Parties this device was removed from, and when it may ask again.
+     *
+     * Held here rather than on the server, which forgets a party minutes after
+     * it empties and would have to keep a list of who is not welcome where for
+     * far longer than it keeps the party itself. A host who removes somebody
+     * gets a door that stays shut for a day without the server carrying a
+     * grudge; somebody determined to get back in can clear the app's data, and
+     * that is an acceptable trade for a guard rail rather than a ban.
+     *
+     * Stored as code → the epoch millisecond it lapses, pruned on every read.
+     */
+    private fun recentKicks(): Map<String, Long> {
+        val raw = prefs.getString(KEY_KICKED, null) ?: return emptyMap()
+        val stored = runCatching {
+            json.decodeFromString(MapSerializer(String.serializer(), Long.serializer()), raw)
+        }.getOrNull() ?: return emptyMap()
+        val now = System.currentTimeMillis()
+        val live = stored.filterValues { it > now }
+        if (live.size != stored.size) writeKicks(live)
+        return live
+    }
+
+    private fun writeKicks(entries: Map<String, Long>) {
+        if (entries.isEmpty()) {
+            prefs.edit().remove(KEY_KICKED).apply()
+            return
+        }
+        val encoded = json.encodeToString(
+            MapSerializer(String.serializer(), Long.serializer()),
+            entries,
+        )
+        prefs.edit().putString(KEY_KICKED, encoded).apply()
+    }
+
+    /** @see recentKicks */
+    private fun recordKick(code: String) {
+        val normalised = code.filter { it.isLetterOrDigit() }.uppercase()
+        if (normalised.isEmpty()) return
+        writeKicks(recentKicks() + (normalised to System.currentTimeMillis() + KICK_BLOCK_MS))
+    }
+
+    /**
+     * Refuses a party this device was recently removed from.
+     *
+     * The refusal says it was removed and not for how long: a countdown is an
+     * invitation to wait it out, and the listener's business is with the host
+     * rather than with a timer.
+     */
+    private fun refuseIfRecentlyKicked(code: String) {
+        if (recentKicks().containsKey(code)) {
+            throw PartyException(
+                "recently_kicked",
+                "Couldn’t let you in — you’ve recently been kicked out of this party.",
+            )
+        }
+    }
+
     /**
      * The picture the rest of the party will see against this device's name.
      *
@@ -1419,6 +1498,50 @@ object ListenTogether {
     private fun recordActivity(entry: PartyActivity) {
         val next = (listOf(entry) + _activity.value).take(100)
         _activity.value = next
+    }
+
+    /**
+     * Who is in a party, before committing a slot to it.
+     *
+     * Unauthenticated on both sides — see the server's `handlePreviewParty` for
+     * why that is safe — so this works from the code somebody read out as
+     * readily as from a tapped link. A party this device was recently removed
+     * from is refused here too, so the refusal arrives while the code is still
+     * on screen rather than after a confirmation the listener cannot act on.
+     */
+    suspend fun previewParty(code: String, server: String? = null): Result<PartyPreview> {
+        val cleaned = code.filter { it.isLetterOrDigit() }.uppercase()
+        if (cleaned.length != CODE_LENGTH) {
+            return Result.failure(PartyException("bad_code", "A party code is six letters or digits."))
+        }
+        return runCatching {
+            refuseIfRecentlyKicked(cleaned)
+            val base = resolveHttpBase(server ?: effectiveIdleServerBase())
+            if (base.isBlank()) throw PartyException("no_server", "Set the party server address first.")
+            val response = http.get("$base/api/parties/$cleaned/preview")
+            if (!response.status.isSuccess()) {
+                val problem = response.toPartyException()
+                // A server that predates this endpoint is not the same answer
+                // as a code that does not exist, and the two arrive as the same
+                // status. What tells them apart is the body: the handler's own
+                // 404 is JSON with a code in it, while a route the router has
+                // never heard of is answered by the router, in plain text, so
+                // nothing parses and the code falls back to the status.
+                //
+                // Worth the paragraph because the invite in somebody's hand may
+                // point at any server at all — an older deploy, or a copy they
+                // run themselves — and a party that cannot be *looked at* is a
+                // party that cannot be joined. Without a face to show, the
+                // confirmation is still a confirmation.
+                if (problem.statusCode == 404 && problem.code == "http_404") {
+                    return@runCatching PartyPreview(code = cleaned)
+                }
+                throw problem
+            }
+            response.body<PartyPreview>()
+        }.onFailure {
+            Log.w(TAG, "could not look up a party: ${redact(it.message)}")
+        }
     }
 
     private suspend fun post(url: String, body: JoinRequest): PartyMembership {
@@ -1511,6 +1634,10 @@ object ListenTogether {
     private const val KEY_TOKEN = "party_token"
     private const val KEY_DEVICE = "device_id"
     private const val KEY_NICKNAME = "party_nickname"
+    private const val KEY_KICKED = "party_kicked_until"
+
+    /** How long a removal keeps this device out of that party. */
+    private const val KICK_BLOCK_MS = 24L * 60 * 60 * 1000
 
     private const val PING_INTERVAL_MS = 15_000L
     private const val REPORT_INTERVAL_MS = 10_000L
