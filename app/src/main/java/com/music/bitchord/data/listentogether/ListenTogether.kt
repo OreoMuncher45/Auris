@@ -1428,7 +1428,7 @@ object ListenTogether {
 
     private const val UNREACHABLE = "Couldn’t reach the party server."
 
-    private val ABSOLUTE_URL = Regex(""" (?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
+    private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'\"]+""", RegexOption.IGNORE_CASE)
     private const val KEY_CODE = "party_code"
     private const val KEY_TOKEN = "party_token"
     private const val KEY_DEVICE = "device_id"
