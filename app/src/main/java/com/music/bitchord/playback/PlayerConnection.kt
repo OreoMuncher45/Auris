@@ -164,6 +164,20 @@ suspend fun MediaController.commitRadioQueue() {
     ).await()
 }
 
+/**
+ * Marks the span of a queue-row drag — see [PartySync.beginQueueDrag]. Each
+ * neighbour the row crosses is still its own `moveMediaItem`, sent the moment
+ * it happens so the local queue and the on-screen list stay in step; this only
+ * tells a jam's party sync to hold its publish until the row is dropped,
+ * instead of sending one for every neighbour crossed along the way.
+ */
+fun MediaController.setQueueDragActive(active: Boolean) {
+    sendCustomCommand(
+        SessionCommand(ACTION_QUEUE_DRAG, Bundle.EMPTY),
+        bundleOf(EXTRA_QUEUE_DRAG_ACTIVE to active),
+    )
+}
+
 /** Mirrors the controller into Compose state, polling position while playing. */
 @Composable
 fun rememberPlayerState(controller: MediaController?): PlayerState {

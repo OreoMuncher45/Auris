@@ -263,16 +263,45 @@ class PartySync(
             focusLost = false
             rejoining = true
         }
+        // Protects the local queue from a reconcile stomping it mid-drag too,
+        // so this is set on every call — including the ones parked below.
         reconcileQuietUntilMs = SystemClock.elapsedRealtime() + INTENT_QUIET_MS
         // Nothing has been published yet, so there is no seq to wait for and
         // the window must not clear on somebody else's control either — it is
         // protecting an action of ours that has not gone out.
         awaitPlaybackSeq = Long.MAX_VALUE
         awaitQueueSeq = Long.MAX_VALUE
+        // A row being dragged through the queue calls this once per neighbour
+        // it crosses — see [beginQueueDrag]. Parked here rather than published,
+        // so the party hears about the reorder once, when the row lands.
+        if (queueDragActive) {
+            queueDragDirty = true
+            publishJob?.cancel()
+            return
+        }
         publishJob?.cancel()
         publishJob = scope.launch {
             delay(PUBLISH_DEBOUNCE_MS)
             publish()
+        }
+    }
+
+    /** A queue row started dragging in the UI. See [onLocalIntent]. */
+    private var queueDragActive = false
+
+    /** Whether a move landed while [queueDragActive] was true, awaiting [endQueueDrag]. */
+    private var queueDragDirty = false
+
+    fun beginQueueDrag() {
+        queueDragActive = true
+    }
+
+    /** The row was dropped (or the drag cancelled). Flushes anything parked by [onLocalIntent]. */
+    fun endQueueDrag() {
+        queueDragActive = false
+        if (queueDragDirty) {
+            queueDragDirty = false
+            onLocalIntent()
         }
     }
 

@@ -934,6 +934,14 @@ fun NowPlayingScreen(
     onJumpTo: (Int) -> Unit,
     onRemoveFromQueue: (Int) -> Unit,
     onMoveInQueue: (Int, Int) -> Unit,
+    /**
+     * A queue row started or stopped being dragged.
+     *
+     * Lets the caller tell a jam's party sync that a reorder is in progress, so
+     * it can hold its publish until the row is dropped instead of sending one
+     * for every neighbour the drag crosses. See [PartySync.beginQueueDrag].
+     */
+    onQueueDragActiveChange: (Boolean) -> Unit = {},
     onClearQueue: () -> Unit,
     onOpenMenu: () -> Unit,
     onOpenAlbum: (String) -> Unit,
@@ -1947,6 +1955,7 @@ fun NowPlayingScreen(
                     onRemove = onRemoveFromQueue,
                     onMove = onMoveInQueue,
                     onClear = onClearQueue,
+                    onDragActiveChange = onQueueDragActiveChange,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -3080,6 +3089,7 @@ fun NowPlayingScreen(
                             onMove = onMoveInQueue,
                             onClear = onClearQueue,
                             onScrollingChange = { queueScrolling = it },
+                            onDragActiveChange = onQueueDragActiveChange,
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -6748,6 +6758,7 @@ private fun InlineQueue(
     onMove: (Int, Int) -> Unit,
     onClear: () -> Unit,
     onScrollingChange: (Boolean) -> Unit = {},
+    onDragActiveChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -6810,12 +6821,14 @@ private fun InlineQueue(
         lazyRange = firstMovable until autoplayStart,
         lazyOffset = 0,
         onMove = onMove,
+        onDragActiveChange = onDragActiveChange,
     )
     val autoplayDrag = rememberQueueDragState(
         listState = listState,
         lazyRange = (autoplayStart + headingCount) until (autoplayStart + headingCount + autoplayRows.size),
         lazyOffset = headingCount,
         onMove = onMove,
+        onDragActiveChange = onDragActiveChange,
     )
 
     // Open on what's playing, not at the top of a long queue. The heading sits
@@ -7090,11 +7103,13 @@ private fun rememberQueueDragState(
     lazyRange: IntRange,
     lazyOffset: Int,
     onMove: (Int, Int) -> Unit,
+    onDragActiveChange: (Boolean) -> Unit = {},
 ): QueueDragState {
     val state = remember(listState) { QueueDragState(listState) }
     state.lazyRange = lazyRange
     state.lazyOffset = lazyOffset
     state.onMove = onMove
+    state.onDragActiveChange = onDragActiveChange
     with(LocalDensity.current) {
         state.edgeZone = QUEUE_EDGE_SCROLL_ZONE.toPx()
         state.edgeSpeed = QUEUE_EDGE_SCROLL_SPEED.toPx()
@@ -7164,6 +7179,14 @@ private class QueueDragState(private val listState: LazyListState) {
     var lazyOffset: Int = 0
     var onMove: (Int, Int) -> Unit = { _, _ -> }
 
+    /**
+     * A row started or stopped being dragged — see [PartySync.beginQueueDrag].
+     * Every neighbour crossed while dragging is still its own [onMove] call, so
+     * the local queue and the party's copy of it can be told apart: the party
+     * only needs to hear about the reorder once, when the row is dropped.
+     */
+    var onDragActiveChange: (Boolean) -> Unit = {}
+
     /** [QUEUE_EDGE_SCROLL_ZONE] and [QUEUE_EDGE_SCROLL_SPEED], in pixels. */
     var edgeZone: Float = 0f
     var edgeSpeed: Float = 0f
@@ -7217,6 +7240,7 @@ private class QueueDragState(private val listState: LazyListState) {
         renderOffset = 0f
         awaiting = null
         setAutoScroll(0f)
+        onDragActiveChange(true)
     }
 
     /** The finger moved [deltaY] pixels and the list stayed put. */
@@ -7231,6 +7255,7 @@ private class QueueDragState(private val listState: LazyListState) {
         renderOffset = 0f
         awaiting = null
         setAutoScroll(0f)
+        onDragActiveChange(false)
     }
 
     /**
