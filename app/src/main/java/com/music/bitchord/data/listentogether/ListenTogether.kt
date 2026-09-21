@@ -378,6 +378,23 @@ object ListenTogether {
     fun effectiveIdleServerBase(): String = _effectiveIdleServer.value
 
     /**
+     * The server a party switch should target when the invite itself does not
+     * name one.
+     *
+     * [customServer] is `""` when nobody has configured one — not the
+     * default server's address — so a switch with no explicit target (a
+     * typed code, entered while already live in a party) has to fall back to
+     * whichever server idle joins already resolve to. Handed the raw empty
+     * string instead, [switchPartyWithRecovery] treats it as a malformed
+     * target and refuses the switch outright.
+     */
+    fun resolveSwitchTarget(
+        inviteServer: String?,
+        customServer: String,
+        idleServer: String = effectiveIdleServerBase(),
+    ): String = inviteServer ?: customServer.ifBlank { idleServer }
+
+    /**
      * The actual server hosting the active party session. Non-null while [State.inParty] is true.
      * Immutable during the party session and never mutated by idle health checks.
      */

@@ -166,12 +166,6 @@ class PrecisionAudioSinkTest {
      * top of it.
      */
     private fun loudDspChain(): DspChain = DspChain(
-        loudness = com.music.bitchord.playback.LoudnessProcessor().apply {
-            enabled = true
-            // A track whose gain is already known, so normalization would
-            // apply -6 dB from the very first frame if it ran at all.
-            prime("track", cachedGainDb = -6f)
-        },
         spatial = SpatialAudioProcessor().apply { enabled = true },
         equalizer = EqualizerProcessor().apply {
             setTuning(enabled = true, curve = com.music.bitchord.playback.EqCurve.FLAT, balance = 1f)

@@ -543,6 +543,9 @@ internal fun MemberAvatarStack(
 @Composable
 internal fun JoinConfirmSheet(
     preview: PartyPreview,
+    avatarUrl: String?,
+    nickname: String,
+    onNicknameChange: (String) -> Unit,
     busy: Boolean,
     error: String?,
     onJoin: () -> Unit,
@@ -592,7 +595,20 @@ internal fun JoinConfirmSheet(
                 )
             }
         }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(20.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            PartySheetAvatar(url = avatarUrl)
+            Spacer(Modifier.width(ICON_GAP))
+            PillTextField(
+                value = nickname,
+                onValueChange = onNicknameChange,
+                placeholder = stringResource(R.string.listen_together_nickname_hint),
+                container = MaterialTheme.colorScheme.surfaceVariant,
+                enabled = !busy,
+                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+            )
+        }
+        Spacer(Modifier.height(20.dp))
         Button(
             onClick = onJoin,
             enabled = !busy && !preview.isFull,

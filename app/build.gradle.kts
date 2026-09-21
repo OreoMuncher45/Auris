@@ -52,6 +52,15 @@ val listenTogetherServer: String = (
         ?: "https://bitchord-listen-together.onrender.com"
     ).trim().trimEnd('/')
 
+/*
+ * Bump this by hand before cutting each sideloaded test build ("beta2",
+ * "beta3", ...) and blank it out for a release build. Marks the debug
+ * versionName below as a pre-release: AppUpdateChecker.isNewer() treats any
+ * "-suffix" as older than a clean release of the same number, so testers
+ * still get the update prompt once the matching tag is actually published.
+ */
+val betaSuffix = "beta2"
+
 android {
     namespace = "com.music.bitchord"
     compileSdk = 36
@@ -62,7 +71,7 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 18
+        versionCode = 19
         versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -129,6 +138,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Only the debug build type ever carries this — a release build
+            // (what a tagged GitHub release is cut from) ignores betaSuffix
+            // entirely, so forgetting to clear the -P flag can't ship a
+            // "-beta" version name.
+            if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
+        }
         release {
             /*
              * Off deliberately. Stream resolution runs YouTube's own player

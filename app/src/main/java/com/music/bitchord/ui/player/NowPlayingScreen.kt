@@ -6689,6 +6689,25 @@ private fun Modifier.bleedHorizontally(gutter: Dp): Modifier = layout { measurab
     }
 }
 
+/**
+ * How a queue row moves when the running order changes under it.
+ *
+ * Placement only — the fades are off deliberately. A row Compose treats as
+ * removed or inserted goes on being drawn at the slot it used to hold for as
+ * long as it takes to fade, and a queue row's background is transparent: the
+ * fading copy and whichever row is sliding through that slot both draw their
+ * title and artist into the same few pixels, which reads as one song's name
+ * printed over another's rather than as anything moving. Without the fades a
+ * row that leaves is gone the moment it leaves, so movement is the only thing
+ * left to see.
+ *
+ * Bounded rather than the default spring for a related reason: every track
+ * change moves the section boundary — see [autoplaySectionStart] — so the
+ * newly current row and the AutoPlay heading trade places, and a low-stiffness
+ * spring is still visibly settling that trade long after the track changed.
+ */
+private val QUEUE_ROW_MOTION = tween<IntOffset>(durationMillis = 200, easing = FastOutSlowInEasing)
+
 /** Softens the list where it meets the header and the scrubber. */
 private fun Modifier.fadingEdges(): Modifier = this
     .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
@@ -6761,8 +6780,19 @@ private fun InlineQueue(
     // across a reorder, which plain videoId+index (the previous key) wasn't:
     // that changed on every swap and silently broke animateItem's ability to
     // tell "this row moved" from "this row was replaced".
-    val manualKeys = remember(manualRows) { manualRows.stableQueueKeys() }
-    val autoplayKeys = remember(autoplayRows) { autoplayRows.stableQueueKeys("autoplay/") }
+    //
+    // Computed once over the *whole* queue rather than per section: a track
+    // AutoPlay picked crosses into the manual section the moment it becomes
+    // current (or falls behind it), and a key that depended on which section
+    // it was in changed the instant it crossed — animateItem read that as the
+    // old row being deleted and a new one inserted rather than as one row
+    // moving, so it faded the two in and out in place instead of sliding the
+    // row smoothly, and with every row background transparent the fading
+    // pair showed through each other. A key keyed only by position in the
+    // full queue never changes at that boundary, so the row now just moves.
+    val queueKeys = remember(queue) { queue.stableQueueKeys() }
+    val manualKeys = queueKeys.subList(0, autoplayStart)
+    val autoplayKeys = queueKeys.subList(autoplayStart, queue.size)
 
     // The heading is a row of the same LazyColumn, so it shifts every
     // AutoPlay index below it along by one — hence the offset back to queue
@@ -6796,10 +6826,23 @@ private fun InlineQueue(
     // the edge auto-scroll below — which would leave the rest of that drag
     // unable to scroll at all. Reordering is also the one time the user is
     // certainly looking somewhere other than at the current track.
+    //
+    // The first jump is a snap rather than a scroll — sliding in from the top
+    // of a long queue to whatever is playing minutes in would just be a scroll
+    // animation with nothing to look at along the way. Every jump after that
+    // is a track change with the sheet already open and on screen, so it
+    // animates instead of cutting straight there.
+    var hasScrolledOnce by remember { mutableStateOf(false) }
     LaunchedEffect(currentIndex) {
         val holding = manualDrag.draggedKey != null || autoplayDrag.draggedKey != null
         if (!holding && currentIndex in queue.indices) {
-            listState.scrollToItem(currentIndex + if (currentIndex >= autoplayStart) 1 else 0)
+            val target = currentIndex + if (currentIndex >= autoplayStart) 1 else 0
+            if (hasScrolledOnce) {
+                listState.animateScrollToItem(target)
+            } else {
+                listState.scrollToItem(target)
+                hasScrolledOnce = true
+            }
         }
     }
 
@@ -6866,7 +6909,17 @@ private fun InlineQueue(
                         // neighbours skip the animation too, for as long as
                         // *anything* in the section is being dragged — see the
                         // note on [manualDrag] below for why.
-                        .then(if (manualDrag.draggedKey != null) Modifier else Modifier.animateItem()),
+                        .then(
+                            if (manualDrag.draggedKey != null) {
+                                Modifier
+                            } else {
+                                Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = null,
+                                    placementSpec = QUEUE_ROW_MOTION,
+                                )
+                            },
+                        ),
                 )
             }
             // Heading first, then what AutoPlay has lined up under it. With
@@ -6876,6 +6929,18 @@ private fun InlineQueue(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // Moves on the same terms as the rows around it.
+                            // Every track change trades this heading with the
+                            // row that just became current, and while the rows
+                            // animated and this did not, it landed in the row's
+                            // old slot a whole animation early — so the two
+                            // drew over each other for as long as the row took
+                            // to arrive.
+                            .animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = QUEUE_ROW_MOTION,
+                            )
                             .padding(vertical = 14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -6926,7 +6991,17 @@ private fun InlineQueue(
                     modifier = Modifier
                         .zIndex(if (dragging) 1f else 0f)
                         .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
-                        .then(if (autoplayDrag.draggedKey != null) Modifier else Modifier.animateItem()),
+                        .then(
+                            if (autoplayDrag.draggedKey != null) {
+                                Modifier
+                            } else {
+                                Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = null,
+                                    placementSpec = QUEUE_ROW_MOTION,
+                                )
+                            },
+                        ),
                 )
             }
         }
@@ -6939,12 +7014,12 @@ private fun InlineQueue(
  * that count, so two copies of one song each keep their own identity instead
  * of colliding on the same LazyColumn key.
  */
-private fun List<Song>.stableQueueKeys(prefix: String = ""): List<String> {
+private fun List<Song>.stableQueueKeys(): List<String> {
     val seen = HashMap<String, Int>()
     return map { song ->
         val n = seen.getOrDefault(song.videoId, 0)
         seen[song.videoId] = n + 1
-        if (n == 0) "$prefix${song.videoId}" else "$prefix${song.videoId}#$n"
+        if (n == 0) song.videoId else "${song.videoId}#$n"
     }
 }
 

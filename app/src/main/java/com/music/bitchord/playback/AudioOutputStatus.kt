@@ -97,10 +97,11 @@ object AudioOutputStatus {
         val bitPerfectDetail: String? = null,
         /**
          * Gain loudness normalization is applying to the playing track, in dB,
-         * or null when it is off, bypassed, or has not measured enough yet.
+         * or null when it is off, bypassed, or YouTube offered no figure for
+         * this track.
          */
         val loudnessGainDb: Float? = null,
-        /** Measured integrated loudness of the playing track in LUFS, when known. */
+        /** YouTube's own normalization figure for the playing track, in dB, when known. */
         val loudnessLufs: Float? = null,
     ) {
         override fun equals(other: Any?): Boolean {
@@ -345,8 +346,8 @@ object AudioOutputStatus {
 
     /**
      * What loudness normalization is doing to the playing track. Nulls mean
-     * "nothing" — off, bypassed by bit-perfect mode, or not yet measured — and
-     * are what the readout shows as inactive.
+     * "nothing" — off, bypassed by bit-perfect mode, or YouTube offered no
+     * figure for this track — and are what the readout shows as inactive.
      */
     fun publishLoudness(gainDb: Float?, lufs: Float?) {
         val snapshot = current.value

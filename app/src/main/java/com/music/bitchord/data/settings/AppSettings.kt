@@ -293,8 +293,9 @@ object AppSettings {
     val preferUsbDac = MutableStateFlow(false)
 
     /**
-     * Level every track to the same loudness, by measuring it and applying one
-     * constant gain — see [com.music.bitchord.playback.LoudnessProcessor].
+     * Level every track to the same loudness, using YouTube's own
+     * normalization figure for it — see
+     * [com.music.bitchord.playback.PlaybackService.setupLoudnessEnhancer].
      *
      * On by default, which is the one genuinely contentious thing about it.
      * The case for it: a queue drawn from several sources is a queue of
@@ -310,17 +311,6 @@ object AppSettings {
      * this setting yields to it unconditionally rather than negotiating.
      */
     val loudnessNormalization = MutableStateFlow(true)
-
-    /**
-     * What [loudnessNormalization] brings tracks to, in LUFS.
-     *
-     * Defaults to [com.music.bitchord.playback.LoudnessProcessor.DEFAULT_TARGET_LUFS].
-     * Exposed because the right answer depends on where someone listens: -14
-     * matches the streaming services and suits headphones, while a noisy car
-     * or a phone speaker is better served louder even though that leaves less
-     * headroom for a quiet track to be boosted into.
-     */
-    val loudnessTargetLufs = MutableStateFlow(DEFAULT_LOUDNESS_TARGET_LUFS)
 
     /**
      * Deliver the decoder's samples to AudioTrack exactly as they were
@@ -806,8 +796,6 @@ object AppSettings {
         }.getOrDefault(OutputPcmMode.PCM_16)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
-        loudnessTargetLufs.value = prefs.getFloat(KEY_LOUDNESS_TARGET_LUFS, DEFAULT_LOUDNESS_TARGET_LUFS)
-            .coerceIn(MIN_LOUDNESS_TARGET_LUFS, MAX_LOUDNESS_TARGET_LUFS)
         bitPerfectMode.value = prefs.getBoolean(KEY_BIT_PERFECT_MODE, false)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
@@ -1434,12 +1422,6 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LOUDNESS_NORMALIZATION, value).apply()
     }
 
-    fun setLoudnessTargetLufs(value: Float) {
-        val clamped = value.coerceIn(MIN_LOUDNESS_TARGET_LUFS, MAX_LOUDNESS_TARGET_LUFS)
-        loudnessTargetLufs.value = clamped
-        prefs.edit().putFloat(KEY_LOUDNESS_TARGET_LUFS, clamped).apply()
-    }
-
     fun setBitPerfectMode(value: Boolean) {
         bitPerfectMode.value = value
         prefs.edit().putBoolean(KEY_BIT_PERFECT_MODE, value).apply()
@@ -1758,21 +1740,6 @@ object AppSettings {
     const val MIN_UPGRADE_LENGTH_SLACK_SECONDS = 0
     const val MAX_UPGRADE_LENGTH_SLACK_SECONDS = 10
 
-    /**
-     * The streaming services' level, and so the one most listeners are
-     * already calibrated to. See
-     * [com.music.bitchord.playback.LoudnessProcessor.DEFAULT_TARGET_LUFS],
-     * which this mirrors — duplicated rather than imported because settings
-     * must not depend on the playback package.
-     *
-     * The range stops at -23 (broadcast, EBU R 128) and -9. Past -9 almost
-     * nothing can be reached without the peak limiter pulling the gain back
-     * down, so the slider would stop doing anything.
-     */
-    const val DEFAULT_LOUDNESS_TARGET_LUFS = -14f
-    const val MIN_LOUDNESS_TARGET_LUFS = -23f
-    const val MAX_LOUDNESS_TARGET_LUFS = -9f
-
     private const val DEFAULT_PERFORMANCE_REFRESH_RATE = 120
 
     private fun normalizePerformanceRefreshRate(value: Int): Int =
@@ -1793,7 +1760,6 @@ object AppSettings {
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
-    private const val KEY_LOUDNESS_TARGET_LUFS = "loudness_target_lufs"
     private const val KEY_BIT_PERFECT_MODE = "bit_perfect_mode"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"

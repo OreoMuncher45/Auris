@@ -211,7 +211,6 @@ fun SettingsScreen(
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
     val preferUsbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
-    val loudnessTargetLufs by AppSettings.loudnessTargetLufs.collectAsStateWithLifecycle()
     val bitPerfectMode by AppSettings.bitPerfectMode.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
@@ -640,21 +639,6 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
                 )
-                if (loudnessNormalization && !bitPerfectMode) {
-                    SliderRow(
-                        icon = Icons.Rounded.Tune,
-                        title = stringResource(R.string.loudness_target),
-                        subtitle = stringResource(R.string.loudness_target_subtitle),
-                        value = stringResource(
-                            R.string.loudness_target_value,
-                            loudnessTargetLufs.roundToInt().toString(),
-                        ),
-                        sliderValue = loudnessTargetLufs,
-                        onSliderValue = { AppSettings.setLoudnessTargetLufs(it.roundToInt().toFloat()) },
-                        valueRange = AppSettings.MIN_LOUDNESS_TARGET_LUFS..AppSettings.MAX_LOUDNESS_TARGET_LUFS,
-                        steps = LOUDNESS_TARGET_STEPS,
-                    )
-                }
             }
             // Automix decides its own length from each pair of tracks —
             // tempo, key, structure — so it replaces the manual slider rather
@@ -1725,13 +1709,6 @@ internal fun openEqualizer(context: Context, sessionId: Int) {
 
 /** Above this, the cache limit slider's subtitle warns rather than reassures. */
 private const val CACHE_WARNING_MB = 2048
-
-/**
- * Stops on the loudness target slider, one per LUFS across the settable
- * range. Compose counts the stops *between* the ends, hence the -1.
- */
-private val LOUDNESS_TARGET_STEPS =
-    (AppSettings.MAX_LOUDNESS_TARGET_LUFS - AppSettings.MIN_LOUDNESS_TARGET_LUFS).toInt() - 1
 
 /** "512 MB", "2 GB", "2.5 GB" — whichever reads more naturally at that size. */
 private fun formatCacheSize(mb: Int): String {

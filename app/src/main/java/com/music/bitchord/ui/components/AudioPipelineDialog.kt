@@ -308,14 +308,14 @@ fun AudioPipelineDialog(
                     val loudnessGainText = when {
                         bitPerfectMode -> stringResource(R.string.off)
                         !loudnessNormalization -> stringResource(R.string.off)
-                        outputStatus.loudnessGainDb == null -> stringResource(R.string.loudness_measuring)
+                        outputStatus.loudnessGainDb == null -> "—"
                         else -> stringResource(
                             R.string.loudness_gain_db,
                             "%+.1f".format(Locale.ROOT, outputStatus.loudnessGainDb),
                         )
                     }
                     val loudnessMeasuredText = outputStatus.loudnessLufs?.let {
-                        stringResource(R.string.loudness_lufs, "%.1f".format(Locale.ROOT, it))
+                        stringResource(R.string.loudness_lufs, "%+.1f".format(Locale.ROOT, it))
                     } ?: "—"
 
                     PipelineRule()

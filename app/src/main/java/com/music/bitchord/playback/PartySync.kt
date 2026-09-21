@@ -392,6 +392,19 @@ class PartySync(
         val party = ListenTogether.state.value
         if (!party.inParty || party.connection != ListenTogether.Connection.LIVE) return false
         if (!party.clockSynced) return false
+        // Already going, so there is nothing to hold back: `play()` on a player
+        // that never stopped does nothing anywhere, and swallowing it here made
+        // it do one thing — arm a wait that nothing can end. Both the things
+        // that clear that wait look for a *stopped* player, so neither ever
+        // would, and the transport sat under a spinner over music that was
+        // playing, for the rest of the party.
+        //
+        // These calls are ordinary, not a misuse: every path that replaces the
+        // current item and restores playback afterwards reads `isPlaying` to
+        // decide, and `isPlaying` is false while a player buffers — which is
+        // exactly what replacing an item makes it do. A quality upgrade landing
+        // mid-track is the common one.
+        if (player()?.playWhenReady == true) return false
         deferredPlayPending = true
         deferredPlayFallback()
         return true
@@ -408,10 +421,16 @@ class PartySync(
         startJob?.cancel()
         startJob = scope.launch {
             delay(DEFERRED_PLAY_TIMEOUT_MS)
+            // Put down whatever happened, including the two outcomes that are
+            // not a failure: the player is already going, or there is no player
+            // left to start. This flag is what the transport draws as "the
+            // party is about to start" — a wait that is over by any route at
+            // all has to end here, not only the route this fallback exists for.
+            if (!deferredPlayPending) return@launch
+            deferredPlayPending = false
             val exo = player() ?: return@launch
-            if (deferredPlayPending && !exo.playWhenReady) {
+            if (!exo.playWhenReady) {
                 Log.w(TAG, "party never acknowledged the resume; starting locally")
-                deferredPlayPending = false
                 exo.play()
             }
         }
@@ -446,7 +465,10 @@ class PartySync(
         // nothing until its own user asks it to. See [focusLost].
         if (focusLost) return
         val target = party.playback
-        val track = target.track ?: return
+        val track = target.track ?: run {
+            seedEmptyParty(party)
+            return
+        }
         val exo = player() ?: return
 
         // Suppressed, not stopped: a notification chime or a short clip holds
@@ -473,7 +495,14 @@ class PartySync(
         // this line still applies — the track the party moved to is loaded, the
         // queue behind it is kept — and everything below it is sound: starting
         // the player, and chasing a playhead nobody here can hear.
-        if (locallyPaused) return
+        if (locallyPaused) {
+            // Nothing below here will start this device while the pause holds,
+            // so a resume still waiting on the party is never going to be
+            // answered — and the transport would draw that wait for as long as
+            // the listener stayed muted.
+            deferredPlayPending = false
+            return
+        }
 
         if (!target.isPlaying) {
             deferredPlayPending = false
@@ -521,6 +550,13 @@ class PartySync(
             alignedSeq = target.seq
             return
         }
+
+        // Playing, in a party that is playing: whatever start this device was
+        // waiting to be allowed to make has been made. Cleared here as well as
+        // in the branch above, because the player can reach this line already
+        // going — a resume that was never withheld in the first place — and
+        // that branch is the only other place that puts the wait down.
+        deferredPlayPending = false
 
         if (want == null) return
 
@@ -766,6 +802,39 @@ class PartySync(
         awaitPlaybackSeq = basePlayback + playbackControls
         awaitQueueSeq = baseQueue + queueControls
         if (playbackControls == 0 && queueControls == 0) reconcileQuietUntilMs = 0L
+    }
+
+    /**
+     * Hands a party with nothing in it the music this device is already playing.
+     *
+     * A party is created empty, and [publish] only ever runs off something the
+     * user did — creating a party is not one of those. So a host who was
+     * listening when they created it had a party that claimed nothing was
+     * playing until they next touched the transport, and anybody who joined in
+     * that window arrived to an empty party while the host carried on listening.
+     *
+     * Only the host, and only while the party has no track of its own. The
+     * first keeps it deterministic: several people can arrive already playing
+     * different things, and with exactly one device allowed to seed there is no
+     * race for the last write to win. The second means this stops the instant
+     * the party has music. Neither takes anything away — a listener who presses
+     * play still publishes through [onLocalIntent], exactly as before.
+     *
+     * Called from [reconcile] rather than from [onEnteredParty] so it is retried
+     * on the next tick: being in a party and having a socket to say so on are
+     * two different moments, and a control sent before the second is dropped
+     * without a word.
+     */
+    private fun seedEmptyParty(party: ListenTogether.State) {
+        if (party.connection != ListenTogether.Connection.LIVE) return
+        if (party.you?.isHost != true) return
+        val exo = player() ?: return
+        // The same two things [publish] would refuse to say anything about: an
+        // empty player, and a file that only exists on this phone.
+        val song = exo.currentMediaItem?.toSong() ?: return
+        if (song.isDeviceFile()) return
+        Log.i(TAG, "seeding the new party with what this device is already playing")
+        publish()
     }
 
     private fun onEnteredParty() {

@@ -269,50 +269,11 @@ fun ListenTogetherScreen(
         }
 
         // A link says which party, not that this device has agreed to join it.
-        // The faces come first; the confirm sheet is what actually joins.
-        if (!state.inParty) {
-            openPartyPreview(code, targetServer)
-            onInviteHandled()
-            return@LaunchedEffect
-        }
-
-        busy = true
-        failure = null
-        try {
-            // Live listeners use switchPartyWithRecovery to guarantee Party A and playback
-            // remain intact if the target invite fails. Idle listeners use joinParty directly.
-            if (state.inParty) {
-                val target = targetServer ?: customServer
-                when (val result = ListenTogether.switchPartyWithRecovery(target, code)) {
-                    is ListenTogether.SwitchPartyResult.Success -> {
-                        codeInput = ""
-                    }
-                    is ListenTogether.SwitchPartyResult.TargetFailedRecovered -> {
-                        failure = context.getString(
-                            R.string.listen_together_switch_failed_stayed_in_party,
-                            result.targetError.trimEnd('.'),
-                            result.partyCode,
-                        )
-                    }
-                    is ListenTogether.SwitchPartyResult.TargetFailedNoParty -> {
-                        failure = context.getString(
-                            R.string.listen_together_switch_failed,
-                            result.targetError.trimEnd('.'),
-                        )
-                    }
-                }
-            } else {
-                val result = ListenTogether.joinParty(code)
-                if (result.isSuccess) {
-                    codeInput = ""
-                } else {
-                    failure = result.exceptionOrNull()?.message
-                }
-            }
-        } finally {
-            busy = false
-            onInviteHandled()
-        }
+        // The confirm sheet is what actually joins — the same one a typed
+        // code goes through, whether or not this device is already in a
+        // party.
+        openPartyPreview(code, targetServer)
+        onInviteHandled()
     }
 
     pendingServerSwitchInvite?.let { (codeToJoin, serverToSet) ->
@@ -354,33 +315,11 @@ fun ListenTogetherScreen(
                         val toJoin = codeToJoin
                         val toSet = serverToSet
                         pendingServerSwitchInvite = null
-                        busy = true
-                        failure = null
-                        scope.launch {
-                            try {
-                                when (val result = ListenTogether.switchPartyWithRecovery(toSet, toJoin)) {
-                                    is ListenTogether.SwitchPartyResult.Success -> {
-                                        codeInput = ""
-                                    }
-                                    is ListenTogether.SwitchPartyResult.TargetFailedRecovered -> {
-                                        failure = context.getString(
-                                            R.string.listen_together_switch_failed_stayed_in_party,
-                                            result.targetError.trimEnd('.'),
-                                            result.partyCode,
-                                        )
-                                    }
-                                    is ListenTogether.SwitchPartyResult.TargetFailedNoParty -> {
-                                        failure = context.getString(
-                                            R.string.listen_together_switch_failed,
-                                            result.targetError.trimEnd('.'),
-                                        )
-                                    }
-                                }
-                            } finally {
-                                busy = false
-                                onInviteHandled()
-                            }
-                        }
+                        // Same next step as any other invite: the confirm
+                        // sheet, not an immediate join. This dialog is only
+                        // consent to talk to a different server at all.
+                        openPartyPreview(toJoin, toSet.ifBlank { null })
+                        onInviteHandled()
                     },
                 ) {
                     Text(
@@ -460,6 +399,12 @@ fun ListenTogetherScreen(
 
                 is PartySheet.Confirm -> JoinConfirmSheet(
                     preview = open.preview,
+                    avatarUrl = ListenTogether.myAvatarUrl(),
+                    nickname = nickname,
+                    onNicknameChange = {
+                        nickname = it.take(80)
+                        ListenTogether.setNickname(nickname)
+                    },
                     busy = busy,
                     error = failure,
                     onDismiss = {
@@ -470,13 +415,20 @@ fun ListenTogetherScreen(
                         busy = true
                         failure = null
                         scope.launch {
-                            // Already in one: the switch keeps this device
-                            // where it is if the new party turns it away.
-                            val problem = if (state.inParty) {
+                            // A server named on the invite itself always wins,
+                            // whether this device is idle or already live: it
+                            // is the one place the target the preview came
+                            // from is actually known. Otherwise, already being
+                            // in a party means a switch, which keeps this
+                            // device where it is if the new party turns it
+                            // away.
+                            val problem = if (open.server != null || state.inParty) {
+                                val target = ListenTogether.resolveSwitchTarget(open.server, customServer)
                                 when (
                                     val switched = ListenTogether.switchPartyWithRecovery(
-                                        open.server ?: customServer,
+                                        target,
                                         open.preview.code,
+                                        nickname,
                                     )
                                 ) {
                                     is ListenTogether.SwitchPartyResult.Success -> null

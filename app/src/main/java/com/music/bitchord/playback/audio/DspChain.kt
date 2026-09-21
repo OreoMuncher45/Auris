@@ -3,30 +3,22 @@ package com.music.bitchord.playback.audio
 import android.util.Log
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.playback.EqualizerProcessor
-import com.music.bitchord.playback.LoudnessProcessor
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
 
 /**
  * Composite DSP chain executing BitChord's custom audio processors in their canonical sequence:
  *
- * AudioBlock(Float32) -> LoudnessProcessor -> SpatialAudioProcessor -> EqualizerProcessor
+ * AudioBlock(Float32) -> SpatialAudioProcessor -> EqualizerProcessor
  *   -> TransitionFilterProcessor -> AudioBlock(Float32)
  *
  * Operates purely on in-place Float32 audio blocks without intermediate fixed-point quantization,
  * preserving full dynamic range and headroom.
  *
- * ## Why loudness goes first
- *
- * It is the only stage that corrects the *recording* rather than expressing a
- * preference about it, and the only one whose correct value depends on hearing
- * the track as it was mastered. Running it after the equaliser would have it
- * measure the listener's tone curve as though that were part of the
- * recording — a heavy bass boost would read as a loud track and be
- * attenuated, so the equaliser would end up quietly fighting itself. Putting
- * it in front means every stage after it sees tracks arriving at a consistent
- * level, which is also what makes the equaliser's make-up attenuation behave
- * the same way from one song to the next.
+ * Loudness normalization is not one of these stages — it runs as a platform
+ * `LoudnessEnhancer` effect on the audio session instead, driven by
+ * `PlaybackService.setupLoudnessEnhancer`, so it applies to whichever player
+ * is audible without needing a seat in this per-sink chain.
  *
  * ## Bit-perfect
  *
@@ -43,7 +35,6 @@ import com.music.bitchord.playback.TransitionFilterProcessor
  * flag is the one that makes the promise enforceable in one place.
  */
 class DspChain(
-    val loudness: LoudnessProcessor = LoudnessProcessor(),
     val spatial: SpatialAudioProcessor = SpatialAudioProcessor(),
     val equalizer: EqualizerProcessor = EqualizerProcessor(),
     val transition: TransitionFilterProcessor = TransitionFilterProcessor(),
@@ -55,7 +46,6 @@ class DspChain(
 
     override fun configure(sampleRate: Int, channelCount: Int) {
         this.currentSampleRate = sampleRate
-        loudness.configure(sampleRate, channelCount)
         spatial.configure(sampleRate, channelCount)
         equalizer.configure(sampleRate, channelCount)
         transition.configure(sampleRate, channelCount)
@@ -78,10 +68,9 @@ class DspChain(
                     val spatialOn = spatial.enabled
                     val eqOn = equalizer.isEnabled
                     val transitionOn = transition.isFiltering
-                    val gainDb = loudness.snapshot.appliedGainDb
                     Log.d(
                         TAG,
-                        "process() #$count frames=$frames sr=$sr loudness=${gainDb}dB " +
+                        "process() #$count frames=$frames sr=$sr " +
                             "spatial=$spatialOn eq=$eqOn transition=$transitionOn",
                     )
                 } catch (_: Throwable) {
@@ -89,7 +78,6 @@ class DspChain(
             }
         }
 
-        loudness.process(block)
         spatial.process(block)
         equalizer.process(block)
         transition.process(block)
@@ -97,7 +85,6 @@ class DspChain(
 
     @Suppress("DEPRECATION")
     override fun flush() {
-        loudness.flush()
         spatial.flush()
         equalizer.flush()
         transition.flush()
@@ -105,7 +92,6 @@ class DspChain(
 
     override fun reset() {
         processCounter = 0L
-        loudness.reset()
         spatial.reset()
         equalizer.reset()
         transition.reset()
