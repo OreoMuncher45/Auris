@@ -173,4 +173,92 @@ object QueueCoordinator {
             player.removeMediaItem(i)
         }
     }
+
+    /**
+     * Reconstructs the upcoming queue when a listener taps an item in the queue drawer.
+     *
+     * Invariants:
+     * 1. If [targetIndex] <= [currentIndex] or either index is out of bounds, returns `null`
+     *    (indicating a backward jump or active track tap handled via standard player seek).
+     * 2. [QueueTier.AUTOPLAY]: The tapped track becomes the active track promoted to [QueueTier.CONTEXT]
+     *    (starting a fresh radio/station). All future [QueueTier.USER_QUEUE] items across the entire
+     *    timeline are preserved immediately after it. Old context and bypassed autoplay items are discarded.
+     * 3. [QueueTier.CONTEXT]: The tapped track becomes active. All future [QueueTier.USER_QUEUE] items
+     *    across the entire timeline are preserved immediately after it. Context items strictly after
+     *    [targetIndex] follow after the user queue. Bypassed context items are discarded.
+     * 4. [QueueTier.USER_QUEUE]: Preceding user queue items between [currentIndex] + 1 and [targetIndex]
+     *    were bypassed within the manual queue and are consumed. Subsequent user queue items, along with
+     *    all future context and autoplay tracks, are preserved.
+     */
+    fun buildJumpQueue(
+        currentTimeline: List<Song>,
+        currentIndex: Int,
+        targetIndex: Int,
+    ): List<Song>? {
+        if (currentIndex !in currentTimeline.indices || targetIndex !in currentTimeline.indices) {
+            return null
+        }
+        if (targetIndex <= currentIndex) {
+            return null
+        }
+
+        val targetSong = currentTimeline[targetIndex]
+        val allFutureUserQueue = currentTimeline.subList(currentIndex + 1, currentTimeline.size)
+            .filter { it.queueTier == QueueTier.USER_QUEUE }
+
+        return when (targetSong.queueTier) {
+            QueueTier.AUTOPLAY -> {
+                val sourceTitle = targetSong.playbackSource?.ifBlank { targetSong.title } ?: targetSong.title
+                val promotedTarget = targetSong.copy(
+                    playbackSource = sourceTitle,
+                    playbackSourceType = targetSong.playbackSourceType ?: PlaybackSourceType.QUEUE,
+                ).asQueueEntry(QueueTier.CONTEXT)
+                listOf(promotedTarget) + allFutureUserQueue
+            }
+            QueueTier.CONTEXT -> {
+                val remainingContext = currentTimeline.subList(targetIndex + 1, currentTimeline.size)
+                    .filter { it.queueTier == QueueTier.CONTEXT }
+                listOf(targetSong) + allFutureUserQueue + remainingContext
+            }
+            QueueTier.USER_QUEUE -> {
+                val subsequentUserQueue = currentTimeline.subList(targetIndex + 1, currentTimeline.size)
+                    .filter { it.queueTier == QueueTier.USER_QUEUE }
+                val futureContext = currentTimeline.subList(currentIndex + 1, currentTimeline.size)
+                    .filter { it.queueTier == QueueTier.CONTEXT }
+                val futureAutoplay = currentTimeline.subList(currentIndex + 1, currentTimeline.size)
+                    .filter { it.queueTier == QueueTier.AUTOPLAY }
+                listOf(targetSong) + subsequentUserQueue + futureContext + futureAutoplay
+            }
+        }
+    }
+
+    /**
+     * Executes a semantic queue jump on [player], preserving history up to [Player.getCurrentMediaItemIndex]
+     * and avoiding unintended reshuffling.
+     */
+    fun jumpToQueueItem(player: Player, targetIndex: Int) {
+        val currentIndex = player.currentMediaItemIndex
+        val count = player.mediaItemCount
+        if (targetIndex !in 0 until count) return
+
+        if (targetIndex <= currentIndex) {
+            // Backward jump or same track: seek in history without modifying playlist
+            player.seekTo(targetIndex, 0L)
+            player.play()
+            return
+        }
+
+        val currentTimeline = (0 until count).map { player.getMediaItemAt(it).toSong() }
+        val newUpcoming = buildJumpQueue(currentTimeline, currentIndex, targetIndex) ?: return
+
+        // Retain played history up to and including currentIndex so backward navigation works
+        val history = (0..currentIndex).map { player.getMediaItemAt(it) }
+        val upcomingMediaItems = newUpcoming.map { it.toMediaItem() }
+
+        val newPlaylist = history + upcomingMediaItems
+        val newTargetIndex = history.size // First track of newUpcoming
+        player.setMediaItems(newPlaylist, newTargetIndex, 0L)
+        player.prepare()
+        player.play()
+    }
 }

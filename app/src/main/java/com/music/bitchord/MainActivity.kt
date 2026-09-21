@@ -1929,7 +1929,11 @@ private fun BitChordApp(
                 // this path and the notification use exactly one loader.
                 controller?.toggleAutoplay()
             },
-            onJumpTo = { controller?.seekToDefaultPosition(it) },
+            onJumpTo = { index ->
+                controller?.let { c ->
+                    QueueCoordinator.jumpToQueueItem(c, index)
+                }
+            },
             onRemoveFromQueue = { controller?.removeMediaItem(it) },
             onMoveInQueue = { from, to -> controller?.moveMediaItem(from, to) },
             onQueueDragActiveChange = { active -> controller?.setQueueDragActive(active) },
