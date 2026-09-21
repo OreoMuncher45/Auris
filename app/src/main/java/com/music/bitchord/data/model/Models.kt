@@ -1,5 +1,15 @@
 package com.music.bitchord.data.model
 
+/** Tier of an item in the playback queue. */
+enum class QueueTier {
+    /** Explicitly queued by user ("Play Next", "Add to Queue", or preserved user queue). */
+    USER_QUEUE,
+    /** Part of the active Album, Playlist, or Artist collection context. */
+    CONTEXT,
+    /** Dynamically generated radio recommendations appended when context/user queue ends. */
+    AUTOPLAY,
+}
+
 /** A playable YouTube Music track. */
 data class Song(
     val videoId: String,
@@ -28,12 +38,14 @@ data class Song(
      * be asked for from.
      */
     val setVideoId: String? = null,
+    /** Which queue tier this track belongs to in the playback timeline. */
+    val queueTier: QueueTier = QueueTier.CONTEXT,
     /**
-     * Queued by AutoPlay or by a station's own mix rather than asked for — the
-     * player groups these under the AutoPlay heading and keeps them at the
-     * bottom of the queue, below anything the user picked.
+     * Unique, strictly immutable queue-entry identity assigned when this track
+     * enters the player's queue in QueueCoordinator. Preserved across all stream transformations
+     * and persistence.
      */
-    val fromAutoplay: Boolean = false,
+    val queueEntryId: String? = null,
     /**
      * The seed title of an explicitly started radio queue. Every item in that
      * queue carries the same value, so the player can keep naming the station
@@ -83,7 +95,62 @@ data class Song(
     val playbackSourceType: PlaybackSourceType? = null,
     /** Browse id for an album, playlist, or other source page. */
     val playbackSourceId: String? = null,
-)
+) {
+    /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
+    val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
+
+    /** Backward-compatibility constructor for callers passing legacy [fromAutoplay]. */
+    constructor(
+        videoId: String,
+        title: String,
+        artist: String,
+        thumbnailUrl: String?,
+        durationText: String? = null,
+        artistId: String? = null,
+        albumId: String? = null,
+        albumName: String? = null,
+        isVideo: Boolean = false,
+        isVideoOrigin: Boolean = isVideo,
+        setVideoId: String? = null,
+        fromAutoplay: Boolean,
+        radioName: String? = null,
+        localUri: String? = null,
+        downloadFormat: String? = null,
+        localPath: String? = null,
+        localDateAddedSeconds: Long? = null,
+        localDateModifiedSeconds: Long? = null,
+        sourceQuality: String? = null,
+        isExplicit: Boolean? = null,
+        playbackSource: String? = null,
+        playbackSourceType: PlaybackSourceType? = null,
+        playbackSourceId: String? = null,
+    ) : this(
+        videoId = videoId,
+        title = title,
+        artist = artist,
+        thumbnailUrl = thumbnailUrl,
+        durationText = durationText,
+        artistId = artistId,
+        albumId = albumId,
+        albumName = albumName,
+        isVideo = isVideo,
+        isVideoOrigin = isVideoOrigin,
+        setVideoId = setVideoId,
+        queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.CONTEXT,
+        queueEntryId = null,
+        radioName = radioName,
+        localUri = localUri,
+        downloadFormat = downloadFormat,
+        localPath = localPath,
+        localDateAddedSeconds = localDateAddedSeconds,
+        localDateModifiedSeconds = localDateModifiedSeconds,
+        sourceQuality = sourceQuality,
+        isExplicit = isExplicit,
+        playbackSource = playbackSource,
+        playbackSourceType = playbackSourceType,
+        playbackSourceId = playbackSourceId,
+    )
+}
 
 /**
  * Artwork at a given pixel size.

@@ -4,6 +4,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
@@ -106,7 +107,7 @@ suspend fun loadAutoplayTracks(
 
     return Result.success(extra.map {
         it.copy(
-            fromAutoplay = true,
+            queueTier = QueueTier.AUTOPLAY,
             radioName = seedSong.radioName,
             playbackSource = seedSong.playbackSource,
             playbackSourceType = seedSong.playbackSourceType,

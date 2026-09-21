@@ -25,6 +25,7 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionToken
 import com.music.bitchord.data.model.NOTIFICATION_ART_PX
 import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.sources.SourceRegistry
@@ -304,7 +305,8 @@ fun MediaItem.toSong() = Song(
     isVideoOrigin = mediaMetadata.extras?.getBoolean(EXTRA_VIDEO_ORIGIN) == true ||
         mediaMetadata.extras?.getBoolean(EXTRA_IS_VIDEO) == true,
     setVideoId = mediaMetadata.extras?.getString(EXTRA_SET_VIDEO_ID),
-    fromAutoplay = this.fromAutoplay,
+    queueTier = this.queueTier,
+    queueEntryId = this.queueEntryId,
     radioName = mediaMetadata.extras?.getString(EXTRA_RADIO_NAME),
     playbackSource = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE),
     playbackSourceType = mediaMetadata.extras?.getString(EXTRA_PLAYBACK_SOURCE_TYPE)
@@ -316,7 +318,23 @@ fun MediaItem.toSong() = Song(
 
 /** @see Song.fromAutoplay */
 val MediaItem.fromAutoplay: Boolean
-    get() = mediaMetadata.extras?.getBoolean(EXTRA_FROM_AUTOPLAY) == true
+    get() = queueTier == QueueTier.AUTOPLAY
+
+/** @see Song.queueTier */
+val MediaItem.queueTier: QueueTier
+    get() = mediaMetadata.extras?.getString(EXTRA_QUEUE_TIER)
+        ?.let { runCatching { QueueTier.valueOf(it) }.getOrNull() }
+        ?: mediaMetadata.genre?.toString()?.let { runCatching { QueueTier.valueOf(it) }.getOrNull() }
+        ?: if (mediaMetadata.extras?.getBoolean(EXTRA_FROM_AUTOPLAY) == true) QueueTier.AUTOPLAY else QueueTier.CONTEXT
+
+/** @see Song.queueEntryId */
+val MediaItem.queueEntryId: String?
+    get() = mediaMetadata.extras?.getString(EXTRA_QUEUE_ENTRY_ID)
+        ?: mediaMetadata.writer?.toString()
+
+/** Public metadata keys for queue categorization and immutable queue entry identity. */
+const val EXTRA_QUEUE_TIER = "bitchord.queueTier"
+const val EXTRA_QUEUE_ENTRY_ID = "bitchord.queueEntryId"
 
 /**
  * Marks a queue entry as AutoPlay's rather than the user's. Carried on the
@@ -525,6 +543,8 @@ fun Song.toMediaItem(): MediaItem {
             .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
             .setIsPlayable(true)
             .setIsBrowsable(false)
+            .setGenre(queueTier.name)
+            .setWriter(queueEntryId)
             // What a queue entry has to carry about itself: which section of
             // the queue it belongs to, whether it is playing off the device,
             // and how long the row that queued it said it runs. The uri two
@@ -541,13 +561,16 @@ fun Song.toMediaItem(): MediaItem {
             // back a null duration and later matching loses the `&d=` it
             // depends on.
             .apply {
-                if (fromAutoplay || offlineUri != null || durationText != null ||
+                if (queueTier != QueueTier.CONTEXT || queueEntryId != null || fromAutoplay ||
+                    offlineUri != null || durationText != null ||
                     artistId != null || albumId != null || setVideoId != null ||
                     isExplicit != null || isVideo || isVideoOrigin || radioName != null ||
                     playbackSource != null || playbackSourceType != null || playbackSourceId != null
                 ) {
                     setExtras(
                         bundleOf(
+                            EXTRA_QUEUE_TIER to queueTier.name,
+                            EXTRA_QUEUE_ENTRY_ID to queueEntryId,
                             EXTRA_FROM_AUTOPLAY to fromAutoplay,
                             EXTRA_RADIO_NAME to radioName,
                             EXTRA_PLAYBACK_SOURCE to playbackSource,

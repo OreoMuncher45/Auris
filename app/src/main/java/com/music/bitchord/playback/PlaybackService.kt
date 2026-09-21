@@ -819,6 +819,10 @@ class PlaybackService : MediaLibraryService() {
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
                 reason = reason,
             )
+            // Prune consumed USER_QUEUE entries when playback enters CONTEXT,
+            // keeping the timeline clean and ensuring REPEAT_MODE_ALL loops only CONTEXT items.
+            QueueCoordinator.consumePlayedUserQueue(exoPlayer)
+
             // The queue moving on by itself. Nobody pressed anything, but it
             // is still this device deciding what the party plays next, and no
             // other path reports it: an automatic advance never passes through

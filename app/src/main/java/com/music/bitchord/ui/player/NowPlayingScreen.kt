@@ -239,6 +239,7 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.PLAYER_ART_PX
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.AudioOutputStatus
@@ -6757,6 +6758,20 @@ private fun Modifier.fadingEdges(): Modifier = this
         )
     }
 
+/** A row in the structured queue drawer (header or track). */
+private sealed interface QueueRow {
+    data class SectionHeader(
+        val title: String,
+        val canClear: Boolean = false,
+        val subtitle: String? = null,
+    ) : QueueRow
+    data class Track(
+        val timelineIndex: Int,
+        val song: Song,
+        val entryId: String,
+    ) : QueueRow
+}
+
 /** The live queue, in the player itself. */
 @Composable
 private fun InlineQueue(
@@ -6781,94 +6796,118 @@ private fun InlineQueue(
         snapshotFlow { listState.isScrollInProgress }.collect(onScrollingChange)
     }
     val keepScroll = remember(listState) { keepScrollInList(listState) }
-    // Where AutoPlay's tracks start. The queue is kept with them last, so this
-    // is one boundary rather than a category to test row by row.
-    val autoplayStart = remember(queue, currentIndex) {
-        autoplaySectionStart(queue.map { it.fromAutoplay }, currentIndex)
+
+    val nowPlayingTrack = remember(queue, currentIndex) {
+        if (currentIndex in queue.indices) {
+            val s = queue[currentIndex]
+            QueueRow.Track(currentIndex, s, s.queueEntryId ?: "${s.videoId}_$currentIndex")
+        } else null
     }
 
-    // Each section reorders on its own — a drag never crosses the line
-    // between what was queued by hand and what AutoPlay picked, same as
-    // [addToQueue] and [playNext] already respect it.
-    //
-    // Both draw straight from the live [queue], never from a snapshot taken
-    // when the drag began: the boundary between the sections moves on its own
-    // as tracks play, so a frozen copy of either one goes stale the moment it
-    // does — AutoPlay's section would keep listing tracks that have long
-    // since played, and the row indices behind `onJumpTo`/`onRemove` would
-    // start pointing at the wrong songs. Each swap is sent to the player as
-    // it happens instead, and the rows animate into place off the live order.
-    val manualRows = queue.subList(0, autoplayStart)
-    val autoplayRows = queue.subList(autoplayStart, queue.size)
-    // A song can be queued twice, so videoId alone isn't always a unique key
-    // — LazyColumn throws on a repeat. Suffixing by how many times that id
-    // has already been seen keeps every key unique while staying stable
-    // across a reorder, which plain videoId+index (the previous key) wasn't:
-    // that changed on every swap and silently broke animateItem's ability to
-    // tell "this row moved" from "this row was replaced".
-    //
-    // Computed once over the *whole* queue rather than per section: a track
-    // AutoPlay picked crosses into the manual section the moment it becomes
-    // current (or falls behind it), and a key that depended on which section
-    // it was in changed the instant it crossed — animateItem read that as the
-    // old row being deleted and a new one inserted rather than as one row
-    // moving, so it faded the two in and out in place instead of sliding the
-    // row smoothly, and with every row background transparent the fading
-    // pair showed through each other. A key keyed only by position in the
-    // full queue never changes at that boundary, so the row now just moves.
-    val queueKeys = remember(queue) { queue.stableQueueKeys() }
-    val manualKeys = queueKeys.subList(0, autoplayStart)
-    val autoplayKeys = queueKeys.subList(autoplayStart, queue.size)
+    val userQueueTracks = remember(queue, currentIndex) {
+        if (currentIndex !in queue.indices) emptyList()
+        else {
+            (currentIndex + 1 until queue.size)
+                .filter { queue[it].queueTier == QueueTier.USER_QUEUE }
+                .map { idx ->
+                    val s = queue[idx]
+                    QueueRow.Track(idx, s, s.queueEntryId ?: "${s.videoId}_$idx")
+                }
+        }
+    }
 
-    // The heading is a row of the same LazyColumn, so it shifts every
-    // AutoPlay index below it along by one — hence the offset back to queue
-    // indices, which is what [onMove] and the rest of the callbacks take.
-    val headingShown = autoplayEnabled || autoplayStart < queue.size
-    val headingCount = if (headingShown) 1 else 0
-    // Nothing moves at or above the track playing right now: what's already
-    // been played is history, and the current row is the boundary the sections
-    // are drawn from. Only what's still to come is the user's to reorder.
-    // AutoPlay's section needs no such limit — [autoplaySectionStart] always
-    // puts it after the current track.
-    val firstMovable = (currentIndex + 1).coerceIn(0, autoplayStart)
-    val manualDrag = rememberQueueDragState(
+    val contextTracks = remember(queue, currentIndex) {
+        if (currentIndex !in queue.indices) emptyList()
+        else {
+            (currentIndex + 1 until queue.size)
+                .filter { queue[it].queueTier == QueueTier.CONTEXT }
+                .map { idx ->
+                    val s = queue[idx]
+                    QueueRow.Track(idx, s, s.queueEntryId ?: "${s.videoId}_$idx")
+                }
+        }
+    }
+
+    val autoplayTracks = remember(queue, currentIndex) {
+        if (currentIndex !in queue.indices) emptyList()
+        else {
+            (currentIndex + 1 until queue.size)
+                .filter { queue[it].queueTier == QueueTier.AUTOPLAY }
+                .map { idx ->
+                    val s = queue[idx]
+                    QueueRow.Track(idx, s, s.queueEntryId ?: "${s.videoId}_$idx")
+                }
+        }
+    }
+
+    val contextTitle = remember(contextTracks, nowPlayingTrack) {
+        contextTracks.firstOrNull()?.song?.playbackSource?.takeIf { it.isNotBlank() }
+            ?: contextTracks.firstOrNull()?.song?.albumName?.takeIf { it.isNotBlank() }
+            ?: nowPlayingTrack?.song?.playbackSource?.takeIf { it.isNotBlank() }
+            ?: nowPlayingTrack?.song?.albumName?.takeIf { it.isNotBlank() }
+    }
+
+    val preUserQueueCount = if (nowPlayingTrack != null) 2 else 0
+
+    val userQueueLazyStart = preUserQueueCount + if (userQueueTracks.isNotEmpty()) 1 else 0
+    val userQueueRange = if (userQueueTracks.isNotEmpty()) {
+        userQueueLazyStart until (userQueueLazyStart + userQueueTracks.size)
+    } else {
+        IntRange.EMPTY
+    }
+    val userQueueLazyOffset = userQueueLazyStart - (currentIndex + 1)
+    val userQueueCount = if (userQueueTracks.isNotEmpty()) 1 + userQueueTracks.size else 0
+
+    val contextLazyStart = preUserQueueCount + userQueueCount + if (contextTracks.isNotEmpty()) 1 else 0
+    val contextRange = if (contextTracks.isNotEmpty()) {
+        contextLazyStart until (contextLazyStart + contextTracks.size)
+    } else {
+        IntRange.EMPTY
+    }
+    val contextTimelineStart = currentIndex + 1 + userQueueTracks.size
+    val contextLazyOffset = contextLazyStart - contextTimelineStart
+    val contextCount = if (contextTracks.isNotEmpty()) 1 + contextTracks.size else 0
+
+    val autoplayHeadingShown = autoplayEnabled || autoplayTracks.isNotEmpty()
+    val autoplayLazyStart = preUserQueueCount + userQueueCount + contextCount + if (autoplayHeadingShown) 1 else 0
+    val autoplayRange = if (autoplayTracks.isNotEmpty()) {
+        autoplayLazyStart until (autoplayLazyStart + autoplayTracks.size)
+    } else {
+        IntRange.EMPTY
+    }
+    val autoplayTimelineStart = currentIndex + 1 + userQueueTracks.size + contextTracks.size
+    val autoplayLazyOffset = autoplayLazyStart - autoplayTimelineStart
+
+    val userQueueDrag = rememberQueueDragState(
         listState = listState,
-        lazyRange = firstMovable until autoplayStart,
-        lazyOffset = 0,
+        lazyRange = userQueueRange,
+        lazyOffset = userQueueLazyOffset,
+        onMove = onMove,
+        onDragActiveChange = onDragActiveChange,
+    )
+    val contextDrag = rememberQueueDragState(
+        listState = listState,
+        lazyRange = contextRange,
+        lazyOffset = contextLazyOffset,
         onMove = onMove,
         onDragActiveChange = onDragActiveChange,
     )
     val autoplayDrag = rememberQueueDragState(
         listState = listState,
-        lazyRange = (autoplayStart + headingCount) until (autoplayStart + headingCount + autoplayRows.size),
-        lazyOffset = headingCount,
+        lazyRange = autoplayRange,
+        lazyOffset = autoplayLazyOffset,
         onMove = onMove,
         onDragActiveChange = onDragActiveChange,
     )
 
-    // Open on what's playing, not at the top of a long queue. The heading sits
-    // between the two sections, so it counts as a row once it's above this one.
-    //
-    // Never mid-drag, though. A track ending while a row is held would jump the
-    // list out from under the finger, and the jump takes the list's scroll off
-    // the edge auto-scroll below — which would leave the rest of that drag
-    // unable to scroll at all. Reordering is also the one time the user is
-    // certainly looking somewhere other than at the current track.
-    //
-    // The first jump is a snap rather than a scroll — sliding in from the top
-    // of a long queue to whatever is playing minutes in would just be a scroll
-    // animation with nothing to look at along the way. Every jump after that
-    // is a track change with the sheet already open and on screen, so it
-    // animates instead of cutting straight there.
     var hasScrolledOnce by remember { mutableStateOf(false) }
     LaunchedEffect(currentIndex) {
-        val holding = manualDrag.draggedKey != null || autoplayDrag.draggedKey != null
-        if (!holding && currentIndex in queue.indices) {
-            val target = currentIndex + if (currentIndex >= autoplayStart) 1 else 0
+        val holding = userQueueDrag.draggedKey != null || contextDrag.draggedKey != null || autoplayDrag.draggedKey != null
+        if (!holding && nowPlayingTrack != null) {
             if (hasScrolledOnce) {
-                listState.animateScrollToItem(target)
+                listState.animateScrollToItem(0)
             } else {
-                listState.scrollToItem(target)
+                listState.scrollToItem(0)
                 hasScrolledOnce = true
             }
         }
@@ -6885,15 +6924,17 @@ private fun InlineQueue(
                 color = Color.White,
                 modifier = Modifier.weight(1f),
             )
-            Text(
-                text = stringResource(R.string.clear),
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White.copy(alpha = if (controlsLocked) 0.25f else 0.75f),
-                modifier = Modifier
-                    .clip(RoundedCornerShape(percent = 50))
-                    .clickable(enabled = !controlsLocked, onClick = onClear)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
+            if (userQueueTracks.isNotEmpty()) {
+                Text(
+                    text = stringResource(R.string.clear),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = if (controlsLocked) 0.25f else 0.75f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(percent = 50))
+                        .clickable(enabled = !controlsLocked, onClick = onClear)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         LazyColumn(
@@ -6901,69 +6942,173 @@ private fun InlineQueue(
             modifier = Modifier
                 .fillMaxWidth()
                 .bleedHorizontally(PLAYER_GUTTER)
-                // Without this the sheet treats the list's leftover scroll as a
-                // drag on itself and slides the whole player away.
                 .nestedScroll(keepScroll)
                 .fadingEdges(),
             contentPadding = PaddingValues(horizontal = PLAYER_GUTTER),
         ) {
-            // What was asked for: the album, playlist or station the queue was
-            // started from, plus anything queued by hand since.
-            itemsIndexed(
-                items = manualRows,
-                key = { index, _ -> manualKeys[index] },
-            ) { index, song ->
-                val key = manualKeys[index]
-                val dragging = manualDrag.draggedKey == key
-                InlineQueueRow(
-                    song = song,
-                    isCurrent = index == currentIndex,
-                    onClick = { onJumpTo(index) },
-                    onRemove = { onRemove(index) },
-                    locked = controlsLocked,
-                    // Only what's still queued ahead. The playing track and
-                    // everything already played sit above the line a drag
-                    // can't cross.
-                    draggable = !controlsLocked && index >= firstMovable,
-                    dragging = dragging,
-                    onDragStart = { manualDrag.onDragStart(key) },
-                    onDrag = manualDrag::onDrag,
-                    onDragEnd = manualDrag::onDragEnd,
-                    modifier = Modifier
-                        .zIndex(if (dragging) 1f else 0f)
-                        .graphicsLayer { translationY = if (dragging) manualDrag.renderOffset else 0f }
-                        // The dragged row follows the finger, so it is the one
-                        // row that must not also be animating to a slot. Its
-                        // neighbours skip the animation too, for as long as
-                        // *anything* in the section is being dragged — see the
-                        // note on [manualDrag] below for why.
-                        .then(
-                            if (manualDrag.draggedKey != null) {
-                                Modifier
-                            } else {
-                                Modifier.animateItem(
-                                    fadeInSpec = null,
-                                    fadeOutSpec = null,
-                                    placementSpec = QUEUE_ROW_MOTION,
-                                )
-                            },
+            if (nowPlayingTrack != null) {
+                item(key = "header-now-playing") {
+                    Text(
+                        text = stringResource(R.string.now_playing),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 12.dp, bottom = 6.dp)
+                            .animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = QUEUE_ROW_MOTION,
+                            ),
+                    )
+                }
+                item(key = nowPlayingTrack.entryId) {
+                    InlineQueueRow(
+                        song = nowPlayingTrack.song,
+                        isCurrent = true,
+                        onClick = { onJumpTo(nowPlayingTrack.timelineIndex) },
+                        onRemove = { onRemove(nowPlayingTrack.timelineIndex) },
+                        locked = controlsLocked,
+                        draggable = false,
+                        dragging = false,
+                        onDragStart = {},
+                        onDrag = {},
+                        onDragEnd = {},
+                        modifier = Modifier.animateItem(
+                            fadeInSpec = null,
+                            fadeOutSpec = null,
+                            placementSpec = QUEUE_ROW_MOTION,
                         ),
-                )
+                    )
+                }
             }
-            // Heading first, then what AutoPlay has lined up under it. With
-            // nothing lined up yet it closes the queue as a promise instead.
-            if (autoplayEnabled || autoplayStart < queue.size) {
+
+            if (userQueueTracks.isNotEmpty()) {
+                item(key = "header-user-queue") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp, bottom = 6.dp)
+                            .animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = QUEUE_ROW_MOTION,
+                            ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.next_in_queue),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = stringResource(R.string.clear),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White.copy(alpha = if (controlsLocked) 0.25f else 0.75f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(percent = 50))
+                                .clickable(enabled = !controlsLocked, onClick = onClear)
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+                itemsIndexed(
+                    items = userQueueTracks,
+                    key = { _, track -> track.entryId },
+                ) { _, track ->
+                    val key = track.entryId
+                    val dragging = userQueueDrag.draggedKey == key
+                    InlineQueueRow(
+                        song = track.song,
+                        isCurrent = false,
+                        onClick = { onJumpTo(track.timelineIndex) },
+                        onRemove = { onRemove(track.timelineIndex) },
+                        locked = controlsLocked,
+                        draggable = !controlsLocked,
+                        dragging = dragging,
+                        onDragStart = { userQueueDrag.onDragStart(key) },
+                        onDrag = userQueueDrag::onDrag,
+                        onDragEnd = userQueueDrag::onDragEnd,
+                        modifier = Modifier
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (dragging) userQueueDrag.renderOffset else 0f }
+                            .then(
+                                if (userQueueDrag.draggedKey != null) {
+                                    Modifier
+                                } else {
+                                    Modifier.animateItem(
+                                        fadeInSpec = null,
+                                        fadeOutSpec = null,
+                                        placementSpec = QUEUE_ROW_MOTION,
+                                    )
+                                },
+                            ),
+                    )
+                }
+            }
+
+            if (contextTracks.isNotEmpty()) {
+                item(key = "header-context") {
+                    val title = if (contextTitle != null) {
+                        stringResource(R.string.next_from, contextTitle)
+                    } else {
+                        stringResource(R.string.queue)
+                    }
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp, bottom = 6.dp)
+                            .animateItem(
+                                fadeInSpec = null,
+                                fadeOutSpec = null,
+                                placementSpec = QUEUE_ROW_MOTION,
+                            ),
+                    )
+                }
+                itemsIndexed(
+                    items = contextTracks,
+                    key = { _, track -> track.entryId },
+                ) { _, track ->
+                    val key = track.entryId
+                    val dragging = contextDrag.draggedKey == key
+                    InlineQueueRow(
+                        song = track.song,
+                        isCurrent = false,
+                        onClick = { onJumpTo(track.timelineIndex) },
+                        onRemove = { onRemove(track.timelineIndex) },
+                        locked = controlsLocked,
+                        draggable = !controlsLocked,
+                        dragging = dragging,
+                        onDragStart = { contextDrag.onDragStart(key) },
+                        onDrag = contextDrag::onDrag,
+                        onDragEnd = contextDrag::onDragEnd,
+                        modifier = Modifier
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (dragging) contextDrag.renderOffset else 0f }
+                            .then(
+                                if (contextDrag.draggedKey != null) {
+                                    Modifier
+                                } else {
+                                    Modifier.animateItem(
+                                        fadeInSpec = null,
+                                        fadeOutSpec = null,
+                                        placementSpec = QUEUE_ROW_MOTION,
+                                    )
+                                },
+                            ),
+                    )
+                }
+            }
+
+            if (autoplayHeadingShown) {
                 item(key = "autoplay-heading") {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            // Moves on the same terms as the rows around it.
-                            // Every track change trades this heading with the
-                            // row that just became current, and while the rows
-                            // animated and this did not, it landed in the row's
-                            // old slot a whole animation early — so the two
-                            // drew over each other for as long as the row took
-                            // to arrive.
                             .animateItem(
                                 fadeInSpec = null,
                                 fadeOutSpec = null,
@@ -6986,7 +7131,7 @@ private fun InlineQueue(
                                 color = Color.White,
                             )
                             Text(
-                                text = if (autoplayStart < queue.size) {
+                                text = if (autoplayTracks.isNotEmpty()) {
                                     stringResource(R.string.autoplay_queue_description)
                                 } else {
                                     stringResource(R.string.autoplay_empty_description)
@@ -6997,40 +7142,39 @@ private fun InlineQueue(
                         }
                     }
                 }
-            }
-            itemsIndexed(
-                items = autoplayRows,
-                key = { index, _ -> autoplayKeys[index] },
-            ) { index, song ->
-                val at = autoplayStart + index
-                val key = autoplayKeys[index]
-                val dragging = autoplayDrag.draggedKey == key
-                InlineQueueRow(
-                    song = song,
-                    isCurrent = at == currentIndex,
-                    onClick = { onJumpTo(at) },
-                    onRemove = { onRemove(at) },
-                    locked = controlsLocked,
-                    draggable = !controlsLocked,
-                    dragging = dragging,
-                    onDragStart = { autoplayDrag.onDragStart(key) },
-                    onDrag = autoplayDrag::onDrag,
-                    onDragEnd = autoplayDrag::onDragEnd,
-                    modifier = Modifier
-                        .zIndex(if (dragging) 1f else 0f)
-                        .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
-                        .then(
-                            if (autoplayDrag.draggedKey != null) {
-                                Modifier
-                            } else {
-                                Modifier.animateItem(
-                                    fadeInSpec = null,
-                                    fadeOutSpec = null,
-                                    placementSpec = QUEUE_ROW_MOTION,
-                                )
-                            },
-                        ),
-                )
+                itemsIndexed(
+                    items = autoplayTracks,
+                    key = { _, track -> track.entryId },
+                ) { _, track ->
+                    val key = track.entryId
+                    val dragging = autoplayDrag.draggedKey == key
+                    InlineQueueRow(
+                        song = track.song,
+                        isCurrent = false,
+                        onClick = { onJumpTo(track.timelineIndex) },
+                        onRemove = { onRemove(track.timelineIndex) },
+                        locked = controlsLocked,
+                        draggable = !controlsLocked,
+                        dragging = dragging,
+                        onDragStart = { autoplayDrag.onDragStart(key) },
+                        onDrag = autoplayDrag::onDrag,
+                        onDragEnd = autoplayDrag::onDragEnd,
+                        modifier = Modifier
+                            .zIndex(if (dragging) 1f else 0f)
+                            .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
+                            .then(
+                                if (autoplayDrag.draggedKey != null) {
+                                    Modifier
+                                } else {
+                                    Modifier.animateItem(
+                                        fadeInSpec = null,
+                                        fadeOutSpec = null,
+                                        placementSpec = QUEUE_ROW_MOTION,
+                                    )
+                                },
+                            ),
+                    )
+                }
             }
         }
     }

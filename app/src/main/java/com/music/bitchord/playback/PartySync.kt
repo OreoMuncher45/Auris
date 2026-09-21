@@ -5,6 +5,7 @@ import androidx.media3.common.Player
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.listentogether.PartyTrack
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CoroutineScope
@@ -773,8 +774,23 @@ class PartySync(
         // Play next, Add to queue, removing a row, dragging one. Before this,
         // none of them reached the party and its copy of the queue silently went
         // stale until the next track change happened to rebuild it.
+        val partyIndex = party.queue.items.indexOfFirst { it.videoId == party.playback.track?.videoId }
+        val upcomingPartyTracks = if (partyIndex >= 0) {
+            party.queue.items.drop(partyIndex + 1)
+        } else {
+            emptyList()
+        }
+
         val partyIds = party.queue.items.map(PartyTrack::videoId)
-        if (clampedIds != partyIds) {
+        if (party.playback.track?.videoId != track.videoId && clampedIds.size == 1 && upcomingPartyTracks.isNotEmpty()) {
+            val toPreserve = upcomingPartyTracks.take(MAX_PARTY_UPCOMING_QUEUE)
+            if (exo.mediaItemCount == 1) {
+                exo.addMediaItems(toPreserve.map { it.toSong().toMediaItem() })
+            }
+            val queue = listOf(track) + toPreserve
+            ListenTogether.setQueue(queue, 0)
+            queueControls++
+        } else if (clampedIds != partyIds) {
             val singleMove = if (partyIds.size == clampedIds.size && trackIndex >= 0 && trackIndex < partyIds.size && partyIds[trackIndex] == clampedIds[trackIndex]) {
                 detectSingleMove(partyIds, clampedIds)
             } else {
@@ -1089,7 +1105,7 @@ private fun PartyTrack.toSong(): Song = Song(
         val total = ms / 1000
         "%d:%02d".format(total / 60, total % 60)
     },
-    fromAutoplay = fromAutoplay,
+    queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.USER_QUEUE,
 )
 
 internal data class QueueMoveDelta(
