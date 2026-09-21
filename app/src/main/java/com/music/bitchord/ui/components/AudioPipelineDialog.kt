@@ -65,36 +65,39 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  * altering them when they aren't.
  *
  * Worth stating outright rather than leaving to be inferred from the rows
- * above it, because "bit-perfect" is the one claim in this dialog a listener
- * might act on — and because until bit-perfect mode existed the app quietly
- * broke bit-exactness whenever the equaliser or spatial audio was switched on
- * and said nothing about it anywhere.
+ * above it, because it is the one claim in this dialog a listener might act
+ * on, and because the app otherwise breaks bit-exactness whenever the
+ * equaliser or spatial audio is switched on without saying so anywhere.
  *
- * The ordering names the *first* thing in the signal chain that disqualifies
- * it, which is also the first thing someone would turn off to get it back.
+ * There are two independent ways to lose it, and the ordering names the
+ * *first* one in the signal chain, which is also the first thing someone
+ * would change to get it back:
+ *
+ * 1. A DSP stage is running. Every one of these is a filter or a gain, and
+ *    none of them can run and leave the output bit-exact.
+ * 2. The output encoding cannot carry the source — a 24-bit stream on a route
+ *    that will not open a float track, or 32-bit integer PCM, which no route
+ *    can carry. [outputExact] is the sink's own verdict on that; see
+ *    `PrecisionAudioSink.publishOutputExactness`.
+ *
+ * This used to be gated behind a Bit-perfect mode that turned the DSP stages
+ * off for you. The mode is gone — with every stage already idle the samples
+ * were bit-exact without it, so the toggle mostly duplicated the Output
+ * precision preference — but the readout is not, because "is it exact right
+ * now" is worth answering whether or not there is a switch that forces it.
  */
 private fun bitExactVerdict(
-    bitPerfectMode: Boolean,
-    bitPerfectActive: Boolean,
-    bitPerfectDetail: String?,
+    outputExact: Boolean,
+    outputExactDetail: String?,
     loudnessActive: Boolean,
     eqActive: Boolean,
     spatialActive: Boolean,
 ): String = when {
-    bitPerfectMode && bitPerfectActive -> "Yes${bitPerfectDetail?.let { " ($it)" }.orEmpty()}"
-    // The mode is on and the DSP chain is bypassed, but the samples still
-    // could not reach AudioTrack intact — a route that will not open a float
-    // track, or a 32-bit source, which no route can carry.
-    bitPerfectMode -> "No — ${bitPerfectDetail ?: "converted downstream"}"
     loudnessActive -> "No — loudness normalization"
     eqActive -> "No — equalizer"
     spatialActive -> "No — spatial audio"
-    // Nothing of ours is altering samples. Deliberately not "Yes": with the
-    // mode off, the output encoding is chosen to suit the Output precision
-    // preference rather than to preserve the source, so a 24-bit stream can
-    // still be sitting on a 16-bit track. Bit-perfect is what makes that
-    // choice the other way round.
-    else -> "Effectively (no DSP active)"
+    outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
+    else -> "No — ${outputExactDetail ?: "converted downstream"}"
 }
 
 /**
@@ -125,7 +128,6 @@ fun AudioPipelineDialog(
     val eqPreset by AppSettings.equalizerPreset.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
-    val bitPerfectMode by AppSettings.bitPerfectMode.collectAsStateWithLifecycle()
 
     Box(
         modifier = modifier
@@ -306,7 +308,6 @@ fun AudioPipelineDialog(
                     // that is the order the samples meet them in — see
                     // [DspChain] on why the level correction goes first.
                     val loudnessGainText = when {
-                        bitPerfectMode -> stringResource(R.string.off)
                         !loudnessNormalization -> stringResource(R.string.off)
                         outputStatus.loudnessGainDb == null -> "—"
                         else -> stringResource(
@@ -331,18 +332,16 @@ fun AudioPipelineDialog(
                         PipelineRow(stringResource(R.string.pipeline_stereo_expand), stereoExpandText)
                         PipelineRow(stringResource(R.string.pipeline_buffers), buffersText)
                         PipelineRow(stringResource(R.string.pipeline_output_api), outputStatus.sink.ifBlank { "AAudio" })
-                        // The verdict, rather than the setting. Bit-perfect
-                        // mode takes BitChord's DSP out of the path, but the
-                        // route still has to accept the decoder's own encoding
-                        // — and with the mode off, this names whichever stage
-                        // is altering samples instead of leaving the reader to
-                        // infer it from four rows above.
+                        // The verdict, rather than the settings. Names whichever
+                        // stage is altering samples — or, when none is, whether
+                        // the route can carry the decoder's own encoding —
+                        // instead of leaving the reader to infer it from four
+                        // rows above.
                         PipelineRow(
                             stringResource(R.string.pipeline_bit_exact),
                             bitExactVerdict(
-                                bitPerfectMode = bitPerfectMode,
-                                bitPerfectActive = outputStatus.bitPerfectActive,
-                                bitPerfectDetail = outputStatus.bitPerfectDetail,
+                                outputExact = outputStatus.outputExact,
+                                outputExactDetail = outputStatus.outputExactDetail,
                                 loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                                 eqActive = eqEnabled,
                                 spatialActive = spatialAudio,

@@ -151,6 +151,7 @@
     <string name="dolby_atmos_unavailable">Thiết bị này không hỗ trợ Atmos, các bài hát sẽ phát ở phiên bản thông thường</string>
     <string name="spatial_audio">Âm thanh không gian</string>
     <string name="spatial_audio_subtitle">Mở rộng âm trường stereo cho cảm giác đắm chìm hơn</string>
+    <string name="spatial_audio_atmos_subtitle">Tạm dừng ở bản nhạc này — Dolby Atmos vốn đã có âm thanh không gian</string>
     <string name="animated_cover_cellular">Phát ảnh bìa động qua dữ liệu di động</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Bài hát, nghệ sĩ, album và thể loại hàng đầu của bạn</string>
@@ -213,6 +214,7 @@
     <string name="automix_mode_performance_subtitle">4 luồng · phân tích nhanh nhất · tỏa nhiệt và tốn pin hơn</string>
     <string name="skip_silence">Bỏ qua đoạn im lặng</string>
     <string name="skip_silence_subtitle">Cắt bớt các khoảng lặng dài hơn 1 giây</string>
+    <string name="skip_silence_float_subtitle">Không khả dụng với đầu ra float 32-bit</string>
     <string name="equalizer">Bộ chỉnh âm</string>
     <string name="equalizer_subtitle">Bảng điều khiển hệ thống của thiết bị</string>
     <string name="show_nerd_stats">Thống kê chi tiết</string>
@@ -699,12 +701,6 @@
     <string name="loudness_target">Âm lượng mục tiêu</string>
     <string name="loudness_target_subtitle">Nhỏ hơn hợp với tai nghe; lớn hơn hợp với ô tô hoặc loa điện thoại</string>
     <string name="loudness_target_value">%1$s LUFS</string>
-    <string name="bit_perfect_mode">Bit-perfect</string>
-    <string name="bit_perfect_mode_subtitle">Gửi âm thanh đã giải mã đến đầu ra mà không thay đổi</string>
-    <string name="bit_perfect_disables_dsp">Tắt chuẩn hóa âm lượng, EQ và âm thanh không gian khi bật</string>
-    <string name="disabled_by_bit_perfect">Không khả dụng khi Bit-perfect đang bật</string>
-    <string name="bit_perfect_active">Chính xác</string>
-    <string name="bit_perfect_converted">Đã chuyển đổi</string>
     <string name="loudness_measuring">Đang đo…</string>
     <string name="loudness_gain_db">%1$s dB</string>
     <string name="loudness_lufs">%1$s LUFS</string>
@@ -844,12 +840,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
+    <string name="equalizer_bitstream_title">Hiện không hoạt động</string>
+    <string name="equalizer_bitstream_subtitle">Bản nhạc này được gửi tới đầu ra mà không giải mã</string>
+    <string name="equalizer_bitstream_footer">Bộ chỉnh âm chỉ hoạt động trên âm thanh đã giải mã. Bản nhạc này được truyền thẳng dưới dạng bitstream để thiết bị của bạn tự giải mã, nên ở đây không có mẫu âm thanh nào để lọc.</string>
 
     <string name="system_equalizer">System equalizer</string>
 

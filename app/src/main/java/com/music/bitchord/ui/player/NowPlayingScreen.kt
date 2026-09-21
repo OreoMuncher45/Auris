@@ -6342,19 +6342,34 @@ private fun OutputCaption(
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
-    // Above what 16-bit/48kHz covers, on the device actually being played to
-    // — [AudioOutputStatus.actualEncoding] is read off the negotiated
-    // AudioTrack, the same figure the Audio Pipeline dialog states as fact,
-    // not off what the source merely claims. Same shine as the Lossless /
-    // Hi-Res Lossless badge below the seek bar, for the same reason: this is
-    // confirmed, not advertised, so it's worth it.
-    val isHiResOutput = when (outputStatus.actualEncoding) {
+    val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+    // What the route is *capable* of, read off the negotiated AudioTrack —
+    // the same figure the Audio Pipeline dialog states as fact, not what the
+    // source merely claims.
+    //
+    // On its own this is a claim about the container, not about the music.
+    // A float-capable route opens a float track for everything that plays
+    // through it, so a 128kbps Opus scored exactly as high here as a studio
+    // master and wore the same shine — which is what this used to do.
+    val routeCarriesHiRes = when (outputStatus.actualEncoding) {
         AudioFormat.ENCODING_PCM_24BIT_PACKED,
         AudioFormat.ENCODING_PCM_32BIT,
         AudioFormat.ENCODING_PCM_FLOAT,
         -> true
         else -> (outputStatus.actualSampleRateHz ?: 0) > 48_000
     }
+    // So the stream has to be worth the container. Measured on the decoder's
+    // own format rather than the source's advertised rung — the same figures
+    // the Hi-Res Lossless badge below the seek bar reads, and for the same
+    // reason: confirmed, not advertised.
+    //
+    // Both halves, because either alone says something the shine does not
+    // mean. A hi-res file on the built-in speaker is capped at 16-bit before
+    // it leaves the app, and a lossy stream stays lossy however wide the
+    // track under it is. The shine means the device is receiving this music
+    // at the quality it was sent in.
+    val streamIsHiRes = nerdStats?.isHiRes == true
+    val isHiResOutput = streamIsHiRes && routeCarriesHiRes
     // The host's first name, exactly as the output line already shortens the
     // account's — "Kushagra's Jam" alongside "Kushagra's Phone".
     val jamName = badge.hostFirstName

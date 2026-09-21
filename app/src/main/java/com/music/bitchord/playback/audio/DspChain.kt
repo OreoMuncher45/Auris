@@ -20,25 +20,18 @@ import com.music.bitchord.playback.TransitionFilterProcessor
  * `PlaybackService.setupLoudnessEnhancer`, so it applies to whichever player
  * is audible without needing a seat in this per-sink chain.
  *
- * ## Bit-perfect
+ * ## Staying out of the way
  *
- * [bitPerfect] makes [process] return before any stage runs. Every processor
- * here already self-bypasses when its own setting is off, so with all four off
- * the samples come out unchanged anyway — but "unchanged because four separate
- * switches all happen to be off" is not a guarantee, it is a coincidence that
- * has held so far. A listener who left the equaliser on and then turned
- * bit-perfect on is asking for two contradictory things, and the mode has to
- * win without depending on anything else having tidied up first.
- *
- * The service does also switch the processors off (see
- * `PlaybackService.applyBitPerfectDependentSettings`), so the two agree; this
- * flag is the one that makes the promise enforceable in one place.
+ * Every stage here self-bypasses when its own setting is off, returning before
+ * it reads a single sample rather than multiplying through by unity. With all
+ * three idle the block leaves this class byte-identical to how it arrived,
+ * which is what lets [PcmBoundary]'s power-of-two scaling round-trip 16- and
+ * 24-bit integers unchanged — see `PrecisionAudioSink.publishOutputExactness`.
  */
 class DspChain(
     val spatial: SpatialAudioProcessor = SpatialAudioProcessor(),
     val equalizer: EqualizerProcessor = EqualizerProcessor(),
     val transition: TransitionFilterProcessor = TransitionFilterProcessor(),
-    private val bitPerfect: Boolean = false,
 ) : FloatAudioProcessor {
 
     private var currentSampleRate: Int = 0
@@ -52,10 +45,6 @@ class DspChain(
     }
 
     override fun process(block: AudioBlock) {
-        // Before the frame check and before the debug logging: in bit-perfect
-        // mode nothing in this class may touch, measure or even look at the
-        // audio.
-        if (bitPerfect) return
         if (block.frameCount == 0) return
 
         if (BuildConfig.DEBUG) {

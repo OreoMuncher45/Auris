@@ -470,18 +470,15 @@ class PlaybackService : MediaLibraryService() {
     private var spare: ExoPlayer? = null
 
     private var crossfade: CrossfadeController? = null
-    private var configuredFloatOutput = false
 
     /**
      * What the players currently in hand were built for.
      *
-     * Read at construction rather than per buffer because it decides what the
-     * delegate sink is configured for and whether Media3 may open a float
-     * track at all — neither of which can be changed under a running
-     * renderer. Moving the setting therefore rebuilds both players, the same
-     * way a change of float output does.
+     * Read at construction rather than per buffer because it decides whether
+     * Media3 may open a float AudioTrack at all, which cannot be changed under
+     * a running renderer. Moving the setting therefore rebuilds both players.
      */
-    private var configuredBitPerfect = false
+    private var configuredFloatOutput = false
     private var outputReconfigureJob: Job? = null
 
     /**
@@ -1395,7 +1392,6 @@ class PlaybackService : MediaLibraryService() {
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
 
         configuredFloatOutput = shouldEnableFloatOutput()
-        configuredBitPerfect = AppSettings.bitPerfectMode.value
         val exoPlayer = buildPlayer(
             spatialAudioProcessorA,
             equalizerProcessorA,
@@ -3934,14 +3930,25 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun Format.measure(): Measured {
         val streamInfo = flacStreamInfo()
+        // The renderer's PCM encoding first: it is the one that would show a
+        // 24-bit master being truncated on the way to the sink, which is the
+        // whole reason the figure is on screen. STREAMINFO describes the file,
+        // so it can only answer what the file holds.
+        //
+        // Float is the exception, and has to be, because it is a carrier
+        // rather than a measurement. `MediaCodecAudioRenderer.getMediaFormat`
+        // asks the decoder for float output whenever the sink reports it can
+        // take one, so a plain 16-bit/44.1kHz file comes back through this
+        // path reading 32-bit exactly as readily as a master does — and then
+        // gets called Hi-Res Lossless, and wears the shine under the
+        // transport, on the strength of the container it happened to travel
+        // in. Nothing about a float buffer says how many bits were in the
+        // samples poured into it, so it is not asked.
+        val rendererDepth = if (pcmEncoding == C.ENCODING_PCM_FLOAT) null else bitDepthOf(pcmEncoding)
         return Measured(
             sampleRateHz = sampleRate.takeIf { it > 0 } ?: streamInfo?.sampleRateHz,
             channels = channelCount.takeIf { it > 0 } ?: streamInfo?.channels,
-            // The renderer's PCM encoding first: it is the one that would show
-            // a 24-bit master being truncated on the way to the sink, which is
-            // the whole reason the figure is on screen. STREAMINFO describes
-            // the file, so it can only answer what the file holds.
-            bitDepth = bitDepthOf(pcmEncoding) ?: streamInfo?.bitDepth,
+            bitDepth = rendererDepth ?: streamInfo?.bitDepth,
         )
     }
 
@@ -4428,14 +4435,13 @@ class PlaybackService : MediaLibraryService() {
     ) = object : DefaultRenderersFactory(this) {
         init {
             // Do not force PCM_FLOAT onto an OEM speaker mixer merely because
-            // the preference asks for it. The selected USB route must advertise
+            // the preference asks for it. The selected route must advertise
             // the format; otherwise Media3 uses its stable PCM16 path.
             //
-            // [shouldEnableFloatOutput] has already folded bit-perfect mode
-            // into this, and in the direction that reads backwards until you
-            // look at what Media3 does with it: bit-perfect *wants* float,
-            // because float is the only AudioTrack encoding that carries a
-            // 24-bit sample intact.
+            // Which way this cuts is worth stating, because it reads backwards:
+            // float is what *preserves* a hi-res source rather than what
+            // embellishes it, since it is the only AudioTrack encoding Media3
+            // will open that carries a 24-bit sample intact.
             setEnableAudioFloatOutput(configuredFloatOutput)
             // c2.sec.flac.decoder produces one extra 232.2ms timestamp
             // advance per decoded buffer when Media3 requests float PCM.
@@ -4466,7 +4472,23 @@ class PlaybackService : MediaLibraryService() {
         ): AudioSink {
             val defaultSink = DefaultAudioSink.Builder(context)
                 .setEnableFloatOutput(enableFloatOutput)
-                .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                // Speed handled by the AudioTrack itself on a float-capable
+                // route, rather than by Sonic. `DefaultAudioSink.configure`
+                // appends `audioProcessorChain.getAudioProcessors()` — which is
+                // where Sonic lives — only on its 16-bit branch; the float
+                // branch gets the format converter and nothing else. With the
+                // stock flag, changing speed on a float route therefore left
+                // the audio playing at 1x while `getMediaDuration` went on
+                // scaling, so the position clock drifted away from the sound.
+                // AudioTrack's own playback params work on either branch.
+                //
+                // Silence skipping is in that same dropped chain and has no
+                // such escape hatch; the equaliser screen says so, and the
+                // equaliser itself is unaffected because it runs upstream in
+                // [PrecisionAudioSink], not here.
+                .setEnableAudioTrackPlaybackParams(
+                    enableAudioTrackPlaybackParams || enableFloatOutput,
+                )
                 .setAudioProcessorChain(
                     DefaultAudioSink.DefaultAudioProcessorChain(
                         emptyArray<AudioProcessor>(),
@@ -4490,13 +4512,18 @@ class PlaybackService : MediaLibraryService() {
             // them for the same reason: it belongs to the listener and
             // the whole session, while the transition filter belongs to
             // one handoff and has to have the last word on it.
-            val dspChain = DspChain(spatial, equalizer, transition, configuredBitPerfect)
+            val dspChain = DspChain(spatial, equalizer, transition)
             return PrecisionAudioSink(
                 delegate = defaultSink,
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
                 preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
-                bitPerfect = configuredBitPerfect,
+                // Which of the two sinks the listener can hear, told by the
+                // role its transition filter currently holds — [activeFilter]
+                // and [spareFilter] trade places at every handoff. Only the
+                // audible one writes telemetry, so the idle player's reset
+                // cannot publish "not exact" over the playing track's verdict.
+                isAudible = { transition === activeFilter },
             )
         }
     }
@@ -4664,7 +4691,6 @@ class PlaybackService : MediaLibraryService() {
         val negotiation = OutputNegotiator.negotiate(
             source = source,
             decoderName = AudioOutputStatus.current.value.decoderName,
-            decoderEncoding = "Float32",
             sampleRateHz = sampleRate,
             channelCount = channels,
             routeKind = routeKind,
@@ -4676,7 +4702,14 @@ class PlaybackService : MediaLibraryService() {
             directSupport = directSupport,
             bluetoothTelemetry = btTelemetry,
             delegateSupportsFloat = shouldEnableFloatOutput(),
-            delegateSupportsPcm24 = true,
+            // Never, on any route. `DefaultAudioSink.configure` inserts either
+            // `ToFloatPcmAudioProcessor` or `ToInt16PcmAudioProcessor` for every
+            // linear-PCM input encoding, so there is no packed-24-bit AudioTrack
+            // to be had through it however loudly the device advertises one.
+            // Claiming otherwise here selected a 24-bit path that Media3 then
+            // silently re-converted, costing an extra quantization and leaving
+            // this readout naming a bit depth that was never written.
+            delegateSupportsPcm24 = false,
             knownSystemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
 
@@ -4692,12 +4725,7 @@ class PlaybackService : MediaLibraryService() {
             // Wait for the short transition to settle, then swap the engine.
             while (crossfade?.isTransitioning() == true) delay(50)
             val requestedFloat = shouldEnableFloatOutput()
-            // Bit-perfect is checked alongside float output because it is the
-            // same kind of setting: both are fixed into the sink when the
-            // player is built, so both need the rebuild rather than the
-            // cheaper route re-application.
-            val requestedBitPerfect = AppSettings.bitPerfectMode.value
-            if (requestedFloat == configuredFloatOutput && requestedBitPerfect == configuredBitPerfect) {
+            if (requestedFloat == configuredFloatOutput) {
                 applyOutputRoute()
             } else {
                 rebuildPlayersForOutput(requestedFloat)
@@ -4727,7 +4755,6 @@ class PlaybackService : MediaLibraryService() {
         oldActive.removeAnalyticsListener(formatListener)
 
         configuredFloatOutput = enableFloat
-        configuredBitPerfect = AppSettings.bitPerfectMode.value
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
         val newActive = buildPlayer(
@@ -4750,7 +4777,8 @@ class PlaybackService : MediaLibraryService() {
         applySettings(newSpare)
         newActive.repeatMode = repeatMode
         newActive.shuffleModeEnabled = shuffleMode
-        applyBitPerfectDependentSettings()
+        applyEqualizer()
+        applySpatialAudioEnabled()
         if (items.isNotEmpty()) {
             newActive.setMediaItems(items, index.coerceIn(items.indices), position)
             // By hand, because the listener is attached below this: the
@@ -4813,18 +4841,12 @@ class PlaybackService : MediaLibraryService() {
         val directFloatSupported = audioManager?.let { mgr ->
             DirectAudioProbe.probeDirectSupport(mgr, 48000, 2, activeDevice).supportsFloat
         } ?: false
-        // Bit-perfect mode needs float for a different reason than the
-        // preference does, so it asks a different question — see
-        // [AudioOutputPolicy.allowsFloatForBitPerfect]. Short version: with
-        // float off, Media3 downconverts every input encoding to 16-bit, so
-        // turning float off in the name of purity is what destroys a hi-res
-        // stream rather than what preserves it.
-        if (AppSettings.bitPerfectMode.value) {
-            return AudioOutputPolicy.allowsFloatForBitPerfect(
-                routeKind = routeKind,
-                advertisesPcmFloat = advertisesFloat || directFloatSupported,
-            )
-        }
+        // Worth knowing which way this cuts for a hi-res stream: with float
+        // off, Media3 downconverts *every* input encoding to 16-bit, because
+        // float and 16-bit are the only two linear-PCM tracks its sink can
+        // open. Float is what carries a 24-bit sample to the hardware intact,
+        // so "32-bit float" in Output precision is the setting that preserves
+        // a hi-res source, not the one that embellishes it.
         return AudioOutputPolicy.shouldUseFloatOutput(
             requestedMode = AppSettings.outputPcmMode.value,
             routeKind = routeKind,
@@ -4886,18 +4908,9 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
         }
         scope.launch {
-            combine(
-                AppSettings.loudnessNormalization,
-                AppSettings.bitPerfectMode,
-            ) { _, _ -> }.collect { applyBitPerfectDependentSettings() }
-        }
-        scope.launch {
-            // Bit-perfect decides what the delegate sink is configured for and
-            // whether Media3 may open a float AudioTrack, neither of which can
-            // change under a running renderer — so it takes the same route a
-            // change of output precision does, rebuilding both players with
-            // the queue and position carried across.
-            AppSettings.bitPerfectMode.drop(1).collect { requestOutputReconfiguration() }
+            AppSettings.loudnessNormalization.collect {
+                setupLoudnessEnhancer(player?.currentMediaItem?.mediaId)
+            }
         }
         scope.launch {
             // Explicit <Any, _>: these flows have mixed element types, and
@@ -4932,11 +4945,7 @@ class PlaybackService : MediaLibraryService() {
      * audio thread is the one place that must not do that.
      */
     private fun applyEqualizer() {
-        // Bit-perfect wins over the equaliser's own switch, and does not
-        // rewrite it: the curve and the toggle are the listener's and are
-        // still there when they turn the mode back off. See
-        // [applyBitPerfectDependentSettings].
-        val enabled = AppSettings.equalizerEnabled.value && !AppSettings.bitPerfectMode.value
+        val enabled = AppSettings.equalizerEnabled.value
         val curve = when (AppSettings.equalizerMode.value) {
             EqualizerMode.DYNAMIC -> toneCurve(
                 x = AppSettings.equalizerToneX.value,
@@ -4958,31 +4967,9 @@ class PlaybackService : MediaLibraryService() {
      * processors are kept in lockstep rather than tracking a role swap.
      */
     private fun applySpatialAudioEnabled() {
-        val enabled = AppSettings.spatialAudio.value &&
-            !activeTrackIsDolbyAtmos &&
-            !AppSettings.bitPerfectMode.value
+        val enabled = AppSettings.spatialAudio.value && !activeTrackIsDolbyAtmos
         spatialAudioProcessorA.enabled = enabled
         spatialAudioProcessorB.enabled = enabled
-    }
-
-    /**
-     * Re-applies everything bit-perfect mode overrides.
-     *
-     * The mode suppresses loudness normalization, the equaliser and spatial
-     * audio while it is on, and each of those has its own apply path that
-     * reads the setting fresh. None of their own flows emit when
-     * [AppSettings.bitPerfectMode] changes, so toggling the mode has to poke
-     * all three or a curve stays in the chain until something unrelated
-     * happens to re-apply it.
-     *
-     * None of the three settings is *written*. A listener who had an equaliser
-     * curve before turning this on gets exactly that curve back when they turn
-     * it off, which is the difference between a mode and a reset.
-     */
-    private fun applyBitPerfectDependentSettings() {
-        setupLoudnessEnhancer(player?.currentMediaItem?.mediaId)
-        applyEqualizer()
-        applySpatialAudioEnabled()
     }
 
     /**
@@ -5007,8 +4994,7 @@ class PlaybackService : MediaLibraryService() {
      * Reads YouTube's own normalization figure for [mediaId] — see
      * [com.music.bitchord.data.innertube.StreamResolver.loudnessDbFor] — and
      * applies it to the shared session as a millibel gain, or switches the
-     * effect off when nothing is known yet, the setting is off, or
-     * bit-perfect mode is on.
+     * effect off when nothing is known yet or the setting is off.
      *
      * A track substituted to JioSaavn or an addon still carries a figure here
      * as long as it was queued from YouTube, because [StreamResolver] resolves
@@ -5018,7 +5004,7 @@ class PlaybackService : MediaLibraryService() {
     private fun setupLoudnessEnhancer(mediaId: String?) {
         val exoPlayer = player ?: return
         val enhancer = ensureLoudnessEnhancer(exoPlayer.audioSessionId) ?: return
-        val enabled = AppSettings.loudnessNormalization.value && !AppSettings.bitPerfectMode.value
+        val enabled = AppSettings.loudnessNormalization.value
         val id = mediaId?.takeIf { it.isNotBlank() }
         val loudnessDb = id?.let(StreamResolver::loudnessDbFor)
         if (!enabled || loudnessDb == null) {

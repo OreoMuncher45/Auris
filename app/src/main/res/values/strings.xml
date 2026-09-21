@@ -179,6 +179,7 @@
     <string name="dolby_atmos_unavailable">This device can\'t play Atmos, so these songs play in their usual version</string>
     <string name="spatial_audio">Spatial audio</string>
     <string name="spatial_audio_subtitle">Widens stereo tracks for a more immersive feel</string>
+    <string name="spatial_audio_atmos_subtitle">Paused for this track — Dolby Atmos is already spatial</string>
     <string name="animated_cover_cellular">Play animated cover over cellular</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Your top songs, artists, albums and genres</string>
@@ -241,6 +242,7 @@
     <string name="automix_mode_performance_subtitle">4 threads · fastest analysis · higher heat and battery use</string>
     <string name="skip_silence">Skip silence</string>
     <string name="skip_silence_subtitle">Trim gaps longer than a second</string>
+    <string name="skip_silence_float_subtitle">Unavailable on 32-bit float output</string>
     <string name="prefer_music_only">Prefer music-only version</string>
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
     <string name="equalizer">Equalizer</string>
@@ -263,9 +265,9 @@
     <string name="equalizer_balance_left">L</string>
     <string name="equalizer_balance_right">R</string>
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-    <string name="equalizer_float_title">Not running right now</string>
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
+    <string name="equalizer_bitstream_title">Not running right now</string>
+    <string name="equalizer_bitstream_subtitle">This track is sent to the output undecoded</string>
+    <string name="equalizer_bitstream_footer">The equaliser works on decoded audio. This track is passed through as a bitstream for your device to decode, so there are no samples here to filter.</string>
     <string name="system_equalizer">System equalizer</string>
     <string name="system_equalizer_subtitle">Your device\'s own panel</string>
     <string name="system_equalizer_footer">Runs after BitChord\'s, on the whole audio session. Using both applies both.</string>
@@ -964,18 +966,6 @@
     <string name="loudness_target_subtitle">Quieter suits headphones; louder suits a car or a phone speaker</string>
 
     <string name="loudness_target_value">%1$s LUFS</string>
-
-    <string name="bit_perfect_mode">Bit-perfect</string>
-
-    <string name="bit_perfect_mode_subtitle">Sends decoded audio to the output untouched</string>
-
-    <string name="bit_perfect_disables_dsp">Turns off loudness, EQ and spatial audio while on</string>
-
-    <string name="disabled_by_bit_perfect">Unavailable while Bit-perfect is on</string>
-
-    <string name="bit_perfect_active">Exact</string>
-
-    <string name="bit_perfect_converted">Converted</string>
 
     <string name="pipeline_loudness">Loudness</string>
 

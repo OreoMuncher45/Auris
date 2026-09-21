@@ -307,45 +307,12 @@ object AppSettings {
      *
      * The case against it is that a constant gain is still a multiplication,
      * so this is the first thing in BitChord that is *on* out of the box and
-     * alters samples. That is what [bitPerfectMode] exists to answer, and why
-     * this setting yields to it unconditionally rather than negotiating.
+     * alters samples. Rather than hide that, the Audio Pipeline readout names
+     * it: its Bit-exact row reports the first stage in the chain that is
+     * altering samples, and switching this off is the first thing a listener
+     * chasing an untouched signal would do.
      */
     val loudnessNormalization = MutableStateFlow(true)
-
-    /**
-     * Deliver the decoder's samples to AudioTrack exactly as they were
-     * decoded.
-     *
-     * This is a promise, not a preference, and it is enforced in two places:
-     * [com.music.bitchord.playback.audio.DspChain] returns before any stage
-     * runs, and [com.music.bitchord.playback.audio.PrecisionAudioSink] picks
-     * the output encoding to preserve the source rather than to suit
-     * [outputPcmMode].
-     *
-     * Three things are worth being explicit about, because "bit-perfect" is a
-     * phrase that invites assumptions:
-     *
-     * - It turns off loudness normalization, the equaliser, spatial audio and
-     *   the transition filter *while it is on*. Their settings are not
-     *   rewritten — a listener who turns this off gets their equaliser curve
-     *   back exactly as they left it — but none of them touch a sample
-     *   meanwhile. There is no version of this where a filter runs and the
-     *   output is still bit-exact.
-     * - It *enables* PCM-float output rather than disabling it, which reads
-     *   backwards until you see what Media3 does with the alternative.
-     *   `DefaultAudioSink` has two linear-PCM output encodings, float and
-     *   16-bit, and inserts a 16-bit downconverter for every input encoding
-     *   when float is off. Float32's 24-bit significand is the only container
-     *   in that pair which holds a 24-bit sample whole.
-     * - It cannot make **32-bit integer PCM** exact. Twenty-four bits of
-     *   significand will not hold thirty-two, and there is no 32-bit integer
-     *   AudioTrack path through Media3 to use instead. The pipeline readout
-     *   reports that rather than claiming otherwise.
-     *
-     * Off by default. Most listeners are better served by level-matched
-     * playback than by a guarantee they have no way to hear.
-     */
-    val bitPerfectMode = MutableStateFlow(false)
 
     /**
      * Whether a source offering a Dolby Atmos rendition is allowed to serve it.
@@ -796,7 +763,6 @@ object AppSettings {
         }.getOrDefault(OutputPcmMode.PCM_16)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
-        bitPerfectMode.value = prefs.getBoolean(KEY_BIT_PERFECT_MODE, false)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
@@ -1422,11 +1388,6 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LOUDNESS_NORMALIZATION, value).apply()
     }
 
-    fun setBitPerfectMode(value: Boolean) {
-        bitPerfectMode.value = value
-        prefs.edit().putBoolean(KEY_BIT_PERFECT_MODE, value).apply()
-    }
-
     fun setExportDownloads(value: Boolean) {
         exportDownloads.value = value
         prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
@@ -1760,7 +1721,6 @@ object AppSettings {
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
-    private const val KEY_BIT_PERFECT_MODE = "bit_perfect_mode"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_EQ_ENABLED = "equalizer_enabled"
