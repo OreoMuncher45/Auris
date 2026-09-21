@@ -2154,6 +2154,16 @@ class PlaybackService : MediaLibraryService() {
         // And the same instant on the wall clock, which is the one
         // logcat stamps its lines with — see [TrackLog].
         mediaItem?.mediaId?.let(TrackLog::onTrackStarted)
+        // A play beginning is what ends the last one's upgrade verdict. Here
+        // rather than in [QualityUpgrade.forget] because that runs on the
+        // failure and rollback paths, where a previous "no" is exactly what
+        // should be kept.
+        mediaItem?.mediaId?.let {
+            QualityUpgrade.onPlaybackStarted(
+                it,
+                mediaItem.localConfiguration?.uri?.let(QualityUpgrade::cacheTag),
+            )
+        }
         TrackLog.d(
             "BitChord",
             "TIMING track selected: ${mediaItem?.mediaId} (reason=$reason)",
