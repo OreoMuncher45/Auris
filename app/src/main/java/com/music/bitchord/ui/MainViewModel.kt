@@ -505,14 +505,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     /** As [toggleLike], for the thumb-down. */
-    fun toggleDislike(videoId: String) = setLike(
-        videoId,
-        if (likeStatusOf(videoId) == LikeStatus.DISLIKE) {
-            LikeStatus.INDIFFERENT
-        } else {
-            LikeStatus.DISLIKE
-        },
-    )
+    fun toggleDislike(videoId: String): LikeStatus? {
+        if (!requireSignIn()) return null
+        val previous = likeStatusOf(videoId)
+        setLike(
+            videoId,
+            if (previous == LikeStatus.DISLIKE) {
+                LikeStatus.INDIFFERENT
+            } else {
+                LikeStatus.DISLIKE
+            },
+        )
+        return previous
+    }
 
     /**
      * Saves the album or playlist [browseId] to the library, or takes it out.

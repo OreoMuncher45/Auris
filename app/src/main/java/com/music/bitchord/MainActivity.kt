@@ -241,6 +241,12 @@ import java.util.Locale
 /** A full first screen of a native YouTube Music radio before AutoPlay tops it up. */
 private const val INITIAL_RADIO_TRACKS = 24
 
+internal fun shouldSkipAfterDislike(
+    previousStatus: LikeStatus,
+    targetVideoId: String,
+    currentVideoId: String?,
+): Boolean = previousStatus != LikeStatus.DISLIKE && targetVideoId == currentVideoId
+
 /** One stable playback context for the lifetime of a queue. */
 private data class QueueSource(
     val title: String,
@@ -3002,7 +3008,19 @@ private fun BitChordApp(
                     // The sheet stays up for a rating: it shows the new state
                     // in place, and people often thumb a song and then queue it.
                     onToggleLike = { viewModel.toggleLike(song.videoId) },
-                    onToggleDislike = { viewModel.toggleDislike(song.videoId) },
+                    onToggleDislike = {
+                        val previousStatus = viewModel.toggleDislike(song.videoId)
+                        if (
+                            previousStatus != null &&
+                            shouldSkipAfterDislike(
+                                previousStatus = previousStatus,
+                                targetVideoId = song.videoId,
+                                currentVideoId = player.song?.videoId,
+                            )
+                        ) {
+                            controller?.seekToNextMediaItem()
+                        }
+                    },
                     onAddToPlaylist = {
                         songActions = null
                         viewModel.loadPlaylists()
