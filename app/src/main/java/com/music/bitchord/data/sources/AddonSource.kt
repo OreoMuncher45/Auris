@@ -361,6 +361,11 @@ class AddonSource(
         client.clear()
     }
 
+    /** Forces the next completed track lookup back onto the network. */
+    fun clearCompletedTrackCalls() {
+        client.clearCompletedTrackCalls()
+    }
+
     private companion object {
         const val TAG = "BitChord"
 

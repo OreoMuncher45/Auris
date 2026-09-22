@@ -368,6 +368,20 @@ class AddonClient(rawBaseUrl: String) {
         quietUntilMs = 0L
     }
 
+    /**
+     * Makes the next catalogue and stream lookups real requests without
+     * disturbing a request already in flight.
+     *
+     * Used only for the listener's explicit "Upgrade quality" action. Normal
+     * playback keeps those caches, but a manual retry must be able to recover
+     * immediately from an addon which answered empty while one of its backends
+     * was unavailable or handed out a URL that did not work.
+     */
+    fun clearCompletedTrackCalls() {
+        searches.clearCompleted()
+        streams.clearCompleted()
+    }
+
     /** Parts joined length-prefixed, so no byte a part may contain can act as a delimiter. */
     private fun keyOf(vararg parts: String) = parts.joinToString("|") { "${it.length}:$it" }
 

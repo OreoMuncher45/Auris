@@ -671,7 +671,14 @@ suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
         }
         queue.map { it.toMediaItem() }
     }
-    setMediaItems(items, startIndex.coerceIn(0, items.size - 1), 0L)
+    setMediaItems(items, queueStartIndex(startIndex, items.size, shuffled), 0L)
     prepare()
     play()
 }
+
+/**
+ * The selected track is moved to the head when a new queue is shuffled, so
+ * playback must begin there rather than at its index in the unshuffled list.
+ */
+internal fun queueStartIndex(requestedIndex: Int, itemCount: Int, shuffled: Boolean): Int =
+    if (shuffled) 0 else requestedIndex.coerceIn(0, itemCount - 1)
