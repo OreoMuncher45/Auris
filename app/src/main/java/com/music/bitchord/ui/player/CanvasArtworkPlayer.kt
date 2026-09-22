@@ -94,6 +94,12 @@ fun CanvasArtworkPlayer(
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
     contentMode: CanvasContentMode = CanvasContentMode.CROP,
+    /** The decoded video's display aspect, or zero until Media3 knows it. */
+    onAspectRatioChanged: (Float) -> Unit = {},
+    /** The full player bounds required before a portrait hero may reveal its first frame. */
+    portraitRevealBounds: IntSize = IntSize.Zero,
+    /** Fades a full-player portrait clip away as the existing sleeve collapses. */
+    presentationAlpha: Float = 1f,
     /** Fires once the clip has an actual frame on screen, and again if it drops back to none. */
     onRenderedChanged: (Boolean) -> Unit = {},
     /** A single frame off the playing clip, for callers that want to re-tint around it. */
@@ -165,6 +171,9 @@ fun CanvasArtworkPlayer(
     // nothing needing doing to it. See the repaint effect below.
     var surfaceGeneration by remember(canvas) { mutableIntStateOf(0) }
     val currentContentMode by rememberUpdatedState(contentMode)
+    val currentPortraitRevealBounds by rememberUpdatedState(portraitRevealBounds)
+    val currentPresentationAlpha by rememberUpdatedState(presentationAlpha)
+    val reportAspect by rememberUpdatedState(onAspectRatioChanged)
 
     val player = remember {
         ExoPlayer.Builder(context)
@@ -190,9 +199,12 @@ fun CanvasArtworkPlayer(
         val listener = object : Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 val width = videoSize.width * videoSize.pixelWidthHeightRatio
-                clipAspect = if (width.isFinite() && width > 0f && videoSize.height > 0) {
+                val aspect = if (width.isFinite() && width > 0f && videoSize.height > 0) {
                     width / videoSize.height
                 } else 0f
+                if (aspect != clipAspect) rendered = false
+                clipAspect = aspect
+                reportAspect(aspect)
                 textureView?.applyContentTransform(clipAspect, currentContentMode)
             }
 
@@ -218,6 +230,7 @@ fun CanvasArtworkPlayer(
     LaunchedEffect(url) {
         rendered = false
         clipAspect = 0f
+        reportAspect(0f)
         val item = MediaItem.Builder().setUri(url)
         mimeTypeOf(url)?.let { item.setMimeType(it) }
         player.setMediaItem(item.build())
@@ -310,13 +323,16 @@ fun CanvasArtworkPlayer(
     // it is. Zeroed on the way out, or a caller would be left holding something
     // hidden behind a clip that is no longer mounted.
     val reportCover by rememberUpdatedState(onCoverChanged)
-    LaunchedEffect(Unit) { snapshotFlow { alpha }.collect { reportCover(it) } }
+    LaunchedEffect(Unit) {
+        snapshotFlow { alpha * currentPresentationAlpha }.collect { reportCover(it) }
+    }
     DisposableEffect(Unit) {
         onDispose {
             // The parent owns the still/canvas handoff. Never leave it holding
             // a Success from a player or TextureView that no longer exists.
             reportRendered(false)
             reportCover(0f)
+            reportAspect(0f)
         }
     }
 
@@ -367,6 +383,9 @@ fun CanvasArtworkPlayer(
                         height: Int,
                     ) {
                         delegate?.onSurfaceTextureSizeChanged(surface, width, height)
+                        if (currentContentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect in 0f..1f) {
+                            rendered = false
+                        }
                     }
 
                     override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
@@ -391,7 +410,14 @@ fun CanvasArtworkPlayer(
                             val transformed = textureView?.applyContentTransform(
                                 clipAspect, currentContentMode,
                             ) == true
-                            if (currentContentMode == CanvasContentMode.CROP || transformed) {
+                            val portrait = currentContentMode == CanvasContentMode.FIT_PORTRAIT &&
+                                clipAspect > 0f && clipAspect < 1f
+                            val expected = currentPortraitRevealBounds
+                            val view = textureView
+                            val layoutReady = !portrait ||
+                                (expected != IntSize.Zero && view?.width == expected.width &&
+                                    view?.height == expected.height)
+                            if ((currentContentMode == CanvasContentMode.CROP || transformed) && layoutReady) {
                                 rendered = true
                                 frameTick++
                                 Log.d(TAG, "first frame on surface (tick $frameTick, gen $surfaceGeneration)")
@@ -416,7 +442,11 @@ fun CanvasArtworkPlayer(
             val view = frame.getChildAt(0) as TextureView
             // Set on the view itself. A Compose alpha layer over a TextureView
             // is not reliably composited, and this is the same fade either way.
-            view.alpha = if (contentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect <= 0f) 0f else alpha
+            view.alpha = if (contentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect <= 0f) {
+                0f
+            } else {
+                alpha * presentationAlpha
+            }
             view.applyContentTransform(clipAspect, contentMode)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 view.setBottomFade(bottomFade, bounds)

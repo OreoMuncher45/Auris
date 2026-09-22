@@ -200,6 +200,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.Velocity
@@ -1037,6 +1038,7 @@ fun NowPlayingScreen(
     // clip's own loop makes that worth guarding separately from a still image.
     val canvasAllowedNow = canvasEnabled && (meteredConnection != true || canvasOverCellular)
     var canvas by remember(song.videoId) { mutableStateOf<CanvasArtwork?>(null) }
+    var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
     // to re-tint the backdrop off the clip's own colours rather than the
@@ -1688,6 +1690,10 @@ fun NowPlayingScreen(
     // the clip goes, instead of a frame later with the sleeve behind it still
     // transparent and no artwork anywhere.
     val heroClip = canvas?.takeIf { heroMode && p < 0.5f }
+    val canvasFirstPortrait = heroClip != null && canvasAspect > 0f && canvasAspect < 1f
+    // Keep the normal backdrop only during the handoff and collapse. Once the
+    // full-player clip covers it, the uncovered FIT margins have a black floor.
+    val canvasFirstSettled = canvasFirstPortrait && canvasRendered && stillCovered && p == 0f
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this
     // — see [heroVisible].
@@ -1721,6 +1727,7 @@ fun NowPlayingScreen(
     // own geometry is known. Zero until the first measure, which is fine: there
     // is nothing to show that early either.
     var heroHeight by remember { mutableStateOf(0.dp) }
+    var playerBounds by remember { mutableStateOf(IntSize.Zero) }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // What sits between the status bar and the artwork: the drag strip in a
     // sheet, plain padding in a pane. Read in three places — the strip itself,
@@ -2057,7 +2064,7 @@ fun NowPlayingScreen(
         return
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize().onSizeChanged { playerBounds = it }.background(Color.Black)) {
         // Anchored to the sleeve's bottom edge, so the screen carries on in the
         // colours the artwork ended in rather than in a quantiser's idea of what
         // the artwork was about. Position ticks recompose this screen twice a
@@ -2069,7 +2076,7 @@ fun NowPlayingScreen(
         // the anchor for a blurred layer, and moving it would re-blur the whole
         // screen on every frame of the drag. Above it the mesh holds one colour,
         // so a seam left behind a collapsed sleeve shows nothing at all.
-        if (legacyMesh) {
+        if (!canvasFirstSettled && legacyMesh) {
             // v1.5's backdrop, restored verbatim: no seam, because the blobs
             // are not anchored to anything on screen — they fill the player and
             // the artwork simply sits on top of them. Keyed on the track, so
@@ -2081,10 +2088,19 @@ fun NowPlayingScreen(
                 palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
                 trackKey = song.videoId,
             )
-        } else {
+        } else if (!canvasFirstSettled) {
             ArtworkMeshBackdrop(
                 mesh = artMesh,
                 seam = if (heroMode) heroHeight else 0.dp,
+            )
+        }
+        if (canvasFirstPortrait) {
+            // Cover the backdrop progressively while the video fades in, then
+            // reveal it again during the existing sleeve collapse.
+            Box(
+                Modifier.matchParentSize()
+                    .graphicsLayer { alpha = canvasCover.floatValue }
+                    .background(Color.Black),
             )
         }
 
@@ -2169,31 +2185,33 @@ fun NowPlayingScreen(
                 )
             }
 
-            // Motion artwork over it, in the same frame.
-            //
-            // Always composed while there's a clip to play, never gated on
-            // [heroVisible]: the clip has to be mounted and decoding *before*
-            // it can report the first frame that raises heroT in the first place.
-            if (heroMode) {
-                heroClip?.let { clip ->
-                    CanvasArtworkPlayer(
-                        canvas = clip,
-                        isPlaying = isPlaying,
-                        contentMode = CanvasContentMode.FIT_PORTRAIT,
-                        onRenderedChanged = { canvasRendered = it },
-                        onFrameCaptured = { canvasFrame = it },
-                        refreshFrameEveryMs = meshRefreshMs,
-                        onCoverChanged = { canvasCover.floatValue = it },
-                        bottomFade = HERO_FADE_FRACTION,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .fillMaxWidth()
-                            .height(heroHeight)
-                            .hazeSource(playerHaze),
-                    )
-                }
-            }
+        }
 
+        // Mount once, behind the controls. A known portrait aspect changes the
+        // invisible view to full-player bounds before its first frame is shown.
+        if (heroMode && heroHeight > 0.dp) {
+            heroClip?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = isPlaying,
+                    contentMode = CanvasContentMode.FIT_PORTRAIT,
+                    onAspectRatioChanged = { canvasAspect = it },
+                    portraitRevealBounds = playerBounds,
+                    presentationAlpha = if (canvasFirstPortrait) (1f - 2f * p).coerceIn(0f, 1f) else 1f,
+                    onRenderedChanged = { canvasRendered = it },
+                    onFrameCaptured = { if (!canvasFirstPortrait) canvasFrame = it },
+                    refreshFrameEveryMs = if (canvasFirstPortrait) null else meshRefreshMs,
+                    onCoverChanged = { canvasCover.floatValue = it },
+                    bottomFade = if (canvasFirstPortrait) 0f else HERO_FADE_FRACTION,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .then(
+                            if (canvasFirstPortrait) Modifier.fillMaxSize()
+                            else Modifier.fillMaxWidth().height(heroHeight),
+                        )
+                        .hazeSource(playerHaze),
+                )
+            }
         }
 
         // This transparent top gradient is always present while the modal
@@ -2228,6 +2246,22 @@ fun NowPlayingScreen(
                     .fillMaxWidth()
                     .height(statusBarTop + topStrip)
                     .background(topScrimBrush)
+            )
+        }
+
+        if (canvasFirstPortrait && canvasRendered) {
+            // The image remains visible through the controls; a plain scrim
+            // protects text and touch targets without erasing the video.
+            Box(
+                Modifier.matchParentSize()
+                    .graphicsLayer { alpha = canvasCover.floatValue }
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.40f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.70f),
+                        ),
+                    ),
             )
         }
 
