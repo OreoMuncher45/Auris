@@ -2179,6 +2179,7 @@ fun NowPlayingScreen(
                     CanvasArtworkPlayer(
                         canvas = clip,
                         isPlaying = isPlaying,
+                        contentMode = CanvasContentMode.FIT_PORTRAIT,
                         onRenderedChanged = { canvasRendered = it },
                         onFrameCaptured = { canvasFrame = it },
                         refreshFrameEveryMs = meshRefreshMs,
