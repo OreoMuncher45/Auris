@@ -245,6 +245,8 @@
     <string name="stop_music_on_close_subtitle">Dừng phát nhạc khi vuốt đóng khỏi danh sách ứng dụng gần đây</string>
     <string name="hide_volume_bar">Ẩn thanh âm lượng</string>
     <string name="hide_volume_bar_subtitle">Bỏ thanh trượt âm lượng khỏi trình phát chính</string>
+    <string name="hide_song_status">Ẩn trạng thái bài hát</string>
+    <string name="hide_song_status_subtitle">Ẩn dòng “Phát từ” hoặc “Được phát bởi” trong trình phát chính</string>
     <string name="off">Tắt</string>
     <string name="low">Thấp</string>
     <string name="medium">Trung bình</string>

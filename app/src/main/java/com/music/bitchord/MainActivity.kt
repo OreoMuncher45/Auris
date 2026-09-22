@@ -3594,6 +3594,8 @@ private fun BitChordApp(
             // request rather than a value that was already true.
             var captureRequest by remember(mode) { mutableIntStateOf(0) }
             var captureFailed by remember(mode) { mutableStateOf(false) }
+            var pageReady by remember(mode) { mutableStateOf(false) }
+            var confirmingProfile by remember(mode) { mutableStateOf(false) }
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 Column(Modifier.fillMaxSize()) {
                     Row(
@@ -3619,7 +3621,7 @@ private fun BitChordApp(
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
-                            if (mode == WebSessionMode.SWITCH_CHANNEL) {
+                            if (pageReady) {
                                 Text(
                                     text = if (captureFailed) {
                                          stringResource(R.string.profile_unavailable)
@@ -3632,23 +3634,40 @@ private fun BitChordApp(
                                 )
                             }
                         }
-                        if (mode == WebSessionMode.SWITCH_CHANNEL) {
+                        if (pageReady) {
                             TextButton(onClick = {
                                 captureFailed = false
+                                confirmingProfile = true
                                 captureRequest++
-                            }) {
-                                Text(stringResource(R.string.use_this_profile))
+                            }, enabled = !confirmingProfile) {
+                                Text(
+                                    if (confirmingProfile) stringResource(R.string.checking)
+                                    else stringResource(R.string.use_this_profile),
+                                )
                             }
                         }
                     }
                     YtMusicLoginScreen(
                         mode = mode,
+                        initialCookie = if (mode == WebSessionMode.SWITCH_CHANNEL) {
+                            googleAccounts.firstOrNull { it.accountId == activeAccountId }?.cookie
+                        } else null,
                         captureRequest = captureRequest,
-                        onCaptureUnavailable = { captureFailed = true },
+                        onPageReady = { pageReady = it },
+                        onCaptureUnavailable = {
+                            confirmingProfile = false
+                            captureFailed = true
+                        },
                         onCaptured = { session ->
-                            viewModel.onWebSession(session, mode)
-                            webSession = null
-                            if (mode == WebSessionMode.SIGN_IN) selectedTab = 2
+                            viewModel.onWebSession(session, mode) { accepted ->
+                                confirmingProfile = false
+                                if (accepted) {
+                                    webSession = null
+                                    if (mode == WebSessionMode.SIGN_IN) selectedTab = 2
+                                } else {
+                                    captureFailed = true
+                                }
+                            }
                         },
                     )
                 }

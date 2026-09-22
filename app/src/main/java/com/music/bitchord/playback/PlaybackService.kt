@@ -73,6 +73,7 @@ import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
@@ -6609,7 +6610,7 @@ class PlaybackService : MediaLibraryService() {
             val song = Song(
                 videoId = vid,
                 title = title,
-                artist = subtitle,
+                artist = InnertubeParser.artistFromSubtitle(subtitle),
                 thumbnailUrl = thumbnailUrl,
             )
             songCache[vid] = song
@@ -6639,7 +6640,7 @@ class PlaybackService : MediaLibraryService() {
         return Song(
             videoId = id,
             title = title,
-            artist = subtitle,
+            artist = InnertubeParser.artistFromSubtitle(subtitle),
             thumbnailUrl = thumbnailUrl,
         )
     }
