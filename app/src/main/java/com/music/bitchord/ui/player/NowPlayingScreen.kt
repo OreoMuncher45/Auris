@@ -126,6 +126,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -1065,7 +1066,6 @@ fun NowPlayingScreen(
     // a pixel readback of its own on every track change, and the two answer the
     // same picture in two different ways, so whichever is not on screen is pure
     // cost — the legacy path pays [rememberArtworkColors] instead.
-    val artMesh = if (legacyMesh) null else rememberArtworkMesh(song.thumbnailUrl, canvasFrame, ART_PX)
     // Asked of every clip, Spotify's Canvas and every other source alike — see
     // CanvasArtworkPlayer's refreshFrameEveryMs. A clip's own colours move as
     // it plays regardless of who published it, and the backdrop should follow.
@@ -1691,9 +1691,10 @@ fun NowPlayingScreen(
     // transparent and no artwork anywhere.
     val heroClip = canvas?.takeIf { heroMode && p < 0.5f }
     val canvasFirstPortrait = heroClip != null && canvasAspect > 0f && canvasAspect < 1f
-    // Keep the normal backdrop only during the handoff and collapse. Once the
-    // full-player clip covers it, the uncovered FIT margins have a black floor.
-    val canvasFirstSettled = canvasFirstPortrait && canvasRendered && stillCovered && p == 0f
+    // Portrait clips always use the existing artwork mesh, even if the user
+    // selected the legacy backdrop for ordinary artwork.
+    val artMesh = if (legacyMesh && !canvasFirstPortrait) null else
+        key(song.videoId) { rememberArtworkMesh(song.thumbnailUrl, canvasFrame, ART_PX) }
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this
     // — see [heroVisible].
@@ -1728,6 +1729,14 @@ fun NowPlayingScreen(
     // is nothing to show that early either.
     var heroHeight by remember { mutableStateOf(0.dp) }
     var playerBounds by remember { mutableStateOf(IntSize.Zero) }
+    // The bottom of a top-aligned, contained clip in the full-player view.
+    // Use measured pixels and the decoded display aspect, never screen constants.
+    val renderedCanvasBottom = if (canvasFirstPortrait && playerBounds.width > 0 && playerBounds.height > 0) {
+        val viewAspect = playerBounds.width.toFloat() / playerBounds.height
+        val videoHeight = if (canvasAspect >= viewAspect) playerBounds.width / canvasAspect
+            else playerBounds.height.toFloat()
+        with(density) { videoHeight.toDp() }
+    } else 0.dp
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // What sits between the status bar and the artwork: the drag strip in a
     // sheet, plain padding in a pane. Read in three places — the strip itself,
@@ -2076,7 +2085,7 @@ fun NowPlayingScreen(
         // the anchor for a blurred layer, and moving it would re-blur the whole
         // screen on every frame of the drag. Above it the mesh holds one colour,
         // so a seam left behind a collapsed sleeve shows nothing at all.
-        if (!canvasFirstSettled && legacyMesh) {
+        if (legacyMesh && !canvasFirstPortrait) {
             // v1.5's backdrop, restored verbatim: no seam, because the blobs
             // are not anchored to anything on screen — they fill the player and
             // the artwork simply sits on top of them. Keyed on the track, so
@@ -2088,19 +2097,10 @@ fun NowPlayingScreen(
                 palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
                 trackKey = song.videoId,
             )
-        } else if (!canvasFirstSettled) {
+        } else {
             ArtworkMeshBackdrop(
                 mesh = artMesh,
-                seam = if (heroMode) heroHeight else 0.dp,
-            )
-        }
-        if (canvasFirstPortrait) {
-            // Cover the backdrop progressively while the video fades in, then
-            // reveal it again during the existing sleeve collapse.
-            Box(
-                Modifier.matchParentSize()
-                    .graphicsLayer { alpha = canvasCover.floatValue }
-                    .background(Color.Black),
+                seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight else 0.dp,
             )
         }
 
@@ -2195,12 +2195,13 @@ fun NowPlayingScreen(
                     canvas = clip,
                     isPlaying = isPlaying,
                     contentMode = CanvasContentMode.FIT_PORTRAIT,
+                    alignPortraitTop = canvasFirstPortrait,
                     onAspectRatioChanged = { canvasAspect = it },
                     portraitRevealBounds = playerBounds,
                     presentationAlpha = if (canvasFirstPortrait) (1f - 2f * p).coerceIn(0f, 1f) else 1f,
                     onRenderedChanged = { canvasRendered = it },
-                    onFrameCaptured = { if (!canvasFirstPortrait) canvasFrame = it },
-                    refreshFrameEveryMs = if (canvasFirstPortrait) null else meshRefreshMs,
+                    onFrameCaptured = { canvasFrame = it },
+                    refreshFrameEveryMs = meshRefreshMs,
                     onCoverChanged = { canvasCover.floatValue = it },
                     bottomFade = if (canvasFirstPortrait) 0f else HERO_FADE_FRACTION,
                     modifier = Modifier
