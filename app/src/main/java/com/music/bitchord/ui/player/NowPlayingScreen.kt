@@ -1737,6 +1737,11 @@ fun NowPlayingScreen(
             else playerBounds.height.toFloat()
         with(density) { videoHeight.toDp() }
     } else 0.dp
+    // Match the old hero's fade height in physical pixels, not its much larger
+    // percentage of a portrait video. The mask ends at the real video bottom.
+    val canvasFirstFadeFraction = if (renderedCanvasBottom > 0.dp) {
+        (heroHeight.value * HERO_FADE_FRACTION / renderedCanvasBottom.value).coerceIn(0f, 1f)
+    } else 0f
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // What sits between the status bar and the artwork: the drag strip in a
     // sheet, plain padding in a pane. Read in three places — the strip itself,
@@ -2203,7 +2208,9 @@ fun NowPlayingScreen(
                     onFrameCaptured = { canvasFrame = it },
                     refreshFrameEveryMs = meshRefreshMs,
                     onCoverChanged = { canvasCover.floatValue = it },
-                    bottomFade = if (canvasFirstPortrait) 0f else HERO_FADE_FRACTION,
+                    bottomFade = if (canvasFirstPortrait) canvasFirstFadeFraction else HERO_FADE_FRACTION,
+                    bottomFadeEndPx = if (canvasFirstPortrait) with(density) { renderedCanvasBottom.toPx() }
+                        else null,
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .then(

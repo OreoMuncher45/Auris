@@ -153,6 +153,8 @@ fun CanvasArtworkPlayer(
      * this is a parameter here rather than a mask the caller could draw.
      */
     bottomFade: Float = 0f,
+    /** Optional end of the fade in view pixels; defaults to the view's bottom edge. */
+    bottomFadeEndPx: Float? = null,
 ) {
     val context = LocalContext.current
 
@@ -452,9 +454,10 @@ fun CanvasArtworkPlayer(
             }
             view.applyContentTransform(clipAspect, contentMode, alignPortraitTop)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                view.setBottomFade(bottomFade, bounds)
+                view.setBottomFade(bottomFade, bounds, bottomFadeEndPx)
             } else {
                 frame.fadeFraction = bottomFade
+                frame.fadeEndPx = bottomFadeEndPx
             }
         },
         modifier = modifier.onSizeChanged { bounds = it },
@@ -484,6 +487,9 @@ private fun TextureView.captureAt(
     if (viewWidth <= 0 || viewHeight <= 0) return null
     val scale = maxPx.toFloat() / maxOf(viewWidth, viewHeight)
     return runCatching {
+        // TextureView.getBitmap copies its texture layer, before the view's
+        // RenderEffect; the pre-31 mask is on the parent frame instead.
+        // Neither display-only fade is baked into the mesh's sampled frame.
         val frame = if (scale >= 1f) {
             getBitmap()
         } else {
@@ -567,17 +573,17 @@ private fun TextureView.applyContentTransform(
  * the older way, with a saveLayer and a Porter-Duff mask.
  */
 @RequiresApi(Build.VERSION_CODES.S)
-private fun TextureView.setBottomFade(fraction: Float, bounds: IntSize) {
-    val height = bounds.height
-    if (fraction <= 0.001f || height == 0) {
+private fun TextureView.setBottomFade(fraction: Float, bounds: IntSize, endPx: Float?) {
+    val endY = endPx?.coerceIn(0f, bounds.height.toFloat()) ?: bounds.height.toFloat()
+    if (fraction <= 0.001f || endY <= 0f) {
         setRenderEffect(null)
         return
     }
     val gradient = LinearGradient(
         0f,
-        height * (1f - fraction.coerceAtMost(1f)),
+        endY * (1f - fraction.coerceAtMost(1f)),
         0f,
-        height.toFloat(),
+        endY,
         android.graphics.Color.BLACK,
         android.graphics.Color.TRANSPARENT,
         Shader.TileMode.CLAMP,
@@ -621,6 +627,14 @@ private class FadingBottomFrame(context: Context) : FrameLayout(context) {
             gradient = null
             invalidate()
         }
+    /** Optional video bottom in this frame's pixels; null retains the historical view bottom. */
+    var fadeEndPx: Float? = null
+        set(value) {
+            if (value == field) return
+            field = value
+            gradient = null
+            invalidate()
+        }
 
     private val maskPaint = Paint().apply {
         xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
@@ -635,15 +649,16 @@ private class FadingBottomFrame(context: Context) : FrameLayout(context) {
 
     override fun dispatchDraw(canvas: Canvas) {
         val fade = fadeFraction
-        if (fade <= 0.001f || height == 0) {
+        val endY = fadeEndPx?.coerceIn(0f, height.toFloat()) ?: height.toFloat()
+        if (fade <= 0.001f || endY <= 0f) {
             super.dispatchDraw(canvas)
             return
         }
         val shader = gradient?.takeIf { gradientHeight == height } ?: LinearGradient(
             0f,
-            height * (1f - fade),
+            endY * (1f - fade),
             0f,
-            height.toFloat(),
+            endY,
             android.graphics.Color.BLACK,
             android.graphics.Color.TRANSPARENT,
             Shader.TileMode.CLAMP,
