@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -65,6 +67,9 @@ val SUPPORTED_LANGUAGES = listOf(
 
 fun languageDisplayNameRes(languageTag: String): Int =
     SUPPORTED_LANGUAGES.firstOrNull { it.tag == languageTag }?.nameRes ?: R.string.english
+
+/** How much of the screen the list may take before it scrolls inside the card. */
+private val LANGUAGE_LIST_MAX_HEIGHT = 340.dp
 
 /**
  * Same frosted iOS alert as [LyricsSourcesDialog], but single-select rather
@@ -144,18 +149,24 @@ fun AppLanguageDialog(
                 )
             }
 
-            SUPPORTED_LANGUAGES.forEach { language ->
-                AlertRule()
-                LanguageRow(
-                    language = language,
-                    selected = language.tag == currentLanguage,
-                    onClick = {
-                        AppCompatDelegate.setApplicationLocales(
-                            LocaleListCompat.forLanguageTags(language.tag),
-                        )
-                        onDismiss()
-                    },
-                )
+            // Capped and scrolled rather than laid out at full height, same as
+            // [TranslationLanguageDialog] — sixteen rows is short enough not
+            // to need that dialog's filter field, but still taller than the
+            // card should get to stay centred on a phone.
+            LazyColumn(modifier = Modifier.heightIn(max = LANGUAGE_LIST_MAX_HEIGHT)) {
+                items(SUPPORTED_LANGUAGES, key = { it.tag }) { language ->
+                    AlertRule()
+                    LanguageRow(
+                        language = language,
+                        selected = language.tag == currentLanguage,
+                        onClick = {
+                            AppCompatDelegate.setApplicationLocales(
+                                LocaleListCompat.forLanguageTags(language.tag),
+                            )
+                            onDismiss()
+                        },
+                    )
+                }
             }
         }
     }

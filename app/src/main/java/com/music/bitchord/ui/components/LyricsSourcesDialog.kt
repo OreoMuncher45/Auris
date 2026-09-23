@@ -429,8 +429,16 @@ private fun ReorderableSourceList(
     Column(
         modifier = Modifier
             .heightIn(max = SOURCES_MAX_HEIGHT)
-            .verticalScroll(scrollState)
-            .onSizeChanged { viewportHeightPx = it.height.toFloat() },
+            // Measured outside [verticalScroll] on purpose: inside it, this
+            // would report the full, unclipped height of every row stacked up
+            // rather than the capped card height, since verticalScroll gives
+            // its child unbounded height to grow into. That made the bottom
+            // edge of the auto-scroll zone measure against a boundary far
+            // below the real one, so it only ever triggered scrolling toward
+            // the top of the list where the zone is anchored to the fixed 0
+            // rather than to this height.
+            .onSizeChanged { viewportHeightPx = it.height.toFloat() }
+            .verticalScroll(scrollState),
     ) {
         liveOrder.forEach { source ->
             // Without this, Compose matches each row to its slot by position

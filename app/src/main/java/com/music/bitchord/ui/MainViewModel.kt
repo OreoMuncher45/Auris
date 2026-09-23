@@ -66,6 +66,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -74,8 +75,17 @@ import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.StreamChoice
-import java.util.concurrent.atomic.AtomicLong
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+/** What the current track's provider picker already knows without another request. */
+enum class LyricsProviderState {
+    NOT_FETCHED,
+    FETCHING,
+    FOUND,
+    NOT_FOUND,
+}
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -247,6 +257,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val lyricsChecked: StateFlow<Boolean> = _lyricsChecked.asStateFlow()
 
     private var lyricsJob: Job? = null
+    private val manualLyricsJobs = mutableMapOf<LyricsSource, Job>()
+
+    private val _lyricsProviderStates = MutableStateFlow(
+        LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED },
+    )
+    val lyricsProviderStates: StateFlow<Map<LyricsSource, LyricsProviderState>> =
+        _lyricsProviderStates.asStateFlow()
+
+    /** Completed hits are retained for the playing track so choosing one is instant. */
+    private val lyricsProviderResults = ConcurrentHashMap<LyricsSource, LyricsRepository.Result>()
+
+    private data class LyricsRequest(
+        val videoId: String,
+        val title: String,
+        val artist: String,
+        val durationMs: Long,
+        val album: String?,
+    )
+
+    private var currentLyricsRequest: LyricsRequest? = null
+    private var lyricsGeneration = 0L
+    private var selectedLyricsSource: LyricsSource? = null
 
     /**
      * What the loaded lyrics are for. Both the track *and* the settings that
@@ -290,6 +322,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // pausing is when the duration is most likely to arrive a frame late.
         if (localUri == null && durationMs <= 0L) return
         lyricsFor = key
+        lyricsGeneration += 1
+        val generation = lyricsGeneration
+        currentLyricsRequest = LyricsRequest(videoId, title, artist, durationMs, album)
+        selectedLyricsSource = null
+        manualLyricsJobs.values.forEach(Job::cancel)
+        manualLyricsJobs.clear()
+        lyricsProviderResults.clear()
+        _lyricsProviderStates.value =
+            LyricsSource.entries.associateWith { LyricsProviderState.NOT_FETCHED }
         _lyrics.value = null
         _lyricsSource.value = null
         lyricsJob?.cancel()
@@ -324,11 +365,108 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val found = LyricsRepository.lyrics(
                 videoId, title, artist, durationMs, album, sources,
                 AppSettings.lyricsSourceOrder.value, AppSettings.prioritizeSyllableSync.value,
+                onSourceStarted = { source -> providerStarted(generation, source) },
+                onSourceResult = { source, result ->
+                    providerFinished(generation, source, result)
+                },
+                onSourceCancelled = { source -> providerCancelled(generation, source) },
             )
-            _lyrics.value = found?.lines
-            _lyricsSource.value = found?.source
+            val selected = selectedLyricsSource?.let(lyricsProviderResults::get) ?: found
+            _lyrics.value = selected?.lines
+            _lyricsSource.value = selected?.source
             _lyricsChecked.value = true
         }
+    }
+
+    /**
+     * Selects a provider from the player drawer. Completed hits are applied
+     * from memory; misses are inert; only an untouched provider goes online.
+     */
+    fun selectLyricsProvider(source: LyricsSource) {
+        val request = currentLyricsRequest ?: return
+        when (_lyricsProviderStates.value[source]) {
+            LyricsProviderState.FOUND -> {
+                selectedLyricsSource = source
+                lyricsProviderResults[source]?.let(::showLyricsResult)
+            }
+            LyricsProviderState.FETCHING -> {
+                // Apply it as soon as the already-running automatic attempt completes.
+                selectedLyricsSource = source
+            }
+            LyricsProviderState.NOT_FETCHED, null -> {
+                selectedLyricsSource = source
+                fetchLyricsProvider(request, lyricsGeneration, source)
+            }
+            LyricsProviderState.NOT_FOUND -> Unit
+        }
+    }
+
+    private fun fetchLyricsProvider(
+        request: LyricsRequest,
+        generation: Long,
+        source: LyricsSource,
+    ) {
+        if (manualLyricsJobs[source]?.isActive == true) return
+        manualLyricsJobs[source] = viewModelScope.launch {
+            LyricsRepository.lyrics(
+                videoId = request.videoId,
+                title = request.title,
+                artist = request.artist,
+                durationMs = request.durationMs,
+                album = request.album,
+                sources = setOf(source),
+                order = listOf(source),
+                prioritizeSyllableSync = false,
+                onSourceStarted = { provider -> providerStarted(generation, provider) },
+                onSourceResult = { provider, result ->
+                    providerFinished(generation, provider, result)
+                },
+                onSourceCancelled = { provider -> providerCancelled(generation, provider) },
+            )
+        }
+    }
+
+    private fun providerStarted(generation: Long, source: LyricsSource) {
+        if (generation != lyricsGeneration) return
+        _lyricsProviderStates.update { it + (source to LyricsProviderState.FETCHING) }
+    }
+
+    private fun providerFinished(
+        generation: Long,
+        source: LyricsSource,
+        result: LyricsRepository.Result?,
+    ) {
+        if (generation != lyricsGeneration) return
+        if (result == null) {
+            _lyricsProviderStates.update { it + (source to LyricsProviderState.NOT_FOUND) }
+            return
+        }
+        lyricsProviderResults[source] = result
+        _lyricsProviderStates.update { it + (source to LyricsProviderState.FOUND) }
+        if (selectedLyricsSource == source) showLyricsResult(result)
+    }
+
+    private fun providerCancelled(generation: Long, source: LyricsSource) {
+        if (generation != lyricsGeneration) return
+        _lyricsProviderStates.update { states ->
+            if (states[source] == LyricsProviderState.FETCHING) {
+                states + (source to LyricsProviderState.NOT_FETCHED)
+            } else {
+                states
+            }
+        }
+        // A tap may have selected a provider while the priority race was still
+        // using it. If that race then cancels the loser, honour the tap with a
+        // dedicated request instead of leaving the row stuck at "Fetching".
+        if (selectedLyricsSource == source) {
+            currentLyricsRequest?.let { fetchLyricsProvider(it, generation, source) }
+        }
+    }
+
+    private fun showLyricsResult(result: LyricsRepository.Result) {
+        _lyrics.value = result.lines
+        _lyricsSource.value = result.source
+        _lyricsChecked.value = true
     }
 
     private val _account = MutableStateFlow<Account?>(null)

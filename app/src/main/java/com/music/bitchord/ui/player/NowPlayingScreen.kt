@@ -199,6 +199,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -217,6 +218,7 @@ import com.music.bitchord.ui.theme.StatusBarIcons
 import com.music.bitchord.ui.theme.rememberArtworkTopBandLuminance
 import com.music.bitchord.ui.theme.topBandScrimAlpha
 import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.LyricsProviderState
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.AudioPipelineDialog
@@ -971,6 +973,44 @@ private data class TranslationParticle(
     val delay: Float,
 )
 
+/** Source/status caption with the provider chooser kept visually inline. */
+@Composable
+private fun LyricsStatusWithChange(
+    status: String,
+    onChange: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberHaptics()
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = status,
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White.copy(alpha = 0.55f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.change_lyrics_provider),
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White.copy(alpha = 0.72f),
+            textDecoration = TextDecoration.Underline,
+            maxLines = 1,
+            modifier = Modifier.clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                haptics.play(Haptic.Select)
+                onChange()
+            },
+        )
+    }
+}
+
 /**
  * Apple Music's Now Playing, closely: artwork that shrinks when paused, a
  * hairline scrubber with elapsed / remaining either side, oversized transport
@@ -1059,6 +1099,8 @@ fun NowPlayingScreen(
     onListenTogether: () -> Unit,
     lyrics: List<LyricLine>?,
     lyricsSource: LyricsSource?,
+    lyricsProviderStates: Map<LyricsSource, LyricsProviderState>,
+    onSelectLyricsProvider: (LyricsSource) -> Unit,
     lyricsUnavailable: Boolean,
     lyricsOffsetOpen: Boolean,
     onDismissLyricsOffset: () -> Unit,
@@ -1104,6 +1146,7 @@ fun NowPlayingScreen(
     val playerHaze = remember { HazeState() }
     var showAudioPipeline by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(false) }
+    var showLyricsProviders by remember { mutableStateOf(false) }
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
     val openAudioOutput = rememberOutputPicker { showAudioOutput = true }
     // Listening in a party whose host has taken the controls: the transport
@@ -1573,6 +1616,19 @@ fun NowPlayingScreen(
         DisposableEffect(view, showAudioOutput) {
             val callback = if (showAudioOutput) {
                 OverlayBack.register(view) { showAudioOutput = false }
+            } else {
+                null
+            }
+            onDispose { OverlayBack.unregister(view, callback) }
+        }
+    }
+
+    BackHandler(enabled = showLyricsProviders) { showLyricsProviders = false }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val view = LocalView.current
+        DisposableEffect(view, showLyricsProviders) {
+            val callback = if (showLyricsProviders) {
+                OverlayBack.register(view) { showLyricsProviders = false }
             } else {
                 null
             }
@@ -2266,12 +2322,9 @@ fun NowPlayingScreen(
         // caption about lyrics nobody is looking at.
         val wideStatusContent: @Composable (Modifier) -> Unit = { statusModifier ->
             if (lyricsOpen) {
-                Text(
-                    text = wideLyricsStatus,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.55f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                LyricsStatusWithChange(
+                    status = wideLyricsStatus,
+                    onChange = { showLyricsProviders = true },
                     modifier = statusModifier.padding(vertical = 4.dp),
                 )
             } else if (syncedLyricsEnabled) {
@@ -2383,6 +2436,15 @@ fun NowPlayingScreen(
                 accountName = accountName,
                 onDismiss = { showAudioOutput = false },
                 onOpenPipeline = { showAudioPipeline = true },
+            )
+        }
+        if (showLyricsProviders) {
+            LyricsProviderSheet(
+                hazeState = playerHaze,
+                currentSource = lyricsSource,
+                states = lyricsProviderStates,
+                onSelect = onSelectLyricsProvider,
+                onDismiss = { showLyricsProviders = false },
             )
         }
         if (showAudioPipeline) {
@@ -2610,7 +2672,7 @@ fun NowPlayingScreen(
         // A subview replaces that hero with an artwork-derived mesh, so it gets
         // only a modest floor rather than an opaque status-bar surface.
         val playerSubviewOpen = lyricsOpen || queueOpen || lyricsOffsetOpen ||
-            showAudioPipeline || showAudioOutput
+            showAudioPipeline || showAudioOutput || showLyricsProviders
         val topGradientAlpha = if (playerSubviewOpen) {
             maxOf(artworkStatusScrimAlpha, SUBVIEW_STATUS_SCRIM_MIN_ALPHA)
         } else {
@@ -2925,6 +2987,13 @@ fun NowPlayingScreen(
                                 }
                                 return@awaitEachGesture
                             }
+                            // A down already taken means the sheet grabbed it
+                            // while "settling" after a scroll (see
+                            // guardSheetFromContentTouches), and the guard is
+                            // about to hand it back to the list under the
+                            // finger. Holding it here would strand that list
+                            // mid-handback, and the list would never scroll.
+                            if (down.isConsumed) return@awaitEachGesture
                             // What detectVerticalDragGestures does, minus the
                             // callbacks: cross the slop, then hold the gesture
                             // to the end so nothing downstream of the first
@@ -3783,8 +3852,8 @@ fun NowPlayingScreen(
                 )
             }
             if (lyricsOpen) {
-                Text(
-                    text = when {
+                LyricsStatusWithChange(
+                    status = when {
                         translationState is LyricsTranslationUiState.Loading ->
                             stringResource(R.string.translating_lyrics_to, translationLanguageName)
                         romanizationState is LyricsTranslationUiState.Loading ->
@@ -3802,10 +3871,7 @@ fun NowPlayingScreen(
                         lyrics.isNullOrEmpty() -> lyricsLoadingText
                         else -> stringResource(R.string.lyrics_saved_with_download)
                     },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.55f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    onChange = { showLyricsProviders = true },
                     modifier = Modifier
                         .fillMaxWidth()
                         .offset(y = 6.dp)
@@ -4132,6 +4198,15 @@ fun NowPlayingScreen(
                 accountName = accountName,
                 onDismiss = { showAudioOutput = false },
                 onOpenPipeline = { showAudioPipeline = true },
+            )
+        }
+        if (showLyricsProviders) {
+            LyricsProviderSheet(
+                hazeState = playerHaze,
+                currentSource = lyricsSource,
+                states = lyricsProviderStates,
+                onSelect = onSelectLyricsProvider,
+                onDismiss = { showLyricsProviders = false },
             )
         }
         if (showAudioPipeline) {

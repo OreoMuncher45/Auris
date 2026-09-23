@@ -418,6 +418,13 @@
     <string name="instrumental">Instrumental</string>
     <string name="pause">Pause</string>
     <string name="lyrics_by">Lyrics by %1$s</string>
+    <string name="change_lyrics_provider">Change</string>
+    <string name="choose_lyrics_provider">Choose lyrics provider</string>
+    <string name="lyrics_provider_current">Current provider</string>
+    <string name="lyrics_provider_found">Lyrics found · Tap to use</string>
+    <string name="lyrics_provider_not_found">Lyrics not found</string>
+    <string name="lyrics_provider_fetching">Fetching lyrics…</string>
+    <string name="lyrics_provider_not_fetched">Tap to fetch</string>
     <string name="no_lyrics_found">No lyrics found</string>
     <string name="lyrics_saved_with_download">Lyrics saved with this download</string>
     <string name="shuffle_on">Shuffle on</string>
