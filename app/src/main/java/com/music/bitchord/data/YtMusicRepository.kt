@@ -578,11 +578,34 @@ object YtMusicRepository {
      */
     suspend fun browseSongs(browseId: String): Result<SongPage> = call("browse:$browseId") {
         val response = Innertube.browse(browseId)
-        val page = pageOf(response)
+        val page = if (browseId.startsWith("MPREb")) {
+            albumPageOf(response)
+        } else {
+            pageOf(response)
+        }
         // Only a playlist has an owner in the sense that matters — see
         // parsePlaylistOwned — and only its own first response can be asked.
         if (!browseId.startsWith("VL")) page
         else page.copy(owned = InnertubeParser.parsePlaylistOwned(response))
+    }
+
+    /**
+     * Joins an album's metadata page to its authoritative track listing.
+     *
+     * Catalogue album pages sometimes carry only a handful of preview rows.
+     * Their header play action names a backing playlist containing every track,
+     * so read songs and pagination from there while retaining the richer album
+     * header and controls from the original response.
+     */
+    private suspend fun albumPageOf(albumResponse: JsonObject): SongPage {
+        val metadata = pageOf(albumResponse)
+        val playlistId = InnertubeParser.parseAlbumPlaylistId(albumResponse) ?: return metadata
+        val tracks = pageOf(Innertube.browse("VL${playlistId.removePrefix("VL")}"))
+        return tracks.copy(
+            library = metadata.library,
+            header = metadata.header,
+            description = metadata.description,
+        )
     }
 
     /** The page [SongPage.continuation] points at. */
@@ -656,6 +679,11 @@ object YtMusicRepository {
     private suspend fun songsPaged(browseId: String): List<Song> {
         val out = LinkedHashMap<String, Song>()
         var response = Innertube.browse(browseId)
+        if (browseId.startsWith("MPREb")) {
+            InnertubeParser.parseAlbumPlaylistId(response)?.let { playlistId ->
+                response = Innertube.browse("VL${playlistId.removePrefix("VL")}")
+            }
+        }
         var page = 1
         while (true) {
             // Same shelf-scoping as pageOf: a playlist (Liked Music and the

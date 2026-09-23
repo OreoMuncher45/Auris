@@ -445,6 +445,58 @@ class SearchPagingTest {
     }
 
     @Test
+    fun `album backing playlist comes from the header instead of recommendation shelves`() {
+        val json = """
+        {
+          "contents": {
+            "musicResponsiveHeaderRenderer": {
+              "title": { "runs": [{ "text": "Full album" }] },
+              "buttons": [{
+                "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                    "watchPlaylistEndpoint": { "playlistId": "OLAK5uy_album" }
+                  }
+                }
+              }]
+            },
+            "musicCarouselShelfRenderer": {
+              "contents": [{
+                "musicPlayButtonRenderer": {
+                  "playNavigationEndpoint": {
+                    "watchPlaylistEndpoint": { "playlistId": "OLAK5uy_recommendation" }
+                  }
+                }
+              }]
+            }
+          }
+        }
+        """.trimIndent()
+
+        assertEquals(
+            "OLAK5uy_album",
+            InnertubeParser.parseAlbumPlaylistId(Json.parseToJsonElement(json).jsonObject),
+        )
+    }
+
+    @Test
+    fun `album backing playlist falls back to its canonical url`() {
+        val json = """
+        {
+          "microformat": {
+            "microformatDataRenderer": {
+              "urlCanonical": "https://music.youtube.com/playlist?list=OLAK5uy_complete&feature=share"
+            }
+          }
+        }
+        """.trimIndent()
+
+        assertEquals(
+            "OLAK5uy_complete",
+            InnertubeParser.parseAlbumPlaylistId(Json.parseToJsonElement(json).jsonObject),
+        )
+    }
+
+    @Test
     fun `library item page keeps saved cards and next continuation`() {
         val json = """
         {

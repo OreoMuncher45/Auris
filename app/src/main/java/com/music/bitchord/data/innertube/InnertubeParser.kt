@@ -938,6 +938,45 @@ object InnertubeParser {
     }
 
     /**
+     * The playlist that contains a catalogue album's complete track listing.
+     *
+     * Album browse pages can expose only a short preview even though their
+     * header reports the release's full song count. The play action points at
+     * the playlist that backs the release, which is the authoritative listing.
+     * Keep the search scoped to the page header: recommendation shelves contain
+     * play actions for other releases too.
+     */
+    fun parseAlbumPlaylistId(root: JsonElement): String? {
+        val header = HEADER_RENDERERS.firstNotNullOfOrNull {
+            collectRenderers(root, it).firstOrNull()
+        }
+        if (header != null) {
+            collectRenderers(header, "musicPlayButtonRenderer")
+                .firstNotNullOfOrNull { it.playlistIdFromPlayAction() }
+                ?.let { return it }
+            collectRenderers(header, "buttonRenderer")
+                .firstNotNullOfOrNull { it.playlistIdFromPlayAction() }
+                ?.let { return it }
+        }
+
+        // Some album layouts omit the header play button but repeat the same
+        // playlist in the canonical album URL.
+        val canonical = root.o("microformat").o("microformatDataRenderer").s("urlCanonical")
+            ?: return null
+        return canonical.substringAfter("list=", missingDelimiterValue = "")
+            .substringBefore('&')
+            .takeIf { it.isNotBlank() }
+    }
+
+    private fun JsonElement.playlistIdFromPlayAction(): String? {
+        val endpoint = o("playNavigationEndpoint")
+            ?: o("navigationEndpoint")
+            ?: this
+        return endpoint.o("watchPlaylistEndpoint").s("playlistId")
+            ?: endpoint.o("watchEndpoint").s("playlistId")
+    }
+
+    /**
      * The editorial blurb YouTube Music writes for a release or an artist —
      * "About the album" / "About the artist" on the web player.
      *
