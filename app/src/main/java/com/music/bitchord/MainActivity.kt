@@ -1005,7 +1005,8 @@ private fun BitChordApp(
         scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
-            val currentTimeline = (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
+            val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
+                ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
             val interleaved = QueueCoordinator.buildContextQueue(
                 currentTimeline = currentTimeline,
@@ -1064,7 +1065,8 @@ private fun BitChordApp(
         scope.launch {
             if (refusedByHost()) return@launch
             val c = controller ?: return@launch
-            val currentTimeline = (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
+            val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
+                ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
             val oneOffQueue = QueueCoordinator.buildOneOffQueue(
                 currentTimeline = currentTimeline,
@@ -1171,7 +1173,8 @@ private fun BitChordApp(
                     }
                 }
                 val current = it.currentMediaItem?.toSong()
-                val timeline = (0 until it.mediaItemCount).map { idx -> it.getMediaItemAt(idx).toSong() }
+                val timeline = player.queue.takeIf { q -> q.size == it.mediaItemCount }
+                    ?: (0 until it.mediaItemCount).map { idx -> it.getMediaItemAt(idx).toSong() }
                 val at = QueueCoordinator.findUserQueueInsertionIndex(
                     timeline = timeline,
                     currentIndex = it.currentMediaItemIndex,
@@ -1200,7 +1203,8 @@ private fun BitChordApp(
                     }
                 }
                 val current = it.currentMediaItem?.toSong()
-                val timeline = (0 until it.mediaItemCount).map { idx -> it.getMediaItemAt(idx).toSong() }
+                val timeline = player.queue.takeIf { q -> q.size == it.mediaItemCount }
+                    ?: (0 until it.mediaItemCount).map { idx -> it.getMediaItemAt(idx).toSong() }
                 val at = QueueCoordinator.findUserQueueInsertionIndex(
                     timeline = timeline,
                     currentIndex = it.currentMediaItemIndex,
@@ -1317,7 +1321,8 @@ private fun BitChordApp(
                     } else {
                         songs
                     }
-                    val timeline = (0 until c.mediaItemCount).map { idx -> c.getMediaItemAt(idx).toSong() }
+                    val timeline = player.queue.takeIf { q -> q.size == c.mediaItemCount }
+                        ?: (0 until c.mediaItemCount).map { idx -> c.getMediaItemAt(idx).toSong() }
                     val at = QueueCoordinator.findUserQueueInsertionIndex(
                         timeline = timeline,
                         currentIndex = c.currentMediaItemIndex,
@@ -1931,7 +1936,7 @@ private fun BitChordApp(
             },
             onJumpTo = { index ->
                 controller?.let { c ->
-                    QueueCoordinator.jumpToQueueItem(c, index)
+                    QueueCoordinator.jumpToQueueItem(c, index, player.queue)
                 }
             },
             onRemoveFromQueue = { controller?.removeMediaItem(it) },

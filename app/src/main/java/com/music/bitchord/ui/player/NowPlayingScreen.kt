@@ -6804,39 +6804,22 @@ private fun InlineQueue(
         } else null
     }
 
-    val userQueueTracks = remember(queue, currentIndex) {
-        if (currentIndex !in queue.indices) emptyList()
-        else {
-            (currentIndex + 1 until queue.size)
-                .filter { queue[it].queueTier == QueueTier.USER_QUEUE }
-                .map { idx ->
-                    val s = queue[idx]
-                    QueueRow.Track(idx, s, "user_${s.queueEntryId ?: "${s.videoId}_$idx"}")
+    val (userQueueTracks, contextTracks, autoplayTracks) = remember(queue, currentIndex) {
+        if (currentIndex !in queue.indices) {
+            Triple(emptyList<QueueRow.Track>(), emptyList<QueueRow.Track>(), emptyList<QueueRow.Track>())
+        } else {
+            val user = ArrayList<QueueRow.Track>()
+            val context = ArrayList<QueueRow.Track>()
+            val autoplay = ArrayList<QueueRow.Track>()
+            for (idx in (currentIndex + 1 until queue.size)) {
+                val s = queue[idx]
+                when (s.queueTier) {
+                    QueueTier.USER_QUEUE -> user.add(QueueRow.Track(idx, s, "user_${s.queueEntryId ?: "${s.videoId}_$idx"}"))
+                    QueueTier.CONTEXT -> context.add(QueueRow.Track(idx, s, "context_${s.queueEntryId ?: "${s.videoId}_$idx"}"))
+                    QueueTier.AUTOPLAY -> autoplay.add(QueueRow.Track(idx, s, "autoplay_${s.queueEntryId ?: "${s.videoId}_$idx"}"))
                 }
-        }
-    }
-
-    val contextTracks = remember(queue, currentIndex) {
-        if (currentIndex !in queue.indices) emptyList()
-        else {
-            (currentIndex + 1 until queue.size)
-                .filter { queue[it].queueTier == QueueTier.CONTEXT }
-                .map { idx ->
-                    val s = queue[idx]
-                    QueueRow.Track(idx, s, "context_${s.queueEntryId ?: "${s.videoId}_$idx"}")
-                }
-        }
-    }
-
-    val autoplayTracks = remember(queue, currentIndex) {
-        if (currentIndex !in queue.indices) emptyList()
-        else {
-            (currentIndex + 1 until queue.size)
-                .filter { queue[it].queueTier == QueueTier.AUTOPLAY }
-                .map { idx ->
-                    val s = queue[idx]
-                    QueueRow.Track(idx, s, "autoplay_${s.queueEntryId ?: "${s.videoId}_$idx"}")
-                }
+            }
+            Triple(user, context, autoplay)
         }
     }
 
@@ -6904,11 +6887,13 @@ private fun InlineQueue(
     LaunchedEffect(currentIndex) {
         val holding = userQueueDrag.draggedKey != null || contextDrag.draggedKey != null || autoplayDrag.draggedKey != null
         if (!holding && nowPlayingTrack != null) {
-            if (hasScrolledOnce) {
-                listState.animateScrollToItem(0)
-            } else {
-                listState.scrollToItem(0)
-                hasScrolledOnce = true
+            if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
+                if (hasScrolledOnce) {
+                    listState.animateScrollToItem(0)
+                } else {
+                    listState.scrollToItem(0)
+                    hasScrolledOnce = true
+                }
             }
         }
     }
@@ -6954,12 +6939,7 @@ private fun InlineQueue(
                         color = Color.White.copy(alpha = 0.75f),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 12.dp, bottom = 6.dp)
-                            .animateItem(
-                                fadeInSpec = null,
-                                fadeOutSpec = null,
-                                placementSpec = QUEUE_ROW_MOTION,
-                            ),
+                            .padding(top = 12.dp, bottom = 6.dp),
                     )
                 }
                 item(key = nowPlayingTrack.entryId) {

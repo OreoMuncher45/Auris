@@ -236,7 +236,11 @@ object QueueCoordinator {
      * Executes a semantic queue jump on [player], preserving history up to [Player.getCurrentMediaItemIndex]
      * and avoiding unintended reshuffling.
      */
-    fun jumpToQueueItem(player: Player, targetIndex: Int) {
+    fun jumpToQueueItem(
+        player: Player,
+        targetIndex: Int,
+        cachedTimeline: List<Song>? = null,
+    ) {
         val currentIndex = player.currentMediaItemIndex
         val count = player.mediaItemCount
         if (targetIndex !in 0 until count) return
@@ -248,7 +252,8 @@ object QueueCoordinator {
             return
         }
 
-        val currentTimeline = (0 until count).map { player.getMediaItemAt(it).toSong() }
+        val currentTimeline = cachedTimeline?.takeIf { it.size == count }
+            ?: (0 until count).map { player.getMediaItemAt(it).toSong() }
         val newUpcoming = buildJumpQueue(currentTimeline, currentIndex, targetIndex) ?: return
 
         // Retain played history up to and including currentIndex so backward navigation works
@@ -258,7 +263,9 @@ object QueueCoordinator {
         val newPlaylist = history + upcomingMediaItems
         val newTargetIndex = history.size // First track of newUpcoming
         player.setMediaItems(newPlaylist, newTargetIndex, 0L)
-        player.prepare()
+        if (runCatching { player.playbackState }.getOrNull() == Player.STATE_IDLE) {
+            player.prepare()
+        }
         player.play()
     }
 }
