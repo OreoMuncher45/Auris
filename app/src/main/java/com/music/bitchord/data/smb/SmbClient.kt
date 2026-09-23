@@ -91,6 +91,37 @@ object SmbClient {
             )
         }
 
+    /**
+     * Reads a whole small file — a cover, never audio. Capped so a
+     * mislabeled video file can't balloon the heap on a list scroll.
+     */
+    fun readFully(streamUrl: String, maxBytes: Long = 16 * 1024 * 1024): ByteArray {
+        val path = SmbConfig.relativePath(streamUrl, SmbAuth.share)
+            ?: throw SmbConnection.SmbException("Not an SMB file: $streamUrl")
+        val file = openFile(path)
+        try {
+            val length = runCatching { file.length }.getOrNull() ?: -1
+            val out = java.io.ByteArrayOutputStream(
+                length.takeIf { it > 0 }?.coerceAtMost(maxBytes)?.toInt() ?: 8192,
+            )
+            val chunk = ByteArray(64 * 1024)
+            var offset = 0L
+            // Bounded by the known length: some servers answer a read past
+            // EOF with bytes no parser accepts instead of an empty one, so
+            // the end of the file is taken from the entry, never probed for.
+            while (length < 0 || offset < length) {
+                val read = file.read(chunk, offset, 0, chunk.size)
+                if (read <= 0) break
+                offset += read
+                if (offset > maxBytes) throw SmbConnection.SmbException("File too large for a cover")
+                out.write(chunk, 0, read)
+            }
+            return out.toByteArray()
+        } finally {
+            runCatching { file.close() }
+        }
+    }
+
     /** Display path back to the wire form. */
     fun smbPath(displayPath: String): String =
         displayPath.replace('/', '\\').trim('\\').ifBlank { "" }
