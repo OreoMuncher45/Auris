@@ -245,6 +245,8 @@
     <string name="skip_silence_float_subtitle">Unavailable on 32-bit float output</string>
     <string name="prefer_music_only">Prefer music-only version</string>
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">Smart audio alignment</string>
+    <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
@@ -779,6 +781,11 @@
     <string name="analysis_refining">analysed, refining…</string>
     <string name="analysis_in_progress">analysing…</string>
     <string name="waiting">waiting</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">not fetched</string>
+    <string name="version_cut_fetching">fetching</string>
+    <string name="version_cut_measuring">analyzing</string>
+    <string name="version_cut_aligned">aligned</string>
     <string name="automix_enabled_subtitle">Times and blends every transition from the tracks themselves. Turn it off if the phone gets hot or playback stutters.</string>
     <string name="automix_disabled_subtitle">Times and blends transitions automatically, without a slider. Performance may vary on slower devices.</string>
     <string name="no_lyrics_sources_enabled">None. Lyrics will not be fetched.</string>
@@ -1006,7 +1013,7 @@
 
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
 
-    <string name="advanced_options">Advanced options</string>
+    <string name="advanced_options">Advanced &amp; experimental options</string>
 
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
 

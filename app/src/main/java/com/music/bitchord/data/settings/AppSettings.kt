@@ -437,6 +437,9 @@ object AppSettings {
      */
     val preferMusicOnly = MutableStateFlow(false)
 
+    /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
+    val smartVersionAlignment = MutableStateFlow(true)
+
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
@@ -696,6 +699,16 @@ object AppSettings {
     val smartMixInProgress = MutableStateFlow(false)
 
     /**
+     * True while a version switch is fetching and analysing the other cut
+     * before playback actually moves. Drains into the loading bar drawn along
+     * the scrubber itself — `ThinSlider.loading` — so the wait reads as work
+     * in progress rather than as a player frozen on a version that is about to
+     * change, and lights the toggle button's spinner through the half of the
+     * switch that has nothing else showing.
+     */
+    val versionAlignmentInProgress = MutableStateFlow(false)
+
+    /**
      * How much of the *upcoming* transition has been analysed, for stats for
      * nerds. Published by the crossfade controller, which is the only thing
      * that knows which two tracks the next transition is between.
@@ -813,6 +826,7 @@ object AppSettings {
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
@@ -1173,6 +1187,11 @@ object AppSettings {
     fun setPreferMusicOnly(value: Boolean) {
         preferMusicOnly.value = value
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setSmartVersionAlignment(value: Boolean) {
+        smartVersionAlignment.value = value
+        prefs.edit().putBoolean(KEY_SMART_VERSION_ALIGNMENT, value).apply()
     }
 
     fun setReduceDynamicBlur(value: Boolean) {
@@ -1794,6 +1813,7 @@ object AppSettings {
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
