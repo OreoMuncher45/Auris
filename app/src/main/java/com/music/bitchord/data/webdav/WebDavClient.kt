@@ -62,36 +62,60 @@ object WebDavClient {
             }
         }
 
-    suspend fun listAudioFiles(
+    /**
+     * Everything a library view needs: the audio plus the pictures filed
+     * beside it. Covers travel as `cover.jpg`/`folder.jpg` next to the music
+     * on every conventional server layout, and the listing that finds the
+     * tracks already walks past them — a second pass would pay the whole
+     * traversal again for files already in hand.
+     */
+    data class Listing(val audio: List<Entry>, val images: List<Entry>)
+
+    suspend fun listLibrary(
         baseUrl: String,
         username: String,
         password: String,
         maxFiles: Int = 10_000,
-    ): Result<List<Entry>> = withContext(Dispatchers.IO) {
+    ): Result<Listing> = withContext(Dispatchers.IO) {
         runCatching {
             val root = WebDavConfig.normalizeUrl(baseUrl)
             require(WebDavConfig.isConfigured(root)) { "WebDAV is not configured" }
-            val found = LinkedHashMap<String, Entry>()
+            val foundAudio = LinkedHashMap<String, Entry>()
+            val foundImages = LinkedHashMap<String, Entry>()
             val dirs = ArrayDeque<String>()
             dirs.add(root)
             val visited = HashSet<String>()
-            while (dirs.isNotEmpty() && found.size < maxFiles) {
+            while (dirs.isNotEmpty() && foundAudio.size < maxFiles) {
                 val dir = dirs.removeFirst()
                 if (!visited.add(dir.lowercase())) continue
                 val entries = propfind(dir, username, password).getOrThrow()
                 for (entry in entries) {
                     if (entry.isCollection) {
                         if (!visited.contains(entry.url.lowercase())) dirs.add(entry.url)
-                    } else if (WebDavConfig.isAudioFile(entry.displayName.ifBlank { entry.url })) {
-                        found.putIfAbsent(entry.url, entry)
+                    } else {
+                        val name = entry.displayName.ifBlank { entry.url }
+                        when {
+                            WebDavConfig.isAudioFile(name) -> foundAudio.putIfAbsent(entry.url, entry)
+                            isImageFile(name) -> foundImages.putIfAbsent(entry.url, entry)
+                        }
                     }
                 }
             }
-            found.values.toList()
+            Listing(foundAudio.values.toList(), foundImages.values.toList())
         }
     }
 
+    suspend fun listAudioFiles(
+        baseUrl: String,
+        username: String,
+        password: String,
+        maxFiles: Int = 10_000,
+    ): Result<List<Entry>> = listLibrary(baseUrl, username, password, maxFiles).map { it.audio }
 
+    fun isImageFile(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp"
+    }
 
     private fun propfindRequest(
         url: String,

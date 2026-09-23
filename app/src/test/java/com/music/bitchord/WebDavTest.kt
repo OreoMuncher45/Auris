@@ -1,9 +1,14 @@
 package com.music.bitchord
 
+import coil3.network.NetworkHeaders
 import com.music.bitchord.data.webdav.WebDavAuth
 import com.music.bitchord.data.webdav.WebDavClient
+import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.webdav.WebDavConfig
 import com.music.bitchord.data.webdav.WebDavRepository
+import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -122,6 +127,37 @@ class WebDavTest {
     }
 
     @Test
+    fun coilAuth_attachesCredentialOnlyForTheServer() {
+        WebDavAuth.update("https://cloud.example.com/music", "user", "pass")
+        try {
+            assertEquals(
+                "Basic dXNlcjpwYXNz",
+                WebDavCoilAuth.authHeaderFor("https://cloud.example.com/Music/Album/cover.jpg"),
+            )
+            // Anything else passes through untouched.
+            assertNull(WebDavCoilAuth.authHeaderFor("https://other.example.com/cover.jpg"))
+            assertNull(WebDavCoilAuth.authHeaderFor("not a url"))
+            assertNull(WebDavCoilAuth.authHeaderFor(null))
+            assertNull(WebDavCoilAuth.authHeaderFor(42))
+            // A request carrying its own credential is never overridden.
+            assertNull(
+                WebDavCoilAuth.authHeaderFor(
+                    "https://cloud.example.com/Music/Album/cover.jpg",
+                    NetworkHeaders.Builder().set("Authorization", "Bearer x").build(),
+                ),
+            )
+        } finally {
+            WebDavAuth.update("", "", "")
+        }
+    }
+
+    @Test
+    fun coilAuth_staysQuietWhenUnconfigured() {
+        WebDavAuth.update("", "", "")
+        assertNull(WebDavCoilAuth.authHeaderFor("https://cloud.example.com/Music/Album/cover.jpg"))
+    }
+
+    @Test
     fun authorizesOnlyConfiguredHost() {
         WebDavAuth.update("https://cloud.example.com/music", "user", "pass")
         assertTrue(WebDavAuth.shouldAuthorize("cloud.example.com"))
@@ -138,5 +174,98 @@ class WebDavTest {
             WebDavRepository.parentFolderName("https://cloud.example.com/Music/Artist/Album/song.mp3"),
         )
     }
+
+    @Test
+    fun detectsImageFiles() {
+        assertTrue(WebDavClient.isImageFile("cover.jpg"))
+        assertTrue(WebDavClient.isImageFile("Folder.PNG"))
+        assertTrue(WebDavClient.isImageFile("art.webp"))
+        assertFalse(WebDavClient.isImageFile("song.mp3"))
+        assertFalse(WebDavClient.isImageFile("notes.txt"))
+    }
+
+    @Test
+    fun artworkFor_prefersConventionalCovers() {
+        fun img(name: String) = WebDavClient.Entry(
+            url = "https://cloud.example.com/Music/Album/$name",
+            displayName = name,
+            isCollection = false,
+            contentType = "image/jpeg",
+        )
+        val siblings = listOf(img("IMG_1234.jpg"), img("cover.jpg"), img("back.jpg"))
+        assertEquals(
+            "https://cloud.example.com/Music/Album/cover.jpg",
+            WebDavRepository.artworkFor("https://cloud.example.com/Music/Album/song.mp3", siblings),
+        )
+    }
+
+    @Test
+    fun artworkFor_fallsBackToFirstAlphabetical() {
+        fun img(name: String) = WebDavClient.Entry(
+            url = "https://cloud.example.com/Music/Album/$name",
+            displayName = name,
+            isCollection = false,
+            contentType = "image/jpeg",
+        )
+        assertEquals(
+            "https://cloud.example.com/Music/Album/a.jpg",
+            WebDavRepository.artworkFor(
+                "https://cloud.example.com/Music/Album/song.mp3",
+                listOf(img("z.jpg"), img("a.jpg")),
+            ),
+        )
+        assertNull(
+            WebDavRepository.artworkFor("https://cloud.example.com/Music/Album/song.mp3", emptyList()),
+        )
+    }
+
+    @Test
+    fun `listLibrary collects audio and sibling images`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            val rootXml = multistatus(
+                collection("Music"),
+                file("song.mp3", "audio/mpeg"),
+                file("cover.jpg", "image/jpeg"),
+                collection("Music/Live"),
+            )
+            val liveXml = multistatus(file("Music/Live/take.flac", "audio/flac"))
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                    MockResponse().setResponseCode(207).setBody(
+                        if (request.path?.contains("Live") == true) liveXml else rootXml,
+                    )
+            }
+            val listing = WebDavClient.listLibrary(server.url("/Music").toString(), "", "").getOrThrow()
+            assertEquals(2, listing.audio.size)
+            assertEquals(1, listing.images.size)
+            assertEquals("cover.jpg", listing.images.single().displayName)
+        }
+    }
+
+    private fun multistatus(vararg rows: String): String = """<?xml version="1.0" encoding="utf-8"?>
+<d:multistatus xmlns:d="DAV:">
+${rows.joinToString("\n")}
+</d:multistatus>
+""".trimIndent()
+
+    private fun collection(href: String): String = """
+  <d:response>
+    <d:href>/$href/</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>${href.substringAfterLast('/')}</d:displayname>
+      <d:resourcetype><d:collection/></d:resourcetype>
+    </d:prop></d:propstat>
+  </d:response>""".trimIndent()
+
+    private fun file(href: String, mime: String): String = """
+  <d:response>
+    <d:href>/$href</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>${href.substringAfterLast('/')}</d:displayname>
+      <d:resourcetype/>
+      <d:getcontenttype>$mime</d:getcontenttype>
+    </d:prop></d:propstat>
+  </d:response>""".trimIndent()
 
 }

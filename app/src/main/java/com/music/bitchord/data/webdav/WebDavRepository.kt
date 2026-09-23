@@ -22,12 +22,15 @@ object WebDavRepository {
     suspend fun getSongs(): List<Song> = withContext(Dispatchers.IO) {
         val url = AppSettings.webdavUrl.value
         if (!WebDavConfig.isConfigured(url)) return@withContext emptyList()
-        val entries = WebDavClient.listAudioFiles(
+        val listing = WebDavClient.listLibrary(
             baseUrl = url,
             username = AppSettings.webdavUsername.value,
             password = AppSettings.webdavPassword.value,
-        ).getOrNull().orEmpty()
-        entries.map { it.toSong() }
+        ).getOrNull() ?: return@withContext emptyList()
+        val artByDir = listing.images.groupBy { dirKey(it.url) }
+        listing.audio.map { entry ->
+            entry.toSong(artworkFor(entry.url, artByDir[dirKey(entry.url)].orEmpty()))
+        }
     }
 
     suspend fun testConnection(
@@ -36,7 +39,7 @@ object WebDavRepository {
         password: String,
     ): Result<Unit> = WebDavClient.testConnection(url, username, password)
 
-    fun WebDavClient.Entry.toSong(): Song {
+    fun WebDavClient.Entry.toSong(artworkUrl: String? = null): Song {
         val album = parentFolderName(url)
         return WebDavConfig.songFor(url, albumName = album).copy(
             // Prefer the server's display name over the URL-decoded guess when
@@ -45,8 +48,22 @@ object WebDavRepository {
                 ?.let { splitTitle(it).second } ?: WebDavConfig.songFor(url).title,
             artist = splitTitle(displayName.substringBeforeLast('.')).first
                 ?: WebDavConfig.songFor(url, album).artist,
+            thumbnailUrl = artworkUrl,
         )
     }
+
+    /**
+     * The cover for a track: a picture filed beside it. Embedded pictures
+     * inside the audio itself are not read — that would be a ranged fetch per
+     * track at list time. See [RemoteArtwork][com.music.bitchord.data.remote.RemoteArtwork].
+     */
+    fun artworkFor(fileUrl: String, siblings: List<WebDavClient.Entry>): String? =
+        com.music.bitchord.data.remote.RemoteArtwork.pick(siblings.map { it.url })
+
+    private fun dirKey(fileUrl: String): String = runCatching {
+        val uri = java.net.URI(fileUrl)
+        "${uri.host.orEmpty()}${uri.path.orEmpty().trimEnd('/').substringBeforeLast('/', "")}"
+    }.getOrDefault(fileUrl.substringBeforeLast('/'))
 
     private fun splitTitle(base: String): Pair<String?, String?> {
         return if (" - " in base) {
