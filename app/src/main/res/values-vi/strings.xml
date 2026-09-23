@@ -1154,5 +1154,9 @@
     <string name="listen_together_status_custom_fallback">Máy chủ tùy chỉnh không thể kết nối · Đang dùng mặc định dự phòng (%1$d ms)</string>
     <string name="listen_together_status_all_offline">Cả máy chủ tùy chỉnh và máy chủ mặc định đều ngoại tuyến</string>
     <string name="listen_together_top_bar_fallback">Dự phòng · %1$s</string>
+    <string name="spotify_canvas_auto_hide">Tự động ẩn điều khiển trình phát</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Thu gọn nửa trình phát sau 5 giây khi Spotify Canvas đang phát</string>
+    <string name="prioritize_spotify_canvas">Ưu tiên Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">Thử Spotify trước Apple Music và các nhà cung cấp ảnh bìa động khác</string>
 
 </resources>
