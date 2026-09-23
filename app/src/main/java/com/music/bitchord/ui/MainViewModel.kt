@@ -1062,22 +1062,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             AppSettings.webdavUrl.drop(1).collect {
-                if (_detailStack.value.any { page ->
-                        page.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID
-                    }
-                ) {
-                    reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
-                }
+                reloadRemoteDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
             }
         }
         viewModelScope.launch {
             AppSettings.smbHost.drop(1).collect {
-                if (_detailStack.value.any { page ->
-                        page.browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID
-                    }
-                ) {
-                    reloadLocalDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID)
-                }
+                reloadRemoteDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID)
             }
         }
         viewModelScope.launch {
@@ -1905,6 +1895,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          */
     }
 
+    /**
+     * A remote file library behind a `local:` page: how to list it and what
+     * an empty listing says. One entry per library keeps the detail loader,
+     * the refresher and the queue collector from each repeating the switch —
+     * a third library adds one line here and nothing anywhere else.
+     */
+    private data class RemoteLibrary(
+        val emptyRes: Int,
+        val songs: suspend () -> List<Song>,
+    )
+
+    private fun remoteLibrary(browseId: String): RemoteLibrary? = when (browseId) {
+        com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID ->
+            RemoteLibrary(
+                R.string.webdav_empty,
+                com.music.bitchord.data.webdav.WebDavRepository::getSongs,
+            )
+        com.music.bitchord.data.smb.SmbConfig.BROWSE_ID ->
+            RemoteLibrary(
+                R.string.smb_empty,
+                com.music.bitchord.data.smb.SmbRepository::getSongs,
+            )
+        else -> null
+    }
+
+    /**
+     * Re-reads an open remote-library page after its server settings change.
+     * A no-op when the page isn't open — the next visit lists fresh anyway.
+     */
+    private fun reloadRemoteDetail(browseId: String) {
+        if (_detailStack.value.any { page -> page.browseId == browseId }) {
+            reloadLocalDetail(browseId)
+        }
+    }
+
     fun openDetail(
         browseId: String,
         title: String,
@@ -1950,7 +1975,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var monthlyListenerCount: String? = null
             /** Whether this artist is subscribed to — see [DetailPage.subscription]. */
             var subscription: SubscriptionState? = null
+            val remote = remoteLibrary(browseId)
             val state = when {
+                remote != null -> {
+                    val songs = remote.songs()
+                    if (songs.isEmpty()) UiState.Error(text(remote.emptyRes))
+                    else UiState.Success(songs)
+                }
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
                     if (songs.isEmpty()) UiState.Error(text(R.string.downloaded_playlist_empty))
@@ -1971,16 +2002,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
                         else UiState.Success(songs)
                     }
-                }
-                browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> {
-                    val songs = com.music.bitchord.data.webdav.WebDavRepository.getSongs()
-                    if (songs.isEmpty()) UiState.Error(text(R.string.webdav_empty))
-                    else UiState.Success(songs)
-                }
-                browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> {
-                    val songs = com.music.bitchord.data.smb.SmbRepository.getSongs()
-                    if (songs.isEmpty()) UiState.Error(text(R.string.smb_empty))
-                    else UiState.Success(songs)
                 }
                 resolved == BrowseType.ARTIST -> {
                     YtMusicRepository.artistPage(browseId).fold(
@@ -2068,7 +2089,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun reloadLocalDetail(browseId: String) {
         viewModelScope.launch {
             val context = getApplication<Application>()
+            val remote = remoteLibrary(browseId)
             val state: UiState<List<Song>> = when {
+                remote != null -> {
+                    val songs = remote.songs()
+                    if (songs.isEmpty()) UiState.Error(text(remote.emptyRes))
+                    else UiState.Success(songs)
+                }
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
                     if (songs.isEmpty()) UiState.Error(text(R.string.downloaded_playlist_empty))
@@ -2087,16 +2114,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
                         else UiState.Success(songs)
                     }
-                }
-                browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> {
-                    val songs = com.music.bitchord.data.webdav.WebDavRepository.getSongs()
-                    if (songs.isEmpty()) UiState.Error(text(R.string.webdav_empty))
-                    else UiState.Success(songs)
-                }
-                browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> {
-                    val songs = com.music.bitchord.data.smb.SmbRepository.getSongs()
-                    if (songs.isEmpty()) UiState.Error(text(R.string.smb_empty))
-                    else UiState.Success(songs)
                 }
                 else -> return@launch
             }
@@ -2227,7 +2244,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch {
             val context = getApplication<Application>()
+            val remote = remoteLibrary(browseId)
             val result = when {
+                remote != null -> runCatching {
+                    remote.songs().ifEmpty { error(text(remote.emptyRes)) }
+                }
                 Downloads.recordIdOf(browseId) != null -> runCatching {
                     downloadedPlaylist(browseId).ifEmpty {
                         error(text(R.string.downloaded_playlist_empty))
@@ -2243,14 +2264,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     LocalMediaRepository.getLocalMusic(context)
                         .ifEmpty { error(text(R.string.no_local_audio_found)) }
-                }
-                browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> runCatching {
-                    com.music.bitchord.data.webdav.WebDavRepository.getSongs()
-                        .ifEmpty { error(text(R.string.webdav_empty)) }
-                }
-                browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> runCatching {
-                    com.music.bitchord.data.smb.SmbRepository.getSongs()
-                        .ifEmpty { error(text(R.string.smb_empty)) }
                 }
                 else -> YtMusicRepository.allSongs(browseId)
             }

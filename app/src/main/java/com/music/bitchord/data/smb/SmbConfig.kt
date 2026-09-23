@@ -1,6 +1,5 @@
 package com.music.bitchord.data.smb
 
-import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import java.util.Locale
 
@@ -89,25 +88,14 @@ object SmbConfig {
 
     fun songFor(host: String, share: String, path: String, albumName: String? = null): Song {
         val fileName = path.substringAfterLast('/').substringAfterLast('\\')
-        val base = fileName.substringBeforeLast('.').takeIf { it.isNotBlank() } ?: fileName
-        val (artist, title) = if (" - " in base) {
-            val parts = base.split(" - ", limit = 2)
-            parts[0].trim().takeIf { it.isNotBlank() } to parts[1].trim().takeIf { it.isNotBlank() }
-        } else {
-            null to base
-        }
         val streamUrl = "smb://${normalizeHost(host)}/${share.trim().trim('/')}/${path.trim('/')}"
-        return Song(
+        return com.music.bitchord.data.remote.RemoteSong.build(
             videoId = idFor(host, share, path),
-            title = title ?: base,
-            artist = artist ?: "Unknown Artist",
-            thumbnailUrl = null,
-            durationText = null,
-            albumName = albumName?.takeIf { it.isNotBlank() },
-            localUri = streamUrl,
-            playbackSource = "SMB",
-            playbackSourceType = PlaybackSourceType.BROWSE,
-            playbackSourceId = BROWSE_ID,
+            streamUrl = streamUrl,
+            fileName = fileName,
+            albumName = albumName,
+            source = "SMB",
+            browseId = BROWSE_ID,
         )
     }
 }

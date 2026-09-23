@@ -1,6 +1,5 @@
 package com.music.bitchord.data.webdav
 
-import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.Song
 import java.util.Locale
 
@@ -80,24 +79,13 @@ object WebDavConfig {
         val decoded = runCatching {
             java.net.URLDecoder.decode(fileUrl.substringAfterLast('/'), "UTF-8")
         }.getOrDefault(fileUrl.substringAfterLast('/'))
-        val base = decoded.substringBeforeLast('.').takeIf { it.isNotBlank() } ?: decoded
-        val (artist, title) = if (" - " in base) {
-            val parts = base.split(" - ", limit = 2)
-            parts[0].trim().takeIf { it.isNotBlank() } to parts[1].trim().takeIf { it.isNotBlank() }
-        } else {
-            null to base
-        }
-        return Song(
+        return com.music.bitchord.data.remote.RemoteSong.build(
             videoId = idFor(fileUrl),
-            title = title ?: base,
-            artist = artist ?: "Unknown Artist",
-            thumbnailUrl = null,
-            durationText = null,
-            albumName = albumName?.takeIf { it.isNotBlank() },
-            localUri = fileUrl,
-            playbackSource = "WebDAV",
-            playbackSourceType = PlaybackSourceType.BROWSE,
-            playbackSourceId = BROWSE_ID,
+            streamUrl = fileUrl,
+            fileName = decoded,
+            albumName = albumName,
+            source = "WebDAV",
+            browseId = BROWSE_ID,
         )
     }
 }

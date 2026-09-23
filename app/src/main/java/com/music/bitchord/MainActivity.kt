@@ -103,6 +103,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -203,10 +204,10 @@ import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
-import com.music.bitchord.ui.components.SmbEditorAlert
+import com.music.bitchord.ui.components.ServerEditorHost
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.components.WebDavConflictAlert
-import com.music.bitchord.ui.components.WebDavEditorAlert
+import com.music.bitchord.ui.components.FieldConfig
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
@@ -3633,54 +3634,40 @@ private fun BitChordApp(
 
         if (showWebDavEditor) {
             BackHandler { showWebDavEditor = false }
-            var urlInput by remember { mutableStateOf(AppSettings.webdavUrl.value) }
-            var usernameInput by remember { mutableStateOf(AppSettings.webdavUsername.value) }
-            var passwordInput by remember { mutableStateOf(AppSettings.webdavPassword.value) }
-            var webdavStatus by remember { mutableStateOf<String?>(null) }
-            var webdavStatusIsGood by remember { mutableStateOf(false) }
-            var webdavTesting by remember { mutableStateOf(false) }
-            WebDavEditorAlert(
+            ServerEditorHost(
                 hazeState = hazeState,
-                urlValue = urlInput,
-                // A result describes the address it was run against, so the
-                // moment a field is edited it stops being true and is cleared.
-                onUrlChange = { urlInput = it; webdavStatus = null },
-                usernameValue = usernameInput,
-                onUsernameChange = { usernameInput = it; webdavStatus = null },
-                passwordValue = passwordInput,
-                onPasswordChange = { passwordInput = it; webdavStatus = null },
-                status = webdavStatus,
-                statusIsGood = webdavStatusIsGood,
-                testing = webdavTesting,
-                canSubmit = urlInput.isNotBlank(),
-                onTest = {
-                    webdavTesting = true
-                    webdavStatus = null
-                    scope.launch {
-                        com.music.bitchord.data.webdav.WebDavRepository.testConnection(
-                            urlInput.trim(),
-                            usernameInput.trim(),
-                            passwordInput,
-                        ).fold(
-                            onSuccess = {
-                                webdavStatus = context.getString(R.string.connected)
-                                webdavStatusIsGood = true
-                            },
-                            onFailure = {
-                                webdavStatus = context.getString(
-                                    R.string.webdav_test_failed,
-                                    it.message ?: context.getString(R.string.failed),
-                                )
-                                webdavStatusIsGood = false
-                            },
-                        )
-                        webdavTesting = false
-                    }
+                title = stringResource(R.string.webdav),
+                description = stringResource(R.string.webdav_description),
+                fields = listOf(
+                    FieldConfig(
+                        initial = AppSettings.webdavUrl.value,
+                        placeholder = stringResource(R.string.webdav_server_url_hint),
+                        keyboardType = KeyboardType.Uri,
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.webdavUsername.value,
+                        placeholder = stringResource(R.string.username),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.webdavPassword.value,
+                        placeholder = stringResource(R.string.password),
+                        keyboardType = KeyboardType.Password,
+                        isPassword = true,
+                    ),
+                ),
+                canSubmit = { it[0].isNotBlank() },
+                testFailedRes = R.string.webdav_test_failed,
+                onTest = { (url, username, password) ->
+                    com.music.bitchord.data.webdav.WebDavRepository.testConnection(
+                        url.trim(),
+                        username.trim(),
+                        password,
+                    )
                 },
-                onSave = {
-                    AppSettings.setWebDavUrl(urlInput.trim())
-                    AppSettings.setWebDavUsername(usernameInput.trim())
-                    AppSettings.setWebDavPassword(passwordInput)
+                onSave = { (url, username, password) ->
+                    AppSettings.setWebDavUrl(url.trim())
+                    AppSettings.setWebDavUsername(username.trim())
+                    AppSettings.setWebDavPassword(password)
                     showWebDavEditor = false
                 },
                 onDismiss = { showWebDavEditor = false },
@@ -3689,64 +3676,52 @@ private fun BitChordApp(
 
         if (showSmbEditor) {
             BackHandler { showSmbEditor = false }
-            var hostInput by remember { mutableStateOf(AppSettings.smbHost.value) }
-            var shareInput by remember { mutableStateOf(AppSettings.smbShare.value) }
-            var folderInput by remember { mutableStateOf(AppSettings.smbBasePath.value) }
-            var usernameInput by remember { mutableStateOf(AppSettings.smbUsername.value) }
-            var passwordInput by remember { mutableStateOf(AppSettings.smbPassword.value) }
-            var smbStatus by remember { mutableStateOf<String?>(null) }
-            var smbStatusIsGood by remember { mutableStateOf(false) }
-            var smbTesting by remember { mutableStateOf(false) }
-            SmbEditorAlert(
+            ServerEditorHost(
                 hazeState = hazeState,
-                hostValue = hostInput,
-                // A result describes the address it was run against, so the
-                // moment a field is edited it stops being true and is cleared.
-                onHostChange = { hostInput = it; smbStatus = null },
-                shareValue = shareInput,
-                onShareChange = { shareInput = it; smbStatus = null },
-                folderValue = folderInput,
-                onFolderChange = { folderInput = it; smbStatus = null },
-                usernameValue = usernameInput,
-                onUsernameChange = { usernameInput = it; smbStatus = null },
-                passwordValue = passwordInput,
-                onPasswordChange = { passwordInput = it; smbStatus = null },
-                status = smbStatus,
-                statusIsGood = smbStatusIsGood,
-                testing = smbTesting,
-                canSubmit = hostInput.isNotBlank() && shareInput.isNotBlank(),
-                onTest = {
-                    smbTesting = true
-                    smbStatus = null
-                    scope.launch {
-                        com.music.bitchord.data.smb.SmbRepository.testConnection(
-                            hostInput.trim(),
-                            shareInput.trim(),
-                            folderInput.trim(),
-                            usernameInput.trim(),
-                            passwordInput,
-                        ).fold(
-                            onSuccess = {
-                                smbStatus = context.getString(R.string.connected)
-                                smbStatusIsGood = true
-                            },
-                            onFailure = {
-                                smbStatus = context.getString(
-                                    R.string.smb_test_failed,
-                                    it.message ?: context.getString(R.string.failed),
-                                )
-                                smbStatusIsGood = false
-                            },
-                        )
-                        smbTesting = false
-                    }
+                title = stringResource(R.string.smb),
+                description = stringResource(R.string.smb_description),
+                fields = listOf(
+                    FieldConfig(
+                        initial = AppSettings.smbHost.value,
+                        placeholder = stringResource(R.string.smb_server_hint),
+                        keyboardType = KeyboardType.Uri,
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbShare.value,
+                        placeholder = stringResource(R.string.smb_share_hint),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbBasePath.value,
+                        placeholder = stringResource(R.string.smb_folder_hint),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbUsername.value,
+                        placeholder = stringResource(R.string.username),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbPassword.value,
+                        placeholder = stringResource(R.string.password),
+                        keyboardType = KeyboardType.Password,
+                        isPassword = true,
+                    ),
+                ),
+                canSubmit = { it[0].isNotBlank() && it[1].isNotBlank() },
+                testFailedRes = R.string.smb_test_failed,
+                onTest = { (host, share, folder, username, password) ->
+                    com.music.bitchord.data.smb.SmbRepository.testConnection(
+                        host.trim(),
+                        share.trim(),
+                        folder.trim(),
+                        username.trim(),
+                        password,
+                    )
                 },
-                onSave = {
-                    AppSettings.setSmbHost(hostInput.trim())
-                    AppSettings.setSmbShare(shareInput.trim())
-                    AppSettings.setSmbBasePath(folderInput.trim())
-                    AppSettings.setSmbUsername(usernameInput.trim())
-                    AppSettings.setSmbPassword(passwordInput)
+                onSave = { (host, share, folder, username, password) ->
+                    AppSettings.setSmbHost(host.trim())
+                    AppSettings.setSmbShare(share.trim())
+                    AppSettings.setSmbBasePath(folder.trim())
+                    AppSettings.setSmbUsername(username.trim())
+                    AppSettings.setSmbPassword(password)
                     showSmbEditor = false
                 },
                 onDismiss = { showSmbEditor = false },

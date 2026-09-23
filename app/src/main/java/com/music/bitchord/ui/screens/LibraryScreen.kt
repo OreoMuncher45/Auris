@@ -157,6 +157,28 @@ fun LibraryScreen(
                 val webdavConfigured by AppSettings.webdavUrl.collectAsStateWithLifecycle()
                 val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
                 val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
+                // The remote libraries share one card shape; each entry is
+                // title, subtitle and the page it opens.
+                val remotes = listOf(
+                    Triple(
+                        stringResource(R.string.webdav),
+                        if (webdavConfigured.isBlank()) {
+                            stringResource(R.string.webdav_not_configured)
+                        } else {
+                            stringResource(R.string.webdav_subtitle)
+                        },
+                        com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
+                    ),
+                    Triple(
+                        stringResource(R.string.smb),
+                        if (smbHost.isBlank() || smbShare.isBlank()) {
+                            stringResource(R.string.smb_not_configured)
+                        } else {
+                            stringResource(R.string.smb_subtitle)
+                        },
+                        com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
+                    ),
+                )
                 val onDeviceShelf = HomeShelf(
                     title = onDevice,
                     items = listOf(
@@ -174,29 +196,15 @@ fun LibraryScreen(
                             videoId = null,
                             browseId = "local:all",
                         ),
+                    ) + remotes.map { (title, subtitle, browseId) ->
                         ShelfItem(
-                            title = stringResource(R.string.webdav),
-                            subtitle = if (webdavConfigured.isBlank()) {
-                                stringResource(R.string.webdav_not_configured)
-                            } else {
-                                stringResource(R.string.webdav_subtitle)
-                            },
+                            title = title,
+                            subtitle = subtitle,
                             thumbnailUrl = null,
                             videoId = null,
-                            browseId = com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
-                        ),
-                        ShelfItem(
-                            title = stringResource(R.string.smb),
-                            subtitle = if (smbHost.isBlank() || smbShare.isBlank()) {
-                                stringResource(R.string.smb_not_configured)
-                            } else {
-                                stringResource(R.string.smb_subtitle)
-                            },
-                            thumbnailUrl = null,
-                            videoId = null,
-                            browseId = com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
-                        ),
-                    ) + downloadedPlaylists.map { playlist ->
+                            browseId = browseId,
+                        )
+                    } + downloadedPlaylists.map { playlist ->
                         ShelfItem(
                             title = playlist.title,
                             // The credit the playlist was downloaded with,
