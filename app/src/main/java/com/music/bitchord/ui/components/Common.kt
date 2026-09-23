@@ -515,7 +515,7 @@ private fun SongRowContent(
             }
         } else {
             AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
+                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)

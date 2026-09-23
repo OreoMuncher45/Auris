@@ -219,6 +219,7 @@ import com.music.bitchord.ui.theme.SystemBarIcons
 import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.optimizedHazeEffect
+import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.AudioPipelineDialog
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -1032,7 +1033,11 @@ fun NowPlayingScreen(
     // Keep the header caption and the system glyphs on the same contrast
     // decision. The caption sits over the same upper part of the cover as the
     // status bar when this is a phone-sized player.
-    val artLuminance = rememberArtworkLuminance(song.thumbnailUrl)
+    // Remote tracks whose art lives inside the file resolve it here, once —
+    // every tint below reads the same value rather than each triggering its
+    // own extraction.
+    val remoteArt = rememberRemoteArtworkUrl(song)
+    val artLuminance = rememberArtworkLuminance(remoteArt)
     val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
 
     // A docked pane sits beside the page rather than covering the screen, so
@@ -1097,7 +1102,7 @@ fun NowPlayingScreen(
     // a pixel readback of its own on every track change, and the two answer the
     // same picture in two different ways, so whichever is not on screen is pure
     // cost — the legacy path pays [rememberArtworkColors] instead.
-    val artMesh = if (legacyMesh) null else rememberArtworkMesh(song.thumbnailUrl, canvasFrame, ART_PX)
+    val artMesh = if (legacyMesh) null else rememberArtworkMesh(remoteArt, canvasFrame, ART_PX)
     // Asked of every clip, Spotify's Canvas and every other source alike — see
     // CanvasArtworkPlayer's refreshFrameEveryMs. A clip's own colours move as
     // it plays regardless of who published it, and the backdrop should follow.
@@ -1620,7 +1625,7 @@ fun NowPlayingScreen(
     // full-bleed at once. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true and the two
     // layers go on trading places as they should.
-    val artUrl = song.artworkAt(ART_PX)
+    val artUrl = remoteArt?.artworkAt(ART_PX)
     var artLoaded by remember(artUrl) { mutableStateOf(false) }
     /**
      * Which go at this cover we are on, and the reason there is more than one.
@@ -2081,7 +2086,7 @@ fun NowPlayingScreen(
             // drag a full-screen blur along with them, which is why the palette
             // is passed as one immutable value.
             MeshGradientBackground(
-                palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
+                palette = rememberArtworkColors(remoteArt, canvasFrame),
                 trackKey = song.videoId,
             )
         } else {
@@ -3714,7 +3719,7 @@ private fun WidePlayerControls(
         // has a collapsing banner for the backdrop to leave a seam behind.
         if (legacyMesh) {
             MeshGradientBackground(
-                palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
+                palette = rememberArtworkColors(rememberRemoteArtworkUrl(song), canvasFrame),
                 trackKey = song.videoId,
             )
         } else {
@@ -4123,7 +4128,7 @@ private fun WidePlayerControls(
 @Composable
 private fun WideArtwork(song: Song, scale: Float, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val artUrl = song.artworkAt(ART_PX)
+    val artUrl = rememberRemoteArtworkUrl(song)?.artworkAt(ART_PX)
     var artLoaded by remember(artUrl) { mutableStateOf(false) }
     val request = remember(context, artUrl) {
         ImageRequest.Builder(context)
@@ -7260,7 +7265,7 @@ private fun InlineQueueRow(
             Spacer(Modifier.width(4.dp))
         }
         AsyncImage(
-            model = song.thumbnailUrl,
+            model = rememberRemoteArtworkUrl(song),
             contentDescription = null,
             modifier = Modifier
                 .size(44.dp)
