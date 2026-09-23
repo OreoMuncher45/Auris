@@ -203,6 +203,7 @@ import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
+import com.music.bitchord.ui.components.SmbEditorAlert
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.components.WebDavConflictAlert
 import com.music.bitchord.ui.components.WebDavEditorAlert
@@ -489,6 +490,7 @@ private fun BitChordApp(
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
     var showWebDavEditor by remember { mutableStateOf(false) }
+    var showSmbEditor by remember { mutableStateOf(false) }
     /**
      * Whether the download manager is open.
      *
@@ -679,6 +681,7 @@ private fun BitChordApp(
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+    val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
     val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
     // The releases those files were asked for as — read here rather than in the
     // page so the Downloads folder recomposes when one is added, the same way it
@@ -717,6 +720,11 @@ private fun BitChordApp(
     LaunchedEffect(webdavUrl) {
         if (detail?.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID) {
             viewModel.reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
+        }
+    }
+    LaunchedEffect(smbHost) {
+        if (detail?.browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID) {
+            viewModel.reloadLocalDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID)
         }
     }
     val controller = rememberMediaController()
@@ -2218,6 +2226,7 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
                             onEditWebDav = { showWebDavEditor = true },
+                            onEditSmb = { showSmbEditor = true },
                         )
                     } else if (key == "listen_together") {
                         ListenTogetherScreen(
@@ -3675,6 +3684,72 @@ private fun BitChordApp(
                     showWebDavEditor = false
                 },
                 onDismiss = { showWebDavEditor = false },
+            )
+        }
+
+        if (showSmbEditor) {
+            BackHandler { showSmbEditor = false }
+            var hostInput by remember { mutableStateOf(AppSettings.smbHost.value) }
+            var shareInput by remember { mutableStateOf(AppSettings.smbShare.value) }
+            var folderInput by remember { mutableStateOf(AppSettings.smbBasePath.value) }
+            var usernameInput by remember { mutableStateOf(AppSettings.smbUsername.value) }
+            var passwordInput by remember { mutableStateOf(AppSettings.smbPassword.value) }
+            var smbStatus by remember { mutableStateOf<String?>(null) }
+            var smbStatusIsGood by remember { mutableStateOf(false) }
+            var smbTesting by remember { mutableStateOf(false) }
+            SmbEditorAlert(
+                hazeState = hazeState,
+                hostValue = hostInput,
+                // A result describes the address it was run against, so the
+                // moment a field is edited it stops being true and is cleared.
+                onHostChange = { hostInput = it; smbStatus = null },
+                shareValue = shareInput,
+                onShareChange = { shareInput = it; smbStatus = null },
+                folderValue = folderInput,
+                onFolderChange = { folderInput = it; smbStatus = null },
+                usernameValue = usernameInput,
+                onUsernameChange = { usernameInput = it; smbStatus = null },
+                passwordValue = passwordInput,
+                onPasswordChange = { passwordInput = it; smbStatus = null },
+                status = smbStatus,
+                statusIsGood = smbStatusIsGood,
+                testing = smbTesting,
+                canSubmit = hostInput.isNotBlank() && shareInput.isNotBlank(),
+                onTest = {
+                    smbTesting = true
+                    smbStatus = null
+                    scope.launch {
+                        com.music.bitchord.data.smb.SmbRepository.testConnection(
+                            hostInput.trim(),
+                            shareInput.trim(),
+                            folderInput.trim(),
+                            usernameInput.trim(),
+                            passwordInput,
+                        ).fold(
+                            onSuccess = {
+                                smbStatus = context.getString(R.string.connected)
+                                smbStatusIsGood = true
+                            },
+                            onFailure = {
+                                smbStatus = context.getString(
+                                    R.string.smb_test_failed,
+                                    it.message ?: context.getString(R.string.failed),
+                                )
+                                smbStatusIsGood = false
+                            },
+                        )
+                        smbTesting = false
+                    }
+                },
+                onSave = {
+                    AppSettings.setSmbHost(hostInput.trim())
+                    AppSettings.setSmbShare(shareInput.trim())
+                    AppSettings.setSmbBasePath(folderInput.trim())
+                    AppSettings.setSmbUsername(usernameInput.trim())
+                    AppSettings.setSmbPassword(passwordInput)
+                    showSmbEditor = false
+                },
+                onDismiss = { showSmbEditor = false },
             )
         }
 

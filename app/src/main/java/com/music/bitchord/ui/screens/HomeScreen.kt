@@ -51,6 +51,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Storage
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.R
 import coil3.compose.AsyncImage
@@ -871,6 +872,29 @@ internal fun ShelfCard(
                     )
                     Icon(
                         imageVector = Icons.Rounded.Folder,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
+            }
+            "local:smb" -> {
+                val palette = remember { MeshPalette(listOf(Color(0xFF0F2027), Color(0xFF2C5364))) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MeshGradientBackground(
+                        palette = palette,
+                        trackKey = "local:smb",
+                        continuous = true,
+                        blurRadius = 24.dp,
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.Storage,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),

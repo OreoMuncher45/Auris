@@ -756,6 +756,16 @@
     <string name="webdav_skip">Skip</string>
     <string name="webdav_apply_to_all">Apply to all</string>
     <string name="webdav_upload_summary">%1$d uploaded · %2$d skipped · %3$d failed</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">Music on a file share</string>
+    <string name="smb_not_configured">Connect a share under Sources</string>
+    <string name="smb_empty">No audio files found on the SMB share. Check the server in Sources.</string>
+    <string name="smb_description">Point BitChord at a shared music folder — a NAS or Windows share speaking SMB.</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">Share name, e.g. Music</string>
+    <string name="smb_folder_hint">Folder (optional)</string>
+    <string name="smb_disconnect">Disconnect</string>
+    <string name="smb_test_failed">Couldn’t reach it: %1$s</string>
     <string name="playlist">playlist</string>
     <string name="playlist_action">Playlist</string>
     <string name="open">Open</string>

@@ -1071,6 +1071,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
+            AppSettings.smbHost.drop(1).collect {
+                if (_detailStack.value.any { page ->
+                        page.browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID
+                    }
+                ) {
+                    reloadLocalDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID)
+                }
+            }
+        }
+        viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
             // downloaded it — see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())
@@ -1967,6 +1977,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (songs.isEmpty()) UiState.Error(text(R.string.webdav_empty))
                     else UiState.Success(songs)
                 }
+                browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> {
+                    val songs = com.music.bitchord.data.smb.SmbRepository.getSongs()
+                    if (songs.isEmpty()) UiState.Error(text(R.string.smb_empty))
+                    else UiState.Success(songs)
+                }
                 resolved == BrowseType.ARTIST -> {
                     YtMusicRepository.artistPage(browseId).fold(
                         onSuccess = { page ->
@@ -2076,6 +2091,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> {
                     val songs = com.music.bitchord.data.webdav.WebDavRepository.getSongs()
                     if (songs.isEmpty()) UiState.Error(text(R.string.webdav_empty))
+                    else UiState.Success(songs)
+                }
+                browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> {
+                    val songs = com.music.bitchord.data.smb.SmbRepository.getSongs()
+                    if (songs.isEmpty()) UiState.Error(text(R.string.smb_empty))
                     else UiState.Success(songs)
                 }
                 else -> return@launch
@@ -2227,6 +2247,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> runCatching {
                     com.music.bitchord.data.webdav.WebDavRepository.getSongs()
                         .ifEmpty { error(text(R.string.webdav_empty)) }
+                }
+                browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID -> runCatching {
+                    com.music.bitchord.data.smb.SmbRepository.getSongs()
+                        .ifEmpty { error(text(R.string.smb_empty)) }
                 }
                 else -> YtMusicRepository.allSongs(browseId)
             }

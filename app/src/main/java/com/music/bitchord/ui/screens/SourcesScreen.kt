@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.PlayCircle
@@ -99,6 +100,8 @@ fun SourcesScreen(
      * this subtree.
      */
     onEditWebDav: () -> Unit,
+    /** As [onEditWebDav], for the SMB share editor. */
+    onEditSmb: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -113,6 +116,13 @@ fun SourcesScreen(
     var webdavTesting by remember { mutableStateOf(false) }
     var webdavTestResult by remember { mutableStateOf<String?>(null) }
     val webdavScope = rememberCoroutineScope()
+    val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
+    val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
+    val smbUsername by AppSettings.smbUsername.collectAsStateWithLifecycle()
+    val smbPassword by AppSettings.smbPassword.collectAsStateWithLifecycle()
+    var smbTesting by remember { mutableStateOf(false) }
+    var smbTestResult by remember { mutableStateOf<String?>(null) }
+    val smbScope = rememberCoroutineScope()
 
     /** Last known reachability per source, filled in as the probes come back. */
     val health = remember { mutableStateMapOf<String, SourceHealth>() }
@@ -314,6 +324,73 @@ fun SourcesScreen(
                     onClick = {
                         AppSettings.clearWebDav()
                         webdavTestResult = null
+                    },
+                )
+            }
+        }
+
+        // A personal library on a file share, filed next to the WebDAV one
+        // for the same reason: it holds the listener's own files instead of
+        // answering for YouTube's, so it takes no part in the ranking above.
+        SettingsGroup(
+            header = stringResource(R.string.smb),
+            footer = stringResource(R.string.smb_description),
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.Storage,
+                title = stringResource(R.string.smb),
+                subtitle = if (smbHost.isBlank() || smbShare.isBlank()) {
+                    stringResource(R.string.smb_not_configured)
+                } else if (smbUsername.isNotBlank()) {
+                    "$smbHost · $smbShare · $smbUsername"
+                } else {
+                    "$smbHost · $smbShare"
+                },
+                onClick = onEditSmb,
+            )
+            if (smbHost.isNotBlank() && smbShare.isNotBlank()) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Dns,
+                    title = if (smbTesting) {
+                        stringResource(R.string.testing)
+                    } else {
+                        smbTestResult ?: stringResource(R.string.test)
+                    },
+                    subtitle = stringResource(R.string.smb_subtitle),
+                    onClick = {
+                        if (smbTesting) return@SettingsRow
+                        smbTesting = true
+                        smbTestResult = null
+                        smbScope.launch {
+                            com.music.bitchord.data.smb.SmbRepository.testConnection(
+                                smbHost,
+                                smbShare,
+                                AppSettings.smbBasePath.value,
+                                smbUsername,
+                                smbPassword,
+                            ).fold(
+                                onSuccess = {
+                                    smbTestResult = context.getString(R.string.connected)
+                                },
+                                onFailure = {
+                                    smbTestResult = context.getString(
+                                        R.string.smb_test_failed,
+                                        it.message ?: context.getString(R.string.failed),
+                                    )
+                                },
+                            )
+                            smbTesting = false
+                        }
+                    },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.DeleteSweep,
+                    title = stringResource(R.string.smb_disconnect),
+                    onClick = {
+                        AppSettings.clearSmb()
+                        smbTestResult = null
                     },
                 )
             }

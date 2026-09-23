@@ -155,6 +155,8 @@ fun LibraryScreen(
             item(key = "replay") { ReplayBanner(replayCard, onOpenReplay) }
             item(key = "shelf:$onDevice") {
                 val webdavConfigured by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+                val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
+                val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
                 val onDeviceShelf = HomeShelf(
                     title = onDevice,
                     items = listOf(
@@ -182,6 +184,17 @@ fun LibraryScreen(
                             thumbnailUrl = null,
                             videoId = null,
                             browseId = com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
+                        ),
+                        ShelfItem(
+                            title = stringResource(R.string.smb),
+                            subtitle = if (smbHost.isBlank() || smbShare.isBlank()) {
+                                stringResource(R.string.smb_not_configured)
+                            } else {
+                                stringResource(R.string.smb_subtitle)
+                            },
+                            thumbnailUrl = null,
+                            videoId = null,
+                            browseId = com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
                         ),
                     ) + downloadedPlaylists.map { playlist ->
                         ShelfItem(

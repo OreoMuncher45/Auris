@@ -627,6 +627,16 @@
     <string name="webdav_skip">Bỏ qua</string>
     <string name="webdav_apply_to_all">Áp dụng cho tất cả</string>
     <string name="webdav_upload_summary">%1$d đã tải lên · %2$d bỏ qua · %3$d thất bại</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">Nhạc trên thư mục chia sẻ</string>
+    <string name="smb_not_configured">Kết nối thư mục chia sẻ trong mục Nguồn</string>
+    <string name="smb_empty">Không tìm thấy tệp âm thanh nào trên thư mục chia sẻ SMB. Kiểm tra máy chủ trong mục Nguồn.</string>
+    <string name="smb_description">Trỏ BitChord tới thư mục nhạc chia sẻ — NAS hoặc máy Windows hỗ trợ SMB.</string>
+    <string name="smb_server_hint">nas.local hoặc 192.168.1.10:4445</string>
+    <string name="smb_share_hint">Tên share, ví dụ Music</string>
+    <string name="smb_folder_hint">Thư mục (không bắt buộc)</string>
+    <string name="smb_disconnect">Ngắt kết nối</string>
+    <string name="smb_test_failed">Không thể kết nối: %1$s</string>
     <string name="playlist">danh sách phát</string>
     <string name="playlist_action">Danh sách phát</string>
     <string name="open">Mở</string>

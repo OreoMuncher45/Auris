@@ -598,6 +598,128 @@ fun WebDavConflictAlert(
 }
 
 /**
+ * The SMB share editor: server, share, an optional folder inside it, and the
+ * credentials. Same frosted card and Test-above-Save actions as
+ * [WebDavEditorAlert] — an address is worth checking before it is stored.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun SmbEditorAlert(
+    hazeState: HazeState,
+    hostValue: String,
+    onHostChange: (String) -> Unit,
+    shareValue: String,
+    onShareChange: (String) -> Unit,
+    folderValue: String,
+    onFolderChange: (String) -> Unit,
+    usernameValue: String,
+    onUsernameChange: (String) -> Unit,
+    passwordValue: String,
+    onPasswordChange: (String) -> Unit,
+    /** What the last test said, or null before one has been run. */
+    status: String?,
+    statusIsGood: Boolean,
+    testing: Boolean,
+    /** Whether server and share are filled in — the rest is optional. */
+    canSubmit: Boolean,
+    onTest: () -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertScaffold(hazeState = hazeState, onDismiss = { if (!testing) onDismiss() }) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.smb),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = status ?: stringResource(R.string.smb_description),
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                color = when {
+                    status == null -> MaterialTheme.colorScheme.onSurface
+                    statusIsGood -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.error
+                },
+                textAlign = TextAlign.Center,
+            )
+            PillTextField(
+                value = hostValue,
+                onValueChange = onHostChange,
+                placeholder = stringResource(R.string.smb_server_hint),
+                enabled = !testing,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Next,
+                ),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = shareValue,
+                onValueChange = onShareChange,
+                placeholder = stringResource(R.string.smb_share_hint),
+                enabled = !testing,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = folderValue,
+                onValueChange = onFolderChange,
+                placeholder = stringResource(R.string.smb_folder_hint),
+                enabled = !testing,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = usernameValue,
+                onValueChange = onUsernameChange,
+                placeholder = stringResource(R.string.username),
+                enabled = !testing,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = passwordValue,
+                onValueChange = onPasswordChange,
+                placeholder = stringResource(R.string.password),
+                enabled = !testing,
+                isPassword = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (canSubmit && !testing) onSave() }),
+            )
+        }
+        AlertRule()
+        AlertAction(
+            label = if (testing) stringResource(R.string.testing) else stringResource(R.string.test),
+            emphasised = false,
+            onClick = onTest,
+            enabled = canSubmit && !testing,
+        )
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.save),
+            emphasised = true,
+            onClick = onSave,
+            enabled = canSubmit && !testing,
+        )
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.cancel),
+            emphasised = false,
+            onClick = onDismiss,
+            enabled = !testing,
+        )
+    }
+}
+
+/**
  * Single-select list, ticked like [LyricsSourcesDialog] rather than with radio
  * buttons — same reasoning: a column of Material radios would be the one
  * Material thing left on an otherwise Apple-shaped alert.
