@@ -6800,7 +6800,7 @@ private fun InlineQueue(
     val nowPlayingTrack = remember(queue, currentIndex) {
         if (currentIndex in queue.indices) {
             val s = queue[currentIndex]
-            QueueRow.Track(currentIndex, s, s.queueEntryId ?: "${s.videoId}_$currentIndex")
+            QueueRow.Track(currentIndex, s, "np_${s.queueEntryId ?: "${s.videoId}_$currentIndex"}")
         } else null
     }
 
@@ -6811,7 +6811,7 @@ private fun InlineQueue(
                 .filter { queue[it].queueTier == QueueTier.USER_QUEUE }
                 .map { idx ->
                     val s = queue[idx]
-                    QueueRow.Track(idx, s, s.queueEntryId ?: "${s.videoId}_$idx")
+                    QueueRow.Track(idx, s, "user_${s.queueEntryId ?: "${s.videoId}_$idx"}")
                 }
         }
     }
@@ -6823,7 +6823,7 @@ private fun InlineQueue(
                 .filter { queue[it].queueTier == QueueTier.CONTEXT }
                 .map { idx ->
                     val s = queue[idx]
-                    QueueRow.Track(idx, s, s.queueEntryId ?: "${s.videoId}_$idx")
+                    QueueRow.Track(idx, s, "context_${s.queueEntryId ?: "${s.videoId}_$idx"}")
                 }
         }
     }
@@ -6835,7 +6835,7 @@ private fun InlineQueue(
                 .filter { queue[it].queueTier == QueueTier.AUTOPLAY }
                 .map { idx ->
                     val s = queue[idx]
-                    QueueRow.Track(idx, s, s.queueEntryId ?: "${s.videoId}_$idx")
+                    QueueRow.Track(idx, s, "autoplay_${s.queueEntryId ?: "${s.videoId}_$idx"}")
                 }
         }
     }

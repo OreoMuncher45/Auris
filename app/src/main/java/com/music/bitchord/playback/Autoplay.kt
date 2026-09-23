@@ -8,6 +8,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import kotlinx.coroutines.CancellationException
 
 /** Most AutoPlay-suggested tracks kept queued ahead of the current one at once. */
@@ -107,11 +108,10 @@ suspend fun loadAutoplayTracks(
 
     return Result.success(extra.map {
         it.copy(
-            queueTier = QueueTier.AUTOPLAY,
             radioName = seedSong.radioName,
             playbackSource = seedSong.playbackSource,
             playbackSourceType = seedSong.playbackSourceType,
             playbackSourceId = seedSong.playbackSourceId,
-        )
+        ).asQueueEntry(QueueTier.AUTOPLAY)
     })
 }

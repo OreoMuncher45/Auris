@@ -90,6 +90,10 @@ object QueueShuffle {
         original = items.map { it.queueEntryId ?: it.mediaId }
         val from = player.currentMediaItemIndex + 1
         val upcoming = items.drop(from)
+        if (upcoming.isEmpty()) {
+            _enabled.value = true
+            return
+        }
 
         val userQueueIndices = upcoming.indices.filter { upcoming[it].queueTier == QueueTier.USER_QUEUE }
         val contextIndices = upcoming.indices.filter { upcoming[it].queueTier == QueueTier.CONTEXT }
@@ -122,6 +126,11 @@ object QueueShuffle {
         val items = player.queueItems()
         val from = player.currentMediaItemIndex + 1
         val upcoming = items.drop(from)
+        if (upcoming.isEmpty()) {
+            original = emptyList()
+            _enabled.value = false
+            return
+        }
         val restored = restoreOrder(upcoming.map { it.queueEntryId ?: it.mediaId }, original)
         applyOrder(player, from, sections(restored, upcoming))
         original = emptyList()
