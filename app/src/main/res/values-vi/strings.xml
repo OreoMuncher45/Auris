@@ -486,6 +486,11 @@
     <string name="sources_order_header">Các nguồn nhạc, được thử theo thứ tự này</string>
     <string name="sources_quality_capped">Kết nối này được đặt dưới chất lượng Cao, vì vậy luồng phát sẽ được chuyển mã để phù hợp giới hạn đó. Việc tải xuống không bị ảnh hưởng.</string>
     <string name="sources_subtitle">Nguồn cung cấp âm thanh và thứ tự ưu tiên</string>
+    <string name="source_matching">Khớp nguồn</string>
+    <string name="upgrade_length_slack">Dung sai độ dài bản nhạc</string>
+    <string name="upgrade_length_slack_subtitle">Chênh lệch thời lượng tối đa cho phép của luồng thay thế</string>
+    <string name="upgrade_length_slack_footer">Dung sai lớn hơn chấp nhận nhiều kết quả khớp hơn; dung sai nhỏ hơn sẽ chặt chẽ hơn. Mặc định là 3 giây.</string>
+    <string name="seconds_short">%1$d giây</string>
     <string name="spdc_token">Token sp_dc</string>
     <string name="spotify_canvas_setup">Thiết lập Spotify Canvas</string>
     <string name="spotify_canvas_setup_description">Để sử dụng Spotify Canvas, hãy cung cấp cookie sp_dc trên Spotify của bạn.</string>
