@@ -134,6 +134,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -1941,6 +1942,26 @@ fun NowPlayingScreen(
     // gesture for a shape they were never drawn for would risk all three for a
     // shape none of them apply to.
     val wideSplitAvailable = wideLyricsLayoutAvailable(windowWidth, windowHeight)
+    // Tablet-sized players use the full-cover blur in all three states. On a
+    // phone only the lyrics and queue replace the main player's seam-aware,
+    // reflected mesh; the main player deliberately keeps its existing look.
+    val tabletArtworkBackdrop = dockedPlayerAvailable(windowWidth)
+    // Owned by the song-level player composition, not by any one screen state.
+    // Opening lyrics/queue and mounting the tablet split therefore reuse the
+    // same decoded painter instead of starting the artwork request again.
+    val fullArtworkBlurPainter = rememberFullArtworkBlurPainter(song.thumbnailUrl, ART_PX)
+    // This is one movable composition, not two backdrop call sites that happen
+    // to share a painter. Compose carries its Image and RenderEffect layer from
+    // the normal player into the tablet split instead of disposing and rebuilding
+    // them. It is recreated only if the painter itself changes with the artwork.
+    val fullArtworkBlurContent = remember(fullArtworkBlurPainter) {
+        movableContentOf<Modifier> { backdropModifier ->
+            FullArtworkBlurBackdrop(
+                painter = fullArtworkBlurPainter,
+                modifier = backdropModifier,
+            )
+        }
+    }
     // One number for both directions, and it lives out here rather than inside
     // the layout it drives — which is the whole reason closing is an animation
     // at all. Held inside, it would be destroyed by the very unmount it was
@@ -2100,9 +2121,7 @@ fun NowPlayingScreen(
             statusContent = wideStatusContent,
             lyricsContent = wideLyricsContent,
             queueContent = wideQueueContent,
-            legacyMesh = legacyMesh,
-            canvasFrame = canvasFrame,
-            artMesh = artMesh,
+            background = fullArtworkBlurContent,
             progress = wideSplit,
         )
         // The output drawer and the pipeline dialog are drawn by the phone
@@ -2157,7 +2176,16 @@ fun NowPlayingScreen(
         // the anchor for a blurred layer, and moving it would re-blur the whole
         // screen on every frame of the drag. Above it the mesh holds one colour,
         // so a seam left behind a collapsed sleeve shows nothing at all.
-        if (!spotifyCanvasPresentation && legacyMesh && !canvasFirstPortrait) {
+        // Both phone backgrounds stay mounted for the entire song. Only these
+        // retained layers' alpha changes when a panel opens, so the full-cover
+        // blur is neither rebuilt nor switched in on a hard frame boundary.
+        // The tablet has no mirrored main-player treatment to crossfade from.
+        val fullArtworkBackdropAlpha by animateFloatAsState(
+            targetValue = if (tabletArtworkBackdrop || lyricsOpen || queueOpen) 1f else 0f,
+            animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+            label = "fullArtworkBackdropCrossfade",
+        )
+        if (!tabletArtworkBackdrop && !spotifyCanvasPresentation && legacyMesh && !canvasFirstPortrait) {
             // v1.5's backdrop, restored verbatim: no seam, because the blobs
             // are not anchored to anything on screen — they fill the player and
             // the artwork simply sits on top of them. Keyed on the track, so
@@ -2168,13 +2196,18 @@ fun NowPlayingScreen(
             MeshGradientBackground(
                 palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
                 trackKey = song.videoId,
+                modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
-        } else if (!spotifyCanvasPresentation) {
+        } else if (!tabletArtworkBackdrop && !spotifyCanvasPresentation) {
             ArtworkMeshBackdrop(
                 mesh = artMesh,
                 seam = if (canvasFirstPortrait) renderedCanvasBottom else if (heroMode) heroHeight else 0.dp,
+                modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
         }
+        fullArtworkBlurContent(
+            Modifier.graphicsLayer { alpha = fullArtworkBackdropAlpha },
+        )
 
         // The artwork, edge to edge and running up behind the status bar,
         // dissolving into the backdrop where the sleeve's bottom edge would
@@ -2283,11 +2316,17 @@ fun NowPlayingScreen(
                         1f
                     },
                     onRenderedChanged = { canvasRendered = it },
-                    onFrameCaptured = { if (!spotifyCanvasFullscreen) canvasFrame = it },
+                    onFrameCaptured = {
+                        if (!spotifyCanvasFullscreen && !tabletArtworkBackdrop) canvasFrame = it
+                    },
                     // The full-screen Spotify video has no mesh to re-tint.
                     // Keeping this null also removes the old three-second GPU
                     // readback cadence from this provider alone.
-                    refreshFrameEveryMs = if (spotifyCanvasFullscreen) null else meshRefreshMs,
+                    refreshFrameEveryMs = if (spotifyCanvasFullscreen || tabletArtworkBackdrop) {
+                        null
+                    } else {
+                        meshRefreshMs
+                    },
                     onCoverChanged = { canvasCover.floatValue = it },
                     bottomFade = when {
                         spotifyCanvasFullscreen -> 0f
@@ -2994,8 +3033,10 @@ fun NowPlayingScreen(
                                     canvas = clip,
                                     isPlaying = isPlaying,
                                     onRenderedChanged = { canvasRendered = it },
-                                    onFrameCaptured = { canvasFrame = it },
-                                    refreshFrameEveryMs = meshRefreshMs,
+                                    onFrameCaptured = {
+                                        if (!tabletArtworkBackdrop) canvasFrame = it
+                                    },
+                                    refreshFrameEveryMs = if (tabletArtworkBackdrop) null else meshRefreshMs,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -3986,9 +4027,8 @@ private fun WidePlayerControls(
     lyricsContent: @Composable (Modifier) -> Unit,
     /** The queue list, likewise — see [wideQueueContent]. */
     queueContent: @Composable (Modifier) -> Unit,
-    legacyMesh: Boolean,
-    canvasFrame: Bitmap?,
-    artMesh: ArtworkMesh?,
+    /** Song-scoped movable backdrop retained across the normal and split layouts. */
+    background: @Composable (Modifier) -> Unit,
     /**
      * How far into the split this is, 0 (closed player: content at
      * [PLAYER_MAX_WIDTH], centred) to 1 (two even columns). Driven by the
@@ -4041,17 +4081,11 @@ private fun WidePlayerControls(
     )
 
     Box(modifier = modifier.fillMaxSize()) {
-        // The same choice between the two backdrop systems the ordinary player
-        // makes, just without a hero seam to report: neither of these shapes
-        // has a collapsing banner for the backdrop to leave a seam behind.
-        if (legacyMesh) {
-            MeshGradientBackground(
-                palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
-                trackKey = song.videoId,
-            )
-        } else {
-            ArtworkMeshBackdrop(mesh = artMesh, seam = 0.dp)
-        }
+        // Wide/tablet player, lyrics and queue all stand directly on the same
+        // complete-cover blur. There is no artwork seam here for the ordinary
+        // player's stretched-and-reflected continuation to belong to, and no
+        // animated-canvas frame is sampled into this still-art background.
+        background(Modifier)
 
         val controls: @Composable ColumnScope.() -> Unit = {
             // Directly above the scrubber, exactly where the phone puts it
