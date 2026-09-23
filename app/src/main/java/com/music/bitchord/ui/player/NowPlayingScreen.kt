@@ -110,6 +110,7 @@ import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Translate
@@ -865,6 +866,8 @@ private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 private const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
 /** One shared travel time keeps the deck, credits and stats moving as a unit. */
 private const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
+/** Shared top-only scrim transition for the Canvas lower deck. */
+private const val SPOTIFY_DECK_TOP_FADE_FRACTION = 0.28f
 
 // The lower glass and the controls use one piece of motion. Keeping the slide
 // specification here prevents a busy frame from exposing slightly different
@@ -955,6 +958,8 @@ private sealed interface LyricsTranslationUiState {
     data class Ready(val lines: List<LyricLine>) : LyricsTranslationUiState
     data object SameLanguage : LyricsTranslationUiState
 }
+
+private enum class LyricsDisplayMode { Original, Romanized, Translated }
 
 private const val TRANSLATION_MOTION_MS = 540
 private const val PARTICLES_PER_VOICE = 18
@@ -1305,20 +1310,33 @@ fun NowPlayingScreen(
     var translationState by remember(song.videoId, translationLanguage, lyrics) {
         mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
     }
-    var showingTranslation by remember(song.videoId, translationLanguage, lyrics) {
-        mutableStateOf(false)
+    var romanizationState by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf<LyricsTranslationUiState>(LyricsTranslationUiState.Idle)
     }
+    var lyricsDisplayMode by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf(LyricsDisplayMode.Original)
+    }
+    val showingTranslation = lyricsDisplayMode == LyricsDisplayMode.Translated
+    val showingRomanization = lyricsDisplayMode == LyricsDisplayMode.Romanized
     var translationTransition by remember(song.videoId) { mutableIntStateOf(0) }
     var translationJob by remember(song.videoId, translationLanguage, lyrics) {
         mutableStateOf<Job?>(null)
     }
-    DisposableEffect(song.videoId, translationLanguage, lyrics) {
-        onDispose { translationJob?.cancel() }
+    var romanizationJob by remember(song.videoId, translationLanguage, lyrics) {
+        mutableStateOf<Job?>(null)
     }
-    val displayedLyrics = if (showingTranslation) {
-        (translationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
-    } else {
-        lyrics.orEmpty()
+    DisposableEffect(song.videoId, translationLanguage, lyrics) {
+        onDispose {
+            translationJob?.cancel()
+            romanizationJob?.cancel()
+        }
+    }
+    val displayedLyrics = when (lyricsDisplayMode) {
+        LyricsDisplayMode.Translated ->
+            (translationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
+        LyricsDisplayMode.Romanized ->
+            (romanizationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
+        LyricsDisplayMode.Original -> lyrics.orEmpty()
     }
     val lyricsLoadingLines = stringArrayResource(R.array.lyrics_loading_lines)
     val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
@@ -1326,7 +1344,11 @@ fun NowPlayingScreen(
     val toggleTranslation: () -> Unit = toggleTranslation@{
         when (val state = translationState) {
             is LyricsTranslationUiState.Ready -> {
-                showingTranslation = !showingTranslation
+                lyricsDisplayMode = if (showingTranslation) {
+                    LyricsDisplayMode.Original
+                } else {
+                    LyricsDisplayMode.Translated
+                }
                 translationTransition++
                 haptics.play(Haptic.Select)
             }
@@ -1344,6 +1366,10 @@ fun NowPlayingScreen(
                 if (source.isEmpty()) return@toggleTranslation
                 haptics.play(Haptic.Tap)
                 translationState = LyricsTranslationUiState.Loading
+                romanizationJob?.cancel()
+                if (romanizationState is LyricsTranslationUiState.Loading) {
+                    romanizationState = LyricsTranslationUiState.Idle
+                }
                 translationJob?.cancel()
                 translationJob = translationScope.launch {
                     when (
@@ -1356,7 +1382,7 @@ fun NowPlayingScreen(
                     ) {
                         is LyricsTranslation.Result.Translated -> {
                             translationState = LyricsTranslationUiState.Ready(result.lines)
-                            showingTranslation = true
+                            lyricsDisplayMode = LyricsDisplayMode.Translated
                             translationTransition++
                             haptics.play(Haptic.ToggleOn)
                         }
@@ -1376,6 +1402,72 @@ fun NowPlayingScreen(
                             Toast.makeText(
                                 context,
                                 context.getString(R.string.lyrics_translation_unavailable),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    val toggleRomanization: () -> Unit = toggleRomanization@{
+        when (val state = romanizationState) {
+            is LyricsTranslationUiState.Ready -> {
+                lyricsDisplayMode = if (showingRomanization) {
+                    LyricsDisplayMode.Original
+                } else {
+                    LyricsDisplayMode.Romanized
+                }
+                translationTransition++
+                haptics.play(Haptic.Select)
+            }
+            LyricsTranslationUiState.Loading -> Unit
+            LyricsTranslationUiState.SameLanguage -> {
+                haptics.play(Haptic.Tap)
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.lyrics_already_romanized),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            LyricsTranslationUiState.Idle -> {
+                val source = lyrics.orEmpty()
+                if (source.isEmpty()) return@toggleRomanization
+                haptics.play(Haptic.Tap)
+                romanizationState = LyricsTranslationUiState.Loading
+                translationJob?.cancel()
+                if (translationState is LyricsTranslationUiState.Loading) {
+                    translationState = LyricsTranslationUiState.Idle
+                }
+                romanizationJob?.cancel()
+                romanizationJob = translationScope.launch {
+                    when (
+                        val result = LyricsTranslation.romanize(
+                            context = context.applicationContext,
+                            trackId = song.videoId,
+                            lines = source,
+                            targetLanguageTag = translationLanguage,
+                        )
+                    ) {
+                        is LyricsTranslation.RomanizationResult.Romanized -> {
+                            romanizationState = LyricsTranslationUiState.Ready(result.lines)
+                            lyricsDisplayMode = LyricsDisplayMode.Romanized
+                            translationTransition++
+                            haptics.play(Haptic.ToggleOn)
+                        }
+                        LyricsTranslation.RomanizationResult.AlreadyRomanized -> {
+                            romanizationState = LyricsTranslationUiState.SameLanguage
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.lyrics_already_romanized),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        LyricsTranslation.RomanizationResult.Unavailable -> {
+                            romanizationState = LyricsTranslationUiState.Idle
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.lyrics_romanization_unavailable),
                                 Toast.LENGTH_SHORT,
                             ).show()
                         }
@@ -2041,6 +2133,14 @@ fun NowPlayingScreen(
                         onClick = toggleTranslation,
                     )
                 }
+                Box(modifier = Modifier.align(Alignment.BottomStart)) {
+                    RomanizationToggleButton(
+                        state = romanizationState,
+                        showingRomanization = showingRomanization,
+                        enabled = !lyrics.isNullOrEmpty(),
+                        onClick = toggleRomanization,
+                    )
+                }
             } else {
                 // Held at a fixed line rather than through
                 // [LyricsUnavailableLine] or [LyricsLoadingLine]: those exist
@@ -2143,10 +2243,16 @@ fun NowPlayingScreen(
         val wideLyricsStatus = when {
             translationState is LyricsTranslationUiState.Loading ->
                 stringResource(R.string.translating_lyrics_to, translationLanguageName)
+            romanizationState is LyricsTranslationUiState.Loading ->
+                stringResource(R.string.romanizing_lyrics)
             showingTranslation ->
                 stringResource(R.string.lyrics_translated_to, translationLanguageName)
+            showingRomanization ->
+                stringResource(R.string.lyrics_romanized)
             translationState is LyricsTranslationUiState.SameLanguage ->
                 stringResource(R.string.lyrics_already_in_language, translationLanguageName)
+            romanizationState is LyricsTranslationUiState.SameLanguage ->
+                stringResource(R.string.lyrics_already_romanized)
             lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
             lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
             lyrics.isNullOrEmpty() -> lyricsLoadingText
@@ -2443,6 +2549,10 @@ fun NowPlayingScreen(
                 CanvasArtworkPlayer(
                     canvas = clip,
                     isPlaying = isPlaying,
+                    // Paused for the whole collapse into the queue/lyrics panel
+                    // and back, not just once it hands off to the still frame at
+                    // p >= 0.5 — see [CanvasArtworkPlayer.pausedForTransition].
+                    pausedForTransition = p > 0f,
                     // Spotify's 9:16 Canvas is the phone background, so it
                     // covers every edge. Other providers retain the contained
                     // portrait treatment introduced for motion cover art.
@@ -2565,8 +2675,20 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .then(
-                        if (reduceDynamicBlur) {
-                            Modifier
+                        if (reduceDynamicBlur || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                            // A real backdrop RenderEffect is unavailable on
+                            // older Android versions and intentionally skipped
+                            // when dynamic blur is reduced. Retain the deck's
+                            // contrast without paying for a fake blur path,
+                            // while keeping the same progressive top edge as
+                            // the live glass surface.
+                            Modifier.background(
+                                Brush.verticalGradient(
+                                    0.00f to Color.Transparent,
+                                    SPOTIFY_DECK_TOP_FADE_FRACTION to Color.Black.copy(alpha = 0.40f),
+                                    1.00f to Color.Black.copy(alpha = 0.40f),
+                                ),
+                            )
                         } else {
                             Modifier.optimizedHazeEffect(
                                 state = playerHaze,
@@ -2593,7 +2715,7 @@ fun NowPlayingScreen(
                                 canDrawArea = { true }
                                 mask = Brush.verticalGradient(
                                     0.00f to Color.Transparent,
-                                    0.16f to Color.Black,
+                                    SPOTIFY_DECK_TOP_FADE_FRACTION to Color.Black,
                                     1.00f to Color.Black,
                                 )
                             }
@@ -3176,6 +3298,7 @@ fun NowPlayingScreen(
                                 CanvasArtworkPlayer(
                                     canvas = clip,
                                     isPlaying = isPlaying,
+                                    pausedForTransition = p > 0f,
                                     onRenderedChanged = { canvasRendered = it },
                                     onFrameCaptured = {
                                         if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
@@ -3491,6 +3614,18 @@ fun NowPlayingScreen(
                     if (translateFade > 0.01f) {
                         Box(
                             modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .graphicsLayer { alpha = translateFade },
+                        ) {
+                            RomanizationToggleButton(
+                                state = romanizationState,
+                                showingRomanization = showingRomanization,
+                                enabled = translateShown && !lyrics.isNullOrEmpty(),
+                                onClick = toggleRomanization,
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .graphicsLayer { alpha = translateFade },
                         ) {
@@ -3652,10 +3787,16 @@ fun NowPlayingScreen(
                     text = when {
                         translationState is LyricsTranslationUiState.Loading ->
                             stringResource(R.string.translating_lyrics_to, translationLanguageName)
+                        romanizationState is LyricsTranslationUiState.Loading ->
+                            stringResource(R.string.romanizing_lyrics)
                         showingTranslation ->
                             stringResource(R.string.lyrics_translated_to, translationLanguageName)
+                        showingRomanization ->
+                            stringResource(R.string.lyrics_romanized)
                         translationState is LyricsTranslationUiState.SameLanguage ->
                             stringResource(R.string.lyrics_already_in_language, translationLanguageName)
+                        romanizationState is LyricsTranslationUiState.SameLanguage ->
+                            stringResource(R.string.lyrics_already_romanized)
                         lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
                         lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
                         lyrics.isNullOrEmpty() -> lyricsLoadingText
@@ -5362,6 +5503,57 @@ private fun TranslationToggleButton(
                 contentDescription = stringResource(
                     if (showingTranslation) R.string.show_original_lyrics
                     else R.string.translate_lyrics,
+                ),
+                tint = tint,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+    }
+}
+
+/** The left-hand companion to [TranslationToggleButton], producing Latin script. */
+@Composable
+private fun RomanizationToggleButton(
+    state: LyricsTranslationUiState,
+    showingRomanization: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val active = showingRomanization || state is LyricsTranslationUiState.Loading
+    val tint = when {
+        !enabled || state is LyricsTranslationUiState.SameLanguage -> Color.White.copy(alpha = 0.42f)
+        active -> Color.White
+        else -> Color.White.copy(alpha = 0.78f)
+    }
+    val discAlpha by animateFloatAsState(
+        targetValue = if (active) 0.34f else 0.18f,
+        label = "romanizeDisc",
+    )
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = discAlpha))
+            .clickable(
+                enabled = enabled,
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (state is LyricsTranslationUiState.Loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = tint,
+                strokeWidth = 1.7.dp,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.Language,
+                contentDescription = stringResource(
+                    if (showingRomanization) R.string.show_original_lyrics
+                    else R.string.romanize_lyrics,
                 ),
                 tint = tint,
                 modifier = Modifier.size(19.dp),
@@ -7429,12 +7621,12 @@ private fun InlineQueue(
                         .zIndex(if (dragging) 1f else 0f)
                         .graphicsLayer { translationY = if (dragging) manualDrag.renderOffset else 0f }
                         // The dragged row follows the finger, so it is the one
-                        // row that must not also be animating to a slot. Its
-                        // neighbours skip the animation too, for as long as
-                        // *anything* in the section is being dragged — see the
-                        // note on [manualDrag] below for why.
+                        // row that must not also be animating to a slot — every
+                        // other row in the section, including the ones it
+                        // displaces on the way, still slides smoothly into its
+                        // new slot rather than snapping there.
                         .then(
-                            if (manualDrag.draggedKey != null) {
+                            if (dragging) {
                                 Modifier
                             } else {
                                 Modifier.animateItem(
@@ -7516,7 +7708,7 @@ private fun InlineQueue(
                         .zIndex(if (dragging) 1f else 0f)
                         .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
                         .then(
-                            if (autoplayDrag.draggedKey != null) {
+                            if (dragging) {
                                 Modifier
                             } else {
                                 Modifier.animateItem(

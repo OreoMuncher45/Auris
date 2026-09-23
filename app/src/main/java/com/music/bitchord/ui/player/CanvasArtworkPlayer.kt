@@ -155,6 +155,16 @@ fun CanvasArtworkPlayer(
     bottomFade: Float = 0f,
     /** Optional end of the fade in view pixels; defaults to the view's bottom edge. */
     bottomFadeEndPx: Float? = null,
+    /**
+     * Halts decoding for the length of a caller-driven transition — the sleeve
+     * collapsing into the queue or lyrics panel and back — rather than only at
+     * the two ends of it. That collapse is driven by the same clock as this
+     * clip's own fade, and a decoder left running through it competes with the
+     * slide for the same frame budget; the stutter that produced this flag was
+     * the decode, not the animation. The clip keeps its last frame on screen
+     * while paused, so there is nothing to fade back in once it lifts.
+     */
+    pausedForTransition: Boolean = false,
 ) {
     val context = LocalContext.current
 
@@ -256,7 +266,9 @@ fun CanvasArtworkPlayer(
     // regardless of playback state, so coming back from background always has
     // a surface ready and `onRenderedFirstFrame()` fires naturally.
     val foreground = rememberIsForeground()
-    LaunchedEffect(foreground) { player.playWhenReady = foreground }
+    LaunchedEffect(foreground, pausedForTransition) {
+        player.playWhenReady = foreground && !pausedForTransition
+    }
 
     // Repaint onto a surface that has just been handed back. A TextureView's
     // SurfaceTexture does not survive every background/layout transition, and

@@ -366,9 +366,14 @@
     <string name="clear_name">Clear name</string>
     <string name="close_lyrics">Close lyrics</string>
     <string name="translate_lyrics">Translate lyrics</string>
+    <string name="romanize_lyrics">Romanize lyrics</string>
     <string name="show_original_lyrics">Show original lyrics</string>
     <string name="translating_lyrics_to">Translating to %1$s…</string>
     <string name="lyrics_translated_to">Translated to %1$s</string>
+    <string name="romanizing_lyrics">Romanizing lyrics…</string>
+    <string name="lyrics_romanized">Romanized pronunciation</string>
+    <string name="lyrics_already_romanized">These lyrics already use Latin characters</string>
+    <string name="lyrics_romanization_unavailable">Romanization is unavailable for these lyrics</string>
     <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
     <string name="translation_language">Translation language</string>

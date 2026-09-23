@@ -888,11 +888,21 @@
 
     <string name="translate_lyrics">Translate lyrics</string>
 
+    <string name="romanize_lyrics">Chuyển lời bài hát sang chữ Latinh</string>
+
     <string name="show_original_lyrics">Show original lyrics</string>
 
     <string name="translating_lyrics_to">Translating to %1$s…</string>
 
     <string name="lyrics_translated_to">Translated to %1$s</string>
+
+    <string name="romanizing_lyrics">Đang chuyển lời bài hát sang chữ Latinh…</string>
+
+    <string name="lyrics_romanized">Phiên âm Latinh</string>
+
+    <string name="lyrics_already_romanized">Lời bài hát này đã dùng ký tự Latinh</string>
+
+    <string name="lyrics_romanization_unavailable">Không thể chuyển lời bài hát này sang chữ Latinh</string>
 
     <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
 
@@ -905,6 +915,10 @@
     <string name="translation_language_app_default">App language</string>
 
     <string name="translation_language_subtitle">Follows the app language</string>
+
+    <string name="jiosaavn_mismatch_warning">Có thể khớp nhầm phiên bản bài hát. Hãy tự chịu rủi ro khi bật.</string>
+    <string name="enable_jiosaavn">Bật JioSaavn?</string>
+    <string name="enable_anyway">Vẫn bật</string>
 
     <string name="search_languages">Search languages</string>
 
