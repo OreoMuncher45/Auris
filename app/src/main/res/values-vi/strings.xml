@@ -7,6 +7,13 @@
     <string name="download_notification_title">Đang tải xuống</string>
     <string name="download_notification_starting">Đang bắt đầu</string>
     <string name="download_notification_queued">%1$s · %2$d bài khác đang chờ</string>
+    <string name="upload_channel_name">Tải lên</string>
+    <string name="upload_channel_description">Các bài hát đang được gửi tới máy chủ WebDAV của bạn</string>
+    <string name="upload_notification_title">Đang tải lên</string>
+    <string name="upload_notification_queued">%1$s · %2$d bài khác đang chờ</string>
+    <plurals name="uploading_song_count">
+        <item quantity="other">Đang tải lên %1$d bài hát</item>
+    </plurals>
     <string name="cancel">Hủy</string>
     <string name="save">Lưu</string>
     <string name="close">Đóng</string>
@@ -612,6 +619,14 @@
     <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
     <string name="webdav_disconnect">Ngắt kết nối</string>
     <string name="webdav_test_failed">Không thể kết nối: %1$s</string>
+    <string name="upload_to_webdav">Tải lên WebDAV</string>
+    <string name="webdav_conflict_title">“%1$s” đã có trên máy chủ</string>
+    <string name="webdav_conflict_message">Ghi đè, hay giữ cả hai bản?</string>
+    <string name="webdav_overwrite">Ghi đè</string>
+    <string name="webdav_keep_both">Giữ cả hai</string>
+    <string name="webdav_skip">Bỏ qua</string>
+    <string name="webdav_apply_to_all">Áp dụng cho tất cả</string>
+    <string name="webdav_upload_summary">%1$d đã tải lên · %2$d bỏ qua · %3$d thất bại</string>
     <string name="playlist">danh sách phát</string>
     <string name="playlist_action">Danh sách phát</string>
     <string name="open">Mở</string>

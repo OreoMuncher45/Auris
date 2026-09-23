@@ -131,6 +131,88 @@ object WebDavClient {
         return builder.build()
     }
 
+    /**
+     * Whether [fileUrl] already exists. Any answer other than 200/404 is a
+     * failure rather than a guess — treating a 500 as "absent" is how an
+     * upload silently eats a file it was told not to touch.
+     */
+    suspend fun exists(fileUrl: String, username: String, password: String): Result<Boolean> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val builder = Request.Builder().url(fileUrl).head()
+                WebDavConfig.basicAuthHeader(username, password)?.let { builder.header("Authorization", it) }
+                Http.client.newCall(builder.build()).execute().use { response ->
+                    when (response.code) {
+                        200 -> true
+                        404 -> false
+                        else -> throw WebDavException("Exists check failed with ${response.code}")
+                    }
+                }
+            }
+        }
+
+    sealed interface PutResult {
+        data object Uploaded : PutResult
+        /** The server refused a non-overwriting PUT because the file is there. */
+        data object AlreadyExists : PutResult
+    }
+
+    /**
+     * Streams [stream] to [fileUrl] without buffering it in memory — a FLAC
+     * can be a hundred megabytes, and holding two copies (ours plus OkHttp's)
+     * is what gets a background upload killed.
+     *
+     * [contentLength] may be -1 when the size isn't knowable up front (a
+     * `content://` row that won't say); OkHttp then sends chunked, which
+     * Nextcloud and every RFC-compliant server accepts for PUT.
+     *
+     * Without [overwrite], `If-None-Match: *` makes the absence check atomic:
+     * a 412 comes back instead of a clobbered file when something else won
+     * the race between [exists] and this call.
+     */
+    suspend fun putFile(
+        fileUrl: String,
+        stream: InputStream,
+        contentLength: Long,
+        mimeType: String,
+        username: String,
+        password: String,
+        overwrite: Boolean,
+        onProgress: ((bytesWritten: Long) -> Unit)? = null,
+    ): Result<PutResult> = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = StreamBody(stream, contentLength, mimeType.toMediaType(), onProgress)
+            val builder = Request.Builder().url(fileUrl).put(body)
+            if (!overwrite) builder.header("If-None-Match", "*")
+            WebDavConfig.basicAuthHeader(username, password)?.let { builder.header("Authorization", it) }
+            Http.client.newCall(builder.build()).execute().use { response ->
+                when (response.code) {
+                    in 200..299 -> PutResult.Uploaded
+                    412 -> PutResult.AlreadyExists
+                    else -> throw WebDavException("Upload failed with ${response.code}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates the collection at [dirUrl], if it isn't one already. 405 means
+     * something is already there, which is the happy path wearing an error
+     * code; anything else out of 2xx is a real failure.
+     */
+    suspend fun ensureCollection(dirUrl: String, username: String, password: String): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val builder = Request.Builder().url(dirUrl).method("MKCOL", null)
+                WebDavConfig.basicAuthHeader(username, password)?.let { builder.header("Authorization", it) }
+                Http.client.newCall(builder.build()).execute().use { response ->
+                    if (response.code !in 200..299 && response.code != 405) {
+                        throw WebDavException("Could not create folder (${response.code})")
+                    }
+                }
+            }
+        }
+
     private fun propfind(dirUrl: String, username: String, password: String): Result<List<Entry>> {
         return runCatching {
             val request = propfindRequest(dirUrl, depth = "1", username, password)
@@ -204,7 +286,77 @@ object WebDavClient {
         URLDecoder.decode(url.trimEnd('/').substringAfterLast('/'), "UTF-8")
     }.getOrDefault(url.trimEnd('/').substringAfterLast('/'))
 
+    /**
+     * `root/<segment>`, with the segment percent-encoded. `URLEncoder` is a
+     * form encoder, so `+` (space) is rewritten to `%20` — a path is not a
+     * query string.
+     */
+    fun joinUrl(root: String, segment: String): String {
+        val encoded = URLEncoder.encode(segment, "UTF-8").replace("+", "%20")
+        return "${root.trimEnd('/')}/$encoded"
+    }
+
+    /**
+     * The name a track is stored under: `Artist - Title.ext`, or just the
+     * title when there is no artist worth naming. Filesystem-hostile
+     * characters never reach the server — a `/` in a title would otherwise
+     * file it into a folder nobody asked for.
+     */
+    fun uploadFileName(title: String, artist: String, extension: String): String {
+        val rawBase = if (artist.isNotBlank() && artist != "Unknown Artist") "$artist - $title" else title
+        val clean = rawBase
+            .map { c -> if (c == '/' || c == '\\' || c.isISOControl()) '_' else c }
+            .joinToString("")
+            .trim().trim('.')
+            .take(120)
+            .ifBlank { "track" }
+        val ext = extension.lowercase(Locale.ROOT).trimStart('.').takeIf { it.isNotBlank() } ?: "mp3"
+        return "$clean.$ext"
+    }
+
+    /**
+     * First name in `base`, `base (1)`, `base (2)`, … that isn't in [taken].
+     * Compared case-insensitively: servers that ignore case would otherwise
+     * hand back a "new" name that collides on disk.
+     */
+    fun resolveNumberedName(base: String, extension: String, taken: Set<String>): String {
+        val lowered = taken.map { it.lowercase(Locale.ROOT) }.toSet()
+        var candidate = "$base.$extension"
+        var n = 1
+        while (candidate.lowercase(Locale.ROOT) in lowered && n < 1000) {
+            candidate = "$base ($n).$extension"
+            n++
+        }
+        return candidate
+    }
+
     class WebDavException(message: String) : Exception(message)
 
+    private class StreamBody(
+        private val stream: InputStream,
+        private val length: Long,
+        private val mime: MediaType?,
+        private val onProgress: ((Long) -> Unit)?,
+    ) : RequestBody() {
+        override fun contentType(): MediaType? = mime
+        override fun contentLength(): Long = length
 
+        override fun writeTo(sink: BufferedSink) {
+            var written = 0L
+            stream.use { input ->
+                val source: Source = input.source()
+                source.buffer().use { buffered ->
+                    var read: Long
+                    while (buffered.read(sink.buffer, 8192).also { read = it } != -1L) {
+                        written += read
+                        sink.flush()
+                        onProgress?.invoke(written)
+                    }
+                }
+            }
+            if (length >= 0 && written != length) {
+                throw IOException("Short upload: wrote $written of $length bytes")
+            }
+        }
+    }
 }

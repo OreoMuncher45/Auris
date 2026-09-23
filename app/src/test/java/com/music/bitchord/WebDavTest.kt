@@ -176,6 +176,109 @@ class WebDavTest {
     }
 
     @Test
+    fun uploadFileName_prefersArtistTitle() {
+        assertEquals(
+            "Artist - Title.mp3",
+            WebDavClient.uploadFileName("Title", "Artist", "mp3"),
+        )
+    }
+
+    @Test
+    fun uploadFileName_dropsUnknownArtistAndSanitizes() {
+        assertEquals(
+            "Title _ Live.flac",
+            WebDavClient.uploadFileName("Title / Live", "Unknown Artist", "FLAC"),
+        )
+    }
+
+    @Test
+    fun uploadFileName_blankFallsBack() {
+        assertEquals("track.mp3", WebDavClient.uploadFileName("  ", "", ""))
+    }
+
+    @Test
+    fun resolveNumberedName_incrementsCaseInsensitively() {
+        assertEquals(
+            "Title.mp3",
+            WebDavClient.resolveNumberedName("Title", "mp3", emptySet()),
+        )
+        assertEquals(
+            "Title (2).mp3",
+            WebDavClient.resolveNumberedName(
+                "Title", "mp3", setOf("title.MP3", "Title (1).mp3"),
+            ),
+        )
+    }
+
+    @Test
+    fun joinUrl_encodesSegments() {
+        assertEquals(
+            "https://cloud.example.com/Music/Artist%20-%20Title.mp3",
+            WebDavClient.joinUrl("https://cloud.example.com/Music/", "Artist - Title.mp3"),
+        )
+    }
+
+    @Test
+    fun `exists maps 200 and 404, put honors If-None-Match`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            val base = server.url("/Music").toString().trimEnd('/')
+            val target = "$base/Artist%20-%20Title.mp3"
+
+            server.enqueue(MockResponse().setResponseCode(404))
+            assertEquals(false, WebDavClient.exists(target, "", "").getOrThrow())
+
+            server.enqueue(MockResponse().setResponseCode(201))
+            var progress = -1L
+            assertEquals(
+                WebDavClient.PutResult.Uploaded,
+                WebDavClient.putFile(
+                    fileUrl = target,
+                    stream = "hello".byteInputStream(),
+                    contentLength = 5,
+                    mimeType = "audio/mpeg",
+                    username = "", password = "",
+                    overwrite = false,
+                    onProgress = { progress = it },
+                ).getOrThrow(),
+            )
+            assertEquals(5L, progress)
+            server.takeRequest() // HEAD from exists() above
+            val put = server.takeRequest() // the PUT itself
+            assertEquals("PUT", put.method)
+            assertEquals("*", put.getHeader("If-None-Match"))
+
+            server.enqueue(MockResponse().setResponseCode(412))
+            assertEquals(
+                WebDavClient.PutResult.AlreadyExists,
+                WebDavClient.putFile(
+                    fileUrl = target,
+                    stream = "hello".byteInputStream(),
+                    contentLength = 5,
+                    mimeType = "audio/mpeg",
+                    username = "", password = "",
+                    overwrite = false,
+                ).getOrThrow(),
+            )
+            server.takeRequest() // the refused PUT
+
+            server.enqueue(MockResponse().setResponseCode(204))
+            assertEquals(
+                WebDavClient.PutResult.Uploaded,
+                WebDavClient.putFile(
+                    fileUrl = target,
+                    stream = "hello".byteInputStream(),
+                    contentLength = 5,
+                    mimeType = "audio/mpeg",
+                    username = "", password = "",
+                    overwrite = true,
+                ).getOrThrow(),
+            )
+            assertNull(server.takeRequest().getHeader("If-None-Match"))
+        }
+    }
+
+    @Test
     fun detectsImageFiles() {
         assertTrue(WebDavClient.isImageFile("cover.jpg"))
         assertTrue(WebDavClient.isImageFile("Folder.PNG"))
@@ -268,4 +371,14 @@ ${rows.joinToString("\n")}
     </d:prop></d:propstat>
   </d:response>""".trimIndent()
 
+    @Test
+    fun `ensureCollection tolerates an existing folder`() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            val dir = server.url("/Music").toString()
+            server.enqueue(MockResponse().setResponseCode(405))
+            WebDavClient.ensureCollection(dir, "", "").getOrThrow()
+            assertEquals("MKCOL", server.takeRequest().method)
+        }
+    }
 }

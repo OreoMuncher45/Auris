@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.Downloading
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Radio
@@ -76,6 +77,7 @@ import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.webdav.WebDavUploads
 import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
@@ -123,6 +125,13 @@ fun SongActionsSheet(
     onAddToQueue: () -> Unit,
     onStartRadio: () -> Unit,
     onDownload: () -> Unit,
+    /**
+     * Copies this track to the WebDAV server. Null hides the row — the caller
+     * passes one only for a readable device file while a server is
+     * configured. Uploading while another upload of the same track runs just
+     * re-runs it; the conflict dialog keeps that idempotent.
+     */
+    onUploadToWebDav: (() -> Unit)? = null,
     onToggleLike: () -> Unit,
     onToggleDislike: () -> Unit,
     onAddToPlaylist: () -> Unit,
@@ -254,6 +263,7 @@ fun SongActionsSheet(
         }
 
         DownloadRow(song, palette, isOffline, onDownload)
+        WebDavUploadRow(song, palette, isOffline, onUploadToWebDav)
         ActionRow(
             icon = Icons.Rounded.Radio,
             label = stringResource(R.string.start_radio),
@@ -482,6 +492,52 @@ private fun DownloadRow(song: Song, palette: ArtworkPalette, isOffline: Boolean,
                 onClick = onDownload,
             )
         }
+    }
+}
+
+/**
+ * Sends a device file to the WebDAV server. Sits beside the download row
+ * because it is the same idea in the other direction — and like that row it
+ * reads its state where it is drawn rather than threading it through the
+ * sheet's signature.
+ *
+ * Shown only for readable local files. A track already on the server, or a
+ * stream with no bytes on this device, has nothing to send up.
+ */
+@Composable
+private fun WebDavUploadRow(
+    song: Song,
+    palette: ArtworkPalette,
+    isOffline: Boolean,
+    onUpload: (() -> Unit)?,
+) {
+    onUpload ?: return
+    if (!isOffline || !WebDavUploads.isUploadable(song)) return
+    val active by WebDavUploads.active.collectAsStateWithLifecycle()
+    when (val state = active[song.videoId]) {
+        is WebDavUploads.TrackState.Running -> ActionRow(
+            icon = Icons.Rounded.FileUpload,
+            label = stringResource(R.string.upload_to_webdav),
+            value = "${(state.fraction * 100).toInt()}%",
+            tint = palette.accent,
+            accent = palette.accent,
+            // In flight already; there is no cancel, so the row only reports.
+            onClick = {},
+        )
+        is WebDavUploads.TrackState.Failed -> ActionRow(
+            icon = Icons.Rounded.FileUpload,
+            label = state.reason,
+            value = stringResource(R.string.try_again),
+            tint = MaterialTheme.colorScheme.error,
+            accent = MaterialTheme.colorScheme.error,
+            onClick = onUpload,
+        )
+        else -> ActionRow(
+            icon = Icons.Rounded.FileUpload,
+            label = stringResource(R.string.upload_to_webdav),
+            accent = palette.accent,
+            onClick = onUpload,
+        )
     }
 }
 

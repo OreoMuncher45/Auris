@@ -204,6 +204,7 @@ import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
+import com.music.bitchord.ui.components.WebDavConflictAlert
 import com.music.bitchord.ui.components.WebDavEditorAlert
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
@@ -869,6 +870,29 @@ private fun BitChordApp(
 
     val scope = rememberCoroutineScope()
 
+    // Copies tracks to the WebDAV server, leaving the local files alone.
+    // A clash suspends the batch on WebDavUploads.conflict until the dialog
+    // above answers it, so this needs nothing more than the summary.
+    fun uploadToWebDav(songs: List<Song>) {
+        scope.launch {
+            val summary = com.music.bitchord.data.webdav.WebDavUploads.upload(context, songs)
+            if (summary.total > 0) {
+                showQueueNotice(
+                    context.getString(
+                        R.string.webdav_upload_summary,
+                        summary.uploaded,
+                        summary.skipped,
+                        summary.failed,
+                    ),
+                )
+            }
+            if (summary.uploaded > 0 &&
+                detail?.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID
+            ) {
+                viewModel.reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
+            }
+        }
+    }
 
     /**
      * Resolve and apply the catalogue release without replacing the video row
@@ -2269,6 +2293,12 @@ private fun BitChordApp(
                                     selected.forEach { song -> Downloads.delete(context, song.videoId) }
                                 }
                             },
+                            onUploadToWebDav =
+                                if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl)) {
+                                    { selected -> uploadToWebDav(selected) }
+                                } else {
+                                    null
+                                },
                             onSongClick = { songs, index ->
                                 playFrom(
                                     songs,
@@ -3008,6 +3038,20 @@ private fun BitChordApp(
                     // progress, and closing the sheet would hide the only
                     // answer to "did that work?".
                     onDownload = { downloadSong(song) },
+                    // The other direction: a device file going up to the
+                    // server. Closed first, unlike a download — progress and
+                    // the summary notice live outside the sheet.
+                    onUploadToWebDav =
+                        if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
+                            com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
+                        ) {
+                            {
+                                songActions = null
+                                uploadToWebDav(listOf(song))
+                            }
+                        } else {
+                            null
+                        },
                     // The sheet stays up for a rating: it shows the new state
                     // in place, and people often thumb a song and then queue it.
                     onToggleLike = { viewModel.toggleLike(song.videoId) },
@@ -3631,6 +3675,32 @@ private fun BitChordApp(
                     showWebDavEditor = false
                 },
                 onDismiss = { showWebDavEditor = false },
+            )
+        }
+
+        // A clash mid-upload, answered here so the scrim covers the tab bar
+        // and mini player like every other alert. Backing out is a skip —
+        // leaving the batch suspended on a dismissed dialog would hang the
+        // upload with no way to reach the question again.
+        val uploadConflict by com.music.bitchord.data.webdav.WebDavUploads.conflict.collectAsStateWithLifecycle()
+        uploadConflict?.let { req ->
+            var applyToAll by remember(req) { mutableStateOf(false) }
+            val answer: (com.music.bitchord.data.webdav.WebDavUploads.Choice) -> Unit = { choice ->
+                req.answer.complete(
+                    com.music.bitchord.data.webdav.WebDavUploads.Resolution(choice, applyToAll),
+                )
+            }
+            BackHandler { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.SKIP) }
+            WebDavConflictAlert(
+                hazeState = hazeState,
+                fileName = req.fileName,
+                showApplyToAll = req.remaining > 0,
+                applyToAll = applyToAll,
+                onApplyToAllChange = { applyToAll = it },
+                onOverwrite = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.OVERWRITE) },
+                onKeepBoth = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.KEEP_BOTH) },
+                onSkip = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.SKIP) },
+                onDismiss = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.SKIP) },
             )
         }
 

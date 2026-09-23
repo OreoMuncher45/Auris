@@ -525,6 +525,79 @@ fun WebDavEditorAlert(
 }
 
 /**
+ * A name clash mid-upload: the server already holds a file under the name a
+ * track would land as.
+ *
+ * Three stacked outcomes rather than a yes/no — overwriting destroys the
+ * server copy, so the non-destructive answer leads as the emphasised action.
+ * [showApplyToAll] is only true mid-batch, where one answer can carry every
+ * clash still queued behind this one.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun WebDavConflictAlert(
+    hazeState: HazeState,
+    fileName: String,
+    showApplyToAll: Boolean,
+    applyToAll: Boolean,
+    onApplyToAllChange: (Boolean) -> Unit,
+    onOverwrite: () -> Unit,
+    onKeepBoth: () -> Unit,
+    onSkip: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertScaffold(hazeState = hazeState, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.webdav_conflict_title, fileName),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = stringResource(R.string.webdav_conflict_message),
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+        }
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.webdav_keep_both),
+            emphasised = true,
+            onClick = onKeepBoth,
+        )
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.webdav_overwrite),
+            emphasised = false,
+            onClick = onOverwrite,
+        )
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.webdav_skip),
+            emphasised = false,
+            onClick = onSkip,
+        )
+        if (showApplyToAll) {
+            AlertRule()
+            ChoiceRow(
+                label = stringResource(R.string.webdav_apply_to_all),
+                detail = null,
+                checked = applyToAll,
+                onClick = { onApplyToAllChange(!applyToAll) },
+            )
+        }
+    }
+}
+
+/**
  * Single-select list, ticked like [LyricsSourcesDialog] rather than with radio
  * buttons — same reasoning: a column of Material radios would be the one
  * Material thing left on an otherwise Apple-shaped alert.
