@@ -143,6 +143,11 @@ fun FullArtworkBlurBackdrop(
     image: ImageBitmap?,
     modifier: Modifier = Modifier,
 ) {
+    val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (image != null) 1f else 0f,
+        animationSpec = tween(320, easing = FastOutSlowInEasing),
+        label = "preparedBackdropImage",
+    )
     Box(modifier = modifier.fillMaxSize().background(FallbackBackdrop)) {
         image?.let { bitmap ->
             val painter = remember(bitmap) { BitmapPainter(bitmap) }
@@ -150,7 +155,7 @@ fun FullArtworkBlurBackdrop(
                 painter = painter,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha },
             )
         }
 
