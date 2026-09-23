@@ -322,10 +322,20 @@ val MediaItem.fromAutoplay: Boolean
 
 /** @see Song.queueTier */
 val MediaItem.queueTier: QueueTier
-    get() = mediaMetadata.extras?.getString(EXTRA_QUEUE_TIER)
-        ?.let { runCatching { QueueTier.valueOf(it) }.getOrNull() }
-        ?: mediaMetadata.genre?.toString()?.let { runCatching { QueueTier.valueOf(it) }.getOrNull() }
-        ?: if (mediaMetadata.extras?.getBoolean(EXTRA_FROM_AUTOPLAY) == true) QueueTier.AUTOPLAY else QueueTier.CONTEXT
+    get() {
+        val raw = mediaMetadata.extras?.getString(EXTRA_QUEUE_TIER)
+            ?: mediaMetadata.genre?.toString()
+        return when (raw) {
+            "USER_QUEUE" -> QueueTier.USER_QUEUE
+            "CONTEXT" -> QueueTier.CONTEXT
+            "AUTOPLAY" -> QueueTier.AUTOPLAY
+            else -> if (mediaMetadata.extras?.getBoolean(EXTRA_FROM_AUTOPLAY) == true) {
+                QueueTier.AUTOPLAY
+            } else {
+                QueueTier.CONTEXT
+            }
+        }
+    }
 
 /** @see Song.queueEntryId */
 val MediaItem.queueEntryId: String?

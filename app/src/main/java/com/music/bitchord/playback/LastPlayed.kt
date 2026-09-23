@@ -150,8 +150,12 @@ object LastPlayed {
         val sourceId: String? = null,
     ) {
         fun toSong(): Song {
-            val resolvedTier = tier?.let { runCatching { com.music.bitchord.data.model.QueueTier.valueOf(it) }.getOrNull() }
-                ?: if (auto) com.music.bitchord.data.model.QueueTier.AUTOPLAY else com.music.bitchord.data.model.QueueTier.CONTEXT
+            val resolvedTier = when (tier) {
+                "USER_QUEUE" -> com.music.bitchord.data.model.QueueTier.USER_QUEUE
+                "CONTEXT" -> com.music.bitchord.data.model.QueueTier.CONTEXT
+                "AUTOPLAY" -> com.music.bitchord.data.model.QueueTier.AUTOPLAY
+                else -> if (auto) com.music.bitchord.data.model.QueueTier.AUTOPLAY else com.music.bitchord.data.model.QueueTier.CONTEXT
+            }
             return Song(
                 videoId = id,
                 title = title,
