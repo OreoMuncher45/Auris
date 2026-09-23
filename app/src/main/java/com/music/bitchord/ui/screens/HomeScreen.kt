@@ -854,6 +854,29 @@ internal fun ShelfCard(
                     )
                 }
             }
+            "local:webdav" -> {
+                val palette = remember { MeshPalette(listOf(Color(0xFF3A1C71), Color(0xFFD76D77))) }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MeshGradientBackground(
+                        palette = palette,
+                        trackKey = "local:webdav",
+                        continuous = true,
+                        blurRadius = 24.dp,
+                    )
+                    Icon(
+                        imageVector = Icons.Rounded.Folder,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(40.dp),
+                    )
+                }
+            }
             else -> {
                 AsyncImage(
                     model = item.thumbnailUrl.artworkAt(CARD_ART_PX),

@@ -413,6 +413,118 @@ fun AddonEditorAlert(
 }
 
 /**
+ * The WebDAV server editor: address, username and password.
+ *
+ * The same frosted card every other alert in this app uses. The three fields
+ * read top to bottom in the order they are typed, and testing sits above Save
+ * the way [AddonEditorAlert] does it — an address is worth checking before it
+ * is stored.
+ *
+ * [status] is what the last test said, or null before one has been run, and
+ * replaces the description in place while it stands — cleared the moment any
+ * field is edited, since a result describes the address it was run against.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun WebDavEditorAlert(
+    hazeState: HazeState,
+    urlValue: String,
+    onUrlChange: (String) -> Unit,
+    usernameValue: String,
+    onUsernameChange: (String) -> Unit,
+    passwordValue: String,
+    onPasswordChange: (String) -> Unit,
+    /** What the last test said, or null before one has been run. */
+    status: String?,
+    statusIsGood: Boolean,
+    testing: Boolean,
+    /** Whether there is enough typed in to be worth testing or saving. */
+    canSubmit: Boolean,
+    onTest: () -> Unit,
+    onSave: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertScaffold(hazeState = hazeState, onDismiss = { if (!testing) onDismiss() }) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 19.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = stringResource(R.string.webdav),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 17.sp, fontWeight = FontWeight.W600),
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Text(
+                text = status ?: stringResource(R.string.webdav_description),
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, lineHeight = 17.sp),
+                color = when {
+                    status == null -> MaterialTheme.colorScheme.onSurface
+                    statusIsGood -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.error
+                },
+                textAlign = TextAlign.Center,
+            )
+            PillTextField(
+                value = urlValue,
+                onValueChange = onUrlChange,
+                placeholder = stringResource(R.string.webdav_server_url_hint),
+                enabled = !testing,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Uri,
+                    imeAction = ImeAction.Next,
+                ),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = usernameValue,
+                onValueChange = onUsernameChange,
+                placeholder = stringResource(R.string.username),
+                enabled = !testing,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            )
+            Spacer(Modifier.height(8.dp))
+            PillTextField(
+                value = passwordValue,
+                onValueChange = onPasswordChange,
+                placeholder = stringResource(R.string.password),
+                enabled = !testing,
+                isPassword = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (canSubmit && !testing) onSave() }),
+            )
+        }
+        AlertRule()
+        // Above Save rather than beside it: an address is worth checking before
+        // it is stored, and a row of three cramped buttons is what the Material
+        // dialog did badly.
+        AlertAction(
+            label = if (testing) stringResource(R.string.testing) else stringResource(R.string.test),
+            emphasised = false,
+            onClick = onTest,
+            enabled = canSubmit && !testing,
+        )
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.save),
+            emphasised = true,
+            onClick = onSave,
+            enabled = canSubmit && !testing,
+        )
+        AlertRule()
+        AlertAction(
+            label = stringResource(R.string.cancel),
+            emphasised = false,
+            onClick = onDismiss,
+            enabled = !testing,
+        )
+    }
+}
+
+/**
  * Single-select list, ticked like [LyricsSourcesDialog] rather than with radio
  * buttons — same reasoning: a column of Material radios would be the one
  * Material thing left on an otherwise Apple-shaped alert.

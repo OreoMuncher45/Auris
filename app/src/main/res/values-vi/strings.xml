@@ -603,6 +603,15 @@
     <string name="use_all_audio_folders_subtitle">Bỏ giới hạn thư mục và quét nhạc trên toàn bộ thiết bị</string>
     <string name="album">album</string>
     <string name="artist">nghệ sĩ</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">Nhạc trên máy chủ của bạn</string>
+    <string name="webdav_not_configured">Kết nối máy chủ trong mục Nguồn</string>
+    <string name="webdav_empty">Không tìm thấy tệp âm thanh nào trên máy chủ WebDAV. Kiểm tra URL trong Cài đặt.</string>
+    <string name="webdav_description">Trỏ BitChord tới thư mục nhạc WebDAV — thư mục Music trên Nextcloud của bạn hoặc bất kỳ máy chủ nào hỗ trợ WebDAV.</string>
+    <string name="webdav_server_url">URL máy chủ</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">Ngắt kết nối</string>
+    <string name="webdav_test_failed">Không thể kết nối: %1$s</string>
     <string name="playlist">danh sách phát</string>
     <string name="playlist_action">Danh sách phát</string>
     <string name="open">Mở</string>

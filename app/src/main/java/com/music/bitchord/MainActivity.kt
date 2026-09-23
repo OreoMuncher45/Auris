@@ -204,6 +204,7 @@ import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
+import com.music.bitchord.ui.components.WebDavEditorAlert
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
@@ -486,6 +487,7 @@ private fun BitChordApp(
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    var showWebDavEditor by remember { mutableStateOf(false) }
     /**
      * Whether the download manager is open.
      *
@@ -675,6 +677,7 @@ private fun BitChordApp(
     val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
+    val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
     val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
     // The releases those files were asked for as — read here rather than in the
     // page so the Downloads folder recomposes when one is added, the same way it
@@ -710,7 +713,11 @@ private fun BitChordApp(
             viewModel.reloadLocalDetail("local:all")
         }
     }
-
+    LaunchedEffect(webdavUrl) {
+        if (detail?.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID) {
+            viewModel.reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
+        }
+    }
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
     var queueNotice by remember { mutableStateOf<QueueActionNotice?>(null) }
@@ -861,6 +868,7 @@ private fun BitChordApp(
     }
 
     val scope = rememberCoroutineScope()
+
 
     /**
      * Resolve and apply the catalogue release without replacing the video row
@@ -2185,6 +2193,7 @@ private fun BitChordApp(
                         SourcesScreen(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
+                            onEditWebDav = { showWebDavEditor = true },
                         )
                     } else if (key == "listen_together") {
                         ListenTogetherScreen(
@@ -3566,6 +3575,62 @@ private fun BitChordApp(
                     }
                 },
                 onDismiss = { if (!lastfmLoading) showLastfmLogin = false },
+            )
+        }
+
+        if (showWebDavEditor) {
+            BackHandler { showWebDavEditor = false }
+            var urlInput by remember { mutableStateOf(AppSettings.webdavUrl.value) }
+            var usernameInput by remember { mutableStateOf(AppSettings.webdavUsername.value) }
+            var passwordInput by remember { mutableStateOf(AppSettings.webdavPassword.value) }
+            var webdavStatus by remember { mutableStateOf<String?>(null) }
+            var webdavStatusIsGood by remember { mutableStateOf(false) }
+            var webdavTesting by remember { mutableStateOf(false) }
+            WebDavEditorAlert(
+                hazeState = hazeState,
+                urlValue = urlInput,
+                // A result describes the address it was run against, so the
+                // moment a field is edited it stops being true and is cleared.
+                onUrlChange = { urlInput = it; webdavStatus = null },
+                usernameValue = usernameInput,
+                onUsernameChange = { usernameInput = it; webdavStatus = null },
+                passwordValue = passwordInput,
+                onPasswordChange = { passwordInput = it; webdavStatus = null },
+                status = webdavStatus,
+                statusIsGood = webdavStatusIsGood,
+                testing = webdavTesting,
+                canSubmit = urlInput.isNotBlank(),
+                onTest = {
+                    webdavTesting = true
+                    webdavStatus = null
+                    scope.launch {
+                        com.music.bitchord.data.webdav.WebDavRepository.testConnection(
+                            urlInput.trim(),
+                            usernameInput.trim(),
+                            passwordInput,
+                        ).fold(
+                            onSuccess = {
+                                webdavStatus = context.getString(R.string.connected)
+                                webdavStatusIsGood = true
+                            },
+                            onFailure = {
+                                webdavStatus = context.getString(
+                                    R.string.webdav_test_failed,
+                                    it.message ?: context.getString(R.string.failed),
+                                )
+                                webdavStatusIsGood = false
+                            },
+                        )
+                        webdavTesting = false
+                    }
+                },
+                onSave = {
+                    AppSettings.setWebDavUrl(urlInput.trim())
+                    AppSettings.setWebDavUsername(usernameInput.trim())
+                    AppSettings.setWebDavPassword(passwordInput)
+                    showWebDavEditor = false
+                },
+                onDismiss = { showWebDavEditor = false },
             )
         }
 
