@@ -115,6 +115,7 @@ import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -153,6 +154,15 @@ const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
 /** Session command used to smoothly swap the current track's version (film vs release). */
 const val ACTION_SWAP_VERSION = "com.music.bitchord.action.SWAP_VERSION"
 const val EXTRA_SWAP_MEDIA_ITEM = "bitchord.swap.media_item"
+
+/**
+ * Session command that starts the alignment measurement for an alternate cut
+ * in the background, without touching playback — see
+ * [PlaybackService.prewarmVersionAlignment]. Sent the moment the UI learns an
+ * alternate exists, so the wait behind [ACTION_SWAP_VERSION] is usually
+ * already paid for by the time the listener asks for it.
+ */
+const val ACTION_PREWARM_VERSION_ALIGNMENT = "com.music.bitchord.action.PREWARM_VERSION_ALIGNMENT"
 
 /** Session command used by the media notification's Shuffle button. */
 const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
@@ -666,6 +676,7 @@ class PlaybackService : MediaLibraryService() {
     private val commitRadioQueueCommand = SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY)
     private val upgradeQualityCommand = SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY)
     private val swapVersionCommand = SessionCommand(ACTION_SWAP_VERSION, Bundle.EMPTY)
+    private val prewarmVersionAlignmentCommand = SessionCommand(ACTION_PREWARM_VERSION_ALIGNMENT, Bundle.EMPTY)
     private val reorderQueueCommand = SessionCommand(ACTION_REORDER_QUEUE, Bundle.EMPTY)
     private val queueDragCommand = SessionCommand(ACTION_QUEUE_DRAG, Bundle.EMPTY)
 
@@ -1580,6 +1591,7 @@ class PlaybackService : MediaLibraryService() {
                     spareFilter.setCutoffs(lowPassHz, highPassHz)
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
+            versionSwapActive = { versionSwapJob?.isActive == true },
         )
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
@@ -1719,6 +1731,24 @@ class PlaybackService : MediaLibraryService() {
         val currentIndex = activePlayer.currentMediaItemIndex
         if (currentIndex !in 0 until activePlayer.mediaItemCount) return
         val currentItem = activePlayer.currentMediaItem ?: return
+        // Listen Together plays the one track every member has, and a version
+        // swap is a purely local choice about which cut of it to hear — see
+        // [ListenTogether]'s own note on why Automix stays off in a party for
+        // the same reason. The toggle is hidden client-side for this, but the
+        // command can still arrive from a controller that predates the hide.
+        if (ListenTogether.state.value.inParty) {
+            TrackLog.d("BitChord", "version swap ignored: in a Listen Together party", about = currentItem.mediaId)
+            return
+        }
+        // Never while Automix is mid-blend: both fades share the same
+        // active/standby pair, and starting a version swap here would tear
+        // the standby player away from a transition already using it. The
+        // reverse — Automix arming while a version swap is running — is
+        // guarded symmetrically in [createCrossfadeController].
+        if (crossfade?.isTransitioning() == true) {
+            TrackLog.d("BitChord", "version swap deferred: Automix is mid-transition", about = currentItem.mediaId)
+            return
+        }
 
         val sourceSong = currentItem.toSong()
         val targetSong = targetMediaItem.toSong()
@@ -1936,6 +1966,92 @@ class PlaybackService : MediaLibraryService() {
      * stats for nerds can say which of the three happened and what the shift
      * came out as.
      */
+    /**
+     * One measurement per pair, shared by every caller that asks for it —
+     * [prepareVersionAlignment] and [prewarmVersionAlignment] alike — and
+     * launched on [scope] rather than on whichever caller asked first.
+     *
+     * That is the whole point: [versionSwapJob] gets cancelled every time a
+     * newer switch outranks it or the listener backs out, and before this the
+     * FFT pass cancelled with it — so backing out of a switch and asking for
+     * it again a moment later paid for the decode and the correlation twice.
+     * A caller that stops waiting now only stops *waiting*; the pass keeps
+     * running here and still lands in [VersionAudioAligner]'s cache for
+     * whoever asks next, including a caller that never existed yet when this
+     * was started.
+     */
+    private val versionAlignmentMeasurements = ConcurrentHashMap<Pair<String, String>, Deferred<Long?>>()
+
+    private fun measureVersionAlignmentAsync(sourceSong: Song, targetSong: Song): Deferred<Long?> {
+        val sourceId = sourceSong.videoId
+        val targetId = targetSong.videoId
+        val key = sourceId to targetId
+        VersionAudioAligner.getCachedOffsetMs(sourceId, targetId)?.let { return CompletableDeferred(it) }
+        versionAlignmentMeasurements[key]?.let { return it }
+        val deferred = scope.async(Dispatchers.Main) {
+            try {
+                val sourceUri = Uri.parse(sourceSong.localUri ?: AutomixAnalysisSource.opusUri(sourceId))
+                val targetUri = Uri.parse(targetSong.localUri ?: AutomixAnalysisSource.opusUri(targetId))
+                withContext(Dispatchers.IO) {
+                    // Together rather than one after the other: two independent
+                    // range reads that the sequential version made the listener pay
+                    // for in series, on top of a wait they were already in.
+                    val sourceHead = async {
+                        sourceSong.localUri != null ||
+                            AudioCache.awaitAnalysisHead(sourceUri, ALIGNMENT_HEAD_TIMEOUT_MS)
+                    }
+                    val targetHead = async {
+                        targetSong.localUri != null ||
+                            AudioCache.awaitAnalysisHead(targetUri, ALIGNMENT_HEAD_TIMEOUT_MS)
+                    }
+                    val sourceReady = sourceHead.await()
+                    val targetReady = targetHead.await()
+                    if (!sourceReady || !targetReady) {
+                        // Carried on to the measurement anyway: the aligner opens
+                        // whatever opening is largest on disk, and a short one
+                        // still correlates better than not trying at all.
+                        TrackLog.w(
+                            "BitChord",
+                            "version alignment head short on disk (source=$sourceReady, " +
+                                "target=$targetReady) for '${sourceSong.title}'",
+                            sourceId,
+                        )
+                    }
+                }
+                withTimeoutOrNull(ALIGNMENT_MEASURE_TIMEOUT_MS) {
+                    VersionAudioAligner.findOffsetMs(
+                        context = this@PlaybackService,
+                        sourceSong = sourceSong,
+                        targetSong = targetSong,
+                    )
+                }
+            } finally {
+                // The cache entry [VersionAudioAligner] wrote on success is the
+                // one that matters from here on; this map only exists to fold
+                // concurrent askers into the one pass actually running.
+                versionAlignmentMeasurements.remove(key)
+            }
+        }
+        versionAlignmentMeasurements[key] = deferred
+        return deferred
+    }
+
+    /**
+     * Starts the measurement for [targetSong] against whatever is currently
+     * playing, without touching playback — called the moment the UI learns an
+     * alternate cut exists, so the FFT pass is already done, or well under
+     * way, by the time the listener actually taps the toggle. A no-op if
+     * Smart Audio Alignment is off, nothing is playing, or the pair is
+     * already known or already running — see [measureVersionAlignmentAsync].
+     */
+    private fun prewarmVersionAlignment(targetSong: Song) {
+        if (!AppSettings.smartVersionAlignment.value) return
+        val sourceSong = player?.currentMediaItem?.toSong() ?: return
+        if (sourceSong.videoId == targetSong.videoId) return
+        if (VersionAudioAligner.getCachedOffsetMs(sourceSong.videoId, targetSong.videoId) != null) return
+        measureVersionAlignmentAsync(sourceSong, targetSong)
+    }
+
     private suspend fun prepareVersionAlignment(
         sourceSong: Song,
         targetSong: Song,
@@ -1957,45 +2073,10 @@ class PlaybackService : MediaLibraryService() {
 
         val token = VersionAudioAligner.beginAttempt(sourceId, targetId)
         try {
-            val sourceUri = Uri.parse(sourceSong.localUri ?: AutomixAnalysisSource.opusUri(sourceId))
-            val targetUri = Uri.parse(targetSong.localUri ?: AutomixAnalysisSource.opusUri(targetId))
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FETCHING)
-            withContext(Dispatchers.IO) {
-                // Together rather than one after the other: two independent
-                // range reads that the sequential version made the listener pay
-                // for in series, on top of a wait they were already in.
-                val sourceHead = async {
-                    sourceSong.localUri != null ||
-                        AudioCache.awaitAnalysisHead(sourceUri, ALIGNMENT_HEAD_TIMEOUT_MS)
-                }
-                val targetHead = async {
-                    targetSong.localUri != null ||
-                        AudioCache.awaitAnalysisHead(targetUri, ALIGNMENT_HEAD_TIMEOUT_MS)
-                }
-                val sourceReady = sourceHead.await()
-                val targetReady = targetHead.await()
-                if (!sourceReady || !targetReady) {
-                    // Carried on to the measurement anyway: the aligner opens
-                    // whatever opening is largest on disk, and a short one
-                    // still correlates better than not trying at all.
-                    TrackLog.w(
-                        "BitChord",
-                        "version alignment head short on disk (source=$sourceReady, " +
-                            "target=$targetReady) for '${sourceSong.title}'",
-                        sourceId,
-                    )
-                }
-            }
-
+            val deferred = measureVersionAlignmentAsync(sourceSong, targetSong)
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.MEASURING)
-            val measured = withTimeoutOrNull(ALIGNMENT_MEASURE_TIMEOUT_MS) {
-                VersionAudioAligner.findOffsetMs(
-                    context = this@PlaybackService,
-                    sourceSong = sourceSong,
-                    targetSong = targetSong,
-                    currentPosMs = currentPosMs,
-                )
-            }
+            val measured = deferred.await()
             if (measured == null) {
                 TrackLog.w(
                     "BitChord",
@@ -2010,7 +2091,8 @@ class PlaybackService : MediaLibraryService() {
         } catch (e: CancellationException) {
             // Outranked by a second switch, or the service went away mid-measure.
             // Left as it stands, the status line would keep reporting a swap
-            // that is never going to land.
+            // that is never going to land. The measurement itself is
+            // unaffected — see [measureVersionAlignmentAsync].
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
             throw e
         }
@@ -6323,6 +6405,7 @@ class PlaybackService : MediaLibraryService() {
                 .add(commitRadioQueueCommand)
                 .add(upgradeQualityCommand)
                 .add(swapVersionCommand)
+                .add(prewarmVersionAlignmentCommand)
                 .add(reorderQueueCommand)
                 .add(queueDragCommand)
                 .build()
@@ -6353,6 +6436,10 @@ class PlaybackService : MediaLibraryService() {
                         val targetSong = songFromBundle(bundle)
                         smoothSwapCurrentTrackVersion(targetSong.toMediaItem())
                     }
+                }
+                ACTION_PREWARM_VERSION_ALIGNMENT -> {
+                    val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
+                    if (bundle != null) prewarmVersionAlignment(songFromBundle(bundle))
                 }
                 ACTION_REORDER_QUEUE -> player?.let { QueueShuffle.reorderFromCommand(it, args) }
                 ACTION_QUEUE_DRAG -> {
