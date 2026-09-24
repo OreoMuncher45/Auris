@@ -514,7 +514,10 @@ fun DetailScreen(
                             MessageState(stringResource(R.string.nothing_matches, query))
                         }
                     }
-                    itemsIndexed(matches) { position, entry ->
+                    itemsIndexed(
+                        items = matches,
+                        key = { _, entry -> "${entry.index}_${entry.value.videoId}" },
+                    ) { position, entry ->
                         val song = entry.value
                         val isCurrent = song.isSameTrackAs(currentSong)
                         SongRow(

@@ -244,7 +244,16 @@ fun SearchScreen(
                                 )
                             }
                         }
-                        itemsIndexed(section.rows) { index, row ->
+                        itemsIndexed(
+                            items = section.rows,
+                            key = { index, row ->
+                                when (row) {
+                                    is SearchResult.TopTrack -> "top_${row.song.videoId}_$index"
+                                    is SearchResult.Track -> "track_${row.song.videoId}_$index"
+                                    is SearchResult.Browse -> "browse_${row.item.browseId}_$index"
+                                }
+                            },
+                        ) { index, row ->
                             when (row) {
                                 is SearchResult.TopTrack -> Unit
                                 is SearchResult.Track -> SongRow(

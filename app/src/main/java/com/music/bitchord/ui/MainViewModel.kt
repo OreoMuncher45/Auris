@@ -1903,7 +1903,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private companion object {
+    companion object {
         /**
          * How long a keystroke waits before the typeahead is asked about it.
          *
@@ -1964,6 +1964,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * the page, its refresh, and the long-press menu that queues it without
          * opening it.
          */
+
+        fun browseTypeOf(browseId: String, fallback: BrowseType = BrowseType.OTHER): BrowseType = when {
+            browseId.startsWith(Downloads.PLAYLIST_PREFIX) -> BrowseType.PLAYLIST
+            browseId.startsWith("UC") -> BrowseType.ARTIST
+            browseId.startsWith("MPREb") || browseId.startsWith("VLOLAK") || browseId.startsWith("OLAK") -> BrowseType.ALBUM
+            browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
+            else -> fallback
+        }
     }
 
     fun openDetail(
@@ -2238,15 +2246,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * before offering to queue what is behind it — an artist is not a running
      * order, so it gets no queue actions.
      */
-    fun browseTypeOf(browseId: String, fallback: BrowseType = BrowseType.OTHER): BrowseType = when {
-        // Not one of YouTube's, and the only one of these that says outright what
-        // it is rather than being read off a prefix convention.
-        browseId.startsWith(Downloads.PLAYLIST_PREFIX) -> BrowseType.PLAYLIST
-        browseId.startsWith("UC") -> BrowseType.ARTIST
-        browseId.startsWith("MPREb") -> BrowseType.ALBUM
-        browseId.startsWith("VL") || browseId.startsWith("PL") -> BrowseType.PLAYLIST
-        else -> fallback
-    }
+    fun browseTypeOf(browseId: String, fallback: BrowseType = BrowseType.OTHER): BrowseType =
+        Companion.browseTypeOf(browseId, fallback)
 
     /**
      * Every track behind an album or playlist, handed to [onResult] once it is
