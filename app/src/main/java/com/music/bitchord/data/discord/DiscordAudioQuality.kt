@@ -14,7 +14,7 @@ fun discordAudioQualityLine(stats: NerdStats.Snapshot?): String? {
     stats ?: return null
 
     val quality = when {
-        stats.isDolbyAtmos -> "Dolby Atmos"
+        stats.isDolbyAtmos -> "◗◖ Dolby Atmos"
         stats.isHiRes -> "Hi-Res Lossless"
         stats.isLossless -> "Lossless"
         else -> return null

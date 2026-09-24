@@ -175,6 +175,7 @@ import com.music.bitchord.playback.toggleShuffle
 import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.playback.revertToOriginal
 import com.music.bitchord.playback.swapToVersion
+import com.music.bitchord.playback.prewarmVersionAlignment
 import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
@@ -1210,10 +1211,15 @@ private fun BitChordApp(
         }
     }
 
-    // Check if alternate (video vs audio) version exists in background
-    LaunchedEffect(player.song?.videoId, convertedAudioId, convertedVideoId) {
+    // Check if alternate (video vs audio) version exists in background.
+    // Skipped entirely in a Listen Together party: the track playing there is
+    // shared by everyone in it, and a per-listener version switch would put
+    // each member on their own cut of what is supposed to be one song — see
+    // [ListenTogether] and the matching guard server-side in
+    // [PlaybackService.smoothSwapCurrentTrackVersion].
+    LaunchedEffect(player.song?.videoId, convertedAudioId, convertedVideoId, partyState.inParty) {
         val song = player.song
-        if (song == null) {
+        if (song == null || partyState.inParty) {
             hasAlternateVersion = false
             return@LaunchedEffect
         }
@@ -1223,20 +1229,25 @@ private fun BitChordApp(
             return@LaunchedEffect
         }
         hasAlternateVersion = false
-        val exists = withContext(Dispatchers.IO) {
+        // The resolved alternate itself, not just whether one exists: found
+        // here is the earliest the service can be told to start measuring it
+        // — see [prewarmVersionAlignment] — so by the time the listener taps
+        // the toggle the FFT pass is usually already done rather than
+        // starting from a cold cache.
+        val resolvedAlternate = withContext(Dispatchers.IO) {
             if (song.isVideo) {
                 runCatching {
-                    val resolved = YtMusicRepository.resolveAudio(song)
-                    resolved.videoId != song.videoId
-                }.getOrDefault(false)
+                    YtMusicRepository.resolveAudio(song).takeIf { it.videoId != song.videoId }
+                }.getOrNull()
             } else {
-                runCatching {
-                    YtMusicRepository.resolveVideo(song) != null
-                }.getOrDefault(false)
+                runCatching { YtMusicRepository.resolveVideo(song) }.getOrNull()
             }
         }
         if (player.song?.videoId == song.videoId) {
-            hasAlternateVersion = exists
+            hasAlternateVersion = resolvedAlternate != null
+            if (resolvedAlternate != null && AppSettings.smartVersionAlignment.value) {
+                controller?.prewarmVersionAlignment(resolvedAlternate)
+            }
         }
     }
 

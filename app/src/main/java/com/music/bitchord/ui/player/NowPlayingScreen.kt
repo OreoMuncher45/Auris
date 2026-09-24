@@ -258,7 +258,6 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
-import com.music.bitchord.playback.smart.VersionAudioAligner
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import dev.chrisbanes.haze.HazeInputScale
@@ -683,6 +682,20 @@ private val GLOW_ROOM = 10.dp
 private val BACKING_FONT_SIZE = 23.sp
 private val BACKING_LINE_HEIGHT = 29.sp
 private const val BACKING_ALPHA = 0.72f
+
+/**
+ * The romanization or translation hung under each line — caption-sized, the
+ * way Apple Music prints pronunciation under the lyric, and tucked up into the
+ * lead's glow inset so the two read as one line rather than two rows.
+ */
+private val SUB_LYRIC_FONT_SIZE = 20.sp
+private val SUB_LYRIC_LINE_HEIGHT = 25.sp
+private val SUB_BACKING_FONT_SIZE = 16.sp
+private val SUB_BACKING_LINE_HEIGHT = 21.sp
+private const val SUB_LYRIC_ALPHA = 0.85f
+private val SUB_LYRIC_TUCK = 6.dp
+private const val SUB_LYRIC_OPEN_MS = 460
+private const val SUB_LYRIC_CLOSE_MS = 260
 
 /**
  * How far the sweep's leading edge fades out instead of ending on a cut.
@@ -1414,6 +1427,15 @@ fun NowPlayingScreen(
         LyricsDisplayMode.Romanized ->
             (romanizationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
         LyricsDisplayMode.Original -> lyrics.orEmpty()
+    }
+    // What the panel draws in small type under each original line, Apple
+    // Music style. The panel itself always keeps the original words; only the
+    // one-line strip over the scrubber swaps to [displayedLyrics]. One mode at
+    // a time by construction — [lyricsDisplayMode] holds a single value.
+    val lyricsSubLines = when (lyricsDisplayMode) {
+        LyricsDisplayMode.Translated -> (translationState as? LyricsTranslationUiState.Ready)?.lines
+        LyricsDisplayMode.Romanized -> (romanizationState as? LyricsTranslationUiState.Ready)?.lines
+        LyricsDisplayMode.Original -> null
     }
     val lyricsLoadingLines = stringArrayResource(R.array.lyrics_loading_lines)
     val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
@@ -2198,7 +2220,8 @@ fun NowPlayingScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) { particleProgress ->
                     LyricsPanel(
-                        lines = displayedLyrics,
+                        lines = lyrics.orEmpty(),
+                        subLines = lyricsSubLines,
                         trackKey = song.videoId,
                         positionMs = lyricsPositionMs,
                         looking = !lyricsUnavailable,
@@ -3440,17 +3463,6 @@ fun NowPlayingScreen(
                                 blurRadius = 4f,
                             ),
                         )
-                        // What the switch to the other cut has worked out —
-                        // see [VersionAudioAligner.status]. Read and filtered
-                        // here rather than hoisted with the reads at the top:
-                        // this line describes the song on screen, so a record
-                        // naming a pair this track isn't part of must not
-                        // reach it.
-                        val rawAlignment by VersionAudioAligner.status
-                            .collectAsStateWithLifecycle()
-                        val otherCut = rawAlignment?.takeIf {
-                            it.sourceId == song.videoId || it.targetId == song.videoId
-                        }
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
@@ -3499,35 +3511,6 @@ fun NowPlayingScreen(
                                     // Dimmer than the measured line above it: that
                                     // one describes the audio, this one describes
                                     // the app, and the ranking should show.
-                                    color = Color.White.copy(alpha = 0.5f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                            // The other cut's switch, if this track has an
-                            // alternate and anything is known about moving to
-                            // it. One line for the whole story: which stage the
-                            // pass reached, and the shift it came out with —
-                            // kept after the swap lands, because the shift is
-                            // only worth reading once the cut it describes is
-                            // the one playing.
-                            if (hasAlternateVersion || otherCut != null) {
-                                Text(
-                                    text = stringResource(
-                                        R.string.version_alignment_status,
-                                        otherCut?.phase
-                                            ?.let { stringResource(it.statLabel()) }
-                                            ?: stringResource(R.string.version_cut_not_fetched),
-                                        // Seconds, not raw milliseconds: nobody
-                                        // reads a shift as "+28690".
-                                        otherCut?.offsetMs
-                                            ?.let { String.format(Locale.US, "%+.1f s", it / 1000.0) }
-                                            ?: "—",
-                                    ),
-                                    style = nerdStyle,
-                                    // The Automix line's rank: both report on
-                                    // the app rather than on the audio.
                                     color = Color.White.copy(alpha = 0.5f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -3718,7 +3701,8 @@ fun NowPlayingScreen(
                                 .graphicsLayer { alpha = if (lyricsPanelVisible) panelFade else 0f },
                         ) { particleProgress ->
                             LyricsPanel(
-                                lines = displayedLyrics,
+                                lines = lyrics.orEmpty(),
+                                subLines = lyricsSubLines,
                                 trackKey = song.videoId,
                                 positionMs = lyricsPositionMs,
                                 looking = !lyricsUnavailable,
@@ -4188,6 +4172,9 @@ fun NowPlayingScreen(
                     label = "playerBottomPill",
                 ) { showQueueModes ->
                     if (showQueueModes) {
+                        // Always three-up, unlike the output/party capsule —
+                        // so it always takes the narrower spacing. See
+                        // [PILL_SEGMENT_WIDTH_TRIPLE].
                         Pill {
                             PillSegment(
                                 icon = BitChordIcons.Shuffle,
@@ -4198,6 +4185,7 @@ fun NowPlayingScreen(
                                 highlighted = shuffleEnabled,
                                 haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                 tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                                width = PILL_SEGMENT_WIDTH_TRIPLE,
                             )
                             PillDivider()
                             PillSegment(
@@ -4219,6 +4207,7 @@ fun NowPlayingScreen(
                                     Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
                                     else -> Haptic.Select
                                 },
+                                width = PILL_SEGMENT_WIDTH_TRIPLE,
                             )
                             PillDivider()
                             PillSegment(
@@ -4230,16 +4219,28 @@ fun NowPlayingScreen(
                                 highlighted = autoplayEnabled,
                                 haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                 tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
+                                width = PILL_SEGMENT_WIDTH_TRIPLE,
                             )
                         }
                     } else {
+                        // The pill's own loading dot has to cover the same
+                        // span the scrubber's sheen does — fetch and measure,
+                        // not just the initial resolve — or the tap that
+                        // started the whole thing goes dark here the moment
+                        // the resolve step ends while the switch is still
+                        // running. Declared fresh rather than reused from
+                        // further up: this segment is composed unconditionally
+                        // once music-only mode is off, so it cannot depend on
+                        // a `val` scoped to a block music-only mode might skip.
+                        val pillVersionAligning by AppSettings.versionAlignmentInProgress
+                            .collectAsStateWithLifecycle()
                         OutputPartyPill(
                             onOutput = openAudioOutput,
                             onParty = onListenTogether,
                             onOpenMembers = openListenTogetherMembers,
                             onChangeTrack = onToggleAudioVersion,
                             isAudioVersion = isAudioVersion,
-                            audioVersionSwitching = audioVersionSwitching,
+                            audioVersionSwitching = audioVersionSwitching || pillVersionAligning,
                             showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                         )
                     }
@@ -4726,6 +4727,8 @@ private fun WidePlayerControls(
                         label = "widePlayerBottomPill",
                     ) { showQueueModes ->
                         if (showQueueModes) {
+                            // Always three-up — see the portrait layout's twin
+                            // of this block and [PILL_SEGMENT_WIDTH_TRIPLE].
                             Pill {
                                 PillSegment(
                                     icon = BitChordIcons.Shuffle,
@@ -4736,6 +4739,7 @@ private fun WidePlayerControls(
                                     highlighted = shuffleEnabled,
                                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                     tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
                                 )
                                 PillDivider()
                                 PillSegment(
@@ -4753,6 +4757,7 @@ private fun WidePlayerControls(
                                         else -> Haptic.Select
                                     },
                                     highlighted = repeatMode != Player.REPEAT_MODE_OFF,
+                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
                                 )
                                 PillDivider()
                                 PillSegment(
@@ -4764,6 +4769,7 @@ private fun WidePlayerControls(
                                     highlighted = autoplayEnabled,
                                     haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                     tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
+                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
                                 )
                             }
                         } else {
@@ -4773,7 +4779,10 @@ private fun WidePlayerControls(
                                 onOpenMembers = onOpenListenTogetherMembers,
                                 onChangeTrack = onToggleAudioVersion,
                                 isAudioVersion = isAudioVersion,
-                                audioVersionSwitching = audioVersionSwitching,
+                                // Covers fetch and measure as well as the
+                                // resolve step — see [versionSwitching] and
+                                // its twin at the portrait call site.
+                                audioVersionSwitching = versionSwitching,
                                 showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                             )
                         }
@@ -5947,6 +5956,11 @@ private fun rememberPlayerControlsOnScroll(
 @Composable
 private fun LyricsPanel(
     lines: List<LyricLine>,
+    /**
+     * Romanized or translated copies of [lines], index for index, drawn small
+     * under each original line. Null shows the originals alone.
+     */
+    subLines: List<LyricLine>? = null,
     trackKey: String,
     positionMs: Long,
     /** Whether a lookup for this track is still in flight. */
@@ -5966,6 +5980,7 @@ private fun LyricsPanel(
 ) {
     val panelPlaying = isPlaying && active
     val clock = rememberLyricClock(trackKey, positionMs, panelPlaying)
+    val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     // Only a song that actually names a second voice is laid out as one. A
@@ -6421,35 +6436,39 @@ private fun LyricsPanel(
                 // Lead and answering vocal are one row: they are one line of
                 // the song, they scale and dim together, and tapping either
                 // seeks to the same place.
-                AnimatedContent(
-                    targetState = line,
-                    transitionSpec = {
-                        val duration = if (reduceAnimation) 0 else 380
-                        val fadeSpec = if (reduceAnimation) snap() else tween<Float>(duration, easing = FastOutSlowInEasing)
-                        (fadeIn(fadeSpec) togetherWith fadeOut(fadeSpec)).using(
-                            SizeTransform(
-                                clip = false,
-                                sizeAnimationSpec = { _, _ ->
-                                    if (reduceAnimation) snap()
-                                    else tween(duration, easing = FastOutSlowInEasing)
-                                },
-                            )
-                        )
-                    },
-                    label = "lyricsTranslationLine",
-                    modifier = shape,
-                ) { renderedLine ->
-                    Column {
+                val sub = subReveal.lines?.getOrNull(index)
+                val subStyle = style.copy(
+                    fontSize = SUB_LYRIC_FONT_SIZE,
+                    lineHeight = SUB_LYRIC_LINE_HEIGHT,
+                    fontWeight = FontWeight.Bold,
+                )
+                Column(modifier = shape) {
+                    PanelVoice(
+                        line = line,
+                        clock = clock,
+                        style = style,
+                        isActive = isActive,
+                        sung = sung,
+                        synced = isSynced,
+                        browsing = browsing,
+                        glowAlpha = glow,
+                        room = GLOW_ROOM,
+                        alignEnd = alignEnd,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // A line the service handed back unchanged ("falling
+                    // down" in a Korean song) gets no second copy of itself.
+                    sub?.takeIf { it.text.differsFrom(line.text) }?.let { subLine ->
                         PanelVoice(
-                            line = renderedLine,
+                            line = subLine,
                             clock = clock,
-                            style = style,
+                            style = subStyle,
                             isActive = isActive,
                             sung = sung,
                             synced = isSynced,
                             browsing = browsing,
-                            glowAlpha = glow,
-                            room = GLOW_ROOM,
+                            glowAlpha = 0f,
+                            room = 0.dp,
                             alignEnd = alignEnd,
                             // Only the rows actually in front of the reader get the
                             // particle pass. Sixty rows' worth of glyph boxes is a
@@ -6457,36 +6476,68 @@ private fun LyricsPanel(
                             translationProgress = translationProgress.takeIf {
                                 if (isSynced) abs(index - focusLine) <= 1 else index < 4
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .revealBelow(subReveal.progress)
+                                // Tucked up into the lead's glow inset so the
+                                // pair reads as one line in two scripts.
+                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                .offset(y = -SUB_LYRIC_TUCK)
+                                .graphicsLayer { alpha = SUB_LYRIC_ALPHA },
                         )
-                        renderedLine.background?.let { backing ->
-                            PanelVoice(
-                                line = backing.withoutBracketPunctuation(),
-                                clock = clock,
-                                style = style.copy(
-                                    fontSize = BACKING_FONT_SIZE,
-                                    lineHeight = BACKING_LINE_HEIGHT,
-                                ),
-                                isActive = isActive,
-                                sung = sung,
-                                synced = isSynced,
-                                browsing = browsing,
-                                // No bloom on the second voice. The glow marks
-                                // what is being sung *at you*; putting it on both
-                                // makes the row read as two equal lines, which is
-                                // the thing this split exists to stop.
-                                glowAlpha = 0f,
-                                room = 0.dp,
-                                alignEnd = alignEnd,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    // No top inset: the lead's own bottom room is
-                                    // the gap, which leaves the two voices closer
-                                    // to each other than to the rows either side.
-                                    .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
-                                    .graphicsLayer { alpha = BACKING_ALPHA },
-                            )
-                        }
+                    }
+                    line.background?.let { backing ->
+                        PanelVoice(
+                            line = backing.withoutBracketPunctuation(),
+                            clock = clock,
+                            style = style.copy(
+                                fontSize = BACKING_FONT_SIZE,
+                                lineHeight = BACKING_LINE_HEIGHT,
+                            ),
+                            isActive = isActive,
+                            sung = sung,
+                            synced = isSynced,
+                            browsing = browsing,
+                            // No bloom on the second voice. The glow marks
+                            // what is being sung *at you*; putting it on both
+                            // makes the row read as two equal lines, which is
+                            // the thing this split exists to stop.
+                            glowAlpha = 0f,
+                            room = 0.dp,
+                            alignEnd = alignEnd,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // No top inset: the lead's own bottom room is
+                                // the gap, which leaves the two voices closer
+                                // to each other than to the rows either side.
+                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                .graphicsLayer { alpha = BACKING_ALPHA },
+                        )
+                        sub?.background
+                            ?.takeIf { it.text.differsFrom(backing.text) }
+                            ?.let { subBacking ->
+                                PanelVoice(
+                                    line = subBacking.withoutBracketPunctuation(),
+                                    clock = clock,
+                                    style = subStyle.copy(
+                                        fontSize = SUB_BACKING_FONT_SIZE,
+                                        lineHeight = SUB_BACKING_LINE_HEIGHT,
+                                    ),
+                                    isActive = isActive,
+                                    sung = sung,
+                                    synced = isSynced,
+                                    browsing = browsing,
+                                    glowAlpha = 0f,
+                                    room = 0.dp,
+                                    alignEnd = alignEnd,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .revealBelow(subReveal.progress)
+                                        .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                        .offset(y = -SUB_LYRIC_TUCK)
+                                        .graphicsLayer { alpha = BACKING_ALPHA * SUB_LYRIC_ALPHA },
+                                )
+                            }
                     }
                 }
             }
@@ -6606,6 +6657,72 @@ private fun PanelVoice(
  * words against the text it draws, and a sweep reading "(echoed" against a
  * line reading "echoed" would search for a substring that is no longer there.
  */
+/**
+ * What [LyricsPanel] draws under each line, and how far it has opened.
+ *
+ * One clock for the whole panel rather than an animation per row: a long song
+ * is a hundred rows, and each would otherwise start, run and stop its own
+ * Animatable on every toggle. [progress] is only ever read in layout and draw
+ * (see [revealBelow]), so opening it costs a relayout of the rows on screen
+ * and not one recomposition.
+ */
+private class SubLyricsReveal(
+    val progress: State<Float>,
+    lines: State<List<LyricLine>?>,
+) {
+    /** Held through the collapse, so the words fold away rather than vanish. */
+    val lines: List<LyricLine>? by lines
+}
+
+@Composable
+private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String): SubLyricsReveal {
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // Keyed to the track: a new song arrives with nothing under it, and must
+    // not fold the last song's translation away over its own opening lines.
+    val shown = remember(trackKey) { mutableStateOf(target) }
+    val progress = remember(trackKey) { Animatable(if (target != null) 1f else 0f) }
+    LaunchedEffect(target, trackKey, reduceAnimation) {
+        if (reduceAnimation) {
+            shown.value = target
+            progress.snapTo(if (target != null) 1f else 0f)
+            return@LaunchedEffect
+        }
+        // Switching straight from romanized to translated closes the one
+        // before opening the other, so two scripts never share the gap.
+        if (shown.value != null && shown.value !== target && progress.value > 0f) {
+            progress.animateTo(0f, tween(SUB_LYRIC_CLOSE_MS, easing = FastOutSlowInEasing))
+        }
+        if (target != null) {
+            shown.value = target
+            progress.animateTo(1f, tween(SUB_LYRIC_OPEN_MS, easing = LYRIC_EASING))
+        } else {
+            shown.value = null
+        }
+    }
+    return remember(trackKey) { SubLyricsReveal(progress.asState(), shown) }
+}
+
+/**
+ * Opens downward out of the line above: the height grows from nothing while
+ * the words slide down from behind the original and fade up. Both read
+ * [progress] outside composition, so only layout and draw run per frame.
+ */
+private fun Modifier.revealBelow(progress: State<Float>): Modifier = this
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val open = progress.value
+        val height = (placeable.height * open).roundToInt()
+        layout(placeable.width, height) {
+            placeable.placeWithLayer(0, 0) {
+                translationY = -placeable.height * (1f - open) * 0.6f
+                alpha = open * open
+            }
+        }
+    }
+
+private fun String.differsFrom(original: String): Boolean =
+    trim().lowercase(Locale.ROOT) != original.trim().lowercase(Locale.ROOT)
+
 private fun LyricLine.withoutBracketPunctuation(): LyricLine = copy(
     text = text.stripParens(),
     words = words.mapNotNull { word ->
@@ -6923,6 +7040,14 @@ private val BOTTOM_ACTION_SIZE = 44.dp
 private val PILL_SEGMENT_WIDTH = 64.dp
 
 /**
+ * Segment width for [OutputPartyPill] once a third icon joins the row — see
+ * its own note. The two-up spacing left each glyph with room the eye read as
+ * empty even at two; a third icon at the same width just multiplied that
+ * empty space instead of tightening it.
+ */
+private val PILL_SEGMENT_WIDTH_TRIPLE = 52.dp
+
+/**
  * Optical sizes, not equal ones.
  *
  * Headphones is a tall, narrow glyph and Person a taller, narrower one, so
@@ -6973,17 +7098,9 @@ private fun PillDivider() {
     Box(
         Modifier
             .width(1.dp)
-            .height(20.dp)
+            .fillMaxHeight()
             .background(Color.White.copy(alpha = 0.20f)),
     )
-}
-
-/** What stats for nerds calls each stage of a switch to the other cut. */
-private fun VersionAudioAligner.CutPhase.statLabel(): Int = when (this) {
-    VersionAudioAligner.CutPhase.FETCHING -> R.string.version_cut_fetching
-    VersionAudioAligner.CutPhase.MEASURING -> R.string.version_cut_measuring
-    VersionAudioAligner.CutPhase.ALIGNED -> R.string.version_cut_aligned
-    VersionAudioAligner.CutPhase.FAILED -> R.string.failed
 }
 
 @Composable
@@ -6998,12 +7115,19 @@ private fun OutputPartyPill(
     showChangeTrack: Boolean = false,
 ) {
     val badge = rememberPartyBadge()
+    // Three icons in one capsule read as cramped at the two-up spacing, so
+    // the segment narrows to make room — but only while the third one is
+    // actually showing. The two-up case (no alternate version, or a Listen
+    // Together party where the toggle is hidden entirely) keeps the spacing
+    // it always had; nothing about that layout changed.
+    val segmentWidth = if (showChangeTrack) PILL_SEGMENT_WIDTH_TRIPLE else PILL_SEGMENT_WIDTH
     Pill {
         PillSegment(
             icon = Icons.Rounded.Headphones,
             iconSize = PILL_HEADPHONES_SIZE,
             contentDescription = stringResource(R.string.audio_output),
             onClick = onOutput,
+            width = segmentWidth,
         )
         AnimatedVisibility(
             visible = showChangeTrack && onChangeTrack != null,
@@ -7030,7 +7154,10 @@ private fun OutputPartyPill(
                 PillDivider()
                 PillSegment(
                     icon = if (isAudioVersion) BitChordIcons.MusicNote else Icons.Rounded.Videocam,
-                    iconSize = 21.dp,
+                    // No explicit size: the default [PILL_ICON_SIZE] is what
+                    // the output and party glyphs beside it use undeclared,
+                    // and the smaller override here read as visibly off
+                    // against them in the same row.
                     contentDescription = stringResource(
                         if (isAudioVersion) R.string.revert_to_original else R.string.convert_to_audio
                     ),
@@ -7041,6 +7168,7 @@ private fun OutputPartyPill(
                     // [ThinSlider.loading]. Lit here as well so the tap that
                     // starts the whole thing visibly registered.
                     loading = audioVersionSwitching,
+                    width = segmentWidth,
                 )
             }
         }
@@ -7065,6 +7193,10 @@ private fun OutputPartyPill(
             onClick = if (badge.inParty) onOpenMembers else onParty,
             highlighted = badge.inParty,
             trailingLabel = badge.members.takeIf { badge.inParty }?.toString(),
+            // Party never coincides with the three-up layout — the toggle is
+            // hidden for the whole time a Listen Together session is active —
+            // so this only ever narrows alongside a real third segment.
+            width = segmentWidth,
         )
     }
 }
@@ -7090,12 +7222,14 @@ private fun PillSegment(
     loading: Boolean = false,
     /** See [BottomGlyph], where the same window means the same thing. */
     tapWindowMs: Long = 0L,
+    /** Per-segment override — see [OutputPartyPill]'s three-up capsule. */
+    width: Dp = PILL_SEGMENT_WIDTH,
 ) {
     val haptics = rememberHaptics()
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
     Box(
         modifier = Modifier
-            .width(PILL_SEGMENT_WIDTH)
+            .width(width)
             .height(BOTTOM_ACTION_SIZE)
             .background(if (highlighted) Color.White.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(
