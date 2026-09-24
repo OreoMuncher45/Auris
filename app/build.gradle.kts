@@ -177,6 +177,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    packaging {
+        resources {
+            // SMBJ's BouncyCastle and jspecify both ship this descriptor.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -336,6 +342,9 @@ dependencies {
 
     // ---- JS module execution: QuickJS VM for style source plugins ----
     implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
+
+    // ---- SMB file shares: pure-Java SMB2/3 client (listing + streaming) ----
+    implementation("com.hierynomus:smbj:0.15.0")
 
     // ---- Automix: on-device beat/downbeat model (Beat This!, MIT-licensed) ----
     // The full android artifact, not onnxruntime-mobile: mobile only loads .ort

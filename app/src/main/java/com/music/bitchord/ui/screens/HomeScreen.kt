@@ -51,6 +51,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Storage
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.R
 import coil3.compose.AsyncImage
@@ -794,6 +795,36 @@ internal fun NewShelfCard(
     }
 }
 
+/**
+ * A device-folder card: mesh gradient in the folder's colours with its glyph
+ * on top. One composable for local music, WebDAV and SMB rather than three
+ * copies of the same box.
+ */
+@Composable
+private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector) {
+    val palette = remember { MeshPalette(colors) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(1f)
+            .clip(RoundedCornerShape(12.dp)),
+        contentAlignment = Alignment.Center,
+    ) {
+        MeshGradientBackground(
+            palette = palette,
+            trackKey = trackKey,
+            continuous = true,
+            blurRadius = 24.dp,
+        )
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(40.dp),
+        )
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ShelfCard(
@@ -831,29 +862,21 @@ internal fun ShelfCard(
                     )
                 }
             }
-            "local:all" -> {
-                val palette = remember { MeshPalette(listOf(Color(0xFF134E5E), Color(0xFF71B280))) }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    MeshGradientBackground(
-                        palette = palette,
-                        trackKey = "local:all",
-                        continuous = true,
-                        blurRadius = 24.dp,
-                    )
-                    Icon(
-                        imageVector = Icons.Rounded.LibraryMusic,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(40.dp),
-                    )
-                }
-            }
+            "local:all" -> ServiceCard(
+                colors = listOf(Color(0xFF134E5E), Color(0xFF71B280)),
+                trackKey = "local:all",
+                icon = Icons.Rounded.LibraryMusic,
+            )
+            "local:webdav" -> ServiceCard(
+                colors = listOf(Color(0xFF3A1C71), Color(0xFFD76D77)),
+                trackKey = "local:webdav",
+                icon = Icons.Rounded.Folder,
+            )
+            "local:smb" -> ServiceCard(
+                colors = listOf(Color(0xFF0F2027), Color(0xFF2C5364)),
+                trackKey = "local:smb",
+                icon = Icons.Rounded.Storage,
+            )
             else -> {
                 AsyncImage(
                     model = item.thumbnailUrl.artworkAt(CARD_ART_PX),

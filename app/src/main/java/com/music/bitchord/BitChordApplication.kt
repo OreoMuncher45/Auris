@@ -12,6 +12,8 @@ import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.CanvasCache
+import com.music.bitchord.data.smb.SmbCoverFetcher
+import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LastPlayed
@@ -122,6 +124,16 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
      */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
+            // Covers on the WebDAV server need the credential or every one
+            // of them 401s — which reads as "this track has no artwork".
+            // Coil's own transport never sees Http.client's interceptor, so
+            // the header is attached per request instead. See WebDavCoilAuth.
+            .components {
+                add(WebDavCoilAuth())
+                // Covers filed on the SMB share; anything else falls
+                // through to Coil's own fetchers. See SmbCoverFetcher.
+                add(SmbCoverFetcher.Factory())
+            }
             .memoryCache {
                 MemoryCache.Builder()
                     .maxSizePercent(context, 0.20)

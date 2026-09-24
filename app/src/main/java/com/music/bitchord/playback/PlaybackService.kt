@@ -1458,7 +1458,12 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         // Read-ahead resolves streams through the same chain the player does.
-        val defaultDataSourceFactory = DefaultDataSource.Factory(this, resolvingFactory)
+        // smb:// tracks read straight off the share below the cache (so they
+        // cache and seek like HTTP); everything else flows as before, and the
+        // YouTube resolver never sees a scheme it cannot answer.
+        val defaultDataSourceFactory = SmbDataSource.RoutingFactory(
+            DefaultDataSource.Factory(this, resolvingFactory),
+        )
         AudioCache.setUpstream(defaultDataSourceFactory)
         mediaSourceFactory = DefaultMediaSourceFactory(AudioCache.playbackFactory(defaultDataSourceFactory))
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())

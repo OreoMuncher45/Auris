@@ -337,7 +337,7 @@ private fun GlassNowPlaying(
                 ),
         ) {
             AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
+                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
                     .size(artSize)

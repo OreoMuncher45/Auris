@@ -163,6 +163,31 @@ fun LibraryScreen(
                 }
             }
             item(key = "shelf:$onDevice") {
+                val webdavConfigured by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+                val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
+                val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
+                // The remote libraries share one card shape; each entry is
+                // title, subtitle and the page it opens.
+                val remotes = listOf(
+                    Triple(
+                        stringResource(R.string.webdav),
+                        if (webdavConfigured.isBlank()) {
+                            stringResource(R.string.webdav_not_configured)
+                        } else {
+                            stringResource(R.string.webdav_subtitle)
+                        },
+                        com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
+                    ),
+                    Triple(
+                        stringResource(R.string.smb),
+                        if (smbHost.isBlank() || smbShare.isBlank()) {
+                            stringResource(R.string.smb_not_configured)
+                        } else {
+                            stringResource(R.string.smb_subtitle)
+                        },
+                        com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
+                    ),
+                )
                 val onDeviceShelf = HomeShelf(
                     title = onDevice,
                     items = listOf(
@@ -180,7 +205,15 @@ fun LibraryScreen(
                             videoId = null,
                             browseId = "local:all",
                         ),
-                    ) + downloadedPlaylists.map { playlist ->
+                    ) + remotes.map { (title, subtitle, browseId) ->
+                        ShelfItem(
+                            title = title,
+                            subtitle = subtitle,
+                            thumbnailUrl = null,
+                            videoId = null,
+                            browseId = browseId,
+                        )
+                    } + downloadedPlaylists.map { playlist ->
                         ShelfItem(
                             title = playlist.title,
                             // The credit the playlist was downloaded with,

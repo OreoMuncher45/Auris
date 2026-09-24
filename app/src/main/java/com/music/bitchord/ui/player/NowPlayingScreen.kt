@@ -226,6 +226,7 @@ import com.music.bitchord.ui.rememberIsForeground
 import com.music.bitchord.ui.LyricsProviderState
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.optimizedHazeEffect
+import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.AudioPipelineDialog
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -1152,10 +1153,14 @@ fun NowPlayingScreen(
     val density = LocalDensity.current
     val haptics = rememberHaptics()
 
+    // Remote tracks whose art lives inside the file resolve it here, once —
+    // every surface below reads the same value rather than each triggering
+    // its own extraction.
+    val remoteArt = rememberRemoteArtworkUrl(song)
     // This is produced by the palette's existing 128 px decode and cache. It
     // samples the upper band rather than the whole sleeve because that is what
     // lies beneath the status bar when the player expands to full bleed.
-    val artTopLuminance = rememberArtworkTopBandLuminance(song.thumbnailUrl, ART_PX)
+    val artTopLuminance = rememberArtworkTopBandLuminance(remoteArt, ART_PX)
     val artworkStatusScrimAlpha = topBandScrimAlpha(artTopLuminance)
 
     // Media-player convention: the player always owns light status icons. The
@@ -1972,7 +1977,7 @@ fun NowPlayingScreen(
     // full-bleed at once. Keyed on the cover there is nothing to reset: the
     // bitmap really is still loaded, so the state stays true and the two
     // layers go on trading places as they should.
-    val artUrl = song.artworkAt(ART_PX)
+    val artUrl = remoteArt?.artworkAt(ART_PX)
     var artLoaded by remember(artUrl) { mutableStateOf(false) }
     /**
      * Which go at this cover we are on, and the reason there is more than one.
@@ -2096,7 +2101,7 @@ fun NowPlayingScreen(
     // Portrait clips always use the existing artwork mesh, even if the user
     // selected the legacy backdrop for ordinary artwork.
     val artMesh = if (legacyMesh && !canvasFirstPortrait) null else
-        key(song.videoId) { rememberArtworkMesh(song.thumbnailUrl, canvasFrame, ART_PX) }
+        key(song.videoId) { rememberArtworkMesh(remoteArt, canvasFrame, ART_PX) }
     // Whether the banner is the presentation at all: full-bleed is on, and there
     // is something to blow out. The collapse is deliberately *not* part of this
     // — see [heroVisible].
@@ -2298,7 +2303,7 @@ fun NowPlayingScreen(
     // Opening lyrics/queue and mounting the tablet split therefore reuse the
     // same tiny pre-blurred bitmap instead of running a screen-sized effect.
     val fullArtworkBlurImage = rememberFullArtworkBlurImage(
-        imageUrl = song.thumbnailUrl,
+        imageUrl = remoteArt,
         artPx = ART_PX,
         prepare = tabletArtworkBackdrop || lyricsOpen || queueOpen || playerPrewarmStage >= 1,
     )
@@ -2562,7 +2567,7 @@ fun NowPlayingScreen(
             // drag a full-screen blur along with them, which is why the palette
             // is passed as one immutable value.
             MeshGradientBackground(
-                palette = rememberArtworkColors(song.thumbnailUrl, canvasFrame),
+                palette = rememberArtworkColors(remoteArt, canvasFrame),
                 trackKey = song.videoId,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
@@ -4964,7 +4969,7 @@ private fun WidePlayerControls(
 @Composable
 private fun WideArtwork(song: Song, scale: Float, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val artUrl = song.artworkAt(ART_PX)
+    val artUrl = rememberRemoteArtworkUrl(song)?.artworkAt(ART_PX)
     var artLoaded by remember(artUrl) { mutableStateOf(false) }
     val request = remember(context, artUrl) {
         ImageRequest.Builder(context)
@@ -8486,7 +8491,7 @@ private fun InlineQueueRow(
             Spacer(Modifier.width(4.dp))
         }
         AsyncImage(
-            model = song.thumbnailUrl,
+            model = rememberRemoteArtworkUrl(song),
             contentDescription = null,
             modifier = Modifier
                 .size(44.dp)

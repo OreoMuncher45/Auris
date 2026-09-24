@@ -105,6 +105,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -222,7 +223,10 @@ import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
+import com.music.bitchord.ui.components.ServerEditorHost
 import com.music.bitchord.ui.components.UpdateAvailableDialog
+import com.music.bitchord.ui.components.WebDavConflictAlert
+import com.music.bitchord.ui.components.FieldConfig
 import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
@@ -517,6 +521,8 @@ private fun BitChordApp(
     var showAccountSelector by remember { mutableStateOf(false) }
     var showListenBrainzLogin by remember { mutableStateOf(false) }
     var showLastfmLogin by remember { mutableStateOf(false) }
+    var showWebDavEditor by remember { mutableStateOf(false) }
+    var showSmbEditor by remember { mutableStateOf(false) }
     /**
      * Whether the download manager is open.
      *
@@ -718,6 +724,8 @@ private fun BitChordApp(
     val savedDownloads by Downloads.saved.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
+    val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+    val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
     val librarySort by AppSettings.librarySort.collectAsStateWithLifecycle()
     // The releases those files were asked for as — read here rather than in the
     // page so the Downloads folder recomposes when one is added, the same way it
@@ -760,7 +768,16 @@ private fun BitChordApp(
             viewModel.reloadLocalDetail("local:all")
         }
     }
-
+    LaunchedEffect(webdavUrl) {
+        if (detail?.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID) {
+            viewModel.reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
+        }
+    }
+    LaunchedEffect(smbHost) {
+        if (detail?.browseId == com.music.bitchord.data.smb.SmbConfig.BROWSE_ID) {
+            viewModel.reloadLocalDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID)
+        }
+    }
     val controller = rememberMediaController()
     val player = rememberPlayerState(controller)
     // A resume in a party is performed on the instant the server schedules, not
@@ -973,6 +990,30 @@ private fun BitChordApp(
     }
 
     val scope = rememberCoroutineScope()
+
+    // Copies tracks to the WebDAV server, leaving the local files alone.
+    // A clash suspends the batch on WebDavUploads.conflict until the dialog
+    // above answers it, so this needs nothing more than the summary.
+    fun uploadToWebDav(songs: List<Song>) {
+        scope.launch {
+            val summary = com.music.bitchord.data.webdav.WebDavUploads.upload(context, songs)
+            if (summary.total > 0) {
+                showQueueNotice(
+                    context.getString(
+                        R.string.webdav_upload_summary,
+                        summary.uploaded,
+                        summary.skipped,
+                        summary.failed,
+                    ),
+                )
+            }
+            if (summary.uploaded > 0 &&
+                detail?.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID
+            ) {
+                viewModel.reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
+            }
+        }
+    }
 
     /**
      * Resolve and apply the catalogue release without replacing the video row
@@ -2536,6 +2577,8 @@ private fun BitChordApp(
                         SourcesScreen(
                             contentPadding = listPadding,
                             onEditSource = { editingSource = it },
+                            onEditWebDav = { showWebDavEditor = true },
+                            onEditSmb = { showSmbEditor = true },
                             onConfirmJioSaavn = { confirmJioSaavn = true },
                         )
                     } else if (key == "listen_together") {
@@ -2618,6 +2661,12 @@ private fun BitChordApp(
                                     selected.forEach { song -> Downloads.delete(context, song.videoId) }
                                 }
                             },
+                            onUploadToWebDav =
+                                if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl)) {
+                                    { selected -> uploadToWebDav(selected) }
+                                } else {
+                                    null
+                                },
                             onSongClick = { songs, index ->
                                 playFrom(
                                     songs,
@@ -3490,6 +3539,20 @@ private fun BitChordApp(
                     // progress, and closing the sheet would hide the only
                     // answer to "did that work?".
                     onDownload = { downloadSong(song) },
+                    // The other direction: a device file going up to the
+                    // server. Closed first, unlike a download — progress and
+                    // the summary notice live outside the sheet.
+                    onUploadToWebDav =
+                        if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
+                            com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
+                        ) {
+                            {
+                                songActions = null
+                                uploadToWebDav(listOf(song))
+                            }
+                        } else {
+                            null
+                        },
                     // The sheet stays up for a rating: it shows the new state
                     // in place, and people often thumb a song and then queue it.
                     onToggleLike = { viewModel.toggleLike(song.videoId) },
@@ -4097,6 +4160,128 @@ private fun BitChordApp(
                     }
                 },
                 onDismiss = { if (!lastfmLoading) showLastfmLogin = false },
+            )
+        }
+
+        if (showWebDavEditor) {
+            BackHandler { showWebDavEditor = false }
+            ServerEditorHost(
+                hazeState = hazeState,
+                title = stringResource(R.string.webdav),
+                description = stringResource(R.string.webdav_description),
+                fields = listOf(
+                    FieldConfig(
+                        initial = AppSettings.webdavUrl.value,
+                        placeholder = stringResource(R.string.webdav_server_url_hint),
+                        keyboardType = KeyboardType.Uri,
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.webdavUsername.value,
+                        placeholder = stringResource(R.string.username),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.webdavPassword.value,
+                        placeholder = stringResource(R.string.password),
+                        keyboardType = KeyboardType.Password,
+                        isPassword = true,
+                    ),
+                ),
+                canSubmit = { it[0].isNotBlank() },
+                testFailedRes = R.string.webdav_test_failed,
+                onTest = { (url, username, password) ->
+                    com.music.bitchord.data.webdav.WebDavRepository.testConnection(
+                        url.trim(),
+                        username.trim(),
+                        password,
+                    )
+                },
+                onSave = { (url, username, password) ->
+                    AppSettings.setWebDavUrl(url.trim())
+                    AppSettings.setWebDavUsername(username.trim())
+                    AppSettings.setWebDavPassword(password)
+                    showWebDavEditor = false
+                },
+                onDismiss = { showWebDavEditor = false },
+            )
+        }
+
+        if (showSmbEditor) {
+            BackHandler { showSmbEditor = false }
+            ServerEditorHost(
+                hazeState = hazeState,
+                title = stringResource(R.string.smb),
+                description = stringResource(R.string.smb_description),
+                fields = listOf(
+                    FieldConfig(
+                        initial = AppSettings.smbHost.value,
+                        placeholder = stringResource(R.string.smb_server_hint),
+                        keyboardType = KeyboardType.Uri,
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbShare.value,
+                        placeholder = stringResource(R.string.smb_share_hint),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbBasePath.value,
+                        placeholder = stringResource(R.string.smb_folder_hint),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbUsername.value,
+                        placeholder = stringResource(R.string.username),
+                    ),
+                    FieldConfig(
+                        initial = AppSettings.smbPassword.value,
+                        placeholder = stringResource(R.string.password),
+                        keyboardType = KeyboardType.Password,
+                        isPassword = true,
+                    ),
+                ),
+                canSubmit = { it[0].isNotBlank() && it[1].isNotBlank() },
+                testFailedRes = R.string.smb_test_failed,
+                onTest = { (host, share, folder, username, password) ->
+                    com.music.bitchord.data.smb.SmbRepository.testConnection(
+                        host.trim(),
+                        share.trim(),
+                        folder.trim(),
+                        username.trim(),
+                        password,
+                    )
+                },
+                onSave = { (host, share, folder, username, password) ->
+                    AppSettings.setSmbHost(host.trim())
+                    AppSettings.setSmbShare(share.trim())
+                    AppSettings.setSmbBasePath(folder.trim())
+                    AppSettings.setSmbUsername(username.trim())
+                    AppSettings.setSmbPassword(password)
+                    showSmbEditor = false
+                },
+                onDismiss = { showSmbEditor = false },
+            )
+        }
+
+        // A clash mid-upload, answered here so the scrim covers the tab bar
+        // and mini player like every other alert. Backing out is a skip —
+        // leaving the batch suspended on a dismissed dialog would hang the
+        // upload with no way to reach the question again.
+        val uploadConflict by com.music.bitchord.data.webdav.WebDavUploads.conflict.collectAsStateWithLifecycle()
+        uploadConflict?.let { req ->
+            var applyToAll by remember(req) { mutableStateOf(false) }
+            val answer: (com.music.bitchord.data.webdav.WebDavUploads.Choice) -> Unit = { choice ->
+                req.answer.complete(
+                    com.music.bitchord.data.webdav.WebDavUploads.Resolution(choice, applyToAll),
+                )
+            }
+            BackHandler { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.SKIP) }
+            WebDavConflictAlert(
+                hazeState = hazeState,
+                fileName = req.fileName,
+                showApplyToAll = req.remaining > 0,
+                applyToAll = applyToAll,
+                onApplyToAllChange = { applyToAll = it },
+                onOverwrite = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.OVERWRITE) },
+                onKeepBoth = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.KEEP_BOTH) },
+                onSkip = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.SKIP) },
+                onDismiss = { answer(com.music.bitchord.data.webdav.WebDavUploads.Choice.SKIP) },
             )
         }
 
