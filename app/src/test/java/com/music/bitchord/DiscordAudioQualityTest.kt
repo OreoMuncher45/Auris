@@ -50,7 +50,7 @@ class DiscordAudioQualityTest {
         )
 
         assertEquals(
-            "Dolby Atmos · E-AC-3 JOC · 768 kbps · 48 kHz · 6 ch",
+            "◗◖ Dolby Atmos · E-AC-3 JOC · 768 kbps · 48 kHz · 6 ch",
             discordAudioQualityLine(stats),
         )
     }

@@ -4228,13 +4228,24 @@ fun NowPlayingScreen(
                             )
                         }
                     } else {
+                        // The pill's own loading dot has to cover the same
+                        // span the scrubber's sheen does — fetch and measure,
+                        // not just the initial resolve — or the tap that
+                        // started the whole thing goes dark here the moment
+                        // the resolve step ends while the switch is still
+                        // running. Declared fresh rather than reused from
+                        // further up: this segment is composed unconditionally
+                        // once music-only mode is off, so it cannot depend on
+                        // a `val` scoped to a block music-only mode might skip.
+                        val pillVersionAligning by AppSettings.versionAlignmentInProgress
+                            .collectAsStateWithLifecycle()
                         OutputPartyPill(
                             onOutput = openAudioOutput,
                             onParty = onListenTogether,
                             onOpenMembers = openListenTogetherMembers,
                             onChangeTrack = onToggleAudioVersion,
                             isAudioVersion = isAudioVersion,
-                            audioVersionSwitching = audioVersionSwitching,
+                            audioVersionSwitching = audioVersionSwitching || pillVersionAligning,
                             showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                         )
                     }
@@ -4768,7 +4779,10 @@ private fun WidePlayerControls(
                                 onOpenMembers = onOpenListenTogetherMembers,
                                 onChangeTrack = onToggleAudioVersion,
                                 isAudioVersion = isAudioVersion,
-                                audioVersionSwitching = audioVersionSwitching,
+                                // Covers fetch and measure as well as the
+                                // resolve step — see [versionSwitching] and
+                                // its twin at the portrait call site.
+                                audioVersionSwitching = versionSwitching,
                                 showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                             )
                         }
@@ -6918,6 +6932,14 @@ private val BOTTOM_ACTION_SIZE = 44.dp
 private val PILL_SEGMENT_WIDTH = 64.dp
 
 /**
+ * Segment width for [OutputPartyPill] once a third icon joins the row — see
+ * its own note. The two-up spacing left each glyph with room the eye read as
+ * empty even at two; a third icon at the same width just multiplied that
+ * empty space instead of tightening it.
+ */
+private val PILL_SEGMENT_WIDTH_TRIPLE = 52.dp
+
+/**
  * Optical sizes, not equal ones.
  *
  * Headphones is a tall, narrow glyph and Person a taller, narrower one, so
@@ -6993,12 +7015,19 @@ private fun OutputPartyPill(
     showChangeTrack: Boolean = false,
 ) {
     val badge = rememberPartyBadge()
+    // Three icons in one capsule read as cramped at the two-up spacing, so
+    // the segment narrows to make room — but only while the third one is
+    // actually showing. The two-up case (no alternate version, or a Listen
+    // Together party where the toggle is hidden entirely) keeps the spacing
+    // it always had; nothing about that layout changed.
+    val segmentWidth = if (showChangeTrack) PILL_SEGMENT_WIDTH_TRIPLE else PILL_SEGMENT_WIDTH
     Pill {
         PillSegment(
             icon = Icons.Rounded.Headphones,
             iconSize = PILL_HEADPHONES_SIZE,
             contentDescription = stringResource(R.string.audio_output),
             onClick = onOutput,
+            width = segmentWidth,
         )
         AnimatedVisibility(
             visible = showChangeTrack && onChangeTrack != null,
@@ -7025,7 +7054,10 @@ private fun OutputPartyPill(
                 PillDivider()
                 PillSegment(
                     icon = if (isAudioVersion) BitChordIcons.MusicNote else Icons.Rounded.Videocam,
-                    iconSize = 21.dp,
+                    // No explicit size: the default [PILL_ICON_SIZE] is what
+                    // the output and party glyphs beside it use undeclared,
+                    // and the smaller override here read as visibly off
+                    // against them in the same row.
                     contentDescription = stringResource(
                         if (isAudioVersion) R.string.revert_to_original else R.string.convert_to_audio
                     ),
@@ -7036,6 +7068,7 @@ private fun OutputPartyPill(
                     // [ThinSlider.loading]. Lit here as well so the tap that
                     // starts the whole thing visibly registered.
                     loading = audioVersionSwitching,
+                    width = segmentWidth,
                 )
             }
         }
@@ -7060,6 +7093,10 @@ private fun OutputPartyPill(
             onClick = if (badge.inParty) onOpenMembers else onParty,
             highlighted = badge.inParty,
             trailingLabel = badge.members.takeIf { badge.inParty }?.toString(),
+            // Party never coincides with the three-up layout — the toggle is
+            // hidden for the whole time a Listen Together session is active —
+            // so this only ever narrows alongside a real third segment.
+            width = segmentWidth,
         )
     }
 }
@@ -7085,12 +7122,14 @@ private fun PillSegment(
     loading: Boolean = false,
     /** See [BottomGlyph], where the same window means the same thing. */
     tapWindowMs: Long = 0L,
+    /** Per-segment override — see [OutputPartyPill]'s three-up capsule. */
+    width: Dp = PILL_SEGMENT_WIDTH,
 ) {
     val haptics = rememberHaptics()
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
     Box(
         modifier = Modifier
-            .width(PILL_SEGMENT_WIDTH)
+            .width(width)
             .height(BOTTOM_ACTION_SIZE)
             .background(if (highlighted) Color.White.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(

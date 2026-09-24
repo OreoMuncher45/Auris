@@ -176,6 +176,19 @@ fun MediaController.swapToVersion(targetSong: Song) {
     )
 }
 
+/**
+ * Asks the service to start measuring [targetSong] against whatever is
+ * playing now, in the background — see [ACTION_PREWARM_VERSION_ALIGNMENT].
+ * Fire-and-forget: nothing here waits on or reports back the result, which
+ * arrives later through [targetSong]'s own cached offset.
+ */
+fun MediaController.prewarmVersionAlignment(targetSong: Song) {
+    sendCustomCommand(
+        SessionCommand(ACTION_PREWARM_VERSION_ALIGNMENT, Bundle.EMPTY),
+        bundleOf(EXTRA_SWAP_MEDIA_ITEM to targetSong.toSongBundle()),
+    )
+}
+
 fun Song.toSongBundle(): Bundle = bundleOf(
     "videoId" to videoId,
     "title" to title,

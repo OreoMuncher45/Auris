@@ -160,6 +160,17 @@ class CrossfadeController(
      * track's gain to the incoming one.
      */
     private val onArmIncoming: (MediaItem) -> Unit = {},
+    /**
+     * True while the service is mid-swap between two versions/cuts of the
+     * current track. That swap fades across the same active/standby pair
+     * this controller does, so the two must never run at once — arming a
+     * transition here would tear the standby player away from the version
+     * swap that already owns it, and the other direction is guarded
+     * symmetrically where the swap starts. Checked once at the top of
+     * [considerAutoTransition] rather than the pieces inside it, since
+     * [Phase.IDLE] is the only phase that can still be preempted for free.
+     */
+    private val versionSwapActive: () -> Boolean = { false },
 ) {
 
     private enum class Phase {
@@ -484,6 +495,12 @@ class CrossfadeController(
     private fun considerAutoTransition() {
         val player = active()
         if (!player.isPlaying) return
+        // Not while a version swap owns the standby player — see
+        // [versionSwapActive]. Nothing to clean up on the way out unlike the
+        // party case below: a version swap is a between-tracks affair on the
+        // same item, so the transition window and mix flag it would have
+        // armed still describe the next track correctly once the swap lets go.
+        if (versionSwapActive()) return
         // Not while listening together. A blend starts the next track early, by
         // a length this device decides for itself from its own copy of the
         // audio — so in a party every member would begin the next song at a
