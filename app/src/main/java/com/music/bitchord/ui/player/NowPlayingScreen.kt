@@ -683,6 +683,20 @@ private val BACKING_LINE_HEIGHT = 29.sp
 private const val BACKING_ALPHA = 0.72f
 
 /**
+ * The romanization or translation hung under each line — caption-sized, the
+ * way Apple Music prints pronunciation under the lyric, and tucked up into the
+ * lead's glow inset so the two read as one line rather than two rows.
+ */
+private val SUB_LYRIC_FONT_SIZE = 20.sp
+private val SUB_LYRIC_LINE_HEIGHT = 25.sp
+private val SUB_BACKING_FONT_SIZE = 16.sp
+private val SUB_BACKING_LINE_HEIGHT = 21.sp
+private const val SUB_LYRIC_ALPHA = 0.85f
+private val SUB_LYRIC_TUCK = 6.dp
+private const val SUB_LYRIC_OPEN_MS = 460
+private const val SUB_LYRIC_CLOSE_MS = 260
+
+/**
  * How far the sweep's leading edge fades out instead of ending on a cut.
  *
  * A hard boundary is legible as a boundary: the eye reads a bar travelling
@@ -1408,6 +1422,15 @@ fun NowPlayingScreen(
         LyricsDisplayMode.Romanized ->
             (romanizationState as? LyricsTranslationUiState.Ready)?.lines ?: lyrics.orEmpty()
         LyricsDisplayMode.Original -> lyrics.orEmpty()
+    }
+    // What the panel draws in small type under each original line, Apple
+    // Music style. The panel itself always keeps the original words; only the
+    // one-line strip over the scrubber swaps to [displayedLyrics]. One mode at
+    // a time by construction — [lyricsDisplayMode] holds a single value.
+    val lyricsSubLines = when (lyricsDisplayMode) {
+        LyricsDisplayMode.Translated -> (translationState as? LyricsTranslationUiState.Ready)?.lines
+        LyricsDisplayMode.Romanized -> (romanizationState as? LyricsTranslationUiState.Ready)?.lines
+        LyricsDisplayMode.Original -> null
     }
     val lyricsLoadingLines = stringArrayResource(R.array.lyrics_loading_lines)
     val lyricsLoadingText = remember(song.videoId) { lyricsLoadingLines.random() }
@@ -2192,7 +2215,8 @@ fun NowPlayingScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) { particleProgress ->
                     LyricsPanel(
-                        lines = displayedLyrics,
+                        lines = lyrics.orEmpty(),
+                        subLines = lyricsSubLines,
                         trackKey = song.videoId,
                         positionMs = lyricsPositionMs,
                         looking = !lyricsUnavailable,
@@ -3672,7 +3696,8 @@ fun NowPlayingScreen(
                                 .graphicsLayer { alpha = if (lyricsPanelVisible) panelFade else 0f },
                         ) { particleProgress ->
                             LyricsPanel(
-                                lines = displayedLyrics,
+                                lines = lyrics.orEmpty(),
+                                subLines = lyricsSubLines,
                                 trackKey = song.videoId,
                                 positionMs = lyricsPositionMs,
                                 looking = !lyricsUnavailable,
@@ -5926,6 +5951,11 @@ private fun rememberPlayerControlsOnScroll(
 @Composable
 private fun LyricsPanel(
     lines: List<LyricLine>,
+    /**
+     * Romanized or translated copies of [lines], index for index, drawn small
+     * under each original line. Null shows the originals alone.
+     */
+    subLines: List<LyricLine>? = null,
     trackKey: String,
     positionMs: Long,
     /** Whether a lookup for this track is still in flight. */
@@ -5945,6 +5975,7 @@ private fun LyricsPanel(
 ) {
     val panelPlaying = isPlaying && active
     val clock = rememberLyricClock(trackKey, positionMs, panelPlaying)
+    val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     // Only a song that actually names a second voice is laid out as one. A
@@ -6400,35 +6431,39 @@ private fun LyricsPanel(
                 // Lead and answering vocal are one row: they are one line of
                 // the song, they scale and dim together, and tapping either
                 // seeks to the same place.
-                AnimatedContent(
-                    targetState = line,
-                    transitionSpec = {
-                        val duration = if (reduceAnimation) 0 else 380
-                        val fadeSpec = if (reduceAnimation) snap() else tween<Float>(duration, easing = FastOutSlowInEasing)
-                        (fadeIn(fadeSpec) togetherWith fadeOut(fadeSpec)).using(
-                            SizeTransform(
-                                clip = false,
-                                sizeAnimationSpec = { _, _ ->
-                                    if (reduceAnimation) snap()
-                                    else tween(duration, easing = FastOutSlowInEasing)
-                                },
-                            )
-                        )
-                    },
-                    label = "lyricsTranslationLine",
-                    modifier = shape,
-                ) { renderedLine ->
-                    Column {
+                val sub = subReveal.lines?.getOrNull(index)
+                val subStyle = style.copy(
+                    fontSize = SUB_LYRIC_FONT_SIZE,
+                    lineHeight = SUB_LYRIC_LINE_HEIGHT,
+                    fontWeight = FontWeight.Bold,
+                )
+                Column(modifier = shape) {
+                    PanelVoice(
+                        line = line,
+                        clock = clock,
+                        style = style,
+                        isActive = isActive,
+                        sung = sung,
+                        synced = isSynced,
+                        browsing = browsing,
+                        glowAlpha = glow,
+                        room = GLOW_ROOM,
+                        alignEnd = alignEnd,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    // A line the service handed back unchanged ("falling
+                    // down" in a Korean song) gets no second copy of itself.
+                    sub?.takeIf { it.text.differsFrom(line.text) }?.let { subLine ->
                         PanelVoice(
-                            line = renderedLine,
+                            line = subLine,
                             clock = clock,
-                            style = style,
+                            style = subStyle,
                             isActive = isActive,
                             sung = sung,
                             synced = isSynced,
                             browsing = browsing,
-                            glowAlpha = glow,
-                            room = GLOW_ROOM,
+                            glowAlpha = 0f,
+                            room = 0.dp,
                             alignEnd = alignEnd,
                             // Only the rows actually in front of the reader get the
                             // particle pass. Sixty rows' worth of glyph boxes is a
@@ -6436,36 +6471,68 @@ private fun LyricsPanel(
                             translationProgress = translationProgress.takeIf {
                                 if (isSynced) abs(index - focusLine) <= 1 else index < 4
                             },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .revealBelow(subReveal.progress)
+                                // Tucked up into the lead's glow inset so the
+                                // pair reads as one line in two scripts.
+                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                .offset(y = -SUB_LYRIC_TUCK)
+                                .graphicsLayer { alpha = SUB_LYRIC_ALPHA },
                         )
-                        renderedLine.background?.let { backing ->
-                            PanelVoice(
-                                line = backing.withoutBracketPunctuation(),
-                                clock = clock,
-                                style = style.copy(
-                                    fontSize = BACKING_FONT_SIZE,
-                                    lineHeight = BACKING_LINE_HEIGHT,
-                                ),
-                                isActive = isActive,
-                                sung = sung,
-                                synced = isSynced,
-                                browsing = browsing,
-                                // No bloom on the second voice. The glow marks
-                                // what is being sung *at you*; putting it on both
-                                // makes the row read as two equal lines, which is
-                                // the thing this split exists to stop.
-                                glowAlpha = 0f,
-                                room = 0.dp,
-                                alignEnd = alignEnd,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    // No top inset: the lead's own bottom room is
-                                    // the gap, which leaves the two voices closer
-                                    // to each other than to the rows either side.
-                                    .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
-                                    .graphicsLayer { alpha = BACKING_ALPHA },
-                            )
-                        }
+                    }
+                    line.background?.let { backing ->
+                        PanelVoice(
+                            line = backing.withoutBracketPunctuation(),
+                            clock = clock,
+                            style = style.copy(
+                                fontSize = BACKING_FONT_SIZE,
+                                lineHeight = BACKING_LINE_HEIGHT,
+                            ),
+                            isActive = isActive,
+                            sung = sung,
+                            synced = isSynced,
+                            browsing = browsing,
+                            // No bloom on the second voice. The glow marks
+                            // what is being sung *at you*; putting it on both
+                            // makes the row read as two equal lines, which is
+                            // the thing this split exists to stop.
+                            glowAlpha = 0f,
+                            room = 0.dp,
+                            alignEnd = alignEnd,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                // No top inset: the lead's own bottom room is
+                                // the gap, which leaves the two voices closer
+                                // to each other than to the rows either side.
+                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                .graphicsLayer { alpha = BACKING_ALPHA },
+                        )
+                        sub?.background
+                            ?.takeIf { it.text.differsFrom(backing.text) }
+                            ?.let { subBacking ->
+                                PanelVoice(
+                                    line = subBacking.withoutBracketPunctuation(),
+                                    clock = clock,
+                                    style = subStyle.copy(
+                                        fontSize = SUB_BACKING_FONT_SIZE,
+                                        lineHeight = SUB_BACKING_LINE_HEIGHT,
+                                    ),
+                                    isActive = isActive,
+                                    sung = sung,
+                                    synced = isSynced,
+                                    browsing = browsing,
+                                    glowAlpha = 0f,
+                                    room = 0.dp,
+                                    alignEnd = alignEnd,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .revealBelow(subReveal.progress)
+                                        .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                        .offset(y = -SUB_LYRIC_TUCK)
+                                        .graphicsLayer { alpha = BACKING_ALPHA * SUB_LYRIC_ALPHA },
+                                )
+                            }
                     }
                 }
             }
@@ -6585,6 +6652,72 @@ private fun PanelVoice(
  * words against the text it draws, and a sweep reading "(echoed" against a
  * line reading "echoed" would search for a substring that is no longer there.
  */
+/**
+ * What [LyricsPanel] draws under each line, and how far it has opened.
+ *
+ * One clock for the whole panel rather than an animation per row: a long song
+ * is a hundred rows, and each would otherwise start, run and stop its own
+ * Animatable on every toggle. [progress] is only ever read in layout and draw
+ * (see [revealBelow]), so opening it costs a relayout of the rows on screen
+ * and not one recomposition.
+ */
+private class SubLyricsReveal(
+    val progress: State<Float>,
+    lines: State<List<LyricLine>?>,
+) {
+    /** Held through the collapse, so the words fold away rather than vanish. */
+    val lines: List<LyricLine>? by lines
+}
+
+@Composable
+private fun rememberSubLyricsReveal(target: List<LyricLine>?, trackKey: String): SubLyricsReveal {
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // Keyed to the track: a new song arrives with nothing under it, and must
+    // not fold the last song's translation away over its own opening lines.
+    val shown = remember(trackKey) { mutableStateOf(target) }
+    val progress = remember(trackKey) { Animatable(if (target != null) 1f else 0f) }
+    LaunchedEffect(target, trackKey, reduceAnimation) {
+        if (reduceAnimation) {
+            shown.value = target
+            progress.snapTo(if (target != null) 1f else 0f)
+            return@LaunchedEffect
+        }
+        // Switching straight from romanized to translated closes the one
+        // before opening the other, so two scripts never share the gap.
+        if (shown.value != null && shown.value !== target && progress.value > 0f) {
+            progress.animateTo(0f, tween(SUB_LYRIC_CLOSE_MS, easing = FastOutSlowInEasing))
+        }
+        if (target != null) {
+            shown.value = target
+            progress.animateTo(1f, tween(SUB_LYRIC_OPEN_MS, easing = LYRIC_EASING))
+        } else {
+            shown.value = null
+        }
+    }
+    return remember(trackKey) { SubLyricsReveal(progress.asState(), shown) }
+}
+
+/**
+ * Opens downward out of the line above: the height grows from nothing while
+ * the words slide down from behind the original and fade up. Both read
+ * [progress] outside composition, so only layout and draw run per frame.
+ */
+private fun Modifier.revealBelow(progress: State<Float>): Modifier = this
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val open = progress.value
+        val height = (placeable.height * open).roundToInt()
+        layout(placeable.width, height) {
+            placeable.placeWithLayer(0, 0) {
+                translationY = -placeable.height * (1f - open) * 0.6f
+                alpha = open * open
+            }
+        }
+    }
+
+private fun String.differsFrom(original: String): Boolean =
+    trim().lowercase(Locale.ROOT) != original.trim().lowercase(Locale.ROOT)
+
 private fun LyricLine.withoutBracketPunctuation(): LyricLine = copy(
     text = text.stripParens(),
     words = words.mapNotNull { word ->
