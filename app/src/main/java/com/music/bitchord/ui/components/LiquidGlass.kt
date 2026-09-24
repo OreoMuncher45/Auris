@@ -4,8 +4,8 @@
  * upstream attribution. This file is the integration glue, adapted from
  * EchoMusicApp/Echo-Music's GlassEffectConfig/Modifier.liquidGlass
  * (GPL-3.0), cut down from Echo's full per-component/vibrancy-slider config
- * to the single on/off switch BitChord exposes in Settings, and scoped to
- * the floating nav bar only.
+ * to the single on/off switch BitChord exposes in Settings. It is used by the
+ * floating nav bar and, while enabled, the app-wide floating top controls.
  */
 package com.music.bitchord.ui.components
 
@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
@@ -29,6 +30,8 @@ import com.music.bitchord.ui.components.backdrop.effects.blur
 import com.music.bitchord.ui.components.backdrop.effects.colorControls
 import com.music.bitchord.ui.components.backdrop.effects.lens
 import com.music.bitchord.ui.components.backdrop.highlight.Highlight
+import com.music.bitchord.ui.components.backdrop.highlight.HighlightElement
+import com.music.bitchord.ui.components.backdrop.internal.ShapeProvider
 import com.music.bitchord.ui.components.backdrop.shadow.Shadow
 import androidx.compose.ui.unit.dp
 
@@ -97,6 +100,45 @@ fun glassContentColor(): Color =
 @Composable
 fun glassIndicatorColor(): Color =
     if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.White else Color.Black
+
+/**
+ * A lightweight visual match for liquid glass over a stable background.
+ *
+ * This keeps the same translucent tint, directional highlight and hairline as
+ * [liquidGlass], but intentionally performs no backdrop capture, blur, lens
+ * refraction or shadow rendering. When Liquid Glass is disabled or unsupported,
+ * [fallbackColor] preserves the control's existing filled appearance.
+ */
+@Composable
+fun Modifier.lightweightLiquidGlass(
+    shape: CornerBasedShape,
+    fallbackColor: Color,
+): Modifier {
+    val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
+        Color(0xFFFAFAFA)
+    } else {
+        Color(0xFF121212)
+    }
+    val shapeProvider = ShapeProvider { shape }
+
+    return clip(shape)
+        .background(
+            color = if (useGlass) glassTint.copy(alpha = SURFACE_OPACITY) else fallbackColor,
+            shape = shape,
+        )
+        .then(
+            if (useGlass) {
+                HighlightElement(
+                    shapeProvider = shapeProvider,
+                    highlight = { Highlight.Default },
+                )
+            } else {
+                Modifier
+            },
+        )
+        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
+}
 
 /**
  * Renders this composable as a liquid glass surface sampling [LocalAppBackdrop]:

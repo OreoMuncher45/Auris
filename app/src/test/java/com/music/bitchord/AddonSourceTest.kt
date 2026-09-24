@@ -248,6 +248,45 @@ class AddonSourceTest {
         assertTrue(AddonSource(config()).search("x", limit = 5).isEmpty())
     }
 
+    @Test
+    fun `manual refresh asks again after a cached empty search`() = runBlocking {
+        route("/manifest.json", manifest())
+        route("/search", json("""{"tracks":[]}"""))
+        val source = AddonSource(config())
+
+        assertTrue(source.search("song", limit = 5).isEmpty())
+        route(
+            "/search",
+            json("""{"tracks":[{"id":"recovered","title":"Song","artist":"Artist"}]}"""),
+        )
+        // The ordinary path still sees the cached empty answer.
+        assertTrue(source.search("song", limit = 5).isEmpty())
+
+        source.clearCompletedTrackCalls()
+        val refreshed = source.search("song", limit = 5)
+
+        assertEquals(listOf("Song"), refreshed.map { it.title })
+        assertEquals(2, synchronized(seen) { seen.count { it.requestUrl?.encodedPath == "/search" } })
+    }
+
+    @Test
+    fun `manual refresh asks again for a cached stream URL`() = runBlocking {
+        route("/manifest.json", manifest())
+        route("/stream/track", json("""{"url":"https://cdn/old.flac","codec":"flac"}"""))
+        val source = AddonSource(config())
+
+        assertEquals("https://cdn/old.flac", source.stream("track", StreamRequest.Lossless)?.url)
+        route("/stream/track", json("""{"url":"https://cdn/new.flac","codec":"flac"}"""))
+        // The ordinary path still reuses a recently resolved URL.
+        assertEquals("https://cdn/old.flac", source.stream("track", StreamRequest.Lossless)?.url)
+
+        source.clearCompletedTrackCalls()
+        val refreshed = source.stream("track", StreamRequest.Lossless)
+
+        assertEquals("https://cdn/new.flac", refreshed?.url)
+        assertEquals(2, synchronized(seen) { seen.count { it.requestUrl?.encodedPath == "/stream/track" } })
+    }
+
     // ── Settings passthrough ──────────────────────────────────────────────
 
     /**

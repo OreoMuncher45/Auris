@@ -1,6 +1,11 @@
 package com.music.bitchord.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -77,7 +82,6 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 @Composable
 fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val session by DownloadSession.state.collectAsStateWithLifecycle()
-    if (!session.visible) return
 
     val haptics = rememberHaptics()
     // Animated, because the fraction lands in steps — one track at a time, plus
@@ -98,51 +102,70 @@ fun TopBarDownloadButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
         label = "downloadRingTint",
     )
 
-    IconButton(
-        onClick = {
-            haptics.play(Haptic.Select)
-            onClick()
-        },
+    AnimatedVisibility(
+        visible = session.visible,
         modifier = modifier,
+        // Open the slot first; the glyph arrives as the pill approaches its
+        // new width. Siblings move with the expanding slot and make room rather
+        // than jumping directly to their final positions.
+        enter = expandHorizontally(
+            animationSpec = tween(260),
+            expandFrom = Alignment.End,
+        ) + fadeIn(
+            animationSpec = tween(durationMillis = 160, delayMillis = 100),
+        ),
+        exit = fadeOut(
+            animationSpec = tween(120),
+        ) + shrinkHorizontally(
+            animationSpec = tween(durationMillis = 220, delayMillis = 60),
+            shrinkTowards = Alignment.End,
+        ),
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            if (session.busy) {
-                CircularProgressIndicator(
-                    // Never quite zero: a ring pinned at nothing reads as
-                    // stalled where the first sliver reads as starting.
-                    progress = { progress.coerceAtLeast(0.02f) },
-                    modifier = Modifier.size(RING_SIZE),
-                    color = tint,
-                    trackColor = tint.copy(alpha = 0.22f),
-                    strokeWidth = 2.dp,
-                    strokeCap = StrokeCap.Round,
-                    gapSize = 0.dp,
+        IconButton(
+            onClick = {
+                haptics.play(Haptic.Select)
+                onClick()
+            },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                if (session.busy) {
+                    CircularProgressIndicator(
+                        // Never quite zero: a ring pinned at nothing reads as
+                        // stalled where the first sliver reads as starting.
+                        progress = { progress.coerceAtLeast(0.02f) },
+                        modifier = Modifier.size(RING_SIZE),
+                        color = tint,
+                        trackColor = tint.copy(alpha = 0.22f),
+                        strokeWidth = 2.dp,
+                        strokeCap = StrokeCap.Round,
+                        gapSize = 0.dp,
+                    )
+                }
+                Icon(
+                    imageVector = when {
+                        failed -> Icons.Rounded.ErrorOutline
+                        // A bare arrow inside the ring, not the tray-and-arrow: the
+                        // ring is already saying "downloading", and a second glyph
+                        // that says it too is detail nobody can resolve at 15dp.
+                        session.busy -> Icons.Rounded.ArrowDownward
+                        else -> Icons.Rounded.DownloadDone
+                    },
+                    contentDescription = when {
+                        session.busy -> stringResource(
+                            R.string.downloads_progress,
+                            (session.fraction * 100).toInt(),
+                        )
+                        failed -> pluralStringResource(
+                            R.plurals.downloads_failed_count,
+                            session.failed,
+                            session.failed,
+                        )
+                        else -> stringResource(R.string.downloads_finished)
+                    },
+                    tint = tint,
+                    modifier = Modifier.size(if (session.busy) GLYPH_IN_RING else GLYPH_SIZE),
                 )
             }
-            Icon(
-                imageVector = when {
-                    failed -> Icons.Rounded.ErrorOutline
-                    // A bare arrow inside the ring, not the tray-and-arrow: the
-                    // ring is already saying "downloading", and a second glyph
-                    // that says it too is detail nobody can resolve at 15dp.
-                    session.busy -> Icons.Rounded.ArrowDownward
-                    else -> Icons.Rounded.DownloadDone
-                },
-                contentDescription = when {
-                    session.busy -> stringResource(
-                        R.string.downloads_progress,
-                        (session.fraction * 100).toInt(),
-                    )
-                    failed -> pluralStringResource(
-                        R.plurals.downloads_failed_count,
-                        session.failed,
-                        session.failed,
-                    )
-                    else -> stringResource(R.string.downloads_finished)
-                },
-                tint = tint,
-                modifier = Modifier.size(if (session.busy) GLYPH_IN_RING else GLYPH_SIZE),
-            )
         }
     }
 }

@@ -188,6 +188,13 @@ enum class LibraryViewType {
     GRID,
 }
 
+/** The surface that was last open inside the expanded player. */
+enum class LastPlayerScreen {
+    MAIN,
+    LYRICS,
+    QUEUE,
+}
+
 /**
  * App settings, backed by SharedPreferences and exposed as flows.
  *
@@ -414,6 +421,9 @@ object AppSettings {
     /** Hides the volume slider on the main player, leaving the rest of the layout to reflow. */
     val hideVolumeBar = MutableStateFlow(false)
 
+    /** Hides the "Playing from" / "Played by" caption at the top of the main player. */
+    val hideSongStatus = MutableStateFlow(false)
+
     /** Swiping a song row plays it next instead of adding it to the end of the queue. */
     val swipeToPlayNext = MutableStateFlow(false)
 
@@ -426,6 +436,9 @@ object AppSettings {
      * metadata appears immediately while the catalogue match is resolved.
      */
     val preferMusicOnly = MutableStateFlow(false)
+
+    /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
+    val smartVersionAlignment = MutableStateFlow(true)
 
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
@@ -477,6 +490,12 @@ object AppSettings {
      */
     val canvasOverCellular = MutableStateFlow(false)
 
+    /** Automatically collapses the lower controls after Spotify Canvas settles. */
+    val spotifyCanvasAutoHide = MutableStateFlow(true)
+
+    /** Tries Spotify before Apple Music and the other animated-art providers. */
+    val prioritizeSpotifyCanvas = MutableStateFlow(false)
+
     /**
      * Blows the player's cover art out to a full-bleed banner running off the
      * top of the screen, rather than sitting it in a square card.
@@ -505,6 +524,9 @@ object AppSettings {
      * reason is one a listener has to agree with.
      */
     val legacyMeshGradient = MutableStateFlow(false)
+
+    /** Restores the expanded player to the surface the listener left open. */
+    val lastPlayerScreen = MutableStateFlow(LastPlayerScreen.MAIN)
 
     /**
      * Time-synced lyrics on the player, lit up as they are sung.
@@ -643,6 +665,9 @@ object AppSettings {
     /** Put the track title on the bold profile line, in place of the artist. */
     val discordUseDetails = MutableStateFlow(false)
 
+    /** Show measured Hi-Res, Lossless, or Dolby specs on the presence card. */
+    val discordShowAudioQuality = MutableStateFlow(true)
+
     /** Reveals the presence-shape controls: status, activity type/name, buttons. */
     val discordAdvancedMode = MutableStateFlow(false)
 
@@ -675,6 +700,16 @@ object AppSettings {
      * something a plain crossfade could not.
      */
     val smartMixInProgress = MutableStateFlow(false)
+
+    /**
+     * True while a version switch is fetching and analysing the other cut
+     * before playback actually moves. Drains into the loading bar drawn along
+     * the scrubber itself — `ThinSlider.loading` — so the wait reads as work
+     * in progress rather than as a player frozen on a version that is about to
+     * change, and lights the toggle button's spinner through the half of the
+     * switch that has nothing else showing.
+     */
+    val versionAlignmentInProgress = MutableStateFlow(false)
 
     /**
      * How much of the *upcoming* transition has been analysed, for stats for
@@ -790,9 +825,11 @@ object AppSettings {
         )
         stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
+        hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
@@ -805,8 +842,15 @@ object AppSettings {
         }
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
+        spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
+        prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
+        lastPlayerScreen.value = runCatching {
+            LastPlayerScreen.valueOf(
+                prefs.getString(KEY_LAST_PLAYER_SCREEN, null) ?: LastPlayerScreen.MAIN.name,
+            )
+        }.getOrDefault(LastPlayerScreen.MAIN)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
@@ -850,6 +894,7 @@ object AppSettings {
         discordAvatar.value = prefs.getString(KEY_DISCORD_AVATAR, "").orEmpty()
         discordRpcEnabled.value = prefs.getBoolean(KEY_DISCORD_RPC_ENABLED, true)
         discordUseDetails.value = prefs.getBoolean(KEY_DISCORD_USE_DETAILS, false)
+        discordShowAudioQuality.value = prefs.getBoolean(KEY_DISCORD_SHOW_AUDIO_QUALITY, true)
         discordAdvancedMode.value = prefs.getBoolean(KEY_DISCORD_ADVANCED_MODE, false)
         discordStatus.value = prefs.getString(KEY_DISCORD_STATUS, "online").orEmpty()
         discordActivityType.value = prefs.getString(KEY_DISCORD_ACTIVITY_TYPE, "listening").orEmpty()
@@ -1128,6 +1173,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_HIDE_VOLUME_BAR, value).apply()
     }
 
+    fun setHideSongStatus(value: Boolean) {
+        hideSongStatus.value = value
+        prefs.edit().putBoolean(KEY_HIDE_SONG_STATUS, value).apply()
+    }
+
     fun setSwipeToPlayNext(value: Boolean) {
         swipeToPlayNext.value = value
         prefs.edit().putBoolean(KEY_SWIPE_TO_PLAY_NEXT, value).apply()
@@ -1141,6 +1191,11 @@ object AppSettings {
     fun setPreferMusicOnly(value: Boolean) {
         preferMusicOnly.value = value
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setSmartVersionAlignment(value: Boolean) {
+        smartVersionAlignment.value = value
+        prefs.edit().putBoolean(KEY_SMART_VERSION_ALIGNMENT, value).apply()
     }
 
     fun setReduceDynamicBlur(value: Boolean) {
@@ -1306,6 +1361,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_CANVAS_OVER_CELLULAR, value).apply()
     }
 
+    fun setSpotifyCanvasAutoHide(value: Boolean) {
+        spotifyCanvasAutoHide.value = value
+        prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value).apply()
+    }
+
+    fun setPrioritizeSpotifyCanvas(value: Boolean) {
+        prioritizeSpotifyCanvas.value = value
+        prefs.edit().putBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, value).apply()
+    }
+
     fun setFullBleedArtwork(value: Boolean) {
         fullBleedArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
@@ -1314,6 +1379,12 @@ object AppSettings {
     fun setLegacyMeshGradient(value: Boolean) {
         legacyMeshGradient.value = value
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
+    }
+
+    fun setLastPlayerScreen(value: LastPlayerScreen) {
+        if (lastPlayerScreen.value == value) return
+        lastPlayerScreen.value = value
+        prefs.edit().putString(KEY_LAST_PLAYER_SCREEN, value.name).apply()
     }
 
     /** Clamped to [DEFAULT_CACHE_LIMIT_BYTES]..[MAX_CACHE_LIMIT_BYTES] — the floor is the default, not zero. */
@@ -1453,6 +1524,11 @@ object AppSettings {
     fun setDiscordUseDetails(value: Boolean) {
         discordUseDetails.value = value
         prefs.edit().putBoolean(KEY_DISCORD_USE_DETAILS, value).apply()
+    }
+
+    fun setDiscordShowAudioQuality(value: Boolean) {
+        discordShowAudioQuality.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_SHOW_AUDIO_QUALITY, value).apply()
     }
 
     fun setDiscordAdvancedMode(value: Boolean) {
@@ -1742,9 +1818,11 @@ object AppSettings {
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
+    private const val KEY_HIDE_SONG_STATUS = "hide_song_status"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
@@ -1752,8 +1830,11 @@ object AppSettings {
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
+    private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
+    private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
+    private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
     private const val KEY_LYRICS_SOURCES_SEEN = "lyrics_sources_seen"
@@ -1794,6 +1875,7 @@ object AppSettings {
     private const val KEY_DISCORD_AVATAR = "discord_avatar"
     private const val KEY_DISCORD_RPC_ENABLED = "discord_rpc_enabled"
     private const val KEY_DISCORD_USE_DETAILS = "discord_use_details"
+    private const val KEY_DISCORD_SHOW_AUDIO_QUALITY = "discord_show_audio_quality"
     private const val KEY_DISCORD_ADVANCED_MODE = "discord_advanced_mode"
     private const val KEY_DISCORD_STATUS = "discord_status"
     private const val KEY_DISCORD_ACTIVITY_TYPE = "discord_activity_type"

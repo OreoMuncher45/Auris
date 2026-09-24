@@ -76,11 +76,9 @@ import kotlin.math.roundToInt
  * effect — see [AudioRouting].
  *
  * A [PlayerDrawer] off the bottom edge, as the rest of the app's sheets are.
- * The *arrangement* is borrowed from vivi-music — the outputs, then volume —
- * because it is the right shape for the job; none of its Material styling is.
- * Vivi folds all but the active device behind a chevron and this does not: on
- * a phone there are usually two, so the disclosure costs a tap to reveal a
- * single row.
+ * Outputs come first and volume follows. Every available device stays visible:
+ * on a phone there are usually two, so a disclosure would cost a tap merely to
+ * reveal a single row.
  */
 @Composable
 internal fun AudioOutputSheet(

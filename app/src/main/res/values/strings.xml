@@ -247,6 +247,8 @@
     <string name="skip_silence_float_subtitle">Unavailable on 32-bit float output</string>
     <string name="prefer_music_only">Prefer music-only version</string>
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">Smart audio alignment</string>
+    <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
@@ -318,6 +320,8 @@
     <string name="stop_music_on_close_subtitle">Stops playback when swiped away from recent apps</string>
     <string name="hide_volume_bar">Hide volume bar</string>
     <string name="hide_volume_bar_subtitle">Removes the volume slider from the main player</string>
+    <string name="hide_song_status">Hide Song Status</string>
+    <string name="hide_song_status_subtitle">Hides the “Playing from” or “Played by” text in the main player</string>
     <string name="off">Off</string>
     <string name="low">Low</string>
     <string name="medium">Medium</string>
@@ -366,9 +370,14 @@
     <string name="clear_name">Clear name</string>
     <string name="close_lyrics">Close lyrics</string>
     <string name="translate_lyrics">Translate lyrics</string>
+    <string name="romanize_lyrics">Romanize lyrics</string>
     <string name="show_original_lyrics">Show original lyrics</string>
     <string name="translating_lyrics_to">Translating to %1$s…</string>
     <string name="lyrics_translated_to">Translated to %1$s</string>
+    <string name="romanizing_lyrics">Romanizing lyrics…</string>
+    <string name="lyrics_romanized">Romanized pronunciation</string>
+    <string name="lyrics_already_romanized">These lyrics already use Latin characters</string>
+    <string name="lyrics_romanization_unavailable">Romanization is unavailable for these lyrics</string>
     <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
     <string name="translation_language">Translation language</string>
@@ -392,6 +401,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} and {album_name} are replaced with the current track.</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} and {album_name} are replaced with the track. The first button opens the song on YouTube Music and the second opens this project.</string>
     <string name="discord_presence_footer">The card updates when the track, position or playback state changes. It clears when playback stops.</string>
+    <string name="discord_show_audio_quality">Show audio quality</string>
+    <string name="discord_show_audio_quality_subtitle">Hi-Res, lossless and Dolby specs on the presence card</string>
     <string name="discord_sign_in_footer">Signing in opens Discord\'s login page. Nothing is typed into BitChord.</string>
     <string name="discord_token">Discord token</string>
     <string name="discord_token_description">Paste your Discord account token. It stays encrypted on this device and is sent only to Discord.</string>
@@ -413,6 +424,13 @@
     <string name="instrumental">Instrumental</string>
     <string name="pause">Pause</string>
     <string name="lyrics_by">Lyrics by %1$s</string>
+    <string name="change_lyrics_provider">Change</string>
+    <string name="choose_lyrics_provider">Choose lyrics provider</string>
+    <string name="lyrics_provider_current">Current provider</string>
+    <string name="lyrics_provider_found">Lyrics found · Tap to use</string>
+    <string name="lyrics_provider_not_found">Lyrics not found</string>
+    <string name="lyrics_provider_fetching">Fetching lyrics…</string>
+    <string name="lyrics_provider_not_fetched">Tap to fetch</string>
     <string name="no_lyrics_found">No lyrics found</string>
     <string name="lyrics_saved_with_download">Lyrics saved with this download</string>
     <string name="shuffle_on">Shuffle on</string>
@@ -618,6 +636,9 @@
     <string name="sources_order_footer">If a source does not have a track or cannot be reached, BitChord tries the next one. Sources above YouTube can replace its recording when they return a better version.</string>
     <string name="sources_order_header">Sources, tried in this order</string>
     <string name="sources_quality_capped">This connection is set below High quality, so streams are transcoded to fit that limit. Downloads are unaffected.</string>
+    <string name="jiosaavn_mismatch_warning">May match the wrong version of a song. Enable at your own risk.</string>
+    <string name="enable_jiosaavn">Enable JioSaavn?</string>
+    <string name="enable_anyway">Enable anyway</string>
     <string name="sources_subtitle">Where audio comes from and the order used</string>
     <string name="source_matching">Source matching</string>
     <string name="upgrade_length_slack">Track length tolerance</string>
@@ -628,6 +649,10 @@
     <string name="spotify_canvas_setup">Spotify Canvas setup</string>
     <string name="spotify_canvas_setup_description">To use Spotify Canvas, provide your Spotify sp_dc cookie.</string>
     <string name="spotify_canvas_setup_steps">1. Sign in at open.spotify.com in a browser.\n2. Open Developer Tools, then Application and Cookies.\n3. Copy the value of the sp_dc cookie.\n4. Paste it below.</string>
+    <string name="spotify_canvas_auto_hide">Auto-hide player controls</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Collapse the half-player after 5 seconds while Spotify Canvas is playing</string>
+    <string name="prioritize_spotify_canvas">Prioritize Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">Try Spotify before Apple Music and other animated cover providers</string>
     <string name="status">Status</string>
     <string name="status_dialog_message">What your account shows while presence is active.</string>
     <string name="status_dnd">Do not disturb</string>
@@ -760,6 +785,11 @@
     <string name="analysis_refining">analysed, refining…</string>
     <string name="analysis_in_progress">analysing…</string>
     <string name="waiting">waiting</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">not fetched</string>
+    <string name="version_cut_fetching">fetching</string>
+    <string name="version_cut_measuring">analyzing</string>
+    <string name="version_cut_aligned">aligned</string>
     <string name="automix_enabled_subtitle">Times and blends every transition from the tracks themselves. Turn it off if the phone gets hot or playback stutters.</string>
     <string name="automix_disabled_subtitle">Times and blends transitions automatically, without a slider. Performance may vary on slower devices.</string>
     <string name="no_lyrics_sources_enabled">None. Lyrics will not be fetched.</string>
@@ -987,7 +1017,7 @@
 
     <string name="blur_unfocused_lyrics_subtitle">Keeps the spotlight on the current line</string>
 
-    <string name="advanced_options">Advanced options</string>
+    <string name="advanced_options">Advanced &amp; experimental options</string>
 
     <string name="lyrics_debug_logs">Lyrics debug logs</string>
 

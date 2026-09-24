@@ -73,6 +73,7 @@ import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
@@ -92,6 +93,7 @@ import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.discord.DiscordRPC
+import com.music.bitchord.data.discord.discordAudioQualityLine
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.stats.ListeningRecorder
 import com.music.bitchord.data.innertube.PlayerClient
@@ -109,10 +111,12 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.smart.AutomixAnalysisSource
+import com.music.bitchord.playback.smart.VersionAudioAligner
 import com.music.bitchord.widget.MediaWidget
 import com.music.bitchord.widget.MediaWidgetSnapshot
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -133,8 +137,12 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import java.util.Locale
 
@@ -144,12 +152,26 @@ const val BACK_RESTARTS_AFTER_MS = 10_000L
 /** Session command used by both the player UI and the media notification. */
 const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
 
+/** Session command used to smoothly swap the current track's version (film vs release). */
+const val ACTION_SWAP_VERSION = "com.music.bitchord.action.SWAP_VERSION"
+const val EXTRA_SWAP_MEDIA_ITEM = "bitchord.swap.media_item"
+
+/**
+ * Session command that starts the alignment measurement for an alternate cut
+ * in the background, without touching playback — see
+ * [PlaybackService.prewarmVersionAlignment]. Sent the moment the UI learns an
+ * alternate exists, so the wait behind [ACTION_SWAP_VERSION] is usually
+ * already paid for by the time the listener asks for it.
+ */
+const val ACTION_PREWARM_VERSION_ALIGNMENT = "com.music.bitchord.action.PREWARM_VERSION_ALIGNMENT"
+
 /** Session command used by the media notification's Shuffle button. */
 const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 
 /** Session actions exposed to Android Auto for the track that is playing. */
 const val ACTION_START_STATION = "com.music.bitchord.action.START_STATION"
 const val ACTION_REVERT_TO_ORIGINAL = "com.music.bitchord.action.REVERT_TO_ORIGINAL"
+const val ACTION_SWAP_TO_VERSION = "com.music.bitchord.action.SWAP_TO_VERSION"
 
 /** Session commands bracketing an explicit radio queue replacement. */
 const val ACTION_BEGIN_RADIO_QUEUE = "com.music.bitchord.action.BEGIN_RADIO_QUEUE"
@@ -157,6 +179,28 @@ const val ACTION_COMMIT_RADIO_QUEUE = "com.music.bitchord.action.COMMIT_RADIO_QU
 
 /** Session command behind the player menu's "Upgrade quality". */
 const val ACTION_UPGRADE_QUALITY = "com.music.bitchord.action.UPGRADE_QUALITY"
+
+/**
+ * App-side gate for explicit quality retries.
+ *
+ * Automatic upgrades never pass through this object. Returning the remaining
+ * wait rather than a Boolean gives the log enough information to distinguish
+ * a deliberate throttle from a search which failed to start.
+ */
+internal class ManualUpgradeThrottle(private val cooldownMs: Long) {
+    private var lastAcceptedAtMs: Long? = null
+
+    @Synchronized
+    fun tryAcquire(nowMs: Long): Long {
+        val previous = lastAcceptedAtMs
+        if (previous != null) {
+            val remaining = cooldownMs - (nowMs - previous)
+            if (remaining > 0) return remaining
+        }
+        lastAcceptedAtMs = nowMs
+        return 0L
+    }
+}
 
 /**
  * Session command carrying a rearrangement of the queue worked out by a
@@ -184,6 +228,29 @@ const val EXTRA_QUEUE_DRAG_ACTIVE = "bitchord.queueDrag.active"
 
 /** A full first page for an explicitly requested station. */
 private const val INITIAL_STATION_TRACKS = 24
+
+/**
+ * How long a version switch will sit on a not-yet-downloaded opening before
+ * it gives up on the head — [com.music.bitchord.playback.AudioCache.awaitAnalysisHead]
+ * both starts the fetch and waits on it, so this is the wait a listener sees
+ * with the bar running. Shared by the two heads, which are fetched in
+ * parallel, so it bounds the pair rather than being paid twice.
+ */
+private const val ALIGNMENT_HEAD_TIMEOUT_MS = 20_000L
+
+/**
+ * How long the cross-correlation itself may take once both heads are on disk.
+ * It is pure computation over two forty-five second windows, so a run that
+ * takes this long has run into contention rather than hard work, and the
+ * caller swaps without a shift instead of holding the track any longer.
+ *
+ * The margin exists because a result that arrives *after* this deadline is
+ * discarded whole: the field log showed a measurement succeed 10 ms past a
+ * tighter budget, and the swap still went out with no shift even though the
+ * offset had been computed and cached. Better a longer bar than a wrong
+ * second.
+ */
+private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 
 private fun Song.canStartStation(): Boolean =
     videoId.isNotBlank() &&
@@ -605,15 +672,20 @@ class PlaybackService : MediaLibraryService() {
     private val shuffleCommand = SessionCommand(ACTION_TOGGLE_SHUFFLE, Bundle.EMPTY)
     private val startStationCommand = SessionCommand(ACTION_START_STATION, Bundle.EMPTY)
     private val revertToOriginalCommand = SessionCommand(ACTION_REVERT_TO_ORIGINAL, Bundle.EMPTY)
+    private val swapToVersionCommand = SessionCommand(ACTION_SWAP_TO_VERSION, Bundle.EMPTY)
     private val beginRadioQueueCommand = SessionCommand(ACTION_BEGIN_RADIO_QUEUE, Bundle.EMPTY)
     private val commitRadioQueueCommand = SessionCommand(ACTION_COMMIT_RADIO_QUEUE, Bundle.EMPTY)
     private val upgradeQualityCommand = SessionCommand(ACTION_UPGRADE_QUALITY, Bundle.EMPTY)
+    private val swapVersionCommand = SessionCommand(ACTION_SWAP_VERSION, Bundle.EMPTY)
+    private val prewarmVersionAlignmentCommand = SessionCommand(ACTION_PREWARM_VERSION_ALIGNMENT, Bundle.EMPTY)
     private val reorderQueueCommand = SessionCommand(ACTION_REORDER_QUEUE, Bundle.EMPTY)
     private val queueDragCommand = SessionCommand(ACTION_QUEUE_DRAG, Bundle.EMPTY)
 
     private var favoriteActionJob: Job? = null
     private var stationActionJob: Job? = null
     private var autoplayLoadJob: Job? = null
+    /** Rate limit for listener-requested retries; automatic upgrades do not touch it. */
+    private val manualUpgradeThrottle = ManualUpgradeThrottle(MANUAL_UPGRADE_COOLDOWN_MS)
     /** Catalogue lookup that decides which rendition of the next video to warm. */
     private var preferredPrefetchJob: Job? = null
     /** Logical queue request, before a video id is replaced by its audio counterpart. */
@@ -1524,6 +1596,7 @@ class PlaybackService : MediaLibraryService() {
                     spareFilter.setCutoffs(lowPassHz, highPassHz)
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
+            versionSwapActive = { versionSwapJob?.isActive == true },
         )
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
@@ -1646,6 +1719,431 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private var versionSwapJob: Job? = null
+    private var versionSwapGeneration = 0
+
+    /**
+     * Seamlessly transitions between two versions/sources of the same track
+     * (e.g. switching between YouTube film/video audio and release FLAC/streaming audio)
+     * using a smooth equal-power crossfade across the two ExoPlayers so there is zero
+     * audible stutter, gap, pause or loading hiccup.
+     */
+    private fun smoothSwapCurrentTrackVersion(
+        targetMediaItem: MediaItem,
+        onSwapCommitted: (() -> Unit)? = null,
+    ) {
+        val activePlayer = player ?: return
+        val currentIndex = activePlayer.currentMediaItemIndex
+        if (currentIndex !in 0 until activePlayer.mediaItemCount) return
+        val currentItem = activePlayer.currentMediaItem ?: return
+        // Listen Together plays the one track every member has, and a version
+        // swap is a purely local choice about which cut of it to hear — see
+        // [ListenTogether]'s own note on why Automix stays off in a party for
+        // the same reason. The toggle is hidden client-side for this, but the
+        // command can still arrive from a controller that predates the hide.
+        if (ListenTogether.state.value.inParty) {
+            TrackLog.d("BitChord", "version swap ignored: in a Listen Together party", about = currentItem.mediaId)
+            return
+        }
+        // Never while Automix is mid-blend: both fades share the same
+        // active/standby pair, and starting a version swap here would tear
+        // the standby player away from a transition already using it. The
+        // reverse — Automix arming while a version swap is running — is
+        // guarded symmetrically in [createCrossfadeController].
+        if (crossfade?.isTransitioning() == true) {
+            TrackLog.d("BitChord", "version swap deferred: Automix is mid-transition", about = currentItem.mediaId)
+            return
+        }
+
+        val sourceSong = currentItem.toSong()
+        val targetSong = targetMediaItem.toSong()
+        val smartAlignEnabled = AppSettings.smartVersionAlignment.value
+
+        versionSwapJob?.cancel()
+        val generation = ++versionSwapGeneration
+        versionSwapJob = scope.launch(Dispatchers.Main) {
+            val mediaId = targetMediaItem.mediaId
+            swappingMediaId = mediaId
+            if (smartAlignEnabled) {
+                AppSettings.versionAlignmentInProgress.value = true
+            }
+            try {
+                val startPosition = activePlayer.currentPosition
+                val alignmentOffsetMs = if (smartAlignEnabled) {
+                    prepareVersionAlignment(sourceSong, targetSong, startPosition)
+                } else {
+                    0L
+                }
+
+                if (player !== activePlayer ||
+                    activePlayer.currentMediaItemIndex != currentIndex ||
+                    activePlayer.currentMediaItem?.mediaId != sourceSong.videoId
+                ) {
+                    swappingMediaId = null
+                    return@launch
+                }
+
+                val standbyPlayer = spare
+                // Crossfade is unconditional: the setting that used to gate it
+                // is gone, so the only thing that can decline the fade is having
+                // no standby player to fade with.
+                val canCrossfade = standbyPlayer != null &&
+                    (activePlayer.isPlaying || activePlayer.playbackState == Player.STATE_READY)
+
+                if (!canCrossfade || standbyPlayer == null) {
+                    val pos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+                    val wasPlaying = activePlayer.playWhenReady
+                    activePlayer.replaceMediaItem(currentIndex, targetMediaItem)
+                    activePlayer.seekTo(currentIndex, pos)
+                    if (wasPlaying) activePlayer.play()
+                    onSwapCommitted?.invoke()
+                    mediaSession?.setCustomLayout(notificationButtons())
+                    swappingMediaId = null
+                    return@launch
+                }
+
+                // Build replacement playlist for standby player
+                val newItems = (0 until activePlayer.mediaItemCount).map { i ->
+                    if (i == currentIndex) targetMediaItem else activePlayer.getMediaItemAt(i)
+                }
+                val wasPlaying = activePlayer.playWhenReady
+                val alignedStartPos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+
+            // Reset and configure standby player
+            standbyPlayer.stop()
+            standbyPlayer.clearMediaItems()
+            standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
+            standbyPlayer.repeatMode = activePlayer.repeatMode
+            standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
+            standbyPlayer.setPlaybackSpeed(activePlayer.playbackParameters.speed)
+            standbyPlayer.volume = 0f
+            standbyPlayer.setMediaItems(newItems, currentIndex, alignedStartPos)
+            standbyPlayer.playWhenReady = false
+            standbyPlayer.prepare()
+
+            // Wait for standby to buffer and reach STATE_READY in the background
+            val timeoutAt = SystemClock.elapsedRealtime() + 7_000L
+            var isReady = false
+            while (isActive && SystemClock.elapsedRealtime() < timeoutAt) {
+                if (player !== activePlayer ||
+                    activePlayer.currentMediaItemIndex != currentIndex
+                ) {
+                    // Active player moved to another track or was changed
+                    standbyPlayer.stop()
+                    standbyPlayer.clearMediaItems()
+                    standbyPlayer.volume = 1f
+                    swappingMediaId = null
+                    return@launch
+                }
+
+                if (standbyPlayer.playbackState == Player.STATE_READY) {
+                    isReady = true
+                    break
+                }
+                if (standbyPlayer.playbackState == Player.STATE_IDLE && standbyPlayer.playerError != null) {
+                    break
+                }
+                delay(20)
+            }
+
+            if (!isReady) {
+                TrackLog.w("BitChord", "version swap standby player failed to prepare, applying directly", about = mediaId)
+                standbyPlayer.stop()
+                standbyPlayer.clearMediaItems()
+                standbyPlayer.volume = 1f
+                swappingMediaId = null
+                val pos = (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L)
+                activePlayer.replaceMediaItem(currentIndex, targetMediaItem)
+                activePlayer.seekTo(currentIndex, pos)
+                if (wasPlaying) activePlayer.play()
+                onSwapCommitted?.invoke()
+                onTrackBecameCurrent(
+                    targetMediaItem,
+                    previousEnded = false,
+                    reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+                    alreadyAudible = true,
+                )
+                mediaSession?.setCustomLayout(notificationButtons())
+                return@launch
+            }
+
+            // Sync playback position with exact live position right before starting playback on standby
+            val livePos = activePlayer.currentPosition
+            val targetLivePos = (livePos + alignmentOffsetMs).coerceAtLeast(0L)
+            standbyPlayer.seekTo(currentIndex, targetLivePos)
+
+            val willPlay = wasPlaying && activePlayer.playWhenReady
+            if (willPlay) {
+                // Start it right away rather than waiting the seek out first:
+                // the outgoing player keeps running through every one of these
+                // steps, so each moment the incoming one spends frozen before
+                // its audio actually starts is a moment it enters the fade
+                // behind — a few hundred reads as a doubled word rather than
+                // as an alignment.
+                standbyPlayer.play()
+                val runningTimeout = SystemClock.elapsedRealtime() + 600L
+                while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < runningTimeout) {
+                    delay(10)
+                }
+                if (standbyPlayer.isPlaying) {
+                    // Now that it is producing audio — still at zero volume —
+                    // put it exactly where the outgoing player is *now*. The
+                    // near-seek lands inside the buffer it already holds, so
+                    // the drift accumulated above collapses to this seek's own
+                    // resume time, which is the one part that cannot go.
+                    standbyPlayer.seekTo(
+                        currentIndex,
+                        (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L),
+                    )
+                    val resyncTimeout = SystemClock.elapsedRealtime() + 300L
+                    while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < resyncTimeout) {
+                        delay(10)
+                    }
+                }
+            } else {
+                // Paused swap: nothing is running on either side, so the first
+                // seek is already exact — it only has to finish before the
+                // fade adopts the player.
+                val seekTimeout = SystemClock.elapsedRealtime() + 400L
+                while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < seekTimeout) {
+                    delay(10)
+                }
+            }
+
+            // Smooth equal-power crossfade transition (~550ms audio morph)
+            val swapCrossfadeMs = 550L
+            val fadeStart = SystemClock.elapsedRealtime()
+            if (!smartAlignEnabled) {
+                AppSettings.smartMixInProgress.value = true
+            }
+
+            try {
+                while (isActive) {
+                    val elapsed = SystemClock.elapsedRealtime() - fadeStart
+                    val progress = (elapsed.toFloat() / swapCrossfadeMs).coerceIn(0f, 1f)
+
+                    if (player !== activePlayer || activePlayer.currentMediaItemIndex != currentIndex) {
+                        standbyPlayer.stop()
+                        standbyPlayer.clearMediaItems()
+                        standbyPlayer.volume = 1f
+                        activePlayer.volume = 1f
+                        swappingMediaId = null
+                        return@launch
+                    }
+
+                    if (standbyPlayer.playWhenReady != activePlayer.playWhenReady) {
+                        standbyPlayer.playWhenReady = activePlayer.playWhenReady
+                    }
+
+                    val inGain = sin(progress * (PI / 2.0)).toFloat()
+                    val outGain = cos(progress * (PI / 2.0)).toFloat()
+                    standbyPlayer.volume = inGain
+                    activePlayer.volume = outGain
+
+                    if (progress >= 1f) break
+                    delay(16)
+                }
+
+                // Adopt incoming player cleanly
+                adoptPlayerForVersionSwap(outgoing = activePlayer, incoming = standbyPlayer)
+                onSwapCommitted?.invoke()
+            } finally {
+                if (!smartAlignEnabled) {
+                    AppSettings.smartMixInProgress.value = false
+                }
+            }
+            } finally {
+                if (generation == versionSwapGeneration) {
+                    AppSettings.versionAlignmentInProgress.value = false
+                }
+            }
+        }
+    }
+
+    /**
+     * Fetches the other cut's opening and measures its offset against the
+     * playing one. Playback stays on the current version until this returns.
+     *
+     * Returns `0` — no shift — rather than refusing the switch: a swap landing
+     * on the wrong second beats staying put. What it never does is return `0`
+     * silently. [VersionAudioAligner.status] walks fetch → measure → result
+     * the whole way through and stays at the result once the swap lands, so
+     * stats for nerds can say which of the three happened and what the shift
+     * came out as.
+     */
+    /**
+     * One measurement per pair, shared by every caller that asks for it —
+     * [prepareVersionAlignment] and [prewarmVersionAlignment] alike — and
+     * launched on [scope] rather than on whichever caller asked first.
+     *
+     * That is the whole point: [versionSwapJob] gets cancelled every time a
+     * newer switch outranks it or the listener backs out, and before this the
+     * FFT pass cancelled with it — so backing out of a switch and asking for
+     * it again a moment later paid for the decode and the correlation twice.
+     * A caller that stops waiting now only stops *waiting*; the pass keeps
+     * running here and still lands in [VersionAudioAligner]'s cache for
+     * whoever asks next, including a caller that never existed yet when this
+     * was started.
+     */
+    private val versionAlignmentMeasurements = ConcurrentHashMap<Pair<String, String>, Deferred<Long?>>()
+
+    private fun measureVersionAlignmentAsync(sourceSong: Song, targetSong: Song): Deferred<Long?> {
+        val sourceId = sourceSong.videoId
+        val targetId = targetSong.videoId
+        val key = sourceId to targetId
+        VersionAudioAligner.getCachedOffsetMs(sourceId, targetId)?.let { return CompletableDeferred(it) }
+        versionAlignmentMeasurements[key]?.let { return it }
+        val deferred = scope.async(Dispatchers.Main) {
+            try {
+                val sourceUri = Uri.parse(sourceSong.localUri ?: AutomixAnalysisSource.opusUri(sourceId))
+                val targetUri = Uri.parse(targetSong.localUri ?: AutomixAnalysisSource.opusUri(targetId))
+                withContext(Dispatchers.IO) {
+                    // Together rather than one after the other: two independent
+                    // range reads that the sequential version made the listener pay
+                    // for in series, on top of a wait they were already in.
+                    val sourceHead = async {
+                        sourceSong.localUri != null ||
+                            AudioCache.awaitAnalysisHead(sourceUri, ALIGNMENT_HEAD_TIMEOUT_MS)
+                    }
+                    val targetHead = async {
+                        targetSong.localUri != null ||
+                            AudioCache.awaitAnalysisHead(targetUri, ALIGNMENT_HEAD_TIMEOUT_MS)
+                    }
+                    val sourceReady = sourceHead.await()
+                    val targetReady = targetHead.await()
+                    if (!sourceReady || !targetReady) {
+                        // Carried on to the measurement anyway: the aligner opens
+                        // whatever opening is largest on disk, and a short one
+                        // still correlates better than not trying at all.
+                        TrackLog.w(
+                            "BitChord",
+                            "version alignment head short on disk (source=$sourceReady, " +
+                                "target=$targetReady) for '${sourceSong.title}'",
+                            sourceId,
+                        )
+                    }
+                }
+                withTimeoutOrNull(ALIGNMENT_MEASURE_TIMEOUT_MS) {
+                    VersionAudioAligner.findOffsetMs(
+                        context = this@PlaybackService,
+                        sourceSong = sourceSong,
+                        targetSong = targetSong,
+                    )
+                }
+            } finally {
+                // The cache entry [VersionAudioAligner] wrote on success is the
+                // one that matters from here on; this map only exists to fold
+                // concurrent askers into the one pass actually running.
+                versionAlignmentMeasurements.remove(key)
+            }
+        }
+        versionAlignmentMeasurements[key] = deferred
+        return deferred
+    }
+
+    /**
+     * Starts the measurement for [targetSong] against whatever is currently
+     * playing, without touching playback — called the moment the UI learns an
+     * alternate cut exists, so the FFT pass is already done, or well under
+     * way, by the time the listener actually taps the toggle. A no-op if
+     * Smart Audio Alignment is off, nothing is playing, or the pair is
+     * already known or already running — see [measureVersionAlignmentAsync].
+     */
+    private fun prewarmVersionAlignment(targetSong: Song) {
+        if (!AppSettings.smartVersionAlignment.value) return
+        val sourceSong = player?.currentMediaItem?.toSong() ?: return
+        if (sourceSong.videoId == targetSong.videoId) return
+        if (VersionAudioAligner.getCachedOffsetMs(sourceSong.videoId, targetSong.videoId) != null) return
+        measureVersionAlignmentAsync(sourceSong, targetSong)
+    }
+
+    private suspend fun prepareVersionAlignment(
+        sourceSong: Song,
+        targetSong: Song,
+        currentPosMs: Long,
+    ): Long {
+        val sourceId = sourceSong.videoId
+        val targetId = targetSong.videoId
+
+        VersionAudioAligner.getCachedOffsetMs(sourceId, targetId)?.let { cached ->
+            val cachedToken = VersionAudioAligner.beginAttempt(sourceId, targetId)
+            VersionAudioAligner.publishPhase(
+                cachedToken,
+                VersionAudioAligner.CutPhase.ALIGNED,
+                cached,
+                fromCache = true,
+            )
+            return cached
+        }
+
+        val token = VersionAudioAligner.beginAttempt(sourceId, targetId)
+        try {
+            VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FETCHING)
+            val deferred = measureVersionAlignmentAsync(sourceSong, targetSong)
+            VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.MEASURING)
+            val measured = deferred.await()
+            if (measured == null) {
+                TrackLog.w(
+                    "BitChord",
+                    "version alignment found nothing to measure for '${sourceSong.title}'; switching with no shift",
+                    sourceId,
+                )
+                VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
+                return 0L
+            }
+            VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.ALIGNED, measured)
+            return measured
+        } catch (e: CancellationException) {
+            // Outranked by a second switch, or the service went away mid-measure.
+            // Left as it stands, the status line would keep reporting a swap
+            // that is never going to land. The measurement itself is
+            // unaffected — see [measureVersionAlignmentAsync].
+            VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FAILED)
+            throw e
+        }
+    }
+
+    private fun adoptPlayerForVersionSwap(outgoing: ExoPlayer, incoming: ExoPlayer) {
+        setSessionOwner(outgoing, owns = false)
+        setSessionOwner(incoming, owns = true)
+
+        outgoing.removeListener(playbackListener)
+        outgoing.removeAnalyticsListener(formatListener)
+
+        player = incoming
+        spare = outgoing
+
+        val heldFilter = activeFilter
+        activeFilter = spareFilter
+        spareFilter = heldFilter
+
+        incoming.addListener(playbackListener)
+        incoming.addAnalyticsListener(formatListener)
+
+        mediaSession?.player = SessionPlayer(
+            incoming,
+            requireNotNull(crossfade),
+            onUserIntent = { partySync?.onLocalIntent() },
+            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
+        ) { lastPublishedSubtitle }
+
+        incoming.volume = 1f
+        outgoing.stop()
+        outgoing.clearMediaItems()
+        outgoing.volume = 1f
+
+        swappingMediaId = null
+        mediaSession?.setCustomLayout(notificationButtons())
+
+        onTrackBecameCurrent(
+            incoming.currentMediaItem,
+            previousEnded = false,
+            reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+            alreadyAudible = true,
+        )
+    }
+
     /** Reopens the current song through YouTube and remembers that choice. */
     private fun revertCurrentToOriginal() {
         val activePlayer = player ?: return
@@ -1664,6 +2162,39 @@ class PlaybackService : MediaLibraryService() {
         val wasPlaying = activePlayer.isPlaying
         swappingMediaId = song.videoId
         activePlayer.replaceMediaItem(index, song.toDirectYouTubeMediaItem())
+        activePlayer.seekTo(index, position)
+        if (wasPlaying) activePlayer.play()
+        refreshCustomLayouts()
+    }
+
+    /**
+     * Swaps the current track to an alternate version (video/audio).
+     * This is called from the UI when the user wants to switch between
+     * video and audio versions of a track.
+     */
+    private fun swapCurrentToVersion(args: Bundle) {
+        val activePlayer = player ?: return
+        val index = activePlayer.currentMediaItemIndex
+        if (index !in 0 until activePlayer.mediaItemCount) return
+        val song = activePlayer.currentMediaItem?.toSong() ?: return
+
+        val targetVideoId = args.getString("targetVideoId")
+        val targetIsVideo = args.getBoolean("targetIsVideo", false)
+
+        if (targetVideoId == null || targetVideoId == song.videoId) return
+
+        val position = activePlayer.currentPosition
+        val wasPlaying = activePlayer.isPlaying
+        swappingMediaId = song.videoId
+
+        // Create the target song with the appropriate flags
+        val targetSong = song.copy(
+            videoId = targetVideoId,
+            isVideo = targetIsVideo,
+            isVideoOrigin = if (targetIsVideo) false else song.isVideoOrigin,
+        )
+
+        activePlayer.replaceMediaItem(index, targetSong.toMediaItem())
         activePlayer.seekTo(index, position)
         if (wasPlaying) activePlayer.play()
         refreshCustomLayouts()
@@ -2218,6 +2749,13 @@ class PlaybackService : MediaLibraryService() {
             submitListenBrainzPlayingNow(newSong, 0L, durationMs)
         }
 
+        // The renderer is still configured for the track that just ended at
+        // this point. Clear its measurements before Discord takes its snapshot
+        // too, otherwise a new lossy track briefly inherits the previous
+        // track's Lossless/Atmos line and that stale network push can win the
+        // race against the decoder's correction.
+        NerdStats.current.value = null
+
         // Discord: the whole of "live updating" for a card whose bar Discord
         // draws itself. Only a track change needs a new presence; the countdown
         // in between is Discord's own arithmetic.
@@ -2248,18 +2786,6 @@ class PlaybackService : MediaLibraryService() {
         publishWidgetState()
         loadLyricsForCurrentTrack()
         if (exoPlayer.isPlaying) startLyricsTicker()
-        // Cleared rather than re-published. The renderer is still
-        // configured for the track that just ended at this point, so
-        // reading the format here reports the *previous* song — which
-        // is how a lossy track spent its whole resolve showing the
-        // "Hi-Res Lossless" badge the track before it had earned.
-        // Nothing measured is better than something wrong, and the
-        // gap is exactly when "Loading lossless" should be showing
-        // instead. The periodic sampler below and
-        // onAudioInputFormatChanged both re-publish once the decoder
-        // has actually settled on this track, so the same-format case
-        // the old call was here to cover is still covered.
-        NerdStats.current.value = null
     }
 
     /** The background hunt for a better copy of whatever is playing. */
@@ -2624,8 +3150,11 @@ class PlaybackService : MediaLibraryService() {
      * resolving data source records what it served ([StreamContainer.served]),
      * so this is not an inference from an error code — the error only says
      * "nothing could read these bytes", and the record says the bytes were an
-     * `.mpd`. Declaring the type is then the whole fix: same item, same URL,
-     * same position, a `DashMediaSource` instead of a progressive one.
+     * `.mpd`. Declaring the type is then most of the fix: same resolved URL,
+     * same position, a `DashMediaSource` instead of a progressive one. The
+     * virtual playback URI must also differ, because Media3 otherwise updates
+     * the existing progressive source in place and never asks
+     * [DefaultMediaSourceFactory] to build the DASH source.
      *
      * The cached bytes go first. They are the manifest, written under the
      * track's ordinary key by the read that failed, and leaving them there
@@ -2651,6 +3180,9 @@ class PlaybackService : MediaLibraryService() {
         // re-preparing the identical item would only spend the budget on it.
         if (item.localConfiguration?.mimeType != null) return false
         val mime = StreamContainer.manifestServing(mediaId) ?: return false
+        val playbackUri = uri ?: return false
+        val reopenedUri = StreamContainer.markedForManifestReopen(playbackUri.toString(), mime)
+        if (reopenedUri == playbackUri.toString()) return false
 
         TrackLog.w(
             "BitChord",
@@ -2662,9 +3194,14 @@ class PlaybackService : MediaLibraryService() {
         // stream refilling its own budget, and this is the first attempt this
         // stream has had that could possibly work.
         recoveries.remove(mediaId)
-        val declared = item.buildUpon().setMimeType(mime).build()
+        val declared = item.buildUpon()
+            // MIME selects DashMediaSource/HlsMediaSource; the marker makes
+            // Media3 actually rebuild rather than update ProgressiveMediaSource.
+            .setUri(reopenedUri)
+            .setMimeType(mime)
+            .build()
         scope.launch(TrackLog.about(mediaId)) {
-            uri?.let { withContext(Dispatchers.IO) { AudioCache.discard(it) } }
+            withContext(Dispatchers.IO) { AudioCache.discard(playbackUri) }
             withContext(Dispatchers.Main) {
                 val live = this@PlaybackService.player ?: return@withContext
                 // The queue can move while the discard runs, and replacing the
@@ -2962,7 +3499,32 @@ class PlaybackService : MediaLibraryService() {
     private fun upgradeQualityNow() {
         val player = player ?: return
         val mediaId = player.currentMediaItem?.mediaId ?: return
+        // Do not charge the manual cooldown for a command that merely arrived
+        // while this track's automatic or manual upgrade was already running.
+        // The UI disables the row too, but the service is the authoritative
+        // boundary for controllers which do not use that UI.
+        if (mediaId in NerdStats.racingLossless.value ||
+            (upgradeJob?.isActive == true && upgradeFor == mediaId)
+        ) {
+            TrackLog.d("BitChord", "manual upgrade ignored for $mediaId: upgrade already running", about = mediaId)
+            return
+        }
+        val remaining = manualUpgradeThrottle.tryAcquire(SystemClock.elapsedRealtime())
+        if (remaining > 0) {
+            TrackLog.d(
+                "BitChord",
+                "manual upgrade ignored for $mediaId: ${remaining}ms cooldown remaining",
+                about = mediaId,
+            )
+            return
+        }
         OriginalVersion.unpin(mediaId)
+        // A manual retry is a request for the addon's state *now*. In
+        // particular, do not replay a successful empty search cached while one
+        // of the addon's upstreams was unavailable or reuse an earlier stream
+        // URL. Running calls are retained and joined; only completed track
+        // answers are discarded. The manifest is intentionally unaffected.
+        SourceRegistry.clearCompletedAddonTrackCalls()
         QualityUpgrade.askByHand(mediaId)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
         lookForBetterCopy(player)
@@ -5222,6 +5784,25 @@ class PlaybackService : MediaLibraryService() {
                 }
         }
 
+        // The first track push usually happens before Media3 has configured
+        // its decoder, so measured quality arrives just afterwards. Re-send
+        // only when the rendered premium line changes; the periodic stats
+        // sampler creates fresh snapshots, but must not generate a Discord
+        // network update every time when their visible values are identical.
+        scope.launch {
+            combine(
+                NerdStats.current,
+                AppSettings.discordShowAudioQuality,
+            ) { stats, enabled ->
+                discordAudioQualityLine(stats).takeIf { enabled }
+            }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
+                }
+        }
+
         // A network coming back, which is the other half of surviving a spell in
         // the background: the gateway heals itself, but its retry backoff climbs
         // to a minute, and a listener who walked back into Wi-Fi shouldn't watch
@@ -5276,6 +5857,8 @@ class PlaybackService : MediaLibraryService() {
         // The setting is what the track plays at for all but the handoff, so
         // it is both the honest tag and the right divisor for the countdown.
         val speed = AppSettings.playbackSpeed.value
+        val audioQuality = discordAudioQualityLine(NerdStats.current.value)
+            .takeIf { AppSettings.discordShowAudioQuality.value }
 
         discordUpdateJob?.cancel()
         discordPresenceUp = true
@@ -5293,6 +5876,7 @@ class PlaybackService : MediaLibraryService() {
                 button2Visible = AppSettings.discordButton2Visible.value,
                 activityType = AppSettings.discordActivityType.value,
                 activityName = AppSettings.discordActivityName.value,
+                audioQuality = audioQuality,
             ).onFailure {
                 TrackLog.d("BitChord", "Discord presence failed: ${it.message}", about = song.videoId)
             }
@@ -5844,9 +6428,12 @@ class PlaybackService : MediaLibraryService() {
                 .add(shuffleCommand)
                 .add(startStationCommand)
                 .add(revertToOriginalCommand)
+                .add(swapToVersionCommand)
                 .add(beginRadioQueueCommand)
                 .add(commitRadioQueueCommand)
                 .add(upgradeQualityCommand)
+                .add(swapVersionCommand)
+                .add(prewarmVersionAlignmentCommand)
                 .add(reorderQueueCommand)
                 .add(queueDragCommand)
                 .build()
@@ -5867,9 +6454,21 @@ class PlaybackService : MediaLibraryService() {
                 ACTION_TOGGLE_SHUFFLE -> toggleShuffleFromSession()
                 ACTION_START_STATION -> startStationFromSession()
                 ACTION_REVERT_TO_ORIGINAL -> revertCurrentToOriginal()
+                ACTION_SWAP_TO_VERSION -> swapCurrentToVersion(args)
                 ACTION_BEGIN_RADIO_QUEUE -> beginRadioQueue()
                 ACTION_COMMIT_RADIO_QUEUE -> player?.let(::saveQueueSnapshotImmediately)
                 ACTION_UPGRADE_QUALITY -> upgradeQualityNow()
+                ACTION_SWAP_VERSION -> {
+                    val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
+                    if (bundle != null) {
+                        val targetSong = songFromBundle(bundle)
+                        smoothSwapCurrentTrackVersion(targetSong.toMediaItem())
+                    }
+                }
+                ACTION_PREWARM_VERSION_ALIGNMENT -> {
+                    val bundle = args.getBundle(EXTRA_SWAP_MEDIA_ITEM)
+                    if (bundle != null) prewarmVersionAlignment(songFromBundle(bundle))
+                }
                 ACTION_REORDER_QUEUE -> player?.let { QueueShuffle.reorderFromCommand(it, args) }
                 ACTION_QUEUE_DRAG -> {
                     if (args.getBoolean(EXTRA_QUEUE_DRAG_ACTIVE, false)) {
@@ -6577,7 +7176,7 @@ class PlaybackService : MediaLibraryService() {
             val song = Song(
                 videoId = vid,
                 title = title,
-                artist = subtitle,
+                artist = InnertubeParser.artistFromSubtitle(subtitle),
                 thumbnailUrl = thumbnailUrl,
             )
             songCache[vid] = song
@@ -6607,7 +7206,7 @@ class PlaybackService : MediaLibraryService() {
         return Song(
             videoId = id,
             title = title,
-            artist = subtitle,
+            artist = InnertubeParser.artistFromSubtitle(subtitle),
             thumbnailUrl = thumbnailUrl,
         )
     }
@@ -6769,6 +7368,9 @@ class PlaybackService : MediaLibraryService() {
          * be worth the break in the audio it costs.
          */
         const val UPGRADE_MIN_REMAINING_MS = 20_000L
+
+        /** Minimum interval between accepted listener-requested quality retries. */
+        const val MANUAL_UPGRADE_COOLDOWN_MS = 30_000L
 
         /** How often to recheck [CrossfadeController.isTransitioning] while an upgrade waits on one. */
         const val UPGRADE_CROSSFADE_POLL_MS = 250L

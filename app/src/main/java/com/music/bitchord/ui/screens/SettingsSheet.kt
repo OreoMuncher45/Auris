@@ -54,6 +54,7 @@ import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
 import androidx.compose.material.icons.rounded.MusicOff
@@ -221,9 +222,11 @@ fun SettingsScreen(
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
+    val hideSongStatus by AppSettings.hideSongStatus.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val preferMusicOnly by AppSettings.preferMusicOnly.collectAsStateWithLifecycle()
+    val smartVersionAlignment by AppSettings.smartVersionAlignment.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -1268,6 +1271,25 @@ fun SettingsScreen(
                     onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
                 )
             }
+            val hideSongStatusTitle = stringResource(R.string.hide_song_status)
+            row(hideSongStatusTitle, "player", "playing from", "played by") {
+                SettingsRow(
+                    icon = Icons.Rounded.VisibilityOff,
+                    title = hideSongStatusTitle,
+                    subtitle = stringResource(R.string.hide_song_status_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = hideSongStatus,
+                            onCheckedChange = AppSettings::setHideSongStatus,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setHideSongStatus(!hideSongStatus) },
+                )
+            }
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.language)) {
@@ -1285,10 +1307,29 @@ fun SettingsScreen(
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.advanced_options)) {
+            val smartAlignmentTitle = stringResource(R.string.smart_version_alignment)
+            row(smartAlignmentTitle, "alignment", "sync", "waveform", "video", "audio", "skit", "intro") {
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = smartAlignmentTitle,
+                    subtitle = stringResource(R.string.smart_version_alignment_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = smartVersionAlignment,
+                            onCheckedChange = AppSettings::setSmartVersionAlignment,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSmartVersionAlignment(!smartVersionAlignment) },
+                )
+            }
             val showNerdStatsTitle = stringResource(R.string.show_nerd_stats)
             row(showNerdStatsTitle, "debug", "bitrate", "codec") {
                 SettingsRow(
-                    icon = Icons.Rounded.GraphicEq,
+                    icon = Icons.Rounded.BarChart,
                     title = showNerdStatsTitle,
                     subtitle = stringResource(R.string.show_nerd_stats_subtitle),
                     trailing = {
