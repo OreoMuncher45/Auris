@@ -16,6 +16,15 @@ data class QueueSource(
 )
 
 /**
+ * Result of constructing a context queue, containing the reconstructed timeline
+ * and the 0-based start index representing the user's tapped track.
+ */
+data class ContextQueueResult(
+    val timeline: List<Song>,
+    val startIndex: Int,
+)
+
+/**
  * Headless orchestrator for two-tier Spotify-style queue operations.
  *
  * Owns timeline construction, tier assignment, deterministic queue identity assignment,
@@ -37,7 +46,9 @@ object QueueCoordinator {
     /**
      * Constructs an interleaved queue for starting a Context (Album, Playlist, Artist):
      *
-     * Invariant: [Selected Track] + [Preserved USER_QUEUE] + [Remaining Context Tracks].
+     * Invariant: [Preceding Context] + [Selected Track] + [Preserved USER_QUEUE] + [Following Context Tracks].
+     * Playback starts at [startIndex] (= precedingContext.size). Preceding tracks remain in history
+     * for backward navigation and loop around under REPEAT_MODE_ALL.
      */
     fun buildContextQueue(
         currentTimeline: List<Song>,
@@ -45,8 +56,8 @@ object QueueCoordinator {
         newContextSongs: List<Song>,
         selectedIndex: Int,
         contextSource: QueueSource,
-    ): List<Song> {
-        if (newContextSongs.isEmpty()) return emptyList()
+    ): ContextQueueResult {
+        if (newContextSongs.isEmpty()) return ContextQueueResult(emptyList(), 0)
 
         val upcomingUserQueue = if (currentIndex in currentTimeline.indices) {
             currentTimeline.subList(currentIndex + 1, currentTimeline.size)
@@ -64,10 +75,17 @@ object QueueCoordinator {
         }
 
         val safeIndex = selectedIndex.coerceIn(contextEntries.indices)
+        val precedingContext = contextEntries.subList(0, safeIndex)
         val selected = contextEntries[safeIndex]
-        val remainingContext = contextEntries.filterIndexed { i, _ -> i != safeIndex }
+        val followingContext = contextEntries.subList(safeIndex + 1, contextEntries.size)
 
-        return listOf(selected) + upcomingUserQueue + remainingContext
+        val timeline = precedingContext + listOf(selected) + upcomingUserQueue + followingContext
+        val startIndex = precedingContext.size
+
+        return ContextQueueResult(
+            timeline = timeline,
+            startIndex = startIndex,
+        )
     }
 
     /**

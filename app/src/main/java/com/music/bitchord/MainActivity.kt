@@ -1008,14 +1008,14 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
-            val interleaved = QueueCoordinator.buildContextQueue(
+            val result = QueueCoordinator.buildContextQueue(
                 currentTimeline = currentTimeline,
                 currentIndex = currentIndex,
                 newContextSongs = songs,
                 selectedIndex = index,
                 contextSource = source,
             )
-            c.playSongs(interleaved, 0)
+            c.playSongs(result.timeline, result.startIndex)
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }

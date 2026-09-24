@@ -83,7 +83,7 @@ class QueueCoordinatorTest {
     }
 
     @Test
-    fun `buildContextQueue preserves upcoming user queue and interleave correctly`() {
+    fun `buildContextQueue preserves sequential order, user queue behind selected, and sets correct startIndex`() {
         // Current timeline: [Track 0 (playing)] + [User Q 1] + [User Q 2] + [Old Autoplay]
         val userQ1 = testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1")
         val userQ2 = testSong("u2", tier = QueueTier.USER_QUEUE, entryId = "entry-u2")
@@ -104,31 +104,121 @@ class QueueCoordinatorTest {
             currentTimeline = currentTimeline,
             currentIndex = 0,
             newContextSongs = albumSongs,
-            selectedIndex = 1, // User tapped album-2
+            selectedIndex = 1, // User tapped album-2 (middle track)
             contextSource = QueueSource("Abbey Road", PlaybackSourceType.BROWSE, "album-id"),
         )
 
-        // Expected: [album-2] + [userQ1, userQ2] + [album-1, album-3]
-        assertEquals(5, result.size)
-        assertEquals("album-2", result[0].videoId)
-        assertEquals(QueueTier.CONTEXT, result[0].queueTier)
-        assertEquals("Abbey Road", result[0].playbackSource)
+        // Expected: [album-1] (preceding) + [album-2] (selected) + [userQ1, userQ2] + [album-3] (following)
+        // startIndex = 1 (album-2)
+        assertEquals(1, result.startIndex)
+        assertEquals(5, result.timeline.size)
 
-        assertEquals("u1", result[1].videoId)
-        assertEquals("entry-u1", result[1].queueEntryId)
-        assertEquals(QueueTier.USER_QUEUE, result[1].queueTier)
+        assertEquals("album-1", result.timeline[0].videoId)
+        assertEquals(QueueTier.CONTEXT, result.timeline[0].queueTier)
+        assertEquals("Abbey Road", result.timeline[0].playbackSource)
 
-        assertEquals("u2", result[2].videoId)
-        assertEquals("entry-u2", result[2].queueEntryId)
-        assertEquals(QueueTier.USER_QUEUE, result[2].queueTier)
+        assertEquals("album-2", result.timeline[1].videoId)
+        assertEquals(QueueTier.CONTEXT, result.timeline[1].queueTier)
+        assertEquals("Abbey Road", result.timeline[1].playbackSource)
 
-        assertEquals("album-1", result[3].videoId)
-        assertEquals(QueueTier.CONTEXT, result[3].queueTier)
-        assertEquals("Abbey Road", result[3].playbackSource)
+        assertEquals("u1", result.timeline[2].videoId)
+        assertEquals("entry-u1", result.timeline[2].queueEntryId)
+        assertEquals(QueueTier.USER_QUEUE, result.timeline[2].queueTier)
 
-        assertEquals("album-3", result[4].videoId)
-        assertEquals(QueueTier.CONTEXT, result[4].queueTier)
-        assertEquals("Abbey Road", result[3].playbackSource)
+        assertEquals("u2", result.timeline[3].videoId)
+        assertEquals("entry-u2", result.timeline[3].queueEntryId)
+        assertEquals(QueueTier.USER_QUEUE, result.timeline[3].queueTier)
+
+        assertEquals("album-3", result.timeline[4].videoId)
+        assertEquals(QueueTier.CONTEXT, result.timeline[4].queueTier)
+        assertEquals("Abbey Road", result.timeline[4].playbackSource)
+    }
+
+    @Test
+    fun `buildContextQueue starting from first track has startIndex 0 and empty preceding context`() {
+        val userQ = testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1")
+        val currentTimeline = listOf(testSong("now"), userQ)
+        val albumSongs = listOf(testSong("album-1"), testSong("album-2"), testSong("album-3"))
+
+        val result = QueueCoordinator.buildContextQueue(
+            currentTimeline = currentTimeline,
+            currentIndex = 0,
+            newContextSongs = albumSongs,
+            selectedIndex = 0,
+            contextSource = QueueSource("Abbey Road", PlaybackSourceType.BROWSE, "album-id"),
+        )
+
+        assertEquals(0, result.startIndex)
+        assertEquals(listOf("album-1", "u1", "album-2", "album-3"), result.timeline.map { it.videoId })
+    }
+
+    @Test
+    fun `buildContextQueue starting from last track has startIndex at last context item and empty following context`() {
+        val userQ = testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1")
+        val currentTimeline = listOf(testSong("now"), userQ)
+        val albumSongs = listOf(testSong("album-1"), testSong("album-2"), testSong("album-3"))
+
+        val result = QueueCoordinator.buildContextQueue(
+            currentTimeline = currentTimeline,
+            currentIndex = 0,
+            newContextSongs = albumSongs,
+            selectedIndex = 2, // Last track
+            contextSource = QueueSource("Abbey Road", PlaybackSourceType.BROWSE, "album-id"),
+        )
+
+        assertEquals(2, result.startIndex)
+        assertEquals(listOf("album-1", "album-2", "album-3", "u1"), result.timeline.map { it.videoId })
+    }
+
+    @Test
+    fun `buildContextQueue with empty user queue preserves exact context order`() {
+        val currentTimeline = listOf(testSong("now", tier = QueueTier.CONTEXT))
+        val albumSongs = listOf(testSong("album-1"), testSong("album-2"), testSong("album-3"))
+
+        val result = QueueCoordinator.buildContextQueue(
+            currentTimeline = currentTimeline,
+            currentIndex = 0,
+            newContextSongs = albumSongs,
+            selectedIndex = 1,
+            contextSource = QueueSource("Abbey Road", PlaybackSourceType.BROWSE, "album-id"),
+        )
+
+        assertEquals(1, result.startIndex)
+        assertEquals(listOf("album-1", "album-2", "album-3"), result.timeline.map { it.videoId })
+    }
+
+    @Test
+    fun `buildContextQueue handles empty context and out of bounds selectedIndex safely`() {
+        val emptyResult = QueueCoordinator.buildContextQueue(
+            currentTimeline = emptyList(),
+            currentIndex = -1,
+            newContextSongs = emptyList(),
+            selectedIndex = 0,
+            contextSource = QueueSource("Empty", PlaybackSourceType.BROWSE),
+        )
+        assertEquals(0, emptyResult.startIndex)
+        assertEquals(emptyList<Song>(), emptyResult.timeline)
+
+        val albumSongs = listOf(testSong("album-1"), testSong("album-2"))
+        val underflow = QueueCoordinator.buildContextQueue(
+            currentTimeline = emptyList(),
+            currentIndex = -1,
+            newContextSongs = albumSongs,
+            selectedIndex = -10,
+            contextSource = QueueSource("Test", PlaybackSourceType.BROWSE),
+        )
+        assertEquals(0, underflow.startIndex)
+        assertEquals("album-1", underflow.timeline[0].videoId)
+
+        val overflow = QueueCoordinator.buildContextQueue(
+            currentTimeline = emptyList(),
+            currentIndex = -1,
+            newContextSongs = albumSongs,
+            selectedIndex = 50,
+            contextSource = QueueSource("Test", PlaybackSourceType.BROWSE),
+        )
+        assertEquals(1, overflow.startIndex)
+        assertEquals("album-2", overflow.timeline[1].videoId)
     }
 
     @Test

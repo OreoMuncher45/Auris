@@ -704,7 +704,8 @@ suspend fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
         }
         queue.map { it.toMediaItem() }
     }
-    setMediaItems(items, startIndex.coerceIn(0, items.size - 1), 0L)
+    val targetIndex = if (shuffled) 0 else startIndex.coerceIn(0, items.size - 1)
+    setMediaItems(items, targetIndex, 0L)
     prepare()
     play()
 }
