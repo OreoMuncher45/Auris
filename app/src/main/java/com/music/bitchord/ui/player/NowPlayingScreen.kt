@@ -258,7 +258,6 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
-import com.music.bitchord.playback.smart.VersionAudioAligner
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import dev.chrisbanes.haze.HazeInputScale
@@ -3436,17 +3435,6 @@ fun NowPlayingScreen(
                                 blurRadius = 4f,
                             ),
                         )
-                        // What the switch to the other cut has worked out —
-                        // see [VersionAudioAligner.status]. Read and filtered
-                        // here rather than hoisted with the reads at the top:
-                        // this line describes the song on screen, so a record
-                        // naming a pair this track isn't part of must not
-                        // reach it.
-                        val rawAlignment by VersionAudioAligner.status
-                            .collectAsStateWithLifecycle()
-                        val otherCut = rawAlignment?.takeIf {
-                            it.sourceId == song.videoId || it.targetId == song.videoId
-                        }
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
@@ -3495,35 +3483,6 @@ fun NowPlayingScreen(
                                     // Dimmer than the measured line above it: that
                                     // one describes the audio, this one describes
                                     // the app, and the ranking should show.
-                                    color = Color.White.copy(alpha = 0.5f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                            // The other cut's switch, if this track has an
-                            // alternate and anything is known about moving to
-                            // it. One line for the whole story: which stage the
-                            // pass reached, and the shift it came out with —
-                            // kept after the swap lands, because the shift is
-                            // only worth reading once the cut it describes is
-                            // the one playing.
-                            if (hasAlternateVersion || otherCut != null) {
-                                Text(
-                                    text = stringResource(
-                                        R.string.version_alignment_status,
-                                        otherCut?.phase
-                                            ?.let { stringResource(it.statLabel()) }
-                                            ?: stringResource(R.string.version_cut_not_fetched),
-                                        // Seconds, not raw milliseconds: nobody
-                                        // reads a shift as "+28690".
-                                        otherCut?.offsetMs
-                                            ?.let { String.format(Locale.US, "%+.1f s", it / 1000.0) }
-                                            ?: "—",
-                                    ),
-                                    style = nerdStyle,
-                                    // The Automix line's rank: both report on
-                                    // the app rather than on the audio.
                                     color = Color.White.copy(alpha = 0.5f),
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -4184,6 +4143,9 @@ fun NowPlayingScreen(
                     label = "playerBottomPill",
                 ) { showQueueModes ->
                     if (showQueueModes) {
+                        // Always three-up, unlike the output/party capsule —
+                        // so it always takes the narrower spacing. See
+                        // [PILL_SEGMENT_WIDTH_TRIPLE].
                         Pill {
                             PillSegment(
                                 icon = BitChordIcons.Shuffle,
@@ -4194,6 +4156,7 @@ fun NowPlayingScreen(
                                 highlighted = shuffleEnabled,
                                 haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                 tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                                width = PILL_SEGMENT_WIDTH_TRIPLE,
                             )
                             PillDivider()
                             PillSegment(
@@ -4215,6 +4178,7 @@ fun NowPlayingScreen(
                                     Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
                                     else -> Haptic.Select
                                 },
+                                width = PILL_SEGMENT_WIDTH_TRIPLE,
                             )
                             PillDivider()
                             PillSegment(
@@ -4226,6 +4190,7 @@ fun NowPlayingScreen(
                                 highlighted = autoplayEnabled,
                                 haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                 tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
+                                width = PILL_SEGMENT_WIDTH_TRIPLE,
                             )
                         }
                     } else {
@@ -4733,6 +4698,8 @@ private fun WidePlayerControls(
                         label = "widePlayerBottomPill",
                     ) { showQueueModes ->
                         if (showQueueModes) {
+                            // Always three-up — see the portrait layout's twin
+                            // of this block and [PILL_SEGMENT_WIDTH_TRIPLE].
                             Pill {
                                 PillSegment(
                                     icon = BitChordIcons.Shuffle,
@@ -4743,6 +4710,7 @@ private fun WidePlayerControls(
                                     highlighted = shuffleEnabled,
                                     haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                     tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
                                 )
                                 PillDivider()
                                 PillSegment(
@@ -4760,6 +4728,7 @@ private fun WidePlayerControls(
                                         else -> Haptic.Select
                                     },
                                     highlighted = repeatMode != Player.REPEAT_MODE_OFF,
+                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
                                 )
                                 PillDivider()
                                 PillSegment(
@@ -4771,6 +4740,7 @@ private fun WidePlayerControls(
                                     highlighted = autoplayEnabled,
                                     haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
                                     tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
+                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
                                 )
                             }
                         } else {
@@ -6991,17 +6961,9 @@ private fun PillDivider() {
     Box(
         Modifier
             .width(1.dp)
-            .height(20.dp)
+            .fillMaxHeight()
             .background(Color.White.copy(alpha = 0.20f)),
     )
-}
-
-/** What stats for nerds calls each stage of a switch to the other cut. */
-private fun VersionAudioAligner.CutPhase.statLabel(): Int = when (this) {
-    VersionAudioAligner.CutPhase.FETCHING -> R.string.version_cut_fetching
-    VersionAudioAligner.CutPhase.MEASURING -> R.string.version_cut_measuring
-    VersionAudioAligner.CutPhase.ALIGNED -> R.string.version_cut_aligned
-    VersionAudioAligner.CutPhase.FAILED -> R.string.failed
 }
 
 @Composable
