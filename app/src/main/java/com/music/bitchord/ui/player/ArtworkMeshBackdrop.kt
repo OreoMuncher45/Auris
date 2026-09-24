@@ -196,12 +196,30 @@ fun rememberArtworkMesh(
     artPx: Int = CARD_ART_PX,
 ): ArtworkMesh? {
     val context = LocalContext.current
+    // The last mesh that was on screen, whatever it was read from. A cover
+    // the cache has never seen decodes *over* this instead of blanking the
+    // backdrop to nothing for the beat the decode takes — which is the
+    // flicker a version switch showed every time its cut arrived carrying
+    // its own thumbnail. Wrong colour for one decode is the trade; absent
+    // colour was the flicker.
+    val heldMesh = remember { mutableStateOf<ArtworkMesh?>(null) }
     // Seeded from the cache so a cover that has been seen before is on colour
-    // in its first frame, with nothing to fade in from.
-    var mesh by remember(imageUrl) { mutableStateOf(imageUrl?.let(meshCache::get)) }
+    // in its first frame, with nothing to fade in from — and from
+    // [heldMesh] otherwise, carried over for the reason above.
+    var mesh by remember(imageUrl) {
+        mutableStateOf(imageUrl?.let(meshCache::get) ?: heldMesh.value)
+    }
+    // What the mesh on screen was actually read from: null while it is a
+    // carry-over from the previous cover. Without this the guard below would
+    // read the carried mesh as this cover's own answer and never decode the
+    // new one.
+    var meshUrl by remember(imageUrl) {
+        mutableStateOf(if (imageUrl != null && meshCache.get(imageUrl) != null) imageUrl else null)
+    }
+    LaunchedEffect(mesh) { heldMesh.value = mesh }
 
     LaunchedEffect(imageUrl, artPx) {
-        if (imageUrl == null || mesh != null) return@LaunchedEffect
+        if (imageUrl == null || meshUrl == imageUrl) return@LaunchedEffect
         val request = ImageRequest.Builder(context)
             .data(imageUrl.artworkAt(artPx))
             .size(MESH_PX)
@@ -225,6 +243,7 @@ fun rememberArtworkMesh(
                 }
                 // A cover that decoded but had no mesh in it — see [meshOf] —
                 // is an answer, not a failure. Asking again gets the same one.
+                meshUrl = imageUrl
                 return@LaunchedEffect
             }
         }
@@ -238,6 +257,7 @@ fun rememberArtworkMesh(
         // threshold is discarded; the last valid mesh is kept instead.
         if (isLikelyBlackFrame(frame)) return@LaunchedEffect
         mesh = withContext(Dispatchers.Default) { meshOf(frame, imageUrl?.hashCode() ?: 0) } ?: mesh
+        meshUrl = imageUrl
     }
     return mesh
 }

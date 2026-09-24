@@ -331,6 +331,13 @@
     <string name="instrumental">Nhạc không lời</string>
     <string name="pause">Tạm dừng</string>
     <string name="lyrics_by">Lời bài hát bởi %1$s</string>
+    <string name="change_lyrics_provider">Đổi</string>
+    <string name="choose_lyrics_provider">Chọn nguồn lời bài hát</string>
+    <string name="lyrics_provider_current">Nguồn hiện tại</string>
+    <string name="lyrics_provider_found">Đã tìm thấy lời bài hát · Chạm để dùng</string>
+    <string name="lyrics_provider_not_found">Không tìm thấy lời bài hát</string>
+    <string name="lyrics_provider_fetching">Đang tải lời bài hát…</string>
+    <string name="lyrics_provider_not_fetched">Chạm để tải</string>
     <string name="no_lyrics_found">Không tìm thấy lời bài hát</string>
     <string name="lyrics_saved_with_download">Lời bài hát được lưu kèm bản tải này</string>
     <string name="shuffle_on">Bật trộn bài</string>
@@ -623,6 +630,11 @@
     <string name="analysis_refining">đã phân tích, đang tinh chỉnh…</string>
     <string name="analysis_in_progress">đang phân tích…</string>
     <string name="waiting">đang chờ</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">chưa tải</string>
+    <string name="version_cut_fetching">đang tải</string>
+    <string name="version_cut_measuring">đang phân tích</string>
+    <string name="version_cut_aligned">đã khớp</string>
     <string name="automix_enabled_subtitle">Tự động căn thời gian và hòa âm từng đoạn chuyển bài dựa trên bản nhạc. Tắt đi nếu điện thoại nóng lên hoặc nhạc bị giật lag.</string>
     <string name="automix_disabled_subtitle">Tự động căn thời gian và hòa âm đoạn chuyển bài mà không cần thanh trượt. Hiệu năng có thể khác nhau trên các thiết bị yếu hơn.</string>
     <string name="no_lyrics_sources_enabled">Không có. Sẽ không tải lời bài hát.</string>
@@ -806,6 +818,10 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+
+    <string name="smart_version_alignment">Smart audio alignment</string>
+
+    <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
