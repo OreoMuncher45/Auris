@@ -282,13 +282,10 @@ fun DetailScreen(
     // an album's track numbers stay the album's rather than becoming positions
     // in the filtered list.
     val matches = remember(songs, query) { songs.matching(query) }
-    // What a tap plays: for playlists the full list (preserving context), so
-    // searching and tapping still stays inside the playlist. For albums / other
-    // browse types the filtered set is used — playing an entire album from a
-    // single search hit would queue tracks the user never asked for.
-    val queue = remember(songs, matches, page.type) {
-        if (page.type == BrowseType.PLAYLIST) songs else matches.map { it.value }
-    }
+    // What a tap plays: the filtered set of tracks currently standing in the
+    // list. When no filter is active, matches contains the full running order
+    // and plays the complete release/playlist from the tapped position.
+    val queue = remember(matches) { matches.map { it.value } }
     val suggested = remember(page.suggestedSongs, query) {
         page.suggestedSongs.matching(query).map { it.value }
     }
@@ -527,8 +524,7 @@ fun DetailScreen(
                                 song.copy(thumbnailUrl = song.thumbnailUrl ?: page.thumbnailUrl)
                             },
                             onClick = {
-                                val startIdx = if (page.type == BrowseType.PLAYLIST) entry.index else position
-                                onSongClick(queue, startIdx)
+                                onSongClick(queue, position)
                             },
                             onLongPress = { onSongLongPress(song) },
                             onSwipeToQueue = { onSongSwipe(song) },
@@ -923,7 +919,7 @@ private fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort)
  * full list — see the track numbers on an album, which are the release's own
  * and not positions in whatever the filter left.
  */
-private fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
+internal fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
     val all = withIndex().toList()
     if (query.isBlank()) return all
     return all.filter { (_, song) ->

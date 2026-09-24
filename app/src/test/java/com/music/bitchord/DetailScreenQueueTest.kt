@@ -1,0 +1,145 @@
+package com.music.bitchord
+
+import com.music.bitchord.data.model.PlaybackSourceType
+import com.music.bitchord.data.model.QueueTier
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.playback.QueueCoordinator
+import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
+import com.music.bitchord.playback.QueueSource
+import com.music.bitchord.ui.screens.matching
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class DetailScreenQueueTest {
+
+    private fun testSong(
+        id: String,
+        title: String = "Title $id",
+        artist: String = "Artist $id",
+        album: String? = null,
+        tier: QueueTier = QueueTier.CONTEXT,
+        entryId: String? = null,
+    ) = Song(
+        videoId = id,
+        title = title,
+        artist = artist,
+        albumName = album,
+        thumbnailUrl = null,
+        queueTier = tier,
+        queueEntryId = entryId,
+    )
+
+    @Test
+    fun `unfiltered playlist preserves full playlist as context queue with correct startIndex`() {
+        val playlistSongs = List(50) { i ->
+            testSong(id = "track-$i", title = "Song $i", artist = "Artist $i")
+        }
+
+        // When query is blank, matching("") preserves all items and indices in order
+        val matches = playlistSongs.matching("")
+        assertEquals(50, matches.size)
+        matches.forEachIndexed { idx, entry ->
+            assertEquals(idx, entry.index)
+            assertEquals(playlistSongs[idx], entry.value)
+        }
+
+        val queue = matches.map { it.value }
+        assertEquals(playlistSongs, queue)
+
+        // User taps track #20 (position = 20)
+        val position = 20
+        val selectedSong = queue[position]
+        assertEquals("track-20", selectedSong.videoId)
+
+        val userQueueSong = testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1")
+        val currentTimeline = listOf(testSong("current"), userQueueSong)
+
+        val result = QueueCoordinator.buildContextQueue(
+            currentTimeline = currentTimeline,
+            currentIndex = 0,
+            newContextSongs = queue,
+            selectedIndex = position,
+            contextSource = QueueSource("My Playlist", PlaybackSourceType.BROWSE, "playlist-123"),
+        )
+
+        // startIndex points to selectedSong (precedingContext.size = 20)
+        assertEquals(20, result.startIndex)
+        assertEquals("track-20", result.timeline[result.startIndex].videoId)
+
+        // Preceding tracks 0..19 are in history
+        for (i in 0 until 20) {
+            assertEquals("track-$i", result.timeline[i].videoId)
+        }
+
+        // USER_QUEUE item is preserved immediately after the selected track
+        assertEquals("u1", result.timeline[21].videoId)
+        assertEquals(QueueTier.USER_QUEUE, result.timeline[21].queueTier)
+
+        // Following tracks 21..49 follow the USER_QUEUE item
+        for (i in 21 until 50) {
+            assertEquals("track-$i", result.timeline[i + 1].videoId)
+        }
+    }
+
+    @Test
+    fun `filtered playlist search results become the context queue, not the unfiltered playlist`() {
+        // Create 100 songs, with 3 matching "Taylor" at indices 11, 46, 82
+        val playlistSongs = List(100) { i ->
+            when (i) {
+                11 -> testSong(id = "track-12", title = "Love Story", artist = "Taylor Swift")
+                46 -> testSong(id = "track-47", title = "Blank Space", artist = "Taylor Swift")
+                82 -> testSong(id = "track-83", title = "Cardigan", artist = "Taylor Swift")
+                else -> testSong(id = "track-${i + 1}", title = "Other Song $i", artist = "Other Artist")
+            }
+        }
+
+        val matches = playlistSongs.matching("Taylor")
+        assertEquals(3, matches.size)
+
+        // The original track positions are retained on entry.index for UI numbering
+        assertEquals(11, matches[0].index)
+        assertEquals(46, matches[1].index)
+        assertEquals(82, matches[2].index)
+
+        // queue is derived from matches
+        val queue = matches.map { it.value }
+        assertEquals(listOf("track-12", "track-47", "track-83"), queue.map { it.videoId })
+
+        // User taps the 2nd search result (position = 1, "Blank Space" / track-47)
+        val position = 1
+        assertEquals("track-47", queue[position].videoId)
+
+        val userQueueSong = testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1")
+        val currentTimeline = listOf(testSong("current"), userQueueSong)
+
+        val result = QueueCoordinator.buildContextQueue(
+            currentTimeline = currentTimeline,
+            currentIndex = 0,
+            newContextSongs = queue,
+            selectedIndex = position,
+            contextSource = QueueSource("My Playlist", PlaybackSourceType.BROWSE, "playlist-123"),
+        )
+
+        // Context contains ONLY the filtered search results, not track-48, track-49...
+        // Expected timeline: [track-12] + [track-47] + [u1] + [track-83]
+        assertEquals(1, result.startIndex)
+        assertEquals(listOf("track-12", "track-47", "u1", "track-83"), result.timeline.map { it.videoId })
+        assertEquals(QueueTier.CONTEXT, result.timeline[0].queueTier)
+        assertEquals(QueueTier.CONTEXT, result.timeline[1].queueTier)
+        assertEquals(QueueTier.USER_QUEUE, result.timeline[2].queueTier)
+        assertEquals(QueueTier.CONTEXT, result.timeline[3].queueTier)
+    }
+
+    @Test
+    fun `matching filters by title, artist, or albumName case-insensitively`() {
+        val songs = listOf(
+            testSong(id = "1", title = "Midnight City", artist = "M83", album = "Hurry Up"),
+            testSong(id = "2", title = "City Lights", artist = "Various", album = "Soundtrack"),
+            testSong(id = "3", title = "Something Else", artist = "City High", album = "Self-Titled"),
+            testSong(id = "4", title = "Unrelated", artist = "Unknown", album = "Unknown"),
+        )
+
+        val matches = songs.matching("city")
+        assertEquals(listOf("1", "2", "3"), matches.map { it.value.videoId })
+    }
+}
