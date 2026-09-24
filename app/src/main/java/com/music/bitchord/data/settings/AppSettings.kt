@@ -662,6 +662,9 @@ object AppSettings {
     /** Put the track title on the bold profile line, in place of the artist. */
     val discordUseDetails = MutableStateFlow(false)
 
+    /** Show measured Hi-Res, Lossless, or Dolby specs on the presence card. */
+    val discordShowAudioQuality = MutableStateFlow(true)
+
     /** Reveals the presence-shape controls: status, activity type/name, buttons. */
     val discordAdvancedMode = MutableStateFlow(false)
 
@@ -877,6 +880,7 @@ object AppSettings {
         discordAvatar.value = prefs.getString(KEY_DISCORD_AVATAR, "").orEmpty()
         discordRpcEnabled.value = prefs.getBoolean(KEY_DISCORD_RPC_ENABLED, true)
         discordUseDetails.value = prefs.getBoolean(KEY_DISCORD_USE_DETAILS, false)
+        discordShowAudioQuality.value = prefs.getBoolean(KEY_DISCORD_SHOW_AUDIO_QUALITY, true)
         discordAdvancedMode.value = prefs.getBoolean(KEY_DISCORD_ADVANCED_MODE, false)
         discordStatus.value = prefs.getString(KEY_DISCORD_STATUS, "online").orEmpty()
         discordActivityType.value = prefs.getString(KEY_DISCORD_ACTIVITY_TYPE, "listening").orEmpty()
@@ -1503,6 +1507,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_DISCORD_USE_DETAILS, value).apply()
     }
 
+    fun setDiscordShowAudioQuality(value: Boolean) {
+        discordShowAudioQuality.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_SHOW_AUDIO_QUALITY, value).apply()
+    }
+
     fun setDiscordAdvancedMode(value: Boolean) {
         discordAdvancedMode.value = value
         prefs.edit().putBoolean(KEY_DISCORD_ADVANCED_MODE, value).apply()
@@ -1846,6 +1855,7 @@ object AppSettings {
     private const val KEY_DISCORD_AVATAR = "discord_avatar"
     private const val KEY_DISCORD_RPC_ENABLED = "discord_rpc_enabled"
     private const val KEY_DISCORD_USE_DETAILS = "discord_use_details"
+    private const val KEY_DISCORD_SHOW_AUDIO_QUALITY = "discord_show_audio_quality"
     private const val KEY_DISCORD_ADVANCED_MODE = "discord_advanced_mode"
     private const val KEY_DISCORD_STATUS = "discord_status"
     private const val KEY_DISCORD_ACTIVITY_TYPE = "discord_activity_type"

@@ -397,6 +397,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} and {album_name} are replaced with the current track.</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} and {album_name} are replaced with the track. The first button opens the song on YouTube Music and the second opens this project.</string>
     <string name="discord_presence_footer">The card updates when the track, position or playback state changes. It clears when playback stops.</string>
+    <string name="discord_show_audio_quality">Show audio quality</string>
+    <string name="discord_show_audio_quality_subtitle">Hi-Res, lossless and Dolby specs on the presence card</string>
     <string name="discord_sign_in_footer">Signing in opens Discord\'s login page. Nothing is typed into BitChord.</string>
     <string name="discord_token">Discord token</string>
     <string name="discord_token_description">Paste your Discord account token. It stays encrypted on this device and is sent only to Discord.</string>

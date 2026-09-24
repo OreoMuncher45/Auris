@@ -4983,8 +4983,16 @@ private fun WideCredits(
  * whole line would recompose sixty times a second.
  */
 @Composable
-private fun rememberLyricClock(positionMs: Long, isPlaying: Boolean): MutableLongState {
-    val clock = remember { mutableLongStateOf(positionMs) }
+private fun rememberLyricClock(
+    trackKey: Any,
+    positionMs: Long,
+    isPlaying: Boolean,
+): MutableLongState {
+    val startedAtMs = remember(trackKey) { SystemClock.elapsedRealtime() }
+    val clock = remember(trackKey) { mutableLongStateOf(positionMs) }
+    val reconciler = remember(trackKey) {
+        LyricClockReconciler(positionMs, startedAtMs, isPlaying)
+    }
     // Gated on the app being on screen. The loop asks for a frame, writes a
     // value that invalidates a drawing, and is handed the next frame for it —
     // which is a request to render continuously for as long as it runs. That is
@@ -4996,7 +5004,12 @@ private fun rememberLyricClock(positionMs: Long, isPlaying: Boolean): MutableLon
     // requesting another frame.
     val foreground = rememberIsForeground()
     LaunchedEffect(positionMs, isPlaying, foreground) {
-        clock.longValue = reconcileLyricPosition(clock.longValue, positionMs)
+        clock.longValue = reconciler.reconcile(
+            displayedMs = clock.longValue,
+            reportedMs = positionMs,
+            observedAtMs = SystemClock.elapsedRealtime(),
+            isPlaying = isPlaying,
+        )
         if (!isPlaying || !foreground) return@LaunchedEffect
         val firstFrame = withFrameMillis { it }
         while (true) {
@@ -5858,7 +5871,7 @@ private fun LyricsPanel(
     modifier: Modifier = Modifier,
 ) {
     val panelPlaying = isPlaying && active
-    val clock = rememberLyricClock(positionMs, panelPlaying)
+    val clock = rememberLyricClock(trackKey, positionMs, panelPlaying)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     // Only a song that actually names a second voice is laid out as one. A
@@ -6560,7 +6573,7 @@ private fun CurrentLyricLine(
         return
     }
 
-    val clock = rememberLyricClock(positionMs, isPlaying)
+    val clock = rememberLyricClock(trackKey, positionMs, isPlaying)
 
     val index by remember(lines) {
         derivedStateOf { lines.indexOfLast { it.timeMs <= clock.longValue } }

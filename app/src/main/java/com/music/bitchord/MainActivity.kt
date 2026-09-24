@@ -210,7 +210,6 @@ import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.components.TopBarBlur
 import com.music.bitchord.ui.components.TopBarDownloadButton
-import com.music.bitchord.ui.components.TopFadeScrim
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
@@ -2794,11 +2793,21 @@ private fun BitChordApp(
                     !(libraryShowAll != null && detail == null) &&
                     !showAccountScrobbling && !showSources && !showListenTogether &&
                     !showEqualizer && !showSettings
-                // The top floor is the exact vertical mirror of the shared
-                // bottom scrim and belongs to app chrome, not to an individual
-                // page. It stays behind either the bounded bar or floating
-                // liquid controls.
-                TopFadeScrim(modifier = Modifier.align(Alignment.TopCenter))
+                val chromePageColor = if (isDetailVisible) {
+                    detailPalette.background
+                } else {
+                    MaterialTheme.colorScheme.background
+                }
+                // This is the bottom floor itself turned upside down, not a
+                // separately maintained approximation. Both edges therefore
+                // share the same curve, height and page-aware colour — including
+                // the white theme background in light mode.
+                BottomFadeScrim(
+                    pageColor = chromePageColor,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .rotate(180f),
+                )
 
                 // With Liquid Glass enabled, every page uses separated floating
                 // controls and therefore has no full-width pane underneath.
@@ -3040,7 +3049,7 @@ private fun BitChordApp(
                     // Not the wash: by the foot of the screen the page has finished
                     // easing out of it and into this, so this is what is actually
                     // under the tab bar.
-                    pageColor = if (isDetailVisible) detailPalette.background else MaterialTheme.colorScheme.background,
+                    pageColor = chromePageColor,
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
 

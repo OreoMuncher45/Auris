@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Label
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.RadioButtonChecked
 import androidx.compose.material.icons.rounded.SmartButton
@@ -54,8 +55,10 @@ import androidx.core.net.toUri
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
+import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.discord.DiscordRPC
 import com.music.bitchord.data.discord.SuperProperties
+import com.music.bitchord.data.discord.discordAudioQualityLine
 import com.music.bitchord.data.model.CARD_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -167,6 +170,7 @@ fun DiscordScreen(
     val avatar by AppSettings.discordAvatar.collectAsStateWithLifecycle()
     val rpcEnabled by AppSettings.discordRpcEnabled.collectAsStateWithLifecycle()
     val useDetails by AppSettings.discordUseDetails.collectAsStateWithLifecycle()
+    val showAudioQuality by AppSettings.discordShowAudioQuality.collectAsStateWithLifecycle()
     val advancedMode by AppSettings.discordAdvancedMode.collectAsStateWithLifecycle()
     val status by AppSettings.discordStatus.collectAsStateWithLifecycle()
     val activityType by AppSettings.discordActivityType.collectAsStateWithLifecycle()
@@ -176,6 +180,7 @@ fun DiscordScreen(
     val button2Text by AppSettings.discordButton2Text.collectAsStateWithLifecycle()
     val button2Visible by AppSettings.discordButton2Visible.collectAsStateWithLifecycle()
     val infoDismissed by AppSettings.discordInfoDismissed.collectAsStateWithLifecycle()
+    val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
 
     val connected = token.isNotEmpty()
     val discordIcon = ImageVector.vectorResource(R.drawable.ic_discord)
@@ -286,6 +291,25 @@ fun DiscordScreen(
             )
             RowDivider()
             SettingsRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = stringResource(R.string.discord_show_audio_quality),
+                subtitle = stringResource(R.string.discord_show_audio_quality_subtitle),
+                enabled = connected && rpcEnabled,
+                trailing = {
+                    Switch(
+                        checked = showAudioQuality,
+                        onCheckedChange = AppSettings::setDiscordShowAudioQuality,
+                        enabled = connected && rpcEnabled,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setDiscordShowAudioQuality(!showAudioQuality) },
+            )
+            RowDivider()
+            SettingsRow(
                 icon = Icons.Rounded.Tune,
                 title = stringResource(R.string.customize_card),
                 subtitle = stringResource(R.string.customize_card_subtitle),
@@ -382,6 +406,7 @@ fun DiscordScreen(
                 heading = activityName.ifEmpty { appName() },
                 verb = kindOf(activityType).localizedVerb(),
                 useDetails = useDetails,
+                audioQuality = discordAudioQualityLine(nerdStats).takeIf { showAudioQuality },
                 button1Text = button1Text,
                 button1Visible = button1Visible,
                 button2Text = button2Text,
@@ -535,7 +560,7 @@ private fun NoticeCard(text: String, onDismiss: () -> Unit) {
 }
 
 /**
- * The card as Discord will draw it: heading, sleeve, three lines of text, a
+ * The card as Discord will draw it: heading, sleeve, an optional quality line, a
  * countdown, and up to two buttons.
  *
  * Deliberately not built from our own row primitives — this is a picture of
@@ -550,6 +575,7 @@ private fun RichPresencePreview(
     heading: String,
     verb: String,
     useDetails: Boolean,
+    audioQuality: String?,
     button1Text: String,
     button1Visible: Boolean,
     button2Text: String,
@@ -607,7 +633,7 @@ private fun RichPresencePreview(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                song?.albumName?.takeIf { it.isNotBlank() }?.let {
+                audioQuality?.let {
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp),

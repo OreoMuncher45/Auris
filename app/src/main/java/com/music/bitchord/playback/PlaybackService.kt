@@ -92,6 +92,7 @@ import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.discord.DiscordRPC
+import com.music.bitchord.data.discord.discordAudioQualityLine
 import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.stats.ListeningRecorder
 import com.music.bitchord.data.innertube.PlayerClient
@@ -2238,6 +2239,13 @@ class PlaybackService : MediaLibraryService() {
             submitListenBrainzPlayingNow(newSong, 0L, durationMs)
         }
 
+        // The renderer is still configured for the track that just ended at
+        // this point. Clear its measurements before Discord takes its snapshot
+        // too, otherwise a new lossy track briefly inherits the previous
+        // track's Lossless/Atmos line and that stale network push can win the
+        // race against the decoder's correction.
+        NerdStats.current.value = null
+
         // Discord: the whole of "live updating" for a card whose bar Discord
         // draws itself. Only a track change needs a new presence; the countdown
         // in between is Discord's own arithmetic.
@@ -2268,18 +2276,6 @@ class PlaybackService : MediaLibraryService() {
         publishWidgetState()
         loadLyricsForCurrentTrack()
         if (exoPlayer.isPlaying) startLyricsTicker()
-        // Cleared rather than re-published. The renderer is still
-        // configured for the track that just ended at this point, so
-        // reading the format here reports the *previous* song — which
-        // is how a lossy track spent its whole resolve showing the
-        // "Hi-Res Lossless" badge the track before it had earned.
-        // Nothing measured is better than something wrong, and the
-        // gap is exactly when "Loading lossless" should be showing
-        // instead. The periodic sampler below and
-        // onAudioInputFormatChanged both re-publish once the decoder
-        // has actually settled on this track, so the same-format case
-        // the old call was here to cover is still covered.
-        NerdStats.current.value = null
     }
 
     /** The background hunt for a better copy of whatever is playing. */
@@ -5278,6 +5274,25 @@ class PlaybackService : MediaLibraryService() {
                 }
         }
 
+        // The first track push usually happens before Media3 has configured
+        // its decoder, so measured quality arrives just afterwards. Re-send
+        // only when the rendered premium line changes; the periodic stats
+        // sampler creates fresh snapshots, but must not generate a Discord
+        // network update every time when their visible values are identical.
+        scope.launch {
+            combine(
+                NerdStats.current,
+                AppSettings.discordShowAudioQuality,
+            ) { stats, enabled ->
+                discordAudioQualityLine(stats).takeIf { enabled }
+            }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
+                }
+        }
+
         // A network coming back, which is the other half of surviving a spell in
         // the background: the gateway heals itself, but its retry backoff climbs
         // to a minute, and a listener who walked back into Wi-Fi shouldn't watch
@@ -5332,6 +5347,8 @@ class PlaybackService : MediaLibraryService() {
         // The setting is what the track plays at for all but the handoff, so
         // it is both the honest tag and the right divisor for the countdown.
         val speed = AppSettings.playbackSpeed.value
+        val audioQuality = discordAudioQualityLine(NerdStats.current.value)
+            .takeIf { AppSettings.discordShowAudioQuality.value }
 
         discordUpdateJob?.cancel()
         discordPresenceUp = true
@@ -5349,6 +5366,7 @@ class PlaybackService : MediaLibraryService() {
                 button2Visible = AppSettings.discordButton2Visible.value,
                 activityType = AppSettings.discordActivityType.value,
                 activityName = AppSettings.discordActivityName.value,
+                audioQuality = audioQuality,
             ).onFailure {
                 TrackLog.d("BitChord", "Discord presence failed: ${it.message}", about = song.videoId)
             }
