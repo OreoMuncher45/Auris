@@ -21,12 +21,17 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -252,6 +257,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.BACK_RESTARTS_AFTER_MS
 import com.music.bitchord.playback.autoplaySectionStart
+import com.music.bitchord.playback.smart.VersionAudioAligner
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import dev.chrisbanes.haze.HazeInputScale
@@ -1031,6 +1037,10 @@ fun NowPlayingScreen(
     isAudioVersion: Boolean,
     /** A catalogue lookup is in progress for this video's manual conversion. */
     audioVersionSwitching: Boolean,
+    /** Whether an alternate (video vs audio) version exists for this track. */
+    hasAlternateVersion: Boolean = false,
+    /** Legacy alias for [hasAlternateVersion]. */
+    hasVideoVersion: Boolean = false,
     /** The player has just swapped this item to a higher-quality source. */
     qualityUpgraded: Boolean,
     queue: List<Song>,
@@ -1181,32 +1191,44 @@ fun NowPlayingScreen(
     // over cellular" case — see [AppSettings.canvasOverCellular] for why a
     // clip's own loop makes that worth guarding separately from a still image.
     val canvasAllowedNow = canvasEnabled && (meteredConnection != true || canvasOverCellular)
-    var canvas by remember(song.videoId) { mutableStateOf<CanvasArtwork?>(null) }
+    // Keyed on the song's identity rather than its videoId: a version switch
+    // swaps the videoId for another cut of the *same* song, and a canvas is
+    // searched for by title and artist — resetting here threw the clip out
+    // mid-loop, blanked the player down to the still sleeve and restarted it,
+    // which is the flicker. A different song keys differently and starts
+    // clean; the same-titled-impostor case is guarded where the clip is
+    // adopted, by [CanvasArtwork.matches].
+    var canvas by remember(song.title, song.artist) { mutableStateOf<CanvasArtwork?>(null) }
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
     // them — used to blow the sleeve out to the full-bleed hero treatment and
     // to re-tint the backdrop off the clip's own colours rather than the
     // still sleeve's.
-    var canvasRendered by remember(song.videoId) { mutableStateOf(false) }
-    var canvasFrame by remember(song.videoId) { mutableStateOf<Bitmap?>(null) }
+    // All five keyed on the clip rather than the song, so a switch that keeps
+    // the same clip — the common case, same title, same search — carries them
+    // through untouched: the player never re-reports a first frame, the
+    // sleeve never flashes back in under a clip that never went away, and
+    // the Spotify deck keeps its state and captured measurements instead of
+    // snapping open mid-loop. A different clip resets them with itself.
+    var canvasRendered by remember(canvas?.url) { mutableStateOf(false) }
+    var canvasFrame by remember(canvas?.url) { mutableStateOf<Bitmap?>(null) }
     // Spotify's phone presentation starts with the full control deck over its
     // video. It leaves on a Canvas tap, or after the optional idle timeout.
-    // Keyed to the track so every new Canvas starts expanded.
-    var spotifyCanvasControlsOpen by remember(song.videoId) { mutableStateOf(true) }
+    var spotifyCanvasControlsOpen by remember(canvas?.url) { mutableStateOf(true) }
     // Captured while the deck is fully laid out. SlidingPlayerDeck collapses
     // that deck's measured height, which makes the weighted region grow;
     // retaining both measurements keeps the credits' destination stationary.
-    var spotifyCanvasDeckHeight by remember(song.videoId) { mutableStateOf(0.dp) }
-    var spotifyCanvasExpandedTopHeight by remember(song.videoId) { mutableStateOf(0.dp) }
+    var spotifyCanvasDeckHeight by remember(canvas?.url) { mutableStateOf(0.dp) }
+    var spotifyCanvasExpandedTopHeight by remember(canvas?.url) { mutableStateOf(0.dp) }
     // How much of the still artwork the clip is covering, reported by the clip
     // itself. Read from a draw scope rather than in composition: it moves every
     // frame of the fade, and the still art it governs is an AsyncImage whose
     // request is rebuilt on each pass and so would not be skipped.
-    val canvasCover = remember(song.videoId) { mutableFloatStateOf(0f) }
+    val canvasCover = remember(canvas?.url) { mutableFloatStateOf(0f) }
     // The one thing about it worth recomposing for: whether the clip is opaque
     // enough that the still frame under it can go entirely. Derived, so this
     // flips twice across a fade instead of once per frame of it.
-    val stillCovered by remember(song.videoId) {
+    val stillCovered by remember(canvas?.url) {
         derivedStateOf { canvasCover.floatValue > 0.999f }
     }
     // v1.5's backdrop, kept behind a switch — see [AppSettings.legacyMeshGradient].
@@ -1234,7 +1256,14 @@ fun NowPlayingScreen(
         }
         // Anything already settled for this track paints immediately: a
         // reopened player, or a track coming round again in the queue.
-        canvas = CanvasRepository.cached(song) ?: canvas
+        //
+        // Across a version switch the clip found for the last cut is carried
+        // over rather than dropped — same title and artist, so the same
+        // search, so the same clip — and only while it still *answers* to
+        // what is playing: [CanvasArtwork.matches] is what stops a preserved
+        // clip from being a different song's that happens to share a title.
+        canvas = CanvasRepository.cached(song)
+            ?: canvas?.takeIf { it.matches(song.title, song.artist, song.albumName) }
 
         // The album name is looked up separately and lands a moment after the
         // player opens, and it is the field that makes the catalogue searches
@@ -2379,6 +2408,10 @@ fun NowPlayingScreen(
             song = song,
             isPlaying = isPlaying,
             isLoading = isLoading || audioVersionSwitching,
+            isAudioVersion = isAudioVersion,
+            audioVersionSwitching = audioVersionSwitching,
+            hasAlternateVersion = hasAlternateVersion || hasVideoVersion,
+            onToggleAudioVersion = onToggleAudioVersion,
             positionMs = positionMs,
             durationMs = durationMs,
             hasPrevious = hasPrevious,
@@ -3020,10 +3053,13 @@ fun NowPlayingScreen(
             // collapses, and re-subscribing to a flow on every frame of that
             // collapse is a waste of a subscription.
             val smartFadeOn by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
-            // The scrubber retains its existing transition sheen while a real
-            // Smart Mix is active. This state is independent from the removed
-            // header icon.
-            val mixing by AppSettings.smartMixInProgress.collectAsStateWithLifecycle()
+            // The loading state the scrubber wears for the length of a version
+            // switch — see [ThinSlider.loading]. The flag is the alignment
+            // half (fetch + measure); [audioVersionSwitching] is the resolve.
+            // Both named here, so there is no frame of the switch with nothing
+            // on screen saying the player is still working.
+            val versionAligning by AppSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
+            val versionSwitching = versionAligning || audioVersionSwitching
             val smartAnalysis by AppSettings.smartAnalysis.collectAsStateWithLifecycle()
             // A party doesn't mix, and doesn't analyse for one either — see
             // [com.music.bitchord.playback.CrossfadeController]. So the two
@@ -3399,6 +3435,17 @@ fun NowPlayingScreen(
                                 blurRadius = 4f,
                             ),
                         )
+                        // What the switch to the other cut has worked out —
+                        // see [VersionAudioAligner.status]. Read and filtered
+                        // here rather than hoisted with the reads at the top:
+                        // this line describes the song on screen, so a record
+                        // naming a pair this track isn't part of must not
+                        // reach it.
+                        val rawAlignment by VersionAudioAligner.status
+                            .collectAsStateWithLifecycle()
+                        val otherCut = rawAlignment?.takeIf {
+                            it.sourceId == song.videoId || it.targetId == song.videoId
+                        }
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
@@ -3453,34 +3500,39 @@ fun NowPlayingScreen(
                                     textAlign = TextAlign.Center,
                                 )
                             }
+                            // The other cut's switch, if this track has an
+                            // alternate and anything is known about moving to
+                            // it. One line for the whole story: which stage the
+                            // pass reached, and the shift it came out with —
+                            // kept after the swap lands, because the shift is
+                            // only worth reading once the cut it describes is
+                            // the one playing.
+                            if (hasAlternateVersion || otherCut != null) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.version_alignment_status,
+                                        otherCut?.phase
+                                            ?.let { stringResource(it.statLabel()) }
+                                            ?: stringResource(R.string.version_cut_not_fetched),
+                                        // Seconds, not raw milliseconds: nobody
+                                        // reads a shift as "+28690".
+                                        otherCut?.offsetMs
+                                            ?.let { String.format(Locale.US, "%+.1f s", it / 1000.0) }
+                                            ?: "—",
+                                    ),
+                                    style = nerdStyle,
+                                    // The Automix line's rank: both report on
+                                    // the app rather than on the audio.
+                                    color = Color.White.copy(alpha = 0.5f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
                         }
                     }
                 }
 
-                // Video uploads begin as their own audio, immediately. This
-                // frosted, pill-shaped control is the one explicit opt-in to a
-                // catalogue match; after a successful swap it becomes Revert
-                // so a bad match is one tap away from the original upload.
-                //
-                // Rides just inside the sleeve's top edge rather than straddling
-                // it. Everything above the sleeve is spoken for: only
-                // [ART_BOX_TOP_PAD] separates this box from the dismiss strip,
-                // and the origin caption is pinned to that strip's bottom. A
-                // pill hung above the artwork had nowhere to hang but across
-                // the caption — and on every screen where the sleeve is bound
-                // by height rather than width, [artTop] is 0 and it did exactly
-                // that on the sleeve's behalf as well.
-                if ((song.isVideo || isAudioVersion) && !lyricsOpen && p < 0.5f) {
-                    VideoAudioVersionButton(
-                        audioVersion = isAudioVersion,
-                        loading = audioVersionSwitching,
-                        onClick = onToggleAudioVersion,
-                        hazeState = playerHaze,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .offset(y = artTop + VERSION_PILL_ART_INSET),
-                    )
-                }
 
                 // Sits in the gap under the sleeve, clear of its rounded
                 // corners and shadow — no box, no clip, nothing for the art
@@ -3565,37 +3617,52 @@ fun NowPlayingScreen(
                         // on a list, and a label that crawls pulls the eye off
                         // whatever is being read below it.
                         val scrolls = p < 0.01f
-                        MarqueeText(
-                            text = song.title,
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontSize = 20.sp,
-                            ),
-                            color = Color.White,
-                            enabled = scrolls,
-                            leading = if (song.isExplicit == true) {
-                                { ExplicitBadge(color = Color.White) }
-                            } else {
-                                null
-                            },
-                            onOverflowChange = { titleOverflowing = it },
-                            // Only the tracks YouTube hands us a browse id for
-                            // lead anywhere; the rest stay plain text.
-                            modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
-                        )
-                        MarqueeText(
-                            text = song.artist,
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.W500,
-                                fontSize = 20.sp,
-                            ),
-                            color = Color.White.copy(alpha = 0.55f),
-                            enabled = scrolls,
-                            // A title that's also scrolling gets to go first —
-                            // starting together reads as clutter, so the artist
-                            // waits a beat before it joins in.
-                            startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
-                            modifier = Modifier.opensPage(song.artistId, onOpenArtist),
-                        )
+                        // Targeted on the words rather than the videoId: two
+                        // cuts that share a title cross-fade into the exact
+                        // same text, which is nothing at all and leaves the
+                        // marquee where it was; a cut that renames the song
+                        // ("… (Live)") dissolves into the new one instead of
+                        // snapping while the rest of the switch moves around
+                        // it.
+                        Crossfade(
+                            targetState = song.title to song.artist,
+                            animationSpec = tween(durationMillis = 300),
+                            label = "playerCredits",
+                        ) {
+                            Column {
+                                MarqueeText(
+                                    text = song.title,
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontSize = 20.sp,
+                                    ),
+                                    color = Color.White,
+                                    enabled = scrolls,
+                                    leading = if (song.isExplicit == true) {
+                                        { ExplicitBadge(color = Color.White) }
+                                    } else {
+                                        null
+                                    },
+                                    onOverflowChange = { titleOverflowing = it },
+                                    // Only the tracks YouTube hands us a browse id for
+                                    // lead anywhere; the rest stay plain text.
+                                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
+                                )
+                                MarqueeText(
+                                    text = song.artist,
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontWeight = FontWeight.W500,
+                                        fontSize = 20.sp,
+                                    ),
+                                    color = Color.White.copy(alpha = 0.55f),
+                                    enabled = scrolls,
+                                    // A title that's also scrolling gets to go first —
+                                    // starting together reads as clutter, so the artist
+                                    // waits a beat before it joins in.
+                                    startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
+                                    modifier = Modifier.opensPage(song.artistId, onOpenArtist),
+                                )
+                            }
+                        }
                     }
                     Spacer(Modifier.width(10.dp))
                     // Beside the credits rather than down in the toggle row:
@@ -3894,14 +3961,15 @@ fun NowPlayingScreen(
                     onSeekFraction(scrubValue)
                     scrubbing = false
                 },
-                // Suppressed under the finger: the bar is already thickening and
-                // tracking a drag, and a sheen sweeping through that reads as a
-                // rendering glitch rather than as a signal.
-                mixing = mixing && !scrubbing,
-                // Hidden while scrubbing for the same reason as the sheen: the
-                // planner is still describing where the transition *would* be,
-                // and a marker sitting under a finger that is moving the
-                // playhead invites reading it as a drag target.
+                // The switch's own wait, drawn along the bar itself — see
+                // [ThinSlider.loading]. Kept up under the finger as well: it
+                // is the only thing on screen saying the player is working
+                // rather than stuck on a version that is about to change.
+                loading = versionSwitching,
+                // Hidden while scrubbing: the planner is still describing
+                // where the transition *would* be, and a marker sitting under
+                // a finger that is moving the playhead invites reading it as
+                // a drag target.
                 transitionWindow = transitionWindow
                     ?.takeIf { !scrubbing && it.end > it.start }
                     ?.let { it.start..it.end },
@@ -4164,6 +4232,10 @@ fun NowPlayingScreen(
                             onOutput = openAudioOutput,
                             onParty = onListenTogether,
                             onOpenMembers = openListenTogetherMembers,
+                            onChangeTrack = onToggleAudioVersion,
+                            isAudioVersion = isAudioVersion,
+                            audioVersionSwitching = audioVersionSwitching,
+                            showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                         )
                     }
                 }
@@ -4342,6 +4414,11 @@ private fun WidePlayerControls(
     song: Song,
     isPlaying: Boolean,
     isLoading: Boolean,
+    isAudioVersion: Boolean = false,
+    audioVersionSwitching: Boolean = false,
+    hasAlternateVersion: Boolean = false,
+    hasVideoVersion: Boolean = false,
+    onToggleAudioVersion: () -> Unit = {},
     positionMs: Long,
     durationMs: Long,
     hasPrevious: Boolean,
@@ -4411,6 +4488,11 @@ private fun WidePlayerControls(
     val haptics = rememberHaptics()
     val scope = rememberCoroutineScope()
 
+    // The switch's loading state for the scrubber, read where the phone reads
+    // it for the same reason — see [ThinSlider.loading].
+    val versionAligning by AppSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
+    val versionSwitching = versionAligning || audioVersionSwitching
+
     val liveFraction = if (durationMs > 0) {
         (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
     } else {
@@ -4476,6 +4558,9 @@ private fun WidePlayerControls(
                     onSeekFraction(scrubValue)
                     onScrubbingChange(false)
                 },
+                // The switch's wait, on the bar itself — see
+                // [ThinSlider.loading] and the phone layout's use of it.
+                loading = versionSwitching,
             )
             Row(
                 modifier = Modifier.fillMaxWidth().offset(y = (-4).dp),
@@ -4681,6 +4766,10 @@ private fun WidePlayerControls(
                                 onOutput = onOpenOutput,
                                 onParty = onListenTogether,
                                 onOpenMembers = onOpenListenTogetherMembers,
+                                onChangeTrack = onToggleAudioVersion,
+                                isAudioVersion = isAudioVersion,
+                                audioVersionSwitching = audioVersionSwitching,
+                                showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                             )
                         }
                     }
@@ -6717,100 +6806,6 @@ private fun LyricsLoadingLine(text: String, modifier: Modifier = Modifier) {
         modifier = modifier.padding(vertical = 4.dp),
     )
 }
-
-@OptIn(ExperimentalHazeMaterialsApi::class)
-@Composable
-private fun VideoAudioVersionButton(
-    audioVersion: Boolean,
-    loading: Boolean,
-    onClick: () -> Unit,
-    hazeState: HazeState,
-    modifier: Modifier = Modifier,
-) {
-    val haptics = rememberHaptics()
-    val shape = RoundedCornerShape(percent = 50)
-    Box(
-        modifier = modifier
-            .height(44.dp)
-            .clip(shape)
-            .optimizedHazeEffect(
-                state = hazeState,
-                // The opaque surface used by the nav bar is too dark over a
-                // player cover. A faint material tint keeps the same glass
-                // blur while letting the artwork's colour show through.
-                style = HazeMaterials.regular(MaterialTheme.colorScheme.surface.copy(alpha = 0.16f)),
-            )
-            .background(Color.White.copy(alpha = 0.04f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            modifier = Modifier.padding(3.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            VideoAudioTab(
-                icon = Icons.Rounded.Videocam,
-                contentDescription = stringResource(R.string.revert_to_original),
-                selected = !audioVersion,
-                enabled = audioVersion && !loading,
-                onClick = {
-                    haptics.play(Haptic.Tap)
-                    onClick()
-                },
-            )
-            VideoAudioTab(
-                icon = BitChordIcons.MusicNote,
-                contentDescription = stringResource(R.string.convert_to_audio),
-                selected = audioVersion,
-                enabled = !audioVersion && !loading,
-                onClick = {
-                    haptics.play(Haptic.Tap)
-                    onClick()
-                },
-                loading = loading,
-            )
-        }
-    }
-}
-
-@Composable
-private fun VideoAudioTab(
-    icon: ImageVector,
-    contentDescription: String,
-    selected: Boolean,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    loading: Boolean = false,
-) {
-    Box(
-        modifier = Modifier
-            .size(38.dp)
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = if (selected) 0.20f else 0f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                enabled = enabled,
-                onClick = onClick,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (loading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(17.dp),
-                color = Color.White,
-                strokeWidth = 2.dp,
-            )
-        } else {
-            Icon(
-                imageVector = icon,
-                contentDescription = contentDescription,
-                tint = Color.White.copy(alpha = if (selected) 1f else 0.58f),
-                modifier = Modifier.size(19.dp),
-            )
-        }
-    }
-}
-
 /**
  * Translucent circular button used for the track menu and the like control.
  *
@@ -6948,12 +6943,21 @@ private fun pillWidth(segments: Int): Dp =
  * going, and how the queue is played.
  */
 @Composable
-private fun Pill(content: @Composable RowScope.() -> Unit) {
+private fun Pill(
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .height(BOTTOM_ACTION_SIZE)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = 0.12f)),
+            .background(Color.White.copy(alpha = 0.12f))
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = 0.82f,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+            ),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
@@ -6969,28 +6973,24 @@ private fun PillDivider() {
     )
 }
 
-/**
- * The two ends of "where is this playing": the output capsule.
- *
- * Both halves answer the same question and so belong to one control rather than
- * two glyphs that happen to sit side by side — headphones for which speaker the
- * sound leaves by, the party for which *people* it reaches.
- *
- * The halves reserve exactly the same width in every state. When a party is
- * active, the right half uses that reserve for its live member count; the left
- * half intentionally retains the same footprint so the pill stays balanced.
- *
- * Collects the party itself instead of taking it as a parameter: the state
- * carries a playhead and lands on every heartbeat, and read any higher up it
- * would recompose the whole player five seconds at a time over a field that has
- * not changed. [rememberPartyBadge] narrows it to what is drawn here first.
- */
+/** What stats for nerds calls each stage of a switch to the other cut. */
+private fun VersionAudioAligner.CutPhase.statLabel(): Int = when (this) {
+    VersionAudioAligner.CutPhase.FETCHING -> R.string.version_cut_fetching
+    VersionAudioAligner.CutPhase.MEASURING -> R.string.version_cut_measuring
+    VersionAudioAligner.CutPhase.ALIGNED -> R.string.version_cut_aligned
+    VersionAudioAligner.CutPhase.FAILED -> R.string.failed
+}
+
 @Composable
 private fun OutputPartyPill(
     onOutput: () -> Unit,
     onParty: () -> Unit,
     /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
     onOpenMembers: () -> Unit,
+    onChangeTrack: (() -> Unit)? = null,
+    isAudioVersion: Boolean = false,
+    audioVersionSwitching: Boolean = false,
+    showChangeTrack: Boolean = false,
 ) {
     val badge = rememberPartyBadge()
     Pill {
@@ -7000,6 +7000,45 @@ private fun OutputPartyPill(
             contentDescription = stringResource(R.string.audio_output),
             onClick = onOutput,
         )
+        AnimatedVisibility(
+            visible = showChangeTrack && onChangeTrack != null,
+            enter = fadeIn(animationSpec = tween(280, easing = FastOutSlowInEasing)) +
+                expandHorizontally(
+                    animationSpec = spring(
+                        dampingRatio = 0.82f,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    expandFrom = Alignment.CenterHorizontally,
+                    clip = true,
+                ),
+            exit = fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
+                shrinkHorizontally(
+                    animationSpec = spring(
+                        dampingRatio = 0.82f,
+                        stiffness = Spring.StiffnessMediumLow,
+                    ),
+                    shrinkTowards = Alignment.CenterHorizontally,
+                    clip = true,
+                ),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PillDivider()
+                PillSegment(
+                    icon = if (isAudioVersion) BitChordIcons.MusicNote else Icons.Rounded.Videocam,
+                    iconSize = 21.dp,
+                    contentDescription = stringResource(
+                        if (isAudioVersion) R.string.revert_to_original else R.string.convert_to_audio
+                    ),
+                    onClick = onChangeTrack ?: {},
+                    highlighted = isAudioVersion,
+                    // The resolve half of the switch; the alignment half runs
+                    // its loading bar along the scrubber — see
+                    // [ThinSlider.loading]. Lit here as well so the tap that
+                    // starts the whole thing visibly registered.
+                    loading = audioVersionSwitching,
+                )
+            }
+        }
         PillDivider()
         PillSegment(
             // Person rather than Groups: the three-person glyph is drawn half
@@ -7043,6 +7082,7 @@ private fun PillSegment(
     trailingLabel: String? = null,
     highlighted: Boolean = false,
     haptic: Haptic = Haptic.Tap,
+    loading: Boolean = false,
     /** See [BottomGlyph], where the same window means the same thing. */
     tapWindowMs: Long = 0L,
 ) {
@@ -7056,6 +7096,7 @@ private fun PillSegment(
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
+                enabled = !loading,
             ) {
                 val now = SystemClock.uptimeMillis()
                 if (now - lastTap.longValue >= tapWindowMs) {
@@ -7068,31 +7109,49 @@ private fun PillSegment(
         contentAlignment = Alignment.Center,
     ) {
         val tint = Color.White.copy(alpha = if (highlighted) 1f else 0.75f)
-        if (icon != null) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(iconSize),
+        Crossfade(
+            targetState = loading,
+            animationSpec = tween(durationMillis = 200),
+            label = "pillSegmentLoading",
+        ) { isLoading ->
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(17.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp,
                 )
-                if (trailingLabel != null) {
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = trailingLabel,
-                        color = tint,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+            } else if (icon != null) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Crossfade(
+                        targetState = icon,
+                        animationSpec = tween(durationMillis = 200),
+                        label = "pillSegmentIcon",
+                    ) { currentIcon ->
+                        Icon(
+                            imageVector = currentIcon,
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier.size(iconSize),
+                        )
+                    }
+                    if (trailingLabel != null) {
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = trailingLabel,
+                            color = tint,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
+            } else if (label != null) {
+                Text(
+                    text = label,
+                    color = tint,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                )
             }
-        } else if (label != null) {
-            Text(
-                text = label,
-                color = tint,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-            )
         }
     }
 }
