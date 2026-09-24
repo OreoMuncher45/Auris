@@ -16,6 +16,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -43,6 +46,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -89,13 +93,26 @@ fun SourcesScreen(
      * and the mini player.
      */
     onEditSource: (SourceConfig) -> Unit,
+    /**
+     * Asks the activity to open the WebDAV editor — raised for the same
+     * reason as [onEditSource]: the frosted alert cannot be drawn from inside
+     * this subtree.
+     */
+    onEditWebDav: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val configs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val upgradeLengthSlackSeconds by AppSettings.upgradeLengthSlackSeconds.collectAsStateWithLifecycle()
+    val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+    val webdavUsername by AppSettings.webdavUsername.collectAsStateWithLifecycle()
+    val webdavPassword by AppSettings.webdavPassword.collectAsStateWithLifecycle()
+    var webdavTesting by remember { mutableStateOf(false) }
+    var webdavTestResult by remember { mutableStateOf<String?>(null) }
+    val webdavScope = rememberCoroutineScope()
 
     /** Last known reachability per source, filled in as the probes come back. */
     val health = remember { mutableStateMapOf<String, SourceHealth>() }
@@ -234,6 +251,72 @@ fun SourcesScreen(
             AddSourceRow(
                 onClick = { onEditSource(SourceConfig(kind = SourceKind.ADDON)) },
             )
+        }
+
+        // A personal library rather than a catalogue in the order above: it
+        // holds the listener's own files instead of answering for YouTube's,
+        // so it takes no part in the ranking and gets its own group. The
+        // editor is raised to the activity like every other alert.
+        SettingsGroup(
+            header = stringResource(R.string.webdav),
+            footer = stringResource(R.string.webdav_description),
+        ) {
+            SettingsRow(
+                icon = Icons.Rounded.Cloud,
+                title = stringResource(R.string.webdav),
+                subtitle = if (webdavUrl.isBlank()) {
+                    stringResource(R.string.webdav_not_configured)
+                } else if (webdavUsername.isNotBlank()) {
+                    "$webdavUrl · $webdavUsername"
+                } else {
+                    webdavUrl
+                },
+                onClick = onEditWebDav,
+            )
+            if (webdavUrl.isNotBlank()) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Dns,
+                    title = if (webdavTesting) {
+                        stringResource(R.string.testing)
+                    } else {
+                        webdavTestResult ?: stringResource(R.string.test)
+                    },
+                    subtitle = stringResource(R.string.webdav_subtitle),
+                    onClick = {
+                        if (webdavTesting) return@SettingsRow
+                        webdavTesting = true
+                        webdavTestResult = null
+                        webdavScope.launch {
+                            com.music.bitchord.data.webdav.WebDavRepository.testConnection(
+                                webdavUrl,
+                                webdavUsername,
+                                webdavPassword,
+                            ).fold(
+                                onSuccess = {
+                                    webdavTestResult = context.getString(R.string.connected)
+                                },
+                                onFailure = {
+                                    webdavTestResult = context.getString(
+                                        R.string.webdav_test_failed,
+                                        it.message ?: context.getString(R.string.failed),
+                                    )
+                                },
+                            )
+                            webdavTesting = false
+                        }
+                    },
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.DeleteSweep,
+                    title = stringResource(R.string.webdav_disconnect),
+                    onClick = {
+                        AppSettings.clearWebDav()
+                        webdavTestResult = null
+                    },
+                )
+            }
         }
 
         SettingsGroup(

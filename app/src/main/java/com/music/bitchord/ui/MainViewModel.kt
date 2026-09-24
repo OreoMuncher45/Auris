@@ -1061,6 +1061,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
+            AppSettings.webdavUrl.drop(1).collect {
+                if (_detailStack.value.any { page ->
+                        page.browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID
+                    }
+                ) {
+                    reloadLocalDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
+                }
+            }
+        }
+        viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
             // downloaded it — see AppUpdateChecker.clearCache.
             AppUpdateChecker.clearCache(getApplication())
@@ -1952,6 +1962,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         else UiState.Success(songs)
                     }
                 }
+                browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> {
+                    val songs = com.music.bitchord.data.webdav.WebDavRepository.getSongs()
+                    if (songs.isEmpty()) UiState.Error(text(R.string.webdav_empty))
+                    else UiState.Success(songs)
+                }
                 resolved == BrowseType.ARTIST -> {
                     YtMusicRepository.artistPage(browseId).fold(
                         onSuccess = { page ->
@@ -2057,6 +2072,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
                         else UiState.Success(songs)
                     }
+                }
+                browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> {
+                    val songs = com.music.bitchord.data.webdav.WebDavRepository.getSongs()
+                    if (songs.isEmpty()) UiState.Error(text(R.string.webdav_empty))
+                    else UiState.Success(songs)
                 }
                 else -> return@launch
             }
@@ -2203,6 +2223,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     LocalMediaRepository.getLocalMusic(context)
                         .ifEmpty { error(text(R.string.no_local_audio_found)) }
+                }
+                browseId == com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID -> runCatching {
+                    com.music.bitchord.data.webdav.WebDavRepository.getSongs()
+                        .ifEmpty { error(text(R.string.webdav_empty)) }
                 }
                 else -> YtMusicRepository.allSongs(browseId)
             }

@@ -559,6 +559,19 @@ object AppSettings {
     /** Empty means every MediaStore folder; otherwise this is a persisted SAF tree URI. */
     val localMusicFolderUri = MutableStateFlow("")
 
+    // ── WebDAV ────────────────────────────────────────────────────────────
+
+    /**
+     * Remote music library over WebDAV (e.g. Nextcloud's Music folder).
+     *
+     * The URL and username live in plain prefs like every other setting; the
+     * password is mirrored out of [AuthStore] so it stays encrypted at rest
+     * and out of backup exports — see [exportPrefs]. Empty URL means
+     * unconfigured, and the library simply reads as empty.
+     */
+    val webdavUrl = MutableStateFlow("")
+    val webdavUsername = MutableStateFlow("")
+    val webdavPassword = MutableStateFlow("")
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
      * order they were pinned.
@@ -820,6 +833,14 @@ object AppSettings {
             ?: LibrarySort.DEFAULT
         detailSongSorts.value = readDetailSongSorts()
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
+        webdavUrl.value = prefs.getString(KEY_WEBDAV_URL, "").orEmpty()
+        webdavUsername.value = prefs.getString(KEY_WEBDAV_USERNAME, "").orEmpty()
+        webdavPassword.value = authStore.webdavPassword.orEmpty()
+        com.music.bitchord.data.webdav.WebDavAuth.update(
+            webdavUrl.value,
+            webdavUsername.value,
+            webdavPassword.value,
+        )
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
@@ -1525,6 +1546,42 @@ object AppSettings {
         prefs.edit().putString(KEY_LOCAL_MUSIC_FOLDER_URI, value).apply()
     }
 
+    fun setWebDavUrl(value: String) {
+        val normalized = value.trim().trimEnd('/')
+        webdavUrl.value = normalized
+        prefs.edit().putString(KEY_WEBDAV_URL, normalized).apply()
+        publishWebDavAuth()
+    }
+
+    fun setWebDavUsername(value: String) {
+        val normalized = value.trim()
+        webdavUsername.value = normalized
+        prefs.edit().putString(KEY_WEBDAV_USERNAME, normalized).apply()
+        publishWebDavAuth()
+    }
+
+    /** Writes through to the encrypted store; pass "" to forget. */
+    fun setWebDavPassword(value: String) {
+        webdavPassword.value = value
+        authStore.webdavPassword = value.ifEmpty { null }
+        publishWebDavAuth()
+    }
+
+    fun clearWebDav() {
+        setWebDavUrl("")
+        setWebDavUsername("")
+        setWebDavPassword("")
+    }
+
+    private fun publishWebDavAuth() {
+        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
+        com.music.bitchord.data.webdav.WebDavAuth.update(
+            webdavUrl.value,
+            webdavUsername.value,
+            webdavPassword.value,
+        )
+    }
+
     private fun readLocalMusicSort(key: String): LocalMusicSort =
         prefs.getString(key, null)
             ?.let { saved -> LocalMusicSort.entries.firstOrNull { it.name == saved } }
@@ -1741,6 +1798,8 @@ object AppSettings {
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
+    private const val KEY_WEBDAV_URL = "webdav_url"
+    private const val KEY_WEBDAV_USERNAME = "webdav_username"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"
