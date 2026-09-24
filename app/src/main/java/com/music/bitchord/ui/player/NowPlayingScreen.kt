@@ -7067,7 +7067,7 @@ private fun PillSegment(
         modifier = Modifier
             .width(PILL_SEGMENT_WIDTH)
             .height(BOTTOM_ACTION_SIZE)
-           
+            .background(if (highlighted) Color.White.copy(alpha = 0.14f) else Color.Transparent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
