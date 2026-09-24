@@ -84,6 +84,7 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
@@ -891,6 +892,10 @@ class PlaybackService : MediaLibraryService() {
                     reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
                 reason = reason,
             )
+            // Prune consumed USER_QUEUE entries when playback enters CONTEXT,
+            // keeping the timeline clean and ensuring REPEAT_MODE_ALL loops only CONTEXT items.
+            QueueCoordinator.consumePlayedUserQueue(exoPlayer)
+
             // The queue moving on by itself. Nobody pressed anything, but it
             // is still this device deciding what the party plays next, and no
             // other path reports it: an automatic advance never passes through
@@ -6353,18 +6358,41 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
+            if (mediaItemIndex !in 0 until wrappedPlayer.mediaItemCount) return
             val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
             if (skipped == null) {
                 wrappedPlayer.seekTo(mediaItemIndex, positionMs)
                 return
             }
 
-            // A direct choice of a later queue row bypasses every item between
-            // here and there. Remove those unplayed rows before seeking so they
-            // do not masquerade as listening history. The selected item's new
-            // index is the first removed slot.
-            wrappedPlayer.removeMediaItems(skipped.first, skipped.last + 1)
-            wrappedPlayer.seekTo(skipped.first, positionMs)
+            // A direct choice of a later queue row bypasses items between current and target.
+            // Invariant: A queue jump may consume/delete USER_QUEUE items only when jumping within
+            // USER_QUEUE. Jumps to any other tier (CONTEXT or AUTOPLAY) must NEVER delete USER_QUEUE items.
+            val targetTier = wrappedPlayer.getMediaItemAt(mediaItemIndex).queueTier
+            val removableIndices = mutableListOf<Int>()
+            for (i in skipped) {
+                val tier = wrappedPlayer.getMediaItemAt(i).queueTier
+                val isRemovable = if (targetTier == QueueTier.USER_QUEUE) {
+                    tier == QueueTier.USER_QUEUE
+                } else {
+                    tier != QueueTier.USER_QUEUE
+                }
+                if (isRemovable) {
+                    removableIndices.add(i)
+                }
+            }
+
+            if (removableIndices.isEmpty()) {
+                wrappedPlayer.seekTo(mediaItemIndex, positionMs)
+                return
+            }
+
+            // Remove in reverse order so preceding indices remain valid during removal
+            for (i in removableIndices.asReversed()) {
+                wrappedPlayer.removeMediaItem(i)
+            }
+            val newTargetIndex = mediaItemIndex - removableIndices.count { it < mediaItemIndex }
+            wrappedPlayer.seekTo(newTargetIndex, positionMs)
         }
 
         override fun seekToPreviousMediaItem() {

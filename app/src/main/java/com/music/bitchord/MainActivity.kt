@@ -158,7 +158,11 @@ import com.music.bitchord.playback.MusicLink
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.playback.PlayerDeepLink
 import com.music.bitchord.playback.QueueBuilder
+import com.music.bitchord.playback.QueueCoordinator
+import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import com.music.bitchord.playback.QueueShuffle
+import com.music.bitchord.playback.QueueSource
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.playback.autoplayEnabledFor
 import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.beginRadioQueue
@@ -271,12 +275,6 @@ internal fun shouldSkipAfterDislike(
     currentVideoId: String?,
 ): Boolean = previousStatus != LikeStatus.DISLIKE && targetVideoId == currentVideoId
 
-/** One stable playback context for the lifetime of a queue. */
-private data class QueueSource(
-    val title: String,
-    val type: PlaybackSourceType,
-    val id: String? = null,
-)
 
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -1061,7 +1059,8 @@ private fun BitChordApp(
             TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
             val target = audio.copy(
                 isVideoOrigin = true,
-                fromAutoplay = song.fromAutoplay,
+                queueTier = song.queueTier,
+                queueEntryId = song.queueEntryId,
                 radioName = song.radioName,
                 playbackSource = song.playbackSource,
                 playbackSourceType = song.playbackSourceType,
@@ -1125,7 +1124,8 @@ private fun BitChordApp(
             convertedVideoId = video.videoId
             TrackLog.d("Player", "video switch applying '${video.title}' (${video.videoId})", song.videoId)
             val target = video.copy(
-                fromAutoplay = song.fromAutoplay,
+                queueTier = song.queueTier,
+                queueEntryId = song.queueEntryId,
                 radioName = song.radioName,
                 playbackSource = song.playbackSource,
                 playbackSourceType = song.playbackSourceType,
@@ -1155,16 +1155,37 @@ private fun BitChordApp(
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
-            controller?.playSongs(
-                songs.map {
-                    it.copy(
-                        playbackSource = source.title,
-                        playbackSourceType = source.type,
-                        playbackSourceId = source.id,
-                    )
-                },
-                index,
-            )
+            val c = controller ?: return@launch
+            val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
+                ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
+            val currentIndex = c.currentMediaItemIndex
+
+            if (ListenTogether.state.value.inParty) {
+                val selectedSong = songs.getOrNull(index) ?: return@launch
+                val party = ListenTogether.state.value
+                val partyQueue = party.queue.items
+                val partyIndex = partyQueue.indexOfFirst { it.videoId == party.playback.track?.videoId }
+                val upcomingPartyTracks = if (partyIndex >= 0) {
+                    partyQueue.drop(partyIndex + 1)
+                } else {
+                    emptyList()
+                }
+                val timeline = QueueCoordinator.buildPartyPlaybackQueue(
+                    tappedSong = selectedSong,
+                    source = source,
+                    upcomingPartyTracks = upcomingPartyTracks,
+                )
+                c.playSongs(timeline, 0)
+            } else {
+                val result = QueueCoordinator.buildContextQueue(
+                    currentTimeline = currentTimeline,
+                    currentIndex = currentIndex,
+                    newContextSongs = songs,
+                    selectedIndex = index,
+                    contextSource = source,
+                )
+                c.playSongs(result.timeline, result.startIndex)
+            }
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
@@ -1263,16 +1284,17 @@ private fun BitChordApp(
         activeRadioSeed = null
         scope.launch {
             if (refusedByHost()) return@launch
-            controller?.playSongs(
-                listOf(
-                    song.copy(
-                        playbackSource = source.title,
-                        playbackSourceType = source.type,
-                        playbackSourceId = source.id,
-                    ),
-                ),
-                0,
+            val c = controller ?: return@launch
+            val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
+                ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
+            val currentIndex = c.currentMediaItemIndex
+            val oneOffQueue = QueueCoordinator.buildOneOffQueue(
+                currentTimeline = currentTimeline,
+                currentIndex = currentIndex,
+                tappedSong = song,
+                source = source,
             )
+            c.playSongs(oneOffQueue, 0)
             // Start radio in the mini-player; the user opens the full view by tapping it.
         }
     }
@@ -1371,13 +1393,20 @@ private fun BitChordApp(
                     }
                 }
                 val current = it.currentMediaItem?.toSong()
+                val timeline = player.queue.takeIf { q -> q.size == it.mediaItemCount }
+                    ?: (0 until it.mediaItemCount).map { idx -> it.getMediaItemAt(idx).toSong() }
+                val at = QueueCoordinator.findUserQueueInsertionIndex(
+                    timeline = timeline,
+                    currentIndex = it.currentMediaItemIndex,
+                    isNext = false,
+                )
                 val queued = song.copy(
                     radioName = current?.radioName,
                     playbackSource = current?.playbackSource ?: queueLabel,
                     playbackSourceType = current?.playbackSourceType ?: PlaybackSourceType.QUEUE,
                     playbackSourceId = current?.playbackSourceId,
-                )
-                it.addMediaItem(it.autoplaySectionStart(), queued.toMediaItem())
+                ).asQueueEntry(QueueTier.USER_QUEUE)
+                it.addMediaItem(at, queued.toMediaItem())
                 showQueueNotice(context.getString(R.string.song_added_to_queue))
             }
         }
@@ -1394,16 +1423,20 @@ private fun BitChordApp(
                     }
                 }
                 val current = it.currentMediaItem?.toSong()
+                val timeline = player.queue.takeIf { q -> q.size == it.mediaItemCount }
+                    ?: (0 until it.mediaItemCount).map { idx -> it.getMediaItemAt(idx).toSong() }
+                val at = QueueCoordinator.findUserQueueInsertionIndex(
+                    timeline = timeline,
+                    currentIndex = it.currentMediaItemIndex,
+                    isNext = true,
+                )
                 val queued = song.copy(
                     radioName = current?.radioName,
                     playbackSource = current?.playbackSource ?: queueLabel,
                     playbackSourceType = current?.playbackSourceType ?: PlaybackSourceType.QUEUE,
                     playbackSourceId = current?.playbackSourceId,
-                )
-                it.addMediaItem(
-                    (it.currentMediaItemIndex + 1).coerceAtMost(it.mediaItemCount),
-                    queued.toMediaItem(),
-                )
+                ).asQueueEntry(QueueTier.USER_QUEUE)
+                it.addMediaItem(at, queued.toMediaItem())
                 showQueueNotice(context.getString(R.string.song_will_play_next))
             }
         }
@@ -1508,11 +1541,13 @@ private fun BitChordApp(
                     } else {
                         songs
                     }
-                    val at = if (next) {
-                        (c.currentMediaItemIndex + 1).coerceAtMost(c.mediaItemCount)
-                    } else {
-                        c.autoplaySectionStart()
-                    }
+                    val timeline = player.queue.takeIf { q -> q.size == c.mediaItemCount }
+                        ?: (0 until c.mediaItemCount).map { idx -> c.getMediaItemAt(idx).toSong() }
+                    val at = QueueCoordinator.findUserQueueInsertionIndex(
+                        timeline = timeline,
+                        currentIndex = c.currentMediaItemIndex,
+                        isNext = next,
+                    )
                     val current = c.currentMediaItem?.toSong()
                     c.addMediaItems(
                         at,
@@ -1523,7 +1558,7 @@ private fun BitChordApp(
                                 playbackSourceType = current?.playbackSourceType
                                     ?: PlaybackSourceType.QUEUE,
                                 playbackSourceId = current?.playbackSourceId,
-                            ).toMediaItem()
+                            ).asQueueEntry(QueueTier.USER_QUEUE).toMediaItem()
                         },
                     )
                     val message = context.resources.getQuantityString(
@@ -2084,7 +2119,8 @@ private fun BitChordApp(
                     ) {
                         optimisticVersionSong = cached.copy(
                             isVideoOrigin = true,
-                            fromAutoplay = song.fromAutoplay,
+                            queueTier = song.queueTier,
+                            queueEntryId = song.queueEntryId,
                             radioName = song.radioName,
                             playbackSource = song.playbackSource,
                             playbackSourceType = song.playbackSourceType,
@@ -2101,7 +2137,8 @@ private fun BitChordApp(
                         !alignmentPending(cached.videoId)
                     ) {
                         optimisticVersionSong = cached.copy(
-                            fromAutoplay = song.fromAutoplay,
+                            queueTier = song.queueTier,
+                            queueEntryId = song.queueEntryId,
                             radioName = song.radioName,
                             playbackSource = song.playbackSource,
                             playbackSourceType = song.playbackSourceType,
@@ -2196,7 +2233,11 @@ private fun BitChordApp(
                 // this path and the notification use exactly one loader.
                 controller?.toggleAutoplay()
             },
-            onJumpTo = { controller?.seekToDefaultPosition(it) },
+            onJumpTo = { index ->
+                controller?.let { c ->
+                    QueueCoordinator.jumpToQueueItem(c, index, player.queue)
+                }
+            },
             onRemoveFromQueue = { controller?.removeMediaItem(it) },
             onMoveInQueue = { from, to -> controller?.moveMediaItem(from, to) },
             onQueueDragActiveChange = { active -> controller?.setQueueDragActive(active) },
@@ -2302,11 +2343,9 @@ private fun BitChordApp(
                 showListenTogether = true
             },
             onClearQueue = {
-                // Keep what's playing; drop everything queued after it.
+                // Keep what's playing and context/autoplay; drop user-queued tracks.
                 controller?.let { c ->
-                    if (c.mediaItemCount > c.currentMediaItemIndex + 1) {
-                        c.removeMediaItems(c.currentMediaItemIndex + 1, c.mediaItemCount)
-                    }
+                    QueueCoordinator.clearUserQueue(c)
                 }
             },
         )

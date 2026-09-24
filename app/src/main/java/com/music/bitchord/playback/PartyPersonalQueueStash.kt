@@ -120,6 +120,8 @@ object PartyPersonalQueueStash {
         val artist: String,
         val artwork: String? = null,
         val auto: Boolean = false,
+        val tier: String? = null,
+        val entryId: String? = null,
         val local: String? = null,
         val path: String? = null,
         val duration: String? = null,
@@ -131,25 +133,30 @@ object PartyPersonalQueueStash {
         val sourceType: String? = null,
         val sourceId: String? = null,
     ) {
-        fun toSong() = Song(
-            videoId = id,
-            title = title,
-            artist = artist,
-            thumbnailUrl = artwork,
-            durationText = duration,
-            albumName = album,
-            isExplicit = explicit,
-            isVideo = video,
-            fromAutoplay = auto,
-            radioName = radio,
-            playbackSource = source,
-            playbackSourceType = sourceType?.let {
-                runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
-            },
-            playbackSourceId = sourceId,
-            localUri = local,
-            localPath = path,
-        )
+        fun toSong(): Song {
+            val resolvedTier = tier?.let { runCatching { com.music.bitchord.data.model.QueueTier.valueOf(it) }.getOrNull() }
+                ?: if (auto) com.music.bitchord.data.model.QueueTier.AUTOPLAY else com.music.bitchord.data.model.QueueTier.CONTEXT
+            return Song(
+                videoId = id,
+                title = title,
+                artist = artist,
+                thumbnailUrl = artwork,
+                durationText = duration,
+                albumName = album,
+                isExplicit = explicit,
+                isVideo = video,
+                queueTier = resolvedTier,
+                queueEntryId = entryId,
+                radioName = radio,
+                playbackSource = source,
+                playbackSourceType = sourceType?.let {
+                    runCatching { com.music.bitchord.data.model.PlaybackSourceType.valueOf(it) }.getOrNull()
+                },
+                playbackSourceId = sourceId,
+                localUri = local,
+                localPath = path,
+            )
+        }
 
         companion object {
             fun from(song: Song) = StoredTrack(
@@ -158,6 +165,8 @@ object PartyPersonalQueueStash {
                 artist = song.artist,
                 artwork = song.thumbnailUrl,
                 auto = song.fromAutoplay,
+                tier = song.queueTier.name,
+                entryId = song.queueEntryId,
                 local = song.localUri,
                 path = song.localPath,
                 duration = song.durationText,

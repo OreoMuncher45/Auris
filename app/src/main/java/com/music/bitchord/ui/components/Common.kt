@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.onSizeChanged
@@ -335,14 +336,16 @@ fun SongRow(
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
     var boxWidth by remember { mutableFloatStateOf(0f) }
 
+    val currentOnSwipeToQueue by rememberUpdatedState(onSwipeToQueue)
+
     val swipeState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled && onSwipeToQueue != null) {
+            if (value != SwipeToDismissBoxValue.Settled && currentOnSwipeToQueue != null) {
                 val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
                 // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
                 if (abs(offset) >= boxWidth * 0.45f) {
                     haptics.play(Haptic.Select)
-                    onSwipeToQueue()
+                    currentOnSwipeToQueue?.invoke()
                 }
             }
             false // never actually dismiss; snap back

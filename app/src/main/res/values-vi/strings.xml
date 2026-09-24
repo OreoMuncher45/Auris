@@ -127,6 +127,8 @@
     <string name="personalized_recommendations">Nhận các đề xuất dành riêng cho bạn</string>
     <string name="play_next">Phát tiếp theo</string>
     <string name="queue">Hàng đợi</string>
+    <string name="next_in_queue">Tiếp theo trong hàng đợi</string>
+    <string name="next_from">Tiếp theo từ: %1$s</string>
     <string name="source_unrecognised">BitChord không nhận dạng được liên kết đó</string>
     <string name="source_already_added">Đã được thêm dưới tên %1$s</string>
     <string name="source_setup_required">Nhấn để hoàn tất thiết lập</string>

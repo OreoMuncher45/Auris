@@ -6,6 +6,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionCommand
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,9 +27,9 @@ import kotlinx.coroutines.flow.asStateFlow
  * The player's own shuffle mode is deliberately never enabled — it would
  * randomise on top of the order set here.
  *
- * AutoPlay's tracks are shuffled among themselves and stay below the ones the
- * user queued, which is where the player's AutoPlay section shows them: a
- * shuffle is not a reason for a mix to start cutting in front of the album.
+ * User-queued tracks (USER_QUEUE) are NEVER shuffled: they reflect deliberate user
+ * intent and remain pinned at the front. Context tracks (CONTEXT) and AutoPlay tracks
+ * (AUTOPLAY) are shuffled among themselves.
  *
  * The rearranging itself is worked out as a permutation and applied to the
  * queue in one edit — see [applyOrder], which is where the size of the queue
@@ -43,7 +44,7 @@ object QueueShuffle {
     fun setEnabled(enabled: Boolean) {
         _enabled.value = enabled
     }
-    /** Media ids in their pre-shuffle order. Empty while shuffle is off. */
+    /** Entry IDs in their pre-shuffle order. Empty while shuffle is off. */
     private var original: List<String> = emptyList()
 
     fun toggle(player: Player) {
@@ -69,22 +70,40 @@ object QueueShuffle {
      * arrived in is remembered, so turning shuffle off restores it.
      */
     fun startingOrder(songs: List<Song>, startIndex: Int): List<Song> {
-        original = songs.map { it.videoId }
-        val rest = songs.filterIndexed { i, _ -> i != startIndex }.shuffled()
-        return listOf(songs[startIndex]) + rest
+        original = songs.map { it.queueEntryId ?: it.videoId }
+        val rest = songs.filterIndexed { i, _ -> i != startIndex }
+        val userQueue = rest.filter { it.queueTier == QueueTier.USER_QUEUE }
+        val context = rest.filter { it.queueTier == QueueTier.CONTEXT }.shuffled()
+        val autoplay = rest.filter { it.queueTier == QueueTier.AUTOPLAY }.shuffled()
+        return listOf(songs[startIndex]) + userQueue + context + autoplay
     }
 
     /**
      * Rearranges everything after the playing track. That track keeps playing,
      * and whatever sits above it stays there — those have had their turn.
+     *
+     * Invariant: USER_QUEUE tracks are never shuffled. CONTEXT and AUTOPLAY are shuffled
+     * within their respective sections.
      */
     private fun shuffle(player: Player) {
         val items = player.queueItems()
-        original = items.map { it.mediaId }
+        original = items.map { it.queueEntryId ?: it.mediaId }
         val from = player.currentMediaItemIndex + 1
         val upcoming = items.drop(from)
-        val (mix, own) = upcoming.indices.partition { upcoming[it].fromAutoplay }
-        applyOrder(player, from, shuffledSection(own) + shuffledSection(mix))
+        if (upcoming.isEmpty()) {
+            _enabled.value = true
+            return
+        }
+
+        val userQueueIndices = upcoming.indices.filter { upcoming[it].queueTier == QueueTier.USER_QUEUE }
+        val contextIndices = upcoming.indices.filter { upcoming[it].queueTier == QueueTier.CONTEXT }
+        val autoplayIndices = upcoming.indices.filter { upcoming[it].queueTier == QueueTier.AUTOPLAY }
+
+        applyOrder(
+            player,
+            from,
+            userQueueIndices + shuffledSection(contextIndices) + shuffledSection(autoplayIndices),
+        )
         _enabled.value = true
     }
 
@@ -107,7 +126,12 @@ object QueueShuffle {
         val items = player.queueItems()
         val from = player.currentMediaItemIndex + 1
         val upcoming = items.drop(from)
-        val restored = restoreOrder(upcoming.map { it.mediaId }, original)
+        if (upcoming.isEmpty()) {
+            original = emptyList()
+            _enabled.value = false
+            return
+        }
+        val restored = restoreOrder(upcoming.map { it.queueEntryId ?: it.mediaId }, original)
         applyOrder(player, from, sections(restored, upcoming))
         original = emptyList()
         _enabled.value = false
@@ -145,9 +169,11 @@ object QueueShuffle {
         return out
     }
 
-    /** [order] with AutoPlay's tracks moved below the user's, order otherwise kept. */
+    /** [order] with sections strictly maintained: USER_QUEUE -> CONTEXT -> AUTOPLAY. */
     private fun sections(order: List<Int>, upcoming: List<MediaItem>): List<Int> =
-        order.filterNot { upcoming[it].fromAutoplay } + order.filter { upcoming[it].fromAutoplay }
+        order.filter { upcoming[it].queueTier == QueueTier.USER_QUEUE } +
+            order.filter { upcoming[it].queueTier == QueueTier.CONTEXT } +
+            order.filter { upcoming[it].queueTier == QueueTier.AUTOPLAY }
 
     /**
      * Rearranges the live queue from [from] onwards, [order] naming where each

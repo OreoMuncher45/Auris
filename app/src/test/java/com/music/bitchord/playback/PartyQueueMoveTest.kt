@@ -1,6 +1,8 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.data.listentogether.PartyTrack
+import com.music.bitchord.data.model.QueueTier
+import com.music.bitchord.data.model.Song
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -132,5 +134,28 @@ class PartyQueueMoveTest {
         // Playback anchor and position are untouched
         assertEquals(initialPlayback.anchorMs, updatedPlayback.anchorMs)
         assertEquals(initialPlayback.positionMs, updatedPlayback.positionMs)
+    }
+
+    @Test
+    fun testPartyTrackToSongMapsTiersCorrectly() {
+        val manualTrack = PartyTrack("manual", title = "Manual", fromAutoplay = false)
+        val autoTrack = PartyTrack("auto", title = "Auto", fromAutoplay = true)
+
+        val manualSong = manualTrack.toSong()
+        val autoSong = autoTrack.toSong()
+
+        assertEquals(QueueTier.USER_QUEUE, manualSong.queueTier)
+        assertEquals(QueueTier.AUTOPLAY, autoSong.queueTier)
+    }
+
+    @Test
+    fun testSongToPartyTrackMapsAutoplayFlagCorrectly() {
+        val autoSong = Song(videoId = "1", title = "1", artist = "Artist 1", thumbnailUrl = null, queueTier = QueueTier.AUTOPLAY)
+        val userSong = Song(videoId = "2", title = "2", artist = "Artist 2", thumbnailUrl = null, queueTier = QueueTier.USER_QUEUE)
+        val contextSong = Song(videoId = "3", title = "3", artist = "Artist 3", thumbnailUrl = null, queueTier = QueueTier.CONTEXT)
+
+        assertEquals(true, autoSong.toPartyTrack(1000L).fromAutoplay)
+        assertEquals(false, userSong.toPartyTrack(1000L).fromAutoplay)
+        assertEquals(false, contextSong.toPartyTrack(1000L).fromAutoplay)
     }
 }
