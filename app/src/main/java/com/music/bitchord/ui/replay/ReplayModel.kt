@@ -373,7 +373,7 @@ fun ReplaySummary.genreRows(limit: Int): List<ReplayRow> =
         )
     }
 
-/** One of the cards along the top of the page. */
+/** One of the Replay headline cards shown on Library and inside Replay. */
 data class ReplayHeroCard(
     val label: String,
     val value: String,
@@ -383,7 +383,8 @@ data class ReplayHeroCard(
 )
 
 /**
- * The four headline facts, in the order they are dealt.
+ * The four headline facts, in their Library navigation order: overview, songs,
+ * artists and albums.
  *
  * Minutes leads because it is the one figure that needs no context to mean
  * something. A category with nothing in it is left out rather than shown empty:
@@ -401,6 +402,17 @@ fun ReplaySummary.cards(context: Context): List<ReplayHeroCard> = buildList {
             page = ReplayStoryPage.MINUTES,
         ),
     )
+    songs.firstOrNull()?.let {
+        add(
+            ReplayHeroCard(
+                label = context.getString(R.string.top_song),
+                value = it.song.title,
+                detail = "${it.song.artist} · ${context.replayCount(it.plays, R.plurals.replay_play_count)}",
+                artworkUrl = it.song.thumbnailUrl,
+                page = ReplayStoryPage.SONGS,
+            ),
+        )
+    }
     artists.firstOrNull()?.let {
         add(
             ReplayHeroCard(
@@ -410,17 +422,6 @@ fun ReplaySummary.cards(context: Context): List<ReplayHeroCard> = buildList {
                     context.replayCount(it.plays, R.plurals.replay_play_count),
                 artworkUrl = it.artworkUrl,
                 page = ReplayStoryPage.ARTISTS,
-            ),
-        )
-    }
-    songs.firstOrNull()?.let {
-        add(
-            ReplayHeroCard(
-                label = context.getString(R.string.top_song),
-                value = it.song.title,
-                detail = "${it.song.artist} · ${context.replayCount(it.plays, R.plurals.replay_play_count)}",
-                artworkUrl = it.song.thumbnailUrl,
-                page = ReplayStoryPage.SONGS,
             ),
         )
     }

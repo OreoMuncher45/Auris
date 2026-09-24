@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,6 +44,37 @@ private val FADE_HEIGHT_WITH_MINI_PLAYER = 254.dp
  * across instead, and the banding goes with them.
  */
 private const val STOPS = 16
+
+/**
+ * The top counterpart to [BottomFadeScrim].
+ *
+ * It uses the same 180dp run, inset-aware height, sampled cubic curve and flat
+ * colour shader as the bottom floor, mirrored vertically. Kept in the shared
+ * app chrome rather than any page so it appears and disappears with exactly
+ * the same screens as the bottom scrim.
+ */
+@Composable
+fun TopFadeScrim(
+    modifier: Modifier = Modifier,
+    pageColor: Color = Color.Black,
+) {
+    val inset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val brush = remember(pageColor) {
+        Brush.verticalGradient(
+            colorStops = Array(STOPS) { i ->
+                val t = i / (STOPS - 1f)
+                t to pageColor.copy(alpha = EaseInCubic.transform(1f - t))
+            },
+        )
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(inset + FADE_HEIGHT)
+            .background(brush),
+    )
+}
 
 /**
  * The floor the floating bars sit on: the page's own colour, faded in from

@@ -194,20 +194,22 @@ private fun seedOf(bitmap: Bitmap): Seed? {
     fun swatches(builder: Palette.Builder) =
         builder.maximumColorCount(SWATCH_COUNT).generate().swatches
 
-    // The default filter throws away near-black and near-white, which on a
-    // monochrome sleeve is the entire image — see MeshGradientBackground, which
-    // hit the same wall.
-    val found = swatches(Palette.from(bitmap)).ifEmpty {
-        swatches(Palette.from(bitmap).clearFilters())
-    }
-    if (found.isEmpty()) return null
+    // The default filter deliberately throws away near-black and near-white.
+    // That is useful while looking for an accent, but it is the wrong answer
+    // to "what colour is this page mostly made of?" A dark photograph would
+    // otherwise be reduced to whatever warm face or tiny coloured detail
+    // survived the filter, and a monochrome sleeve to an anti-aliased fringe.
+    // Both cases used to turn into the same maroon page.
+    val all = swatches(Palette.from(bitmap).clearFilters())
+    if (all.isEmpty()) return null
+    val accentCandidates = swatches(Palette.from(bitmap)).ifEmpty { all }
 
-    val dominant = found.maxBy { it.population }
+    val dominant = all.maxBy { it.population }
     // The accent has to earn its place twice over: a colour nobody sees enough
     // of reads as arbitrary, and a grey one isn't an accent at all. Scoring on
     // saturation against the *square root* of population is what stops a sleeve
     // that is four-fifths black sky from accenting in black.
-    val vibrant = found.maxBy { swatch ->
+    val vibrant = accentCandidates.maxBy { swatch ->
         val hsl = FloatArray(3).also { ColorUtils.colorToHSL(swatch.rgb, it) }
         hsl[1] * sqrt(swatch.population.toFloat())
     }
@@ -301,18 +303,24 @@ private fun Seed.toPalette(dark: Boolean): ArtworkPalette = if (dark) {
         // Deep enough that white body text clears contrast on any sleeve, but
         // not so deep the hue is gone — the whole point is that the page is
         // recognisably *this* record's colour.
-        background = dominant.withHsl(saturation = { it.coerceIn(0.20f, 0.62f) }, lightness = { 0.13f }),
+        background = dominant.withHsl(
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.20f, maximum = 0.62f) },
+            lightness = { 0.13f },
+        ),
         // Follows the edge's own brightness within a band that stays clear of
         // white body text at the top and of [background] at the bottom: a
         // sleeve that ends dark hands over almost invisibly, one that ends
         // bright leaves a page that is visibly lit from under the artwork.
         wash = edge.withHsl(
-            saturation = { it.coerceIn(0.18f, 0.58f) },
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.18f, maximum = 0.58f) },
             lightness = { it.coerceIn(0.14f, 0.24f) },
         ),
-        elevated = dominant.withHsl(saturation = { it.coerceIn(0.20f, 0.62f) }, lightness = { 0.22f }),
+        elevated = dominant.withHsl(
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.20f, maximum = 0.62f) },
+            lightness = { 0.22f },
+        ),
         accent = vibrant.withHsl(
-            saturation = { it.coerceAtLeast(0.55f) },
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.55f, maximum = 1f) },
             lightness = { it.coerceIn(0.62f, 0.78f) },
         ),
         onBackground = Color.White,
@@ -325,14 +333,20 @@ private fun Seed.toPalette(dark: Boolean): ArtworkPalette = if (dark) {
     )
 } else {
     ArtworkPalette(
-        background = dominant.withHsl(saturation = { it.coerceIn(0.14f, 0.50f) }, lightness = { 0.91f }),
+        background = dominant.withHsl(
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.14f, maximum = 0.50f) },
+            lightness = { 0.91f },
+        ),
         wash = edge.withHsl(
-            saturation = { it.coerceIn(0.12f, 0.46f) },
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.12f, maximum = 0.46f) },
             lightness = { it.coerceIn(0.78f, 0.90f) },
         ),
-        elevated = dominant.withHsl(saturation = { it.coerceIn(0.14f, 0.50f) }, lightness = { 0.83f }),
+        elevated = dominant.withHsl(
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.14f, maximum = 0.50f) },
+            lightness = { 0.83f },
+        ),
         accent = vibrant.withHsl(
-            saturation = { it.coerceAtLeast(0.55f) },
+            saturation = { adaptedArtworkSaturation(it, minimum = 0.55f, maximum = 1f) },
             lightness = { it.coerceIn(0.30f, 0.44f) },
         ),
         onBackground = Color.Black,
@@ -340,6 +354,27 @@ private fun Seed.toPalette(dark: Boolean): ArtworkPalette = if (dark) {
         divider = Color.Black.copy(alpha = 0.10f),
     )
 }
+
+/**
+ * Keeps neutral artwork neutral instead of inventing a hue for it.
+ *
+ * HSL represents grey with hue zero. Raising that grey to a saturation floor
+ * therefore does not make it "more colourful"; it manufactures red, which
+ * becomes brown/maroon once the page lightness is lowered. A small real amount
+ * of colour is kept as-is, while an unmistakably chromatic swatch can still be
+ * strengthened enough to make controls legible and the page recognisable.
+ */
+internal fun adaptedArtworkSaturation(source: Float, minimum: Float, maximum: Float): Float {
+    val saturation = source.coerceIn(0f, 1f)
+    return if (saturation < CHROMATIC_SATURATION_THRESHOLD) {
+        saturation
+    } else {
+        saturation.coerceIn(minimum, maximum)
+    }
+}
+
+/** Below this, boosting saturation makes quantisation noise visible as a tint. */
+private const val CHROMATIC_SATURATION_THRESHOLD = 0.12f
 
 private fun Color.withHsl(
     saturation: (Float) -> Float = { it },

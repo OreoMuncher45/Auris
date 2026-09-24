@@ -68,14 +68,16 @@ private const val SCRIM_PEAK = 0.42f
 private const val SCRIM_STOPS = 12
 
 /**
- * The glass behind every top bar: full blur along the top edge, ramping to
- * nothing on the way down.
+ * The glass behind artwork-led top bars: full blur along the top edge, ramping
+ * to nothing on the way down.
  *
  * A bar carrying a uniform pane is a rectangle sitting on the page, and its
  * bottom edge is a line drawn across whatever scrolls under it. That reads
  * worst on a detail page, whose artwork runs up under the status bar, but it
- * is the same hard edge on a feed — so the fade is what every page gets, and
- * [FrostedTopBar] paints no backdrop of its own anywhere.
+ * is the same hard edge on a feed. Ordinary pages now deliberately accept that
+ * bounded pane and use [TopBarBlur]. Artwork-led pages, including Replay, now
+ * use their own full-bleed background with no status-bar effect layered over
+ * it, so this progressive variant is no longer mounted by the app chrome.
  *
  * Fading out instead leaves the title and back arrow something to be legible
  * against and the page nothing to be interrupted by.
@@ -176,5 +178,38 @@ fun TopFadeBlur(
             .fillMaxWidth()
             .height(height)
             .background(scrim),
+    )
+}
+
+/**
+ * The uniform glass used by ordinary top bars.
+ *
+ * Unlike [TopFadeBlur], this occupies only the status-bar inset and the 52dp
+ * bar itself. Its material is deliberately identical to [FloatingBottomBar]'s
+ * non-liquid-glass surface: the same regular Haze material, the same surface
+ * colour and the same reduced-resolution sampling supplied by
+ * [optimizedHazeEffect]. [FrostedTopBar] draws the hairline at its lower edge.
+ *
+ * Replay and artwork detail pages draw neither component and let their own
+ * full-bleed background show through unchanged.
+ */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+fun TopBarBlur(
+    hazeState: HazeState,
+    modifier: Modifier = Modifier,
+) {
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    // FrostedTopBar supplies the solid surface when dynamic blur is reduced.
+    if (reduceDynamicBlur) return
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(topBarHeight())
+            .optimizedHazeEffect(
+                state = hazeState,
+                style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
+            ),
     )
 }

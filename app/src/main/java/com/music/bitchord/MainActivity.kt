@@ -208,9 +208,10 @@ import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
+import com.music.bitchord.ui.components.TopBarBlur
 import com.music.bitchord.ui.components.TopBarDownloadButton
+import com.music.bitchord.ui.components.TopFadeScrim
 import com.music.bitchord.ui.components.optimizedHazeEffect
-import com.music.bitchord.ui.components.TopFadeBlur
 import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
@@ -414,8 +415,8 @@ private fun BitChordApp(
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val hazeState = remember { HazeState() }
-    // Recording the backdrop layer costs a draw pass, so it only runs when the
-    // nav bar's glass surface actually has something to sample.
+    // Recording the backdrop layer costs a draw pass, so it only runs when a
+    // liquid-glass surface (the nav bar or artwork-page back button) can sample it.
     val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
     // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
     // now-playing-and-tabs component is a layout, not an effect, and dropping
@@ -478,6 +479,9 @@ private fun BitChordApp(
     // opened from the page and the share sheet from either, and closing one
     // has to reveal what it was opened from.
     var showReplay by remember { mutableStateOf(false) }
+    // Library cards use the same Replay page as every other entry point, but
+    // category cards ask it to start at their matching ranked section.
+    var replayLandingPage by remember { mutableStateOf(ReplayStoryPage.INTRO) }
     var replayStory by remember { mutableStateOf<ReplayStoryPage?>(null) }
     var showReplayShare by remember { mutableStateOf(false) }
     /** Which story card the share sheet is for, or null for the whole Replay. */
@@ -665,11 +669,11 @@ private fun BitChordApp(
     val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
-    // Local Music has no artwork to wash the bar in, so it renders with a
-    // plain status bar rather than the artwork-driven blur other detail
-    // pages (album/artist/playlist) get. Downloads is the same page, and the
-    // tab row it now carries sits directly under the bar, so it needs the same
-    // treatment — an artwork blur over it would tint the tabs.
+    // Local Music has no artwork to wash the top inset in, so it renders with
+    // the ordinary bounded status bar rather than the artwork gradient used by
+    // album/artist/playlist pages. Downloads is the same page, and the tab row
+    // it now carries sits directly under the bar, so it needs that same plain
+    // treatment rather than a release-style colour wash over its tabs.
     //
     // A downloaded playlist's page is under `local:` too and is none of that: it
     // has a cover and a track list, so it takes the bar every other release page
@@ -914,7 +918,7 @@ private fun BitChordApp(
     // As [detailListState], for Replay: its own large heading owns the title
     // until it is scrolled away, and the bar lives out here rather than on the
     // page. Rebuilt per opening so reopening starts at the top.
-    val replayListState = rememberLazyListState()
+    val replayListState = remember(showReplay, replayLandingPage) { LazyListState() }
     val replayScrolled by remember(replayListState) {
         derivedStateOf {
             replayListState.firstVisibleItemIndex > 0 ||
@@ -2018,7 +2022,10 @@ private fun BitChordApp(
                         selectedTab = TAB_SEARCH
                     }
                     PlaybackSourceType.HISTORY -> showHistory = true
-                    PlaybackSourceType.REPLAY -> showReplay = true
+                    PlaybackSourceType.REPLAY -> {
+                        replayLandingPage = ReplayStoryPage.INTRO
+                        showReplay = true
+                    }
                     PlaybackSourceType.EXPLORE -> selectedTab = TAB_EXPLORE
                     PlaybackSourceType.SHARED_LINK -> {
                         val id = sourceId ?: return@openSource
@@ -2292,6 +2299,7 @@ private fun BitChordApp(
                             },
                             contentPadding = listPadding,
                             listState = replayListState,
+                            landingPage = replayLandingPage,
                         )
                     } else if (key == "discord") {
                         DiscordScreen(
@@ -2361,6 +2369,7 @@ private fun BitChordApp(
                             onEqualizer = { showEqualizer = true },
                             onOpenReplay = {
                                 showSettings = false
+                                replayLandingPage = ReplayStoryPage.INTRO
                                 showReplay = true
                             },
                             onLyricsSources = { showLyricsSources = true },
@@ -2753,8 +2762,13 @@ private fun BitChordApp(
                             onShelfItemLongPress = onBrowseLongPress,
                             onNewPlaylist = { creatingPlaylist = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
-                            replayCard = replayCards.firstOrNull(),
-                            onOpenReplay = { showReplay = true },
+                            replayCards = replayCards,
+                            replayHolder = account?.name.orEmpty(),
+                            replayMemberSince = replay.memberSince,
+                            onOpenReplay = { page ->
+                                replayLandingPage = page
+                                showReplay = true
+                            },
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onRetry = viewModel::loadLibrary,
                             refreshing = MainViewModel.Feed.LIBRARY in refreshing,
@@ -2766,38 +2780,34 @@ private fun BitChordApp(
                     }
                 }
 
-                // Every top bar is a fade rather than a pane — see [TopFadeBlur].
-                // Drawn before the bar so the bar's own content sits on top of it.
-                // Hidden on the Search tab: the search field itself becomes the
-                // top element, sitting cleanly under the status bar inset.
-                val isDetailVisible = detail != null && !isLocalDetail && !showSettings &&
+                // Artwork-led pages and Replay leave the top-bar footprint
+                // transparent so the shared app-level gradient is continuous.
+                // Other pages use the navbar's regular bounded blur unless
+                // Liquid Glass has switched them to separated controls too.
+                val isDetailVisible = detail != null &&
+                    (detail.type == BrowseType.ALBUM ||
+                        detail.type == BrowseType.PLAYLIST ||
+                        detail.type == BrowseType.ARTIST) &&
+                    !isLocalDetail && !showDiscord && !showHistory && !showSettings &&
                     !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay
-                // Search is the one page that doesn't get the fade. Its field sits
-                // directly under the bar rather than a page's worth of content, so
-                // the strip's 32dp run past the bar lands on the field itself and
-                // reads as a smear over the thing being typed into — a blur with
-                // nothing behind it to blur. The same conditions as the page key in
-                // [AnimatedContent] above, since anything stacked over the tab is a
-                // page that does want the fade.
-                val isSearchVisible = selectedTab == TAB_SEARCH && detail == null &&
-                    !showSettings && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer &&
-                    !showReplay && !showDiscord && !showHistory && libraryShowAll == null
-                if (!isSearchVisible) TopFadeBlur(
-                    hazeState = hazeState,
-                    // Replay paints its own full-bleed black backdrop up under the
-                    // status bar, exactly as a release page's artwork does.
-                    pageColor = when {
-                        showReplay -> Color.Black
-                        isDetailVisible -> detailPalette.wash
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    scrimColor = when {
-                        showReplay -> Color.Black
-                        isDetailVisible -> detailPalette.background
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    modifier = Modifier.align(Alignment.TopCenter),
-                )
+                val isReplayVisible = showReplay && !showDiscord && !showHistory &&
+                    !(libraryShowAll != null && detail == null) &&
+                    !showAccountScrobbling && !showSources && !showListenTogether &&
+                    !showEqualizer && !showSettings
+                // The top floor is the exact vertical mirror of the shared
+                // bottom scrim and belongs to app chrome, not to an individual
+                // page. It stays behind either the bounded bar or floating
+                // liquid controls.
+                TopFadeScrim(modifier = Modifier.align(Alignment.TopCenter))
+
+                // With Liquid Glass enabled, every page uses separated floating
+                // controls and therefore has no full-width pane underneath.
+                if (!glassActive && !isReplayVisible && !isDetailVisible) {
+                    TopBarBlur(
+                        hazeState = hazeState,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+                }
 
                 FrostedTopBar(
                     title = when {
@@ -2817,6 +2827,9 @@ private fun BitChordApp(
                             if (it.label == "Play") stringResource(R.string.listen_now) else it.label
                         }
                     },
+                    transparentBackdrop = glassActive || isReplayVisible || isDetailVisible,
+                    artworkPageChrome = isReplayVisible || isDetailVisible,
+                    backButtonHazeState = hazeState,
                     trailingTitle = if (detail != null && detailActiveShelf != null) detail.title else null,
                     // Search has no large in-list header to hand the title back to —
                     // the field takes that space — so its bar title is always up.

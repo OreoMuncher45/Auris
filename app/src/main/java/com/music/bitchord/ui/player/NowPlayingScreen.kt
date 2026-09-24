@@ -3980,7 +3980,8 @@ fun NowPlayingScreen(
                 TransportGlyph(
                     icon = R.drawable.ic_player_previous,
                     contentDescription = stringResource(R.string.widget_previous),
-                    size = 48.dp,
+                    size = PLAYER_SKIP_ICON_SIZE,
+                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
                     onClick = onPrevious,
                     // Lit whenever back has something to do — either a track to
                     // step to, or enough elapsed for it to restart this one.
@@ -4015,7 +4016,8 @@ fun NowPlayingScreen(
                 TransportGlyph(
                     icon = R.drawable.ic_player_next,
                     contentDescription = stringResource(R.string.widget_next),
-                    size = 48.dp,
+                    size = PLAYER_SKIP_ICON_SIZE,
+                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
                     onClick = onNext,
                     enabled = !controlsLocked && hasNext,
                     haptic = Haptic.SkipNext,
@@ -4501,7 +4503,8 @@ private fun WidePlayerControls(
                 TransportGlyph(
                     icon = R.drawable.ic_player_previous,
                     contentDescription = stringResource(R.string.widget_previous),
-                    size = 48.dp,
+                    size = PLAYER_SKIP_ICON_SIZE,
+                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
                     onClick = onPrevious,
                     enabled = !controlsLocked &&
                         (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
@@ -4530,7 +4533,8 @@ private fun WidePlayerControls(
                 TransportGlyph(
                     icon = R.drawable.ic_player_next,
                     contentDescription = stringResource(R.string.widget_next),
-                    size = 48.dp,
+                    size = PLAYER_SKIP_ICON_SIZE,
+                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
                     onClick = onNext,
                     enabled = !controlsLocked && hasNext,
                     haptic = Haptic.SkipNext,
@@ -6886,6 +6890,14 @@ private fun TransportGlyph(
         )
     }
 }
+
+/**
+ * The skip glyphs draw a little beyond their fixed 48dp button footprint.
+ * Keeping the footprint fixed turns the extra 4dp into 2dp less optical space
+ * above and below, without changing the transport row's measurements.
+ */
+private val PLAYER_SKIP_ICON_SIZE = 52.dp
+private val PLAYER_SKIP_TOUCH_SIZE = 48.dp
 
 private val BOTTOM_ACTION_SIZE = 44.dp
 
