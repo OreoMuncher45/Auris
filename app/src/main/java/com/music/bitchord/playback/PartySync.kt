@@ -755,13 +755,21 @@ class PartySync(
         // the full list is not — it parses a metadata bundle per track — and
         // this runs on every pause and every seek, on a queue that can be
         // hundreds long.
-        val localIds = (0 until exo.mediaItemCount)
-            .map { exo.getMediaItemAt(it).mediaId }
-            // Device files are dropped rather than sent for everyone else to
-            // fail on, so the index has to be found in what is left, not in the
-            // local list — otherwise it points at the wrong row.
-            .filterNot { it.startsWith("content://") || it.startsWith("file://") }
+        val rawLocalItems = (0 until exo.mediaItemCount)
+            .map { exo.getMediaItemAt(it) }
+            .filterNot { it.mediaId.startsWith("content://") || it.mediaId.startsWith("file://") }
 
+        val rawTrackIndex = rawLocalItems.indexOfFirst { it.mediaId == track.videoId }
+        val localItems = if (rawTrackIndex >= 0) {
+            val pastAndCurrent = rawLocalItems.subList(0, rawTrackIndex + 1)
+            val upcoming = rawLocalItems.subList(rawTrackIndex + 1, rawLocalItems.size)
+                .filter { it.queueTier != QueueTier.CONTEXT }
+            pastAndCurrent + upcoming
+        } else {
+            rawLocalItems.filter { it.queueTier != QueueTier.CONTEXT }
+        }
+
+        val localIds = localItems.map { it.mediaId }
         val trackIndex = localIds.indexOf(track.videoId)
         val clampedIds = if (trackIndex >= 0) {
             val upcomingEnd = (trackIndex + 1 + MAX_PARTY_UPCOMING_QUEUE).coerceAtMost(localIds.size)
@@ -783,8 +791,10 @@ class PartySync(
 
         val partyIds = party.queue.items.map(PartyTrack::videoId)
         if (party.playback.track?.videoId != track.videoId && clampedIds.size == 1 && upcomingPartyTracks.isNotEmpty()) {
-            val toPreserve = upcomingPartyTracks.take(MAX_PARTY_UPCOMING_QUEUE)
-            if (exo.mediaItemCount == 1) {
+            val toPreserve = upcomingPartyTracks
+                .filterNot { it.fromAutoplay }
+                .take(MAX_PARTY_UPCOMING_QUEUE)
+            if (exo.mediaItemCount == 1 && toPreserve.isNotEmpty()) {
                 exo.addMediaItems(toPreserve.map { it.toSong().toMediaItem() })
             }
             val queue = listOf(track) + toPreserve
@@ -803,7 +813,7 @@ class PartySync(
             } else {
                 val countToTake = clampedIds.size
                 val queue = (0 until countToTake)
-                    .map { exo.getMediaItemAt(it).toSong() }
+                    .map { localItems[it].toSong() }
                     .filterNot(Song::isDeviceFile)
                     .map { it.toPartyTrack(0L) }
                 ListenTogether.setQueue(queue, trackIndex)
@@ -879,6 +889,15 @@ class PartySync(
         val song = exo.currentMediaItem?.toSong() ?: return
         if (song.isDeviceFile()) return
         Log.i(TAG, "seeding the new party with what this device is already playing")
+        val currentIndex = exo.currentMediaItemIndex
+        if (currentIndex >= 0 && currentIndex + 1 < exo.mediaItemCount) {
+            val toKeep = (currentIndex + 1 until exo.mediaItemCount)
+                .map { exo.getMediaItemAt(it) }
+                .filter { it.queueTier != QueueTier.CONTEXT }
+            if (toKeep.size != exo.mediaItemCount - (currentIndex + 1)) {
+                exo.replaceMediaItems(currentIndex + 1, exo.mediaItemCount, toKeep)
+            }
+        }
         publish()
     }
 
@@ -1093,7 +1112,7 @@ internal fun Song.toPartyTrack(playerDurationMs: Long): PartyTrack = PartyTrack(
     fromAutoplay = fromAutoplay,
 )
 
-private fun PartyTrack.toSong(): Song = Song(
+internal fun PartyTrack.toSong(): Song = Song(
     videoId = videoId,
     title = title,
     artist = artist,

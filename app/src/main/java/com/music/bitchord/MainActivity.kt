@@ -1008,14 +1008,33 @@ private fun BitChordApp(
             val currentTimeline = player.queue.takeIf { it.size == c.mediaItemCount }
                 ?: (0 until c.mediaItemCount).map { c.getMediaItemAt(it).toSong() }
             val currentIndex = c.currentMediaItemIndex
-            val result = QueueCoordinator.buildContextQueue(
-                currentTimeline = currentTimeline,
-                currentIndex = currentIndex,
-                newContextSongs = songs,
-                selectedIndex = index,
-                contextSource = source,
-            )
-            c.playSongs(result.timeline, result.startIndex)
+
+            if (ListenTogether.state.value.inParty) {
+                val selectedSong = songs.getOrNull(index) ?: return@launch
+                val party = ListenTogether.state.value
+                val partyQueue = party.queue.items
+                val partyIndex = partyQueue.indexOfFirst { it.videoId == party.playback.track?.videoId }
+                val upcomingPartyTracks = if (partyIndex >= 0) {
+                    partyQueue.drop(partyIndex + 1)
+                } else {
+                    emptyList()
+                }
+                val timeline = QueueCoordinator.buildPartyPlaybackQueue(
+                    tappedSong = selectedSong,
+                    source = source,
+                    upcomingPartyTracks = upcomingPartyTracks,
+                )
+                c.playSongs(timeline, 0)
+            } else {
+                val result = QueueCoordinator.buildContextQueue(
+                    currentTimeline = currentTimeline,
+                    currentIndex = currentIndex,
+                    newContextSongs = songs,
+                    selectedIndex = index,
+                    contextSource = source,
+                )
+                c.playSongs(result.timeline, result.startIndex)
+            }
             // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }

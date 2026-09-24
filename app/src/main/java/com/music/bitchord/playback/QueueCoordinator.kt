@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import androidx.media3.common.Player
+import com.music.bitchord.data.listentogether.PartyTrack
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
@@ -113,6 +114,31 @@ object QueueCoordinator {
         ).asQueueEntry(QueueTier.CONTEXT)
 
         return listOf(oneOffEntry) + upcomingUserQueue
+    }
+
+    /**
+     * Constructs a single-song playback timeline for Listen Together mode:
+     *
+     * Invariant: [Tapped Track (CONTEXT)] + [Upcoming Canonical Manual Party Tracks (USER_QUEUE)].
+     * Preceding and following context tracks from the album/playlist are excluded from the shared queue.
+     * Stale AutoPlay recommendations from the previous track are omitted.
+     */
+    fun buildPartyPlaybackQueue(
+        tappedSong: Song,
+        source: QueueSource,
+        upcomingPartyTracks: List<PartyTrack>,
+    ): List<Song> {
+        val entry = tappedSong.copy(
+            playbackSource = source.title,
+            playbackSourceType = source.type,
+            playbackSourceId = source.id,
+        ).asQueueEntry(QueueTier.CONTEXT)
+
+        val manualUpcoming = upcomingPartyTracks
+            .filterNot { it.fromAutoplay }
+            .map { it.toSong().asQueueEntry(QueueTier.USER_QUEUE) }
+
+        return listOf(entry) + manualUpcoming
     }
 
     /**

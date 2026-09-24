@@ -82,6 +82,62 @@ class PartyPersonalQueueStashTest {
         assertEquals(1, snapshot!!.index) // Clamped to last index
     }
 
+    @Test
+    fun testMidAlbumPartyEntryStashesFullContextAndRestoresOnExit() {
+        val albumSongs = List(15) { i ->
+            Song(
+                videoId = "track-$i",
+                title = "Song $i",
+                artist = "Artist",
+                thumbnailUrl = null,
+                albumName = "Album 1",
+            )
+        }
+
+        // Host was playing track #4 (index 4) with 30s elapsed
+        PartyPersonalQueueStash.stash(
+            songs = albumSongs,
+            index = 4,
+            positionMs = 30000L,
+            wasPlaying = true,
+        )
+
+        // When leaving party, stash should restore all 15 tracks at index 4
+        val restored = PartyPersonalQueueStash.load()
+        assertNotNull(restored)
+        assertEquals(15, restored!!.songs.size)
+        assertEquals(4, restored.index)
+        assertEquals("track-4", restored.songs[restored.index].videoId)
+        assertEquals(30000L, restored.positionMs)
+        assertTrue(restored.wasPlaying)
+
+        // Clear after restoring
+        PartyPersonalQueueStash.clear()
+        assertFalse(PartyPersonalQueueStash.hasStash())
+    }
+
+    @Test
+    fun testJoinerPersonalQueueStashedAndRestoredOnExit() {
+        val joinerPersonalQueue = listOf(
+            Song(videoId = "personal-1", title = "P1", artist = "Artist", thumbnailUrl = null),
+            Song(videoId = "personal-2", title = "P2", artist = "Artist", thumbnailUrl = null),
+        )
+
+        PartyPersonalQueueStash.stash(
+            songs = joinerPersonalQueue,
+            index = 0,
+            positionMs = 15000L,
+            wasPlaying = false,
+        )
+
+        val restored = PartyPersonalQueueStash.load()
+        assertNotNull(restored)
+        assertEquals(2, restored!!.songs.size)
+        assertEquals("personal-1", restored.songs[0].videoId)
+        assertEquals(15000L, restored.positionMs)
+        assertFalse(restored.wasPlaying)
+    }
+
     private class FakeSharedPreferences : SharedPreferences {
         private val data = mutableMapOf<String, Any?>()
 
