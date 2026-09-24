@@ -680,7 +680,7 @@
     <string name="listen_together_server_unknown">Нажмите, чтобы проверить</string>
     <string name="listen_together_custom_server">Использовать свой сервер</string>
     <string name="listen_together_custom_server_footer">Оставьте пустым, чтобы использовать встроенный сервер. Если у вас своя копия, все участники должны указать один и тот же адрес.</string>
-    <string name="listen_together_using_builtin">Используется встроенный сервер</string>
+    <string name="listen_together_using_default">Используется встроенный сервер</string>
     <string name="listen_together_create">Создать вечеринку</string>
     <string name="listen_together_create_subtitle">Получите код, чтобы поделиться с друзьями</string>
     <string name="listen_together_create_footer">Вы получите код из шести символов. Присоединиться может любой, у кого он есть, — до пяти устройств, включая ваше.</string>
@@ -747,6 +747,7 @@
     <string name="automix_mode_performance_subtitle">4 потока · самый быстрый анализ · выше нагрев и расход</string>
 
     <string name="automix_not_supported_video">Automix не поддерживается для видео-треков</string>
+    <string name="automix_stopped_in_party">Automix: остановлен в режиме «Слушать вместе»</string>
 
     <string name="automix_performance">Производительность Automix</string>
 
@@ -1032,12 +1033,6 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
 
     <string name="system_equalizer">System equalizer</string>
 

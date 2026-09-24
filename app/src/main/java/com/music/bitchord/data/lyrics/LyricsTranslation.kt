@@ -56,13 +56,30 @@ object LyricsTranslation {
         data object Unavailable : Result
     }
 
+    sealed interface RomanizationResult {
+        data class Romanized(
+            val lines: List<LyricLine>,
+            val sourceLanguage: String,
+            val fromCache: Boolean,
+        ) : RomanizationResult
+
+        data object AlreadyRomanized : RomanizationResult
+        data object Unavailable : RomanizationResult
+    }
+
     private const val ENDPOINT = "https://translate.googleapis.com/translate_a/single"
-    private const val CACHE_VERSION = 2
-    private const val CACHE_DIRECTORY = "lyrics_translation_v2"
+    private const val INPUT_TOOLS_ENDPOINT = "https://inputtools.google.com/request"
+    // Version 3 invalidates answers cached before the Latin-script retry existed;
+    // otherwise a song that once came back untranslated would never take the
+    // repaired path after the app is updated.
+    private const val CACHE_VERSION = 3
+    private const val CACHE_DIRECTORY = "lyrics_translation_v3"
     private const val MAX_CACHE_BYTES = 2L * 1024L * 1024L
     private const val MAX_BATCH_CHARS = 3_500
     private const val MAX_PARALLEL_REQUESTS = 2
-    private val markerRegex = Regex("\\uE000\\d{4}\\uE001")
+    // Input Tools changes ASCII digits to the destination script, so match the
+    // private-use wrapper rather than assuming the counter remains ASCII.
+    private val markerRegex = Regex("\\uE000[^\\uE001]*\\uE001")
     private val json = Json { ignoreUnknownKeys = true }
     private val diskMutex = Mutex()
     private val memory = LruCache<String, CachedTranslation>(12)
@@ -148,8 +165,31 @@ object LyricsTranslation {
             .orEmpty()
         if (source.isBlank()) return Result.Unavailable
 
-        val translated = complete.flatMap { it.translations }
+        var translated = complete.flatMap { it.translations }
         if (translated.size != slots.size) return Result.Unavailable
+
+        // Google's ordinary auto-detection understands many Latin-script
+        // Hindi/Urdu/Punjabi lyrics, but its NMT occasionally returns whole
+        // phrases unchanged ("tera hone laga hoon" is a common example). If a
+        // sizeable part of a Latin-script source survived untouched, use
+        // Google's Input Tools to restore the detected language's native script
+        // and translate that. Keep the first answer unless the retry actually
+        // transforms more of the song, so names and genuinely bilingual lyrics
+        // do not get worse merely because they contain Latin text.
+        if (
+            !sameLanguage(source, target) &&
+            predominantlyLatin(slots) &&
+            unchangedWeight(slots, translated) * 3 >= slots.sumOf { it.text.length }
+        ) {
+            val retried = retryRomanizedTranslation(batches, source, target)
+            if (
+                retried != null &&
+                retried.size == slots.size &&
+                unchangedWeight(slots, retried) < unchangedWeight(slots, translated)
+            ) {
+                translated = retried
+            }
+        }
         val entry = CachedTranslation(
             sourceLanguage = source,
             targetLanguage = target,
@@ -167,6 +207,70 @@ object LyricsTranslation {
                 fromCache = false,
             )
         }
+    }
+
+    suspend fun romanize(
+        context: Context,
+        trackId: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): RomanizationResult {
+        if (lines.isEmpty()) return RomanizationResult.Unavailable
+        val slots = flatten(lines)
+        if (slots.isEmpty()) return RomanizationResult.Unavailable
+        if (!hasNonLatinLetters(slots)) return RomanizationResult.AlreadyRomanized
+
+        // Romanization always ends in Latin script. The translation destination
+        // is still sent as `tl` because the web endpoint requires it, but it is
+        // deliberately excluded from this cache key: changing "translate to"
+        // cannot change how the source language is pronounced.
+        val cacheKey = cacheKey(trackId, "romanize", slots)
+        val cached = memory.get(cacheKey) ?: readCache(context, cacheKey)?.also {
+            memory.put(cacheKey, it)
+        }
+        if (cached != null && cached.version == CACHE_VERSION && cached.texts.size == slots.size) {
+            return RomanizationResult.Romanized(
+                lines = rebuild(lines, slots, cached.texts),
+                sourceLanguage = cached.sourceLanguage,
+                fromCache = true,
+            )
+        }
+
+        val target = targetLanguageTag.trim().ifBlank { "en" }
+        val batches = batches(slots)
+        val answers = coroutineScope {
+            batches.chunked(MAX_PARALLEL_REQUESTS).flatMap { group ->
+                group.map { batch -> async { requestRomanizationBatch(batch, target) } }.awaitAll()
+            }
+        }
+        if (answers.any { it == null }) return RomanizationResult.Unavailable
+        val complete = answers.filterNotNull()
+        val source = complete
+            .groupBy { canonicalLanguage(it.sourceLanguage) }
+            .maxByOrNull { (_, values) -> values.sumOf { it.sourceWeight } }
+            ?.key
+            .orEmpty()
+        val romanized = complete.flatMap { it.translations }
+        if (source.isBlank() || romanized.size != slots.size) return RomanizationResult.Unavailable
+        if (unchangedWeight(slots, romanized) == slots.sumOf { it.text.length }) {
+            // Non-Latin input reached this point, so an unchanged response is
+            // an unsupported/failed romanization rather than an already-Latin
+            // lyric. The fast all-Latin check above handles the real no-op case.
+            return RomanizationResult.Unavailable
+        }
+
+        val entry = CachedTranslation(
+            sourceLanguage = source,
+            targetLanguage = "Latn",
+            texts = romanized,
+        )
+        memory.put(cacheKey, entry)
+        writeCache(context, cacheKey, entry)
+        return RomanizationResult.Romanized(
+            lines = rebuild(lines, slots, romanized),
+            sourceLanguage = source,
+            fromCache = false,
+        )
     }
 
     private fun flatten(lines: List<LyricLine>): List<TextSlot> = buildList {
@@ -219,10 +323,14 @@ object LyricsTranslation {
 
     private fun marker(index: Int): String = "\uE000${index.toString().padStart(4, '0')}\uE001"
 
-    private suspend fun requestBatch(batch: Batch, target: String): BatchAnswer? {
+    private suspend fun requestBatch(
+        batch: Batch,
+        target: String,
+        sourceLanguage: String = "auto",
+    ): BatchAnswer? {
         val body = FormBody.Builder()
             .add("client", "dict-chrome-ex")
-            .add("sl", "auto")
+            .add("sl", sourceLanguage)
             .add("tl", target)
             .add("dt", "t")
             .add("q", batch.payload)
@@ -251,6 +359,121 @@ object LyricsTranslation {
             BatchAnswer(parts, source, batch.payload.length)
         }.getOrNull()
     }
+
+    private suspend fun requestRomanizationBatch(batch: Batch, target: String): BatchAnswer? {
+        val body = FormBody.Builder()
+            .add("client", "dict-chrome-ex")
+            .add("sl", "auto")
+            .add("tl", target)
+            .add("dt", "rm")
+            .add("q", batch.payload)
+            .build()
+        val request = Request.Builder()
+            .url(ENDPOINT)
+            .header("User-Agent", "BitChord/1.5.2")
+            .header("Accept", "application/json")
+            .post(body)
+            .build()
+        val response = try {
+            client.newCall(request).awaitBody()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            return null
+        }
+        return runCatching {
+            val root = json.parseToJsonElement(response).jsonArray
+            val romanizedBody = root[0].jsonArray.joinToString(separator = "") { segment ->
+                segment.jsonArray.getOrNull(3)?.jsonPrimitive?.contentOrNull.orEmpty()
+            }
+            val source = root.getOrNull(2)?.jsonPrimitive?.contentOrNull.orEmpty()
+            val parts = romanizedBody.split(markerRegex).map(String::trim)
+            if (source.isBlank() || parts.size != batch.slots.size || parts.any { it.isBlank() }) {
+                return@runCatching null
+            }
+            BatchAnswer(parts, source, batch.payload.length)
+        }.getOrNull()
+    }
+
+    private suspend fun retryRomanizedTranslation(
+        batches: List<Batch>,
+        sourceLanguage: String,
+        target: String,
+    ): List<String>? = coroutineScope {
+        val source = canonicalLanguage(sourceLanguage)
+        if (source.isBlank() || source == "en") return@coroutineScope null
+        val answers = batches.chunked(MAX_PARALLEL_REQUESTS).flatMap { group ->
+            group.map { batch ->
+                async {
+                    val nativePayload = requestNativeScript(batch.payload, source) ?: return@async null
+                    requestBatch(batch.copy(payload = nativePayload), target, source)
+                }
+            }.awaitAll()
+        }
+        if (answers.any { it == null }) null else answers.filterNotNull().flatMap { it.translations }
+    }
+
+    private suspend fun requestNativeScript(text: String, sourceLanguage: String): String? {
+        val body = FormBody.Builder()
+            .add("text", text)
+            .add("itc", "$sourceLanguage-t-i0-und")
+            .add("num", "1")
+            .add("cp", "0")
+            .add("cs", "1")
+            .add("ie", "utf-8")
+            .add("oe", "utf-8")
+            .build()
+        val request = Request.Builder()
+            .url(INPUT_TOOLS_ENDPOINT)
+            .header("User-Agent", "BitChord/1.5.2")
+            .header("Accept", "application/json")
+            .post(body)
+            .build()
+        val response = try {
+            client.newCall(request).awaitBody()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: IOException) {
+            return null
+        }
+        return runCatching {
+            val root = json.parseToJsonElement(response).jsonArray
+            if (root.getOrNull(0)?.jsonPrimitive?.contentOrNull != "SUCCESS") return@runCatching null
+            root[1].jsonArray[0].jsonArray[1].jsonArray[0].jsonPrimitive.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+        }.getOrNull()
+    }
+
+    private fun predominantlyLatin(slots: List<TextSlot>): Boolean {
+        var latin = 0
+        var other = 0
+        slots.forEach { slot ->
+            slot.text.codePoints().forEach { codePoint ->
+                if (Character.isLetter(codePoint)) {
+                    if (Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.LATIN) latin++
+                    else other++
+                }
+            }
+        }
+        return latin > 0 && latin >= other * 4
+    }
+
+    private fun hasNonLatinLetters(slots: List<TextSlot>): Boolean = slots.any { slot ->
+        slot.text.codePoints().anyMatch { codePoint ->
+            Character.isLetter(codePoint) &&
+                Character.UnicodeScript.of(codePoint) != Character.UnicodeScript.LATIN
+        }
+    }
+
+    private fun unchangedWeight(slots: List<TextSlot>, transformed: List<String>): Int =
+        slots.zip(transformed).sumOf { (slot, text) ->
+            if (comparable(slot.text) == comparable(text)) slot.text.length else 0
+        }
+
+    private fun comparable(text: String): String = text
+        .trim()
+        .lowercase(Locale.ROOT)
+        .replace(Regex("\\s+"), " ")
 
     private suspend fun Call.awaitBody(): String = suspendCancellableCoroutine { continuation ->
         continuation.invokeOnCancellation { cancel() }

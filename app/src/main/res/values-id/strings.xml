@@ -640,7 +640,7 @@
     <string name="listen_together_server_unknown">Ketuk untuk memeriksa</string>
     <string name="listen_together_custom_server">Pakai server sendiri</string>
     <string name="listen_together_custom_server_footer">Biarkan kosong untuk memakai server bawaan. Kalau kamu menjalankan salinan sendiri, semua orang di pesta harus diarahkan ke server yang sama.</string>
-    <string name="listen_together_using_builtin">Memakai server bawaan</string>
+    <string name="listen_together_using_default">Memakai server bawaan</string>
     <string name="listen_together_create">Buat pesta</string>
     <string name="listen_together_create_subtitle">Dapatkan kode untuk dibagikan ke teman</string>
     <string name="listen_together_create_footer">Kamu dapat kode enam karakter. Siapa pun yang punya kodenya bisa ikut, sampai lima perangkat termasuk milikmu.</string>
@@ -704,6 +704,7 @@
     <string name="automix_mode_performance_subtitle">4 thread · analisis tercepat · penggunaan baterai lebih tinggi</string>
 
     <string name="automix_not_supported_video">Automix tidak didukung pada lagu video</string>
+    <string name="automix_stopped_in_party">Automix: dihentikan saat Dengar bersama</string>
 
     <string name="automix_performance">Performa Automix</string>
 
@@ -989,12 +990,6 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
 
     <string name="system_equalizer">System equalizer</string>
 

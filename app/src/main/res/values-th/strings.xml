@@ -598,6 +598,7 @@
     <string name="running">กำลังทำงาน</string>
     <string name="automix_analysis_status">Automix · เพลงนี้: %1$s · ถัดไป: %2$s</string>
     <string name="automix_not_supported_video">Automix ไม่รองรับเพลงแบบวิดีโอ</string>
+    <string name="automix_stopped_in_party">Automix: หยุดทำงานขณะฟังด้วยกัน</string>
     <string name="analysis_complete">วิเคราะห์แล้ว</string>
     <string name="analysis_refining">วิเคราะห์แล้ว กำลังปรับแต่ง…</string>
     <string name="analysis_in_progress">กำลังวิเคราะห์…</string>
@@ -687,7 +688,7 @@
     <string name="listen_together_server_unknown">แตะเพื่อตรวจสอบ</string>
     <string name="listen_together_custom_server">ใช้เซิร์ฟเวอร์ของคุณเอง</string>
     <string name="listen_together_custom_server_footer">เว้นว่างไว้เพื่อใช้เซิร์ฟเวอร์ที่มีมาให้ ถ้าคุณรันสำเนาของตัวเอง ทุกคนในปาร์ตี้ต้องชี้ไปที่เซิร์ฟเวอร์เดียวกัน</string>
-    <string name="listen_together_using_builtin">กำลังใช้เซิร์ฟเวอร์ที่มีมาให้</string>
+    <string name="listen_together_using_default">กำลังใช้เซิร์ฟเวอร์ที่มีมาให้</string>
     <string name="listen_together_create">สร้างปาร์ตี้</string>
     <string name="listen_together_create_subtitle">รับรหัสไปแชร์กับเพื่อน</string>
     <string name="listen_together_create_footer">คุณจะได้รหัสหกตัวอักษร ใครที่มีรหัสก็เข้าร่วมได้ สูงสุดห้าเครื่องรวมเครื่องของคุณ</string>
@@ -820,12 +821,6 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
 
     <string name="system_equalizer">System equalizer</string>
 

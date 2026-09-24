@@ -120,44 +120,61 @@ private fun runs(vararg parts: Pair<String, Boolean>): List<HeadlineRun> =
 fun ReplaySummary.storyHeadline(context: Context, page: ReplayStoryPage): List<HeadlineRun> = when (page) {
     ReplayStoryPage.INTRO -> runs(
         context.getString(R.string.replay_intro_start) to false,
+        " " to false,
         "Replay" to true,
+        " " to false,
         context.getString(R.string.replay_intro_end) to false,
     )
     ReplayStoryPage.MINUTES -> runs(
         context.getString(R.string.replay_minutes_start) to false,
+        " " to false,
         context.getString(R.string.replay_minutes_value, formatMinutes(totalMs)) to true,
+        " " to false,
         context.getString(R.string.replay_minutes_end) to false,
     )
     ReplayStoryPage.SONGS -> runs(
         context.getString(R.string.replay_songs_start) to false,
+        " " to false,
         context.replayCount(totalPlays, R.plurals.replay_song_count) to true,
+        " " to false,
         context.getString(R.string.replay_songs_end) to false,
     )
     ReplayStoryPage.ARTISTS -> runs(
         context.getString(R.string.replay_artist_start) to false,
+        " " to false,
         context.getString(R.string.replay_artist_focus) to true,
+        " " to false,
         context.getString(R.string.replay_artist_end) to false,
     )
     ReplayStoryPage.ALBUMS -> runs(
         context.getString(R.string.replay_album_start) to false,
+        " " to false,
         context.getString(R.string.replay_album_focus) to true,
+        " " to false,
         context.getString(R.string.replay_album_end) to false,
     )
     ReplayStoryPage.GENRES -> runs(
         context.getString(R.string.replay_genre_start) to false,
+        " " to false,
         context.getString(R.string.replay_genre_focus) to true,
+        " " to false,
         context.getString(R.string.replay_genre_end) to false,
     )
     ReplayStoryPage.HABITS -> runs(
         context.getString(R.string.replay_habits_start) to false,
+        " " to false,
         context.replayCount(distinctSongs, R.plurals.replay_song_count) to true,
+        " " to false,
         context.getString(R.string.replay_habits_middle) to false,
+        " " to false,
         context.replayCount(distinctArtists, R.plurals.replay_artist_count) to true,
         "." to false,
     )
     ReplayStoryPage.SUMMARY -> runs(
         context.getString(R.string.replay_summary_start) to false,
+        " " to false,
         label to true,
+        " " to false,
         "." to false,
     )
 }
@@ -356,7 +373,7 @@ fun ReplaySummary.genreRows(limit: Int): List<ReplayRow> =
         )
     }
 
-/** One of the cards along the top of the page. */
+/** One of the Replay headline cards shown on Library and inside Replay. */
 data class ReplayHeroCard(
     val label: String,
     val value: String,
@@ -366,7 +383,8 @@ data class ReplayHeroCard(
 )
 
 /**
- * The four headline facts, in the order they are dealt.
+ * The four headline facts, in their Library navigation order: overview, songs,
+ * artists and albums.
  *
  * Minutes leads because it is the one figure that needs no context to mean
  * something. A category with nothing in it is left out rather than shown empty:
@@ -384,6 +402,17 @@ fun ReplaySummary.cards(context: Context): List<ReplayHeroCard> = buildList {
             page = ReplayStoryPage.MINUTES,
         ),
     )
+    songs.firstOrNull()?.let {
+        add(
+            ReplayHeroCard(
+                label = context.getString(R.string.top_song),
+                value = it.song.title,
+                detail = "${it.song.artist} · ${context.replayCount(it.plays, R.plurals.replay_play_count)}",
+                artworkUrl = it.song.thumbnailUrl,
+                page = ReplayStoryPage.SONGS,
+            ),
+        )
+    }
     artists.firstOrNull()?.let {
         add(
             ReplayHeroCard(
@@ -393,17 +422,6 @@ fun ReplaySummary.cards(context: Context): List<ReplayHeroCard> = buildList {
                     context.replayCount(it.plays, R.plurals.replay_play_count),
                 artworkUrl = it.artworkUrl,
                 page = ReplayStoryPage.ARTISTS,
-            ),
-        )
-    }
-    songs.firstOrNull()?.let {
-        add(
-            ReplayHeroCard(
-                label = context.getString(R.string.top_song),
-                value = it.song.title,
-                detail = "${it.song.artist} · ${context.replayCount(it.plays, R.plurals.replay_play_count)}",
-                artworkUrl = it.song.thumbnailUrl,
-                page = ReplayStoryPage.SONGS,
             ),
         )
     }

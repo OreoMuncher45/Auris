@@ -105,6 +105,8 @@ fun SourcesScreen(
     onEditWebDav: () -> Unit,
     /** As [onEditWebDav], for the SMB share editor. */
     onEditSmb: () -> Unit,
+    /** Opens the full-window warning before JioSaavn is opted into. */
+    onConfirmJioSaavn: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -234,7 +236,13 @@ fun SourcesScreen(
                         onToggle = if (config.kind == SourceKind.YOUTUBE) {
                             null
                         } else {
-                            ({ SourceRegistry.setEnabled(config.id, it) })
+                            ({ enabled ->
+                                if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
+                                    onConfirmJioSaavn()
+                                } else {
+                                    SourceRegistry.setEnabled(config.id, enabled)
+                                }
+                            })
                         },
                         handle = handle,
                     )
@@ -766,6 +774,7 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
 @Composable
 private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
     !isComplete -> stringResource(R.string.source_setup_required)
+    kind == SourceKind.JIOSAAVN -> stringResource(R.string.jiosaavn_mismatch_warning)
     health is SourceHealth.Ok -> listOfNotNull(
         health.detail,
         kind.labels.take(3).joinToString(" · "),

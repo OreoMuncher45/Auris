@@ -640,7 +640,7 @@
     <string name="listen_together_server_unknown">点按以检查</string>
     <string name="listen_together_custom_server">使用自己的服务器</string>
     <string name="listen_together_custom_server_footer">留空则使用内置服务器。如果你运行自己的副本，派对中的所有人都必须指向同一个。</string>
-    <string name="listen_together_using_builtin">正在使用内置服务器</string>
+    <string name="listen_together_using_default">正在使用内置服务器</string>
     <string name="listen_together_create">创建派对</string>
     <string name="listen_together_create_subtitle">获取代码，分享给朋友</string>
     <string name="listen_together_create_footer">你会得到一个六位代码。拿到代码的人都能加入，包括你自己最多五台设备。</string>
@@ -704,6 +704,7 @@
     <string name="automix_mode_performance_subtitle">4 个线程 · 分析最快 · 发热和耗电较高</string>
 
     <string name="automix_not_supported_video">视频类歌曲不支持 Automix</string>
+    <string name="automix_stopped_in_party">Automix：一起听期间已停止</string>
 
     <string name="automix_performance">Automix 性能</string>
 
@@ -989,12 +990,6 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
 
     <string name="system_equalizer">System equalizer</string>
 

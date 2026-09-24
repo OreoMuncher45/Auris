@@ -1,9 +1,13 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material3.Button
@@ -13,6 +17,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -21,6 +26,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -33,6 +39,8 @@ fun SpotifyCanvasAuthScreen(
     onNavigateUp: () -> Unit
 ) {
     val currentToken by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
+    val autoHidePlayer by AppSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
+    val prioritizeSpotify by AppSettings.prioritizeSpotifyCanvas.collectAsStateWithLifecycle()
     var tokenInput by remember(currentToken) { mutableStateOf(currentToken) }
 
     Scaffold(
@@ -55,17 +63,32 @@ fun SpotifyCanvasAuthScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(16.dp)
+                .verticalScroll(rememberScrollState())
         ) {
             Text(
                 text = stringResource(R.string.spotify_canvas_setup_description),
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+
+            SpotifyCanvasSettingToggle(
+                title = stringResource(R.string.spotify_canvas_auto_hide),
+                subtitle = stringResource(R.string.spotify_canvas_auto_hide_subtitle),
+                checked = autoHidePlayer,
+                onCheckedChange = AppSettings::setSpotifyCanvasAutoHide,
+            )
+
+            SpotifyCanvasSettingToggle(
+                title = stringResource(R.string.prioritize_spotify_canvas),
+                subtitle = stringResource(R.string.prioritize_spotify_canvas_subtitle),
+                checked = prioritizeSpotify,
+                onCheckedChange = AppSettings::setPrioritizeSpotifyCanvas,
+            )
             
             Text(
                 text = stringResource(R.string.spotify_canvas_setup_steps),
                 style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(bottom = 24.dp)
+                modifier = Modifier.padding(top = 16.dp, bottom = 24.dp)
             )
 
             OutlinedTextField(
@@ -86,5 +109,41 @@ fun SpotifyCanvasAuthScreen(
                 Text(stringResource(R.string.save))
             }
         }
+    }
+}
+
+@Composable
+private fun SpotifyCanvasSettingToggle(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 16.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }

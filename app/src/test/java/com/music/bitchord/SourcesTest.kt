@@ -3,9 +3,13 @@ package com.music.bitchord
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.jiosaavn.RawSongItem
 import com.music.bitchord.data.jiosaavn.prioritizeExplicit
+import com.music.bitchord.data.jiosaavn.selectBestSaavnStream
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.MusicSource
+import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceHealth
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -575,6 +579,80 @@ class SourcesTest {
     }
 
     @Test
+    fun `JioSaavn is off by default on a fresh install`() {
+        assertFalse(SourceConfig(kind = SourceKind.JIOSAAVN).enabled)
+        val sources = SourceRegistry.sourcesForInit(emptyList(), forceJioSaavnOff = true)
+
+        assertFalse(sources.single { it.kind == SourceKind.JIOSAAVN }.enabled)
+        assertTrue(sources.single { it.kind == SourceKind.YOUTUBE }.enabled)
+    }
+
+    @Test
+    fun `the opt-in migration disables JioSaavn once for existing installs`() {
+        val previouslyEnabled = SourceConfig(kind = SourceKind.JIOSAAVN, enabled = true)
+
+        val migrated = SourceRegistry.sourcesForInit(
+            listOf(previouslyEnabled),
+            forceJioSaavnOff = true,
+        )
+        assertFalse(migrated.single { it.kind == SourceKind.JIOSAAVN }.enabled)
+
+        val userEnabledAgain = migrated.map {
+            if (it.kind == SourceKind.JIOSAAVN) it.copy(enabled = true) else it
+        }
+        val nextLaunch = SourceRegistry.sourcesForInit(
+            userEnabledAgain,
+            forceJioSaavnOff = false,
+        )
+        assertTrue(nextLaunch.single { it.kind == SourceKind.JIOSAAVN }.enabled)
+    }
+
+    @Test
+    fun `disabled JioSaavn and addons are excluded from the source list used by downloads`() {
+        val disabledJio = SourceConfig(kind = SourceKind.JIOSAAVN, enabled = false)
+        val disabledAddon = SourceConfig(
+            kind = SourceKind.ADDON,
+            baseUrl = "https://disabled.example",
+            enabled = false,
+        )
+        val enabledAddon = SourceConfig(
+            kind = SourceKind.ADDON,
+            baseUrl = "https://enabled.example",
+            enabled = true,
+        )
+        val youtube = SourceConfig(kind = SourceKind.YOUTUBE)
+
+        val enabled = SourceRegistry.enabledConfigs(
+            listOf(disabledJio, disabledAddon, enabledAddon, youtube),
+        )
+
+        assertEquals(listOf(enabledAddon.id, youtube.id), enabled.map { it.id })
+    }
+
+    @Test
+    fun `JioSaavn upgrades a parameterized 96kbps CDN URL without losing its query`() {
+        val url = "https://aac.saavncdn.com/871/song_96.mp4?Expires=123&Signature=abc"
+
+        val selected = selectBestSaavnStream(url, supports320 = true)!!
+
+        assertEquals(
+            "https://aac.saavncdn.com/871/song_320.mp4?Expires=123&Signature=abc",
+            selected.url,
+        )
+        assertEquals(320, selected.kbps)
+    }
+
+    @Test
+    fun `JioSaavn never calls an unrecognised unchanged URL 320kbps`() {
+        val url = "https://aac.saavncdn.com/871/song.mp4?token=abc"
+
+        val selected = selectBestSaavnStream(url, supports320 = true)!!
+
+        assertEquals(url, selected.url)
+        assertNull(selected.kbps)
+    }
+
+    @Test
     fun `explicit YouTube track cannot match the censored JioSaavn edition`() {
         val target = TrackMatcher.Target(
             "Starboy",
@@ -715,6 +793,59 @@ class SourcesTest {
         )
     }
 
+    /**
+     * The case this whole path exists for, and the one it shipped wrong.
+     *
+     * Tidal publishes the immersive mix as its own row — same recording, same
+     * runtime, different id — and files it under `audioQuality: LOW`. Scored
+     * on that label the Atmos mix sorts *below* every stereo row, so
+     * [SourceResolver.streamBest] opens the lossless stereo row, gets a
+     * perfectly good FLAC and returns; the immersive row is never even asked
+     * for. No `?atmos=` hint can rescue that — the mix is not a rendition of
+     * the row being asked about.
+     */
+    @Test
+    fun `prefers the immersive row over a lossless one when Atmos is wanted`() {
+        DeviceCodecs.forced = true
+        AppSettings.dolbyAtmos.value = true
+        try {
+            val target = TrackMatcher.Target("Gehra Hua", "Shashwat Sachdev", durationSec = 362)
+            val stereo = song("Gehra Hua", "Shashwat Sachdev", duration = "6:02")
+                .copy(sourceQuality = ModuleSource.LOSSLESS)
+            val atmos = song("Gehra Hua", "Shashwat Sachdev", duration = "6:02")
+                .copy(sourceQuality = ModuleSource.DOLBY)
+
+            assertEquals(
+                listOf(atmos, stereo),
+                SourceResolver.preferred(listOf(stereo, atmos), target, wantsLossless = true),
+            )
+        } finally {
+            DeviceCodecs.forced = null
+        }
+    }
+
+    /** Switched off, the immersive row is just a row and lossless decides again. */
+    @Test
+    fun `ignores the immersive row when the Atmos setting is off`() {
+        DeviceCodecs.forced = true
+        AppSettings.dolbyAtmos.value = false
+        try {
+            val target = TrackMatcher.Target("Gehra Hua", "Shashwat Sachdev", durationSec = 362)
+            val stereo = song("Gehra Hua", "Shashwat Sachdev", duration = "6:02")
+                .copy(sourceQuality = ModuleSource.LOSSLESS)
+            val atmos = song("Gehra Hua", "Shashwat Sachdev", duration = "6:02")
+                .copy(sourceQuality = ModuleSource.DOLBY)
+
+            assertEquals(
+                listOf(stereo, atmos),
+                SourceResolver.preferred(listOf(stereo, atmos), target, wantsLossless = true),
+            )
+        } finally {
+            DeviceCodecs.forced = null
+            AppSettings.dolbyAtmos.value = true
+        }
+    }
+
     // ---- Deciding whether an upgrade is worth the seam -----------------------
 
     /**
@@ -814,6 +945,55 @@ class SourcesTest {
             SourceResolver.isBetter(
                 StreamFormat(codec = "mp4", kbps = 320),
                 StreamFormat(codec = "flac"),
+            ),
+        )
+    }
+
+    /**
+     * Immersive outranks bit-exact, and the order of the two tests inside
+     * [SourceResolver.isBetter] is the whole of it.
+     *
+     * An Atmos stream is E-AC-3 and so answers `isLossless == false`. With the
+     * lossless test first, a FLAC won there and the Atmos test below it could
+     * never run — which meant a track offered as both played as the FLAC
+     * whatever the setting said, and an upgrade pass would cut a FLAC in over
+     * an Atmos stream already playing.
+     */
+    @Test
+    fun `ranks an immersive mix above a lossless copy`() {
+        assertTrue(
+            SourceResolver.isBetter(
+                StreamFormat(codec = "eac3-joc", sampleRateHz = 48000),
+                StreamFormat(codec = "flac", bitDepth = 24, sampleRateHz = 96000),
+            ),
+        )
+        assertFalse(
+            SourceResolver.isBetter(
+                StreamFormat(codec = "flac", bitDepth = 24, sampleRateHz = 96000),
+                StreamFormat(codec = "eac3-joc", sampleRateHz = 48000),
+            ),
+        )
+    }
+
+    /**
+     * And the same answer mid-playback: a FLAC arriving over a playing Atmos
+     * stream is a better copy of a mix the listener did not choose, which is a
+     * downgrade dressed as an upgrade — and one that costs a seam in the audio
+     * to deliver.
+     */
+    @Test
+    fun `never swaps away from an immersive mix that is already playing`() {
+        assertFalse(
+            SourceResolver.worthSwapping(
+                StreamFormat(codec = "flac", bitDepth = 24),
+                StreamFormat(codec = "eac3-joc"),
+            ),
+        )
+        // The reverse still swaps: immersive is what was asked for.
+        assertTrue(
+            SourceResolver.worthSwapping(
+                StreamFormat(codec = "eac3-joc"),
+                StreamFormat(codec = "flac", bitDepth = 24),
             ),
         )
     }
@@ -954,7 +1134,12 @@ class SourcesTest {
 
         override suspend fun health() = SourceHealth.Ok()
 
-        override suspend fun search(query: String, limit: Int, waitForAll: Boolean): List<Song> {
+        override suspend fun search(
+            query: String,
+            limit: Int,
+            waitForAll: Boolean,
+            request: StreamRequest?,
+        ): List<Song> {
             asked = true
             try {
                 delay(answerAfterMs)

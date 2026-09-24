@@ -184,7 +184,7 @@ object WebDavUploads {
         if (hasEmbeddedPicture(context, song)) return direct(original)
         if (com.music.bitchord.download.Downloads.verifiedSavedUri(song.videoId) == null) return direct(original)
         val artwork = runCatching {
-            com.music.bitchord.download.MediaTagger.artworkFor(song)
+            com.music.bitchord.download.MediaTagger.artworkFor(context, song)
         }.getOrNull() ?: return direct(original)
         // Staging consumes the original stream, so a failure here re-opens
         // rather than re-sending a spent one.

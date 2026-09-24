@@ -3,18 +3,21 @@ package com.music.bitchord.ui.components
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +33,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Person
@@ -52,6 +56,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +64,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
@@ -66,14 +72,18 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
+import dev.chrisbanes.haze.materials.HazeMaterials
+import kotlin.math.roundToInt
 
 /**
  * The bar's own height, above whatever inset it is sitting under.
  *
  * The single source of truth for it: the bar lays itself out to this, and
- * everything that has to clear the bar — page content padding, [TopFadeBlur]'s
- * ramp, fixed headers that sit directly beneath it — measures from here rather
- * than from a copy of the number.
+ * everything that has to clear the bar — page content padding, either top
+ * backdrop, fixed headers that sit directly beneath it — measures from here
+ * rather than from a copy of the number.
  */
 val TopBarContentHeight = 52.dp
 
@@ -82,6 +92,22 @@ val TopBarContentHeight = 52.dp
  * it, so content rests below the glass instead of against it.
  */
 val TopBarContentGap = 12.dp
+
+/**
+ * How much of each end of the bar is spoken for, so a long title truncates
+ * instead of running under what sits there.
+ *
+ * Only ever consumed through the larger of the two — see the title's padding.
+ * They are kept apart rather than collapsed into one number because they
+ * describe two different things, and the wordmark is the one that changes when
+ * the logo or the Dev badge does.
+ */
+private val BackInset = 54.dp
+private val WordmarkInset = 96.dp
+private val ActionsInset = 56.dp
+
+/** What the leading end of the bar needs: a back button, or the wordmark. */
+private fun leadingInset(hasBack: Boolean): Dp = if (hasBack) BackInset else WordmarkInset
 
 /**
  * How far down the window the bar actually ends: the status bar inset it is
@@ -105,17 +131,17 @@ fun topBarHeight(): Dp =
 fun topBarContentPadding(): Dp = topBarHeight() + TopBarContentGap
 
 /**
- * The top bar's content — title, back affordance, actions — over no backdrop
- * of its own.
+ * The top bar's content — title, back affordance, actions — over no blur of its
+ * own.
  *
- * The glass behind it is [TopFadeBlur]'s, drawn underneath: a blur that starts
- * full at the status bar and ramps to nothing below, so the bar has no bottom
- * edge to draw a line across the page with. A uniform pane would put that line
- * back, which is the one thing every surface here is built to avoid.
+ * Ordinary pages put [TopBarBlur] underneath it and use this bar's lower
+ * hairline to finish that bounded pane. Replay, album, playlist and artist
+ * pages set [transparentBackdrop], as does every page while Liquid Glass is
+ * active, so the shared top gradient remains unobstructed.
  *
- * The exception is Reduce dynamic blur, where there is no fade to sit on and
- * the bar fills itself solid instead — title over raw scrolling content is
- * unreadable, so something has to carry it.
+ * The exception is Reduce dynamic blur, where a bounded bar fills itself solid
+ * instead. A [transparentBackdrop] page remains transparent because the
+ * app-level gradient already carries its floating controls.
  *
  * Apple Music behaviour: the big in-list header owns the title at rest;
  * once the list scrolls, the small centered title fades in.
@@ -125,6 +151,12 @@ fun FrostedTopBar(
     title: String,
     scrolled: Boolean,
     modifier: Modifier = Modifier,
+    /** Leaves the whole bar transparent so the page's own top gradient is the backdrop. */
+    transparentBackdrop: Boolean = false,
+    /** Circular back surface and no collapsing title, for artwork-led pages. */
+    artworkPageChrome: Boolean = false,
+    /** Source sampled by floating top-bar surfaces when liquid glass is off. */
+    backButtonHazeState: HazeState? = null,
     trailingTitle: String? = null,
     onBack: (() -> Unit)? = null,
     refreshing: Boolean = false,
@@ -134,17 +166,21 @@ fun FrostedTopBar(
     actions: @Composable () -> Unit = {},
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val useFloatingChrome = artworkPageChrome ||
+        (LocalLiquidGlassEnabled.current && isGlassSupported())
     val titleAlpha by animateFloatAsState(
         targetValue = if (scrolled || trailingTitle != null) 1f else 0f,
         animationSpec = tween(220),
         label = "topBarTitleAlpha",
     )
-    // Only the solid bar wants a hairline under it. A faded one has no edge for
-    // the line to mark, and drawing it there would be inventing the very seam
-    // the fade exists to remove.
+    // Every bounded bar uses the same hairline, whether its pane is blurred or
+    // solid. A transparent artwork page has no pane edge for a line to mark.
     val dividerColor by animateColorAsState(
         targetValue = MaterialTheme.colorScheme.outline.copy(
-            alpha = if ((scrolled || trailingTitle != null) && reduceDynamicBlur) 0.6f else 0f,
+            alpha = when {
+                transparentBackdrop -> 0f
+                else -> 0.6f
+            },
         ),
         animationSpec = tween(220),
         label = "topBarDivider",
@@ -154,8 +190,9 @@ fun FrostedTopBar(
         modifier = modifier
             .fillMaxWidth()
             .then(
-                if (reduceDynamicBlur) Modifier.background(MaterialTheme.colorScheme.surface)
-                else Modifier,
+                if (reduceDynamicBlur && !transparentBackdrop) {
+                    Modifier.background(MaterialTheme.colorScheme.surface)
+                } else Modifier,
             ),
     ) {
         Box(
@@ -164,71 +201,107 @@ fun FrostedTopBar(
                 .statusBarsPadding()
                 .height(TopBarContentHeight),
         ) {
-            AnimatedContent(
-                targetState = trailingTitle,
-                transitionSpec = {
-                    (fadeIn(animationSpec = tween(260)) + slideInHorizontally(animationSpec = tween(260)) { it / 3 }) togetherWith
-                        (fadeOut(animationSpec = tween(200)) + slideOutHorizontally(animationSpec = tween(200)) { -it / 3 })
-                },
-                label = "topBarTitleAnimation",
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(start = if (onBack != null) 54.dp else 96.dp, end = 56.dp)
-                    .fillMaxWidth()
-                    .graphicsLayer { alpha = titleAlpha },
-            ) { trailing ->
-                if (trailing != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
+            /* Temporarily hidden: keep the scrolling center-title implementation
+             * intact so it can be restored without rebuilding its transitions.
+             *
+            // Artwork pages keep their large in-page heading and never create a
+            // duplicate title in the status bar, including in accessibility.
+            if (!artworkPageChrome) {
+                AnimatedContent(
+                    targetState = trailingTitle,
+                    transitionSpec = {
+                        (fadeIn(animationSpec = tween(260)) + slideInHorizontally(animationSpec = tween(260)) { it / 3 }) togetherWith
+                            (fadeOut(animationSpec = tween(200)) + slideOutHorizontally(animationSpec = tween(200)) { -it / 3 })
+                    },
+                    label = "topBarTitleAnimation",
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        // Reserve room for whatever flanks the title — and reserve
+                        // the *same* room on both sides. Equal is the whole point:
+                        // the title is centered within this padded box, so an inset
+                        // that differs end to end moves it off the bar's centre by
+                        // half that difference. Reserving what each side actually
+                        // needs (96dp for the wordmark, 56dp for the actions) put
+                        // every root tab's title 20dp right of centre, which is
+                        // visible against a status bar clock that is not.
+                        .padding(horizontal = max(leadingInset(onBack != null), ActionsInset))
+                        .fillMaxWidth()
+                        .graphicsLayer { alpha = titleAlpha },
+                ) { trailing ->
+                    if (trailing != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = trailing,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                    } else {
                         Text(
                             text = title,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = trailing,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.weight(1f, fill = false),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                } else {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
                 }
             }
+             */
             // On a pushed page the back affordance is always visible, since
             // there is no large in-list header to fall back on.
             if (onBack != null) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = stringResource(R.string.back),
-                        tint = MaterialTheme.colorScheme.onSurface,
+                if (useFloatingChrome) {
+                    ArtworkPageBackButton(
+                        onClick = onBack,
+                        hazeState = backButtonHazeState,
+                        // The surface edge aligns with the floating navbar. The
+                        // padding belongs outside the circle; its icon remains
+                        // centred in the same 44dp control in every material.
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .padding(start = PAGE_GUTTER),
                     )
+                } else {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.align(Alignment.CenterStart).padding(start = 4.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = stringResource(R.string.back),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
                 }
+            } else if (useFloatingChrome) {
+                FloatingAppMark(
+                    hazeState = backButtonHazeState,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = PAGE_GUTTER),
+                )
             } else {
                 Row(
                     modifier = Modifier
@@ -256,13 +329,25 @@ fun FrostedTopBar(
                     }
                 }
             }
-            Row(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                actions()
+            if (useFloatingChrome) {
+                ArtworkPageActions(
+                    hazeState = backButtonHazeState,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        // Same outer edge as the navbar; PILL_INSET below is
+                        // internal padding around the icons, not extra margin.
+                        .padding(end = PAGE_GUTTER),
+                    content = actions,
+                )
+            } else {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    actions()
+                }
             }
         }
         // The divider and the loader line share the bar's bottom edge; the box
@@ -276,6 +361,160 @@ fun FrostedTopBar(
             )
         }
     }
+}
+
+/** Root-page app mark: a navbar-matched logo circle plus an external Dev badge. */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun FloatingAppMark(
+    hazeState: HazeState?,
+    modifier: Modifier = Modifier,
+) {
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val useLiquidGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val contentColor = if (useLiquidGlass && !reduceDynamicBlur) {
+        glassContentColor()
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .then(artworkPageSurface(shape = CircleShape, hazeState = hazeState)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_logo),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(contentColor),
+                modifier = Modifier.size(width = 24.dp, height = 16.dp),
+            )
+        }
+        if (BuildConfig.FLAVOR == "dev") {
+            Text(
+                text = "Dev",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+    }
+}
+
+/** Circular floating back affordance, material-matched to the navbar. */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun ArtworkPageBackButton(
+    onClick: () -> Unit,
+    hazeState: HazeState?,
+    modifier: Modifier = Modifier,
+) {
+    val shape = CircleShape
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val useLiquidGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val contentColor = if (useLiquidGlass && !reduceDynamicBlur) {
+        glassContentColor()
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+
+    IconButton(
+        onClick = onClick,
+        modifier = modifier
+            .size(44.dp)
+            .then(artworkPageSurface(shape = shape, hazeState = hazeState)),
+    ) {
+        Icon(
+            Icons.AutoMirrored.Rounded.ArrowBack,
+            contentDescription = stringResource(R.string.back),
+            tint = contentColor,
+        )
+    }
+}
+
+/** One shared pill for every action at the right of a floating top bar. */
+@Composable
+private fun ArtworkPageActions(
+    hazeState: HazeState?,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    Row(
+        modifier = modifier
+            .then(artworkPageSurface(shape = CircleShape, hazeState = hazeState))
+            // Keep the right edge fixed while a new action opens room to its
+            // left. The surface itself therefore grows instead of jumping to
+            // its new width in a single frame.
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow,
+                ),
+            )
+            // One 48dp profile target with no inset is a true 48x48 circle.
+            // Once another action exists, restore the navbar's PILL_INSET at
+            // both edges. This is layout padding inside the surface, not an
+            // outer margin, so PAGE_GUTTER remains unchanged.
+            .artworkActionEdgePadding(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        content()
+    }
+}
+
+/**
+ * Navbar edge padding that collapses only for the profile-only state.
+ *
+ * Invisible/animating action slots can measure between zero and 48dp, so the
+ * natural content width—not the number of emitted composables—is the reliable
+ * source of truth. At exactly one icon target the pill stays circular; above
+ * that it gains the same inset as the navbar while retaining fully round ends.
+ */
+private fun Modifier.artworkActionEdgePadding(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = 0))
+    val oneActionWidth = 48.dp.roundToPx()
+    val extraActionFraction = ((placeable.width - oneActionWidth).toFloat() / oneActionWidth)
+        .coerceIn(0f, 1f)
+    val edgePadding = (PILL_INSET.roundToPx() * extraActionFraction).roundToInt()
+    val width = (placeable.width + edgePadding * 2).coerceIn(constraints.minWidth, constraints.maxWidth)
+
+    layout(width, placeable.height) {
+        placeable.placeRelative(edgePadding, 0)
+    }
+}
+
+/** The navbar's exact material choice, reusable by every floating top control. */
+@OptIn(ExperimentalHazeMaterialsApi::class)
+@Composable
+private fun artworkPageSurface(
+    shape: CornerBasedShape,
+    hazeState: HazeState?,
+): Modifier {
+    val container = MaterialTheme.colorScheme.surface
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val useLiquidGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+
+    return Modifier
+        .clip(shape)
+        .then(
+            when {
+                useLiquidGlass -> Modifier.liquidGlass(shape)
+                reduceDynamicBlur || hazeState == null -> Modifier.background(container)
+                else -> Modifier.optimizedHazeEffect(
+                    state = hazeState,
+                    style = HazeMaterials.regular(container),
+                )
+            },
+        )
+        // Keep the same explicit hairline as FloatingBottomBar. Liquid glass
+        // also has its refractive highlight, but the navbar retains this edge
+        // so these surfaces do as well.
+        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
 }
 
 /**

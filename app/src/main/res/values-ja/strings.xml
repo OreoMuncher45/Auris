@@ -640,7 +640,7 @@
     <string name="listen_together_server_unknown">タップして確認</string>
     <string name="listen_together_custom_server">自分のサーバーを使う</string>
     <string name="listen_together_custom_server_footer">空のままにすると内蔵サーバーを使います。自分でコピーを動かしている場合は、パーティーの全員が同じサーバーを指している必要があります。</string>
-    <string name="listen_together_using_builtin">内蔵サーバーを使用中</string>
+    <string name="listen_together_using_default">内蔵サーバーを使用中</string>
     <string name="listen_together_create">パーティーを作る</string>
     <string name="listen_together_create_subtitle">友だちに共有するコードを取得</string>
     <string name="listen_together_create_footer">6文字のコードが発行されます。コードを知っている人は誰でも参加でき、自分を含めて5台までです。</string>
@@ -829,6 +829,7 @@
     <string name="automix_mode_performance_subtitle">4 スレッド · 最速分析 · 発熱とバッテリー消費が高くなります</string>
 
     <string name="automix_not_supported_video">動画の曲では Automix はサポートされていません</string>
+    <string name="automix_stopped_in_party">Automix: 一緒に聴く中は停止</string>
 
     <string name="automix_performance">Automix パフォーマンス</string>
 
@@ -990,12 +991,6 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
 
     <string name="system_equalizer">System equalizer</string>
 

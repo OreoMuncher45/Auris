@@ -633,6 +633,7 @@
     <string name="running">In esecuzione</string>
     <string name="automix_analysis_status">Automix · questo brano: %1$s · successivo: %2$s</string>
     <string name="automix_not_supported_video">Automix non supportato sui video musicali</string>
+    <string name="automix_stopped_in_party">Automix: interrotto in “Ascoltare insieme”</string>
     <string name="analysis_complete">analizzato</string>
     <string name="analysis_refining">analizzato, rifinitura…</string>
     <string name="analysis_in_progress">analisi in corso…</string>
@@ -723,7 +724,7 @@
     <string name="listen_together_server_unknown">Tocca per controllare</string>
     <string name="listen_together_custom_server">Usa il tuo server</string>
     <string name="listen_together_custom_server_footer">Lascia vuoto per usare il server integrato. Se ne gestisci una copia tua, tutti nel party devono puntare alla stessa.</string>
-    <string name="listen_together_using_builtin">Si usa il server integrato</string>
+    <string name="listen_together_using_default">Si usa il server integrato</string>
     <string name="listen_together_create">Crea un party</string>
     <string name="listen_together_create_subtitle">Ottieni un codice da condividere con gli amici</string>
     <string name="listen_together_create_footer">Ricevi un codice di sei caratteri. Chi lo ha può entrare, fino a cinque dispositivi compreso il tuo.</string>
@@ -946,12 +947,6 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
 
     <string name="system_equalizer">System equalizer</string>
 
