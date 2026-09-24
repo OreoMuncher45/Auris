@@ -51,7 +51,7 @@ jobs:
               content = f.read()
 
           pattern = re.compile(r'(<!-- BEGIN CONTRIBUTORS -->\n)(.*?)(<!-- END CONTRIBUTORS -->)', re.DOTALL)
-          updated = pattern.sub(f'\\g<1>{new_section}\n\\3', content)
+          updated = pattern.sub(lambda m: m.group(1) + new_section + '\n' + m.group(3), content)
 
           with open('MAINTAINERS.md', 'w', encoding='utf-8') as f:
               f.write(updated)
