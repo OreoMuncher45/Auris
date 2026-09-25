@@ -1357,6 +1357,7 @@ fun NowPlayingScreen(
         if (showAudioPipeline) {
             AudioPipelineDialog(
                 hazeState = playerHaze,
+                isPlaying = isPlaying,
                 onDismiss = { showAudioPipeline = false },
             )
         }
