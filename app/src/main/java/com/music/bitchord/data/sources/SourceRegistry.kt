@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.net.Uri
 import android.util.Log
+import com.music.bitchord.auth.EncryptedPrefs
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.addon.AddonClient
@@ -11,8 +12,6 @@ import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.DetectedFormat
 import com.music.bitchord.data.sources.addon.SourceFormats
 import com.music.bitchord.data.settings.AudioQuality
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlinx.serialization.Serializable
@@ -83,21 +82,8 @@ object SourceRegistry {
     private var instances: Map<String, MusicSource> = emptyMap()
 
     fun init(context: Context) {
-        prefs = runCatching {
-            EncryptedSharedPreferences.create(
-                context,
-                "bitchord_sources",
-                MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-            )
-        }.getOrElse {
-            // Same degradation as AuthStore: a handful of OEM builds cannot
-            // init the keystore, and refusing to run at all is worse than
-            // storing this the way every other setting in the app is stored.
-            TrackLog.w(TAG, "EncryptedSharedPreferences unavailable for sources: ${it.message}")
-            context.getSharedPreferences("bitchord_sources_plain", Context.MODE_PRIVATE)
-        }
+        // Same repair and degradation as AuthStore; see EncryptedPrefs.
+        prefs = EncryptedPrefs.open(context, "bitchord_sources", "bitchord_sources_plain")
 
         val stored = prefs.getString(KEY_SOURCES, null)?.let(::decodeStored) ?: emptyList()
         val jioOptInMigrationDone = prefs.getBoolean(KEY_JIOSAAVN_OPT_IN_V1, false)

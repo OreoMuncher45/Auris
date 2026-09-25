@@ -2,9 +2,6 @@ package com.music.bitchord.auth
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.music.bitchord.data.DebugLog as Log
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
 
 /**
  * Encrypted-at-rest storage for credentials.
@@ -16,25 +13,15 @@ import androidx.security.crypto.MasterKey
  * full access to their account, so they don't go in the plain prefs the
  * scrobbler tokens use.
  *
- * Keystore init fails on a handful of OEM builds, so it degrades to plain
- * prefs rather than crashing on launch.
+ * A restored file whose keyset this device can't unwrap is recreated, and a
+ * Keystore that can't be used at all degrades to plain prefs rather than
+ * crashing on launch; see [EncryptedPrefs]. Kept out of backups for the first
+ * reason, in backup_rules.xml and data_extraction_rules.xml.
  */
 class AuthStore(context: Context) {
 
-    private val prefs: SharedPreferences = runCatching {
-        EncryptedSharedPreferences.create(
-            context,
-            "bitchord_auth",
-            MasterKey.Builder(context)
-                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-                .build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }.getOrElse {
-        Log.w("BitChord", "EncryptedSharedPreferences unavailable, falling back: ${it.message}")
-        context.getSharedPreferences("bitchord_auth_plain", Context.MODE_PRIVATE)
-    }
+    private val prefs: SharedPreferences =
+        EncryptedPrefs.open(context, "bitchord_auth", "bitchord_auth_plain")
 
     var cookie: String?
         get() = prefs.getString(KEY_COOKIE, null)
