@@ -44,8 +44,11 @@ import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.LoadEventInfo
-import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSpec
+import androidx.media3.datasource.TransferListener
+import androidx.media3.exoplayer.upstream.BandwidthMeter
+import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.CommandButton
@@ -90,6 +93,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.NerdStats
@@ -1234,7 +1238,7 @@ class PlaybackService : MediaLibraryService() {
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(stream.url))
                     .setHttpRequestHeaders(
-                        if (directYouTube) PlayerClient.forStreamUrl(stream.url).mediaHeaders()
+                        if (directYouTube) StreamResolver.mediaHeadersFor(stream.url)
                         else stream.headers,
                     )
                     .build()
@@ -1257,7 +1261,7 @@ class PlaybackService : MediaLibraryService() {
                 } catch (e: TimeoutCancellationException) {
                     throw java.io.IOException("Direct YouTube resolution timed out for $videoId", e)
                 }
-                val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
+                val headers = StreamResolver.mediaHeadersFor(streamUrl)
                 TrackLog.d("BitChord", "serving original YouTube version for $videoId", about = videoId)
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
@@ -1279,7 +1283,7 @@ class PlaybackService : MediaLibraryService() {
                 } catch (e: TimeoutCancellationException) {
                     throw java.io.IOException("Automix Opus resolution timed out for $videoId", e)
                 }
-                val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
+                val headers = StreamResolver.mediaHeadersFor(streamUrl)
                 return@Resolver dataSpec.buildUpon()
                     .setUri(Uri.parse(streamUrl))
                     .setHttpRequestHeaders(headers)
@@ -1403,7 +1407,7 @@ class PlaybackService : MediaLibraryService() {
                 // back for the bytes. A mismatch is answered with a throttled
                 // trickle or a 403 rather than an error worth the name, so the
                 // fetch is dressed as whatever the URL says it should be.
-                val headers = PlayerClient.forStreamUrl(streamUrl).mediaHeaders()
+                val headers = StreamResolver.mediaHeadersFor(streamUrl)
                 // Recorded even though only one server can answer here: a
                 // source enabled from Settings mid-track flips the branch
                 // above under a half-filled cache entry, and the entry would
@@ -1443,7 +1447,7 @@ class PlaybackService : MediaLibraryService() {
                 // again while the fallback plays.
                 is Resolved.YouTube -> {
                     NerdStats.recordSource(videoId, "YouTube")
-                    val headers = PlayerClient.forStreamUrl(won.url).mediaHeaders()
+                    val headers = StreamResolver.mediaHeadersFor(won.url)
                     StreamChoice.remember(videoId, SourceStream(won.url, headers = headers), substituted = false)
                     dataSpec.buildUpon()
                         .setUri(Uri.parse(won.url))
@@ -2877,6 +2881,37 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    /** Counts every byte a player reads, cache or network, progressive or DASH. */
+    private class CountingBandwidthMeter(private val delegate: BandwidthMeter) : BandwidthMeter by delegate {
+        val bytes = AtomicLong()
+
+        private val counter = object : TransferListener {
+            override fun onTransferInitializing(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
+                delegate.transferListener?.onTransferInitializing(source, dataSpec, isNetwork)
+            }
+
+            override fun onTransferStart(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
+                delegate.transferListener?.onTransferStart(source, dataSpec, isNetwork)
+            }
+
+            override fun onBytesTransferred(
+                source: DataSource,
+                dataSpec: DataSpec,
+                isNetwork: Boolean,
+                bytesTransferred: Int,
+            ) {
+                bytes.addAndGet(bytesTransferred.toLong())
+                delegate.transferListener?.onBytesTransferred(source, dataSpec, isNetwork, bytesTransferred)
+            }
+
+            override fun onTransferEnd(source: DataSource, dataSpec: DataSpec, isNetwork: Boolean) {
+                delegate.transferListener?.onTransferEnd(source, dataSpec, isNetwork)
+            }
+        }
+
+        override fun getTransferListener(): TransferListener = counter
+    }
+
     /**
      * Puts a track that died mid-read back on its feet.
      *
@@ -3999,31 +4034,8 @@ class PlaybackService : MediaLibraryService() {
     ): Long? {
         QualityUpgrade.beginAudition(mediaId)
         val startedAt = SystemClock.elapsedRealtime()
-        // What [auditionVerdict] checks a "Ready" claim against, alongside
-        // Media3's own bufferedPosition/bufferedPercentage. Those two are the
-        // player's own estimate of how far it could seek right now, and nothing
-        // stops that estimate from running well ahead of what has actually come
-        // off the network — a DASH source's duration and buffered-position
-        // arithmetic is derived from index/segment bookkeeping that is not the
-        // same thing as bytes received, and the two were measured disagreeing
-        // by three orders of magnitude on this exact path: an audition reported
-        // "buffered through 23466ms" after 1.6 real seconds, while the cache
-        // entry the swap was about to read from held 2.7 kilobytes. Counting
-        // completed loads is the one number here that cannot be that wrong,
-        // because it is Media3 reporting what its own loader actually finished
-        // reading, not a position it computed from a header.
-        var mediaBytesLoaded = 0L
-        val loadCounter = object : AnalyticsListener {
-            override fun onLoadCompleted(
-                eventTime: AnalyticsListener.EventTime,
-                loadEventInfo: LoadEventInfo,
-                mediaLoadData: MediaLoadData,
-            ) {
-                if (mediaLoadData.dataType == C.DATA_TYPE_MEDIA) {
-                    mediaBytesLoaded += loadEventInfo.bytesLoaded
-                }
-            }
-        }
+        // Bytes actually read, since bufferedPosition can run far ahead of them on DASH.
+        val meter = CountingBandwidthMeter(DefaultBandwidthMeter.getSingletonInstance(this))
         withContext(Dispatchers.IO) {
             // A clean entry first, because `#hifi` names a *slot* and not a
             // file. Every audition is a fresh candidate — a different catalogue,
@@ -4055,8 +4067,7 @@ class PlaybackService : MediaLibraryService() {
             AudioCache.warmRange(Uri.parse(upgradedUri), 0, UPGRADE_HEADER_BYTES)
         }
         val audition = withContext(Dispatchers.Main) {
-            buildAuditionPlayer().apply {
-                addAnalyticsListener(loadCounter)
+            buildAuditionPlayer(meter).apply {
                 setMediaItem(
                     at.item.buildUpon()
                         .setUri(upgradedUri)
@@ -4072,7 +4083,7 @@ class PlaybackService : MediaLibraryService() {
             warmedThrough = withTimeoutOrNull(UPGRADE_AUDITION_MS) {
                 while (true) {
                     val verdict = withContext(Dispatchers.Main) {
-                        auditionVerdict(audition, at.duration, stream, mediaBytesLoaded)
+                        auditionVerdict(audition, at.duration, stream, meter.bytes.get())
                     }
                     when (verdict) {
                         is Audition.Ready -> return@withTimeoutOrNull verdict.bufferedTo
@@ -4204,18 +4215,7 @@ class PlaybackService : MediaLibraryService() {
         //   upgrade landing at 39889ms, past the 32496ms warmed for it
         // ```
         if (buffered >= wantedThrough || audition.bufferedPercentage >= 100) {
-            // Neither of those numbers is bytes. Both are the player's own
-            // read of a container's index/duration bookkeeping, and that
-            // bookkeeping can say "ready" while almost nothing has actually
-            // come off the network — measured on this exact path: "buffered
-            // through 23466ms" after 1.6 real seconds, with 2.7 kilobytes
-            // sitting in the cache entry the swap was about to read from. A
-            // swap taken on that claim finds nothing local to read, and the
-            // stutter that follows is indistinguishable from a track looping.
-            // [loadCounter] in [auditionUpgrade] is Media3 reporting what its
-            // own loader actually finished reading, which the bookkeeping
-            // above cannot get wrong the same way — so it gates the swap
-            // rather than only the buffered-position claim.
+            // Measured: "buffered through 23466ms" with 2.7kB actually cached, and the swap then looped.
             if (bytesLoaded < MIN_PROVEN_LOAD_BYTES) return Audition.Waiting
             return Audition.Ready(buffered)
         }
@@ -4239,8 +4239,9 @@ class PlaybackService : MediaLibraryService() {
      * which the drift alone can eat. Held for seconds and then released with the
      * player.
      */
-    private fun buildAuditionPlayer(): ExoPlayer = ExoPlayer.Builder(this)
+    private fun buildAuditionPlayer(meter: BandwidthMeter): ExoPlayer = ExoPlayer.Builder(this)
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
+        .setBandwidthMeter(meter)
         .setLoadControl(
             DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
@@ -7406,11 +7407,8 @@ class PlaybackService : MediaLibraryService() {
          */
         const val DISCORD_TEARDOWN_TIMEOUT_MS = 3_000L
 
-        /**
-         * Size of each range the player fetches. The same figure read-ahead
-         * uses, and for the same reason — see [ChunkedDataSource].
-         */
-        const val STREAM_CHUNK_BYTES = 2L * 1024 * 1024
+        /** Upper bound per range; [PlayerClient.rangeBytesFor] narrows it per client. */
+        const val STREAM_CHUNK_BYTES = 1L * 1024 * 1024
 
         /** Shortest gap "skip silence" is allowed to touch. */
         const val MIN_SILENCE_US = 1_000_000L
@@ -7568,16 +7566,7 @@ class PlaybackService : MediaLibraryService() {
          */
         const val UPGRADE_HEADER_BYTES = 1L * 1024 * 1024
 
-        /**
-         * Real, Media3-reported bytes an audition must have actually loaded
-         * before its buffered-position/percentage claim is trusted — see the
-         * cross-check in [auditionVerdict].
-         *
-         * Set to [UPGRADE_HEADER_BYTES]: anything short of that is, at most,
-         * the container header the audition already fetches on its own before
-         * a single audio byte is read, so a "Ready" verdict backed by less than
-         * this is backed by no more than the header.
-         */
+        /** Loaded media bytes an audition needs before its buffered position is believed. */
         const val MIN_PROVEN_LOAD_BYTES = UPGRADE_HEADER_BYTES
 
         /**

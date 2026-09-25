@@ -71,7 +71,8 @@ val betaSuffix = "beta3"
 
 android {
     namespace = "com.music.bitchord"
-    compileSdk = 36
+    // InnerTubeX's AAR requires compiling against 37; targetSdk (runtime behaviour) stays 36.
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.music.bitchord"
@@ -307,14 +308,19 @@ dependencies {
     implementation("com.halilibo.compose-richtext:richtext-commonmark:0.20.0")
 
     // ---- Innertube (YouTube Music) client: Ktor + kotlinx.serialization ----
-    implementation("io.ktor:ktor-client-core:3.0.3")
-    implementation("io.ktor:ktor-client-okhttp:3.0.3")
-    implementation("io.ktor:ktor-client-content-negotiation:3.0.3")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    // Ktor and serialization are held at InnerTubeX's versions (below) so the
+    // upgrade it forces is explicit rather than resolved behind our backs.
+    implementation("io.ktor:ktor-client-core:3.5.2")
+    implementation("io.ktor:ktor-client-okhttp:3.5.2")
+    implementation("io.ktor:ktor-client-content-negotiation:3.5.2")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
 
     // ---- Discord Rich Presence: the gateway is a WebSocket, so Ktor needs the plugin ----
-    implementation("io.ktor:ktor-client-websockets:3.0.3")
+    implementation("io.ktor:ktor-client-websockets:3.5.2")
+
+    // ---- YouTube stream extraction: live-benchmarked client catalog + cipher tiers ----
+    implementation("com.github.MetrolistGroup.innertubex:innertubex-android:v0.7.0")
 
     // ---- Stream resolution: NewPipe solves YouTube's signature + `n` throttling ----
     // Pinned to v0.26.3, not the newer v0.26.4: v0.26.4's player-JS parser fails with
@@ -341,7 +347,8 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     // ---- JS module execution: QuickJS VM for style source plugins ----
-    implementation("io.github.dokar3:quickjs-kt-android:1.0.5")
+    // Held at InnerTubeX's version; the same VM runs QuickJsExecutor's module sources.
+    implementation("io.github.dokar3:quickjs-kt-android:1.0.14")
 
     // ---- SMB file shares: pure-Java SMB2/3 client (listing + streaming) ----
     implementation("com.hierynomus:smbj:0.15.0")
@@ -357,7 +364,7 @@ dependencies {
     // "what does this app send, and what does it do with what comes back", and
     // a hand-rolled fake of the client would be a test of the fake. Pinned to
     // the OkHttp version already on the runtime classpath.
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.3.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
