@@ -409,7 +409,7 @@ private fun ReorderableSourceList(
     }
 
     // Runs only while [autoScroll] is pointed somewhere — see
-    // [rememberQueueDragState] in the main queue for the same shape of loop,
+    // [rememberQueueDrag] in the main queue for the same shape of loop,
     // scrolling a different kind of list.
     LaunchedEffect(autoScroll.dir) {
         if (autoScroll.dir == 0) return@LaunchedEffect

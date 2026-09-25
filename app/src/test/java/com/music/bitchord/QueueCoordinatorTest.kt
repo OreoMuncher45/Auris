@@ -288,16 +288,17 @@ class QueueCoordinatorTest {
 
     @Test
     fun `clearUserQueue removes only USER_QUEUE items after currentIndex`() {
-        val items = mutableListOf(
-            testSong("playing", tier = QueueTier.CONTEXT).toMediaItem(),
-            testSong("u1", tier = QueueTier.USER_QUEUE).toMediaItem(),
-            testSong("u2", tier = QueueTier.USER_QUEUE).toMediaItem(),
-            testSong("c1", tier = QueueTier.CONTEXT).toMediaItem(),
-            testSong("a1", tier = QueueTier.AUTOPLAY).toMediaItem(),
+        val songs = listOf(
+            testSong("playing", tier = QueueTier.CONTEXT),
+            testSong("u1", tier = QueueTier.USER_QUEUE),
+            testSong("u2", tier = QueueTier.USER_QUEUE),
+            testSong("c1", tier = QueueTier.CONTEXT),
+            testSong("a1", tier = QueueTier.AUTOPLAY),
         )
+        val items = songs.map { it.toMediaItem() }.toMutableList()
         val player = createFakePlayer(items, currentIndex = { 0 })
 
-        QueueCoordinator.clearUserQueue(player)
+        QueueCoordinator.clearUserQueue(player, tierAt(songs, items))
 
         assertEquals(3, items.size)
         assertEquals("playing", items[0].mediaId)
@@ -308,15 +309,16 @@ class QueueCoordinatorTest {
     @Test
     fun `consumePlayedUserQueue prunes user queue items when entering context`() {
         var currentIndex = 2
-        val items = mutableListOf(
-            testSong("u1", tier = QueueTier.USER_QUEUE).toMediaItem(),
-            testSong("u2", tier = QueueTier.USER_QUEUE).toMediaItem(),
-            testSong("c1", tier = QueueTier.CONTEXT).toMediaItem(),
-            testSong("c2", tier = QueueTier.CONTEXT).toMediaItem(),
+        val songs = listOf(
+            testSong("u1", tier = QueueTier.USER_QUEUE),
+            testSong("u2", tier = QueueTier.USER_QUEUE),
+            testSong("c1", tier = QueueTier.CONTEXT),
+            testSong("c2", tier = QueueTier.CONTEXT),
         )
+        val items = songs.map { it.toMediaItem() }.toMutableList()
         val player = createFakePlayer(items, currentIndex = { currentIndex })
 
-        QueueCoordinator.consumePlayedUserQueue(player)
+        QueueCoordinator.consumePlayedUserQueue(player, tierAt(songs, items))
 
         assertEquals(2, items.size)
         assertEquals("c1", items[0].mediaId)
@@ -351,6 +353,42 @@ class QueueCoordinatorTest {
         assertEquals("u2", result[2].videoId)
         assertEquals(QueueTier.USER_QUEUE, result[2].queueTier)
         assertEquals("entry-u2", result[2].queueEntryId)
+    }
+
+    @Test
+    fun `buildJumpQueue to context track keeps autoplay`() {
+        val timeline = listOf(
+            testSong("now", tier = QueueTier.CONTEXT),
+            testSong("c1", tier = QueueTier.CONTEXT),
+            testSong("c2", tier = QueueTier.CONTEXT),
+            testSong("a1", tier = QueueTier.AUTOPLAY),
+            testSong("a2", tier = QueueTier.AUTOPLAY),
+        )
+
+        val result = QueueCoordinator.buildJumpQueue(timeline, currentIndex = 0, targetIndex = 1)!!
+
+        assertEquals(listOf("c1", "c2", "a1", "a2"), result.map { it.videoId })
+        assertEquals(QueueTier.AUTOPLAY, result[2].queueTier)
+        assertEquals(QueueTier.AUTOPLAY, result[3].queueTier)
+    }
+
+    @Test
+    fun `buildJumpQueue to a middle autoplay track keeps the autoplay after it`() {
+        val timeline = listOf(
+            testSong("now", tier = QueueTier.CONTEXT),
+            testSong("u1", tier = QueueTier.USER_QUEUE),
+            testSong("c1", tier = QueueTier.CONTEXT),
+            testSong("a1", tier = QueueTier.AUTOPLAY),
+            testSong("a2", tier = QueueTier.AUTOPLAY),
+            testSong("a3", tier = QueueTier.AUTOPLAY),
+        )
+
+        val result = QueueCoordinator.buildJumpQueue(timeline, currentIndex = 0, targetIndex = 4)!!
+
+        // a1 was skipped over and c1 was the old context; a3 is still to come.
+        assertEquals(listOf("a2", "u1", "a3"), result.map { it.videoId })
+        assertEquals(QueueTier.CONTEXT, result[0].queueTier)
+        assertEquals(QueueTier.AUTOPLAY, result[2].queueTier)
     }
 
     @Test
@@ -438,12 +476,13 @@ class QueueCoordinatorTest {
     @Test
     fun `jumpToQueueItem updates player retaining history and setting new upcoming items`() {
         var activeIndex = 0
-        val items = mutableListOf(
-            testSong("history0", tier = QueueTier.CONTEXT).toMediaItem(),
-            testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1").toMediaItem(),
-            testSong("c1", tier = QueueTier.CONTEXT).toMediaItem(),
-            testSong("a1", tier = QueueTier.AUTOPLAY).toMediaItem(),
+        val songs = listOf(
+            testSong("history0", tier = QueueTier.CONTEXT),
+            testSong("u1", tier = QueueTier.USER_QUEUE, entryId = "entry-u1"),
+            testSong("c1", tier = QueueTier.CONTEXT),
+            testSong("a1", tier = QueueTier.AUTOPLAY),
         )
+        val items = songs.map { it.toMediaItem() }.toMutableList()
 
         val player = Proxy.newProxyInstance(
             Player::class.java.classLoader,
@@ -472,16 +511,20 @@ class QueueCoordinatorTest {
             }
         } as Player
 
-        // Jump to a1 (index 3)
-        QueueCoordinator.jumpToQueueItem(player, targetIndex = 3)
+        // Jump to a1 (index 3). The timeline is passed in because a MediaItem's
+        // tier can't be read back on the JVM; the promotion of a1 to CONTEXT is
+        // covered by the buildJumpQueue tests.
+        QueueCoordinator.jumpToQueueItem(player, targetIndex = 3, cachedTimeline = songs)
 
-        // Playlist should now be: [history0 (retained), a1 (now active CONTEXT), u1 (preserved USER_QUEUE)]
+        // Playlist should now be: [history0 (retained), a1 (now active), u1 (preserved)]
         assertEquals(3, items.size)
         assertEquals(1, activeIndex)
-        assertEquals("history0", items[0].mediaId)
-        assertEquals("a1", items[1].mediaId)
-        assertEquals(QueueTier.CONTEXT, items[1].queueTier)
-        assertEquals("u1", items[2].mediaId)
-        assertEquals(QueueTier.USER_QUEUE, items[2].queueTier)
+        assertEquals(listOf("history0", "a1", "u1"), items.map { it.mediaId })
+    }
+
+    /** Tiers looked up by song, since MediaItem metadata extras don't survive on the JVM. */
+    private fun tierAt(songs: List<Song>, items: List<MediaItem>): (Int) -> QueueTier {
+        val byId = songs.associate { it.videoId to it.queueTier }
+        return { index -> byId.getValue(items[index].mediaId) }
     }
 }

@@ -67,7 +67,7 @@ val listenTogetherServer: String = (
  * comes. Blanking this line is the one step that turns a beta into a release,
  * so it is the one place to get right.
  */
-val betaSuffix = "beta2"
+val betaSuffix = "beta3"
 
 android {
     namespace = "com.music.bitchord"

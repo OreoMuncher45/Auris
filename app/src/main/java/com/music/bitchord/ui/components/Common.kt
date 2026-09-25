@@ -625,10 +625,10 @@ fun DownloadedBadge(videoId: String, tint: Color, modifier: Modifier = Modifier)
  * Pull-to-refresh for the tab feeds, with the usual circular puck suppressed.
  *
  * The feeds sit under a frosted bar that already occupies the top 96dp, so a
- * puck dropping into that space would be blurred out by the glass it lands
- * behind. The drag feedback is the loader line along the bottom edge of the
- * bar instead — which is why [state] is hoisted: the bar lives beside this
- * content, not inside it, and has to follow the same drag.
+ * puck drawn here would be blurred out by the glass it lands behind. The bar
+ * draws its own puck instead, sliding out from under its bottom edge — which
+ * is why [state] is hoisted: the bar lives beside this content, not inside it,
+ * and has to follow the same drag.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -177,19 +177,6 @@ fun MediaController.swapToVersion(targetSong: Song) {
     )
 }
 
-/**
- * Asks the service to start measuring [targetSong] against whatever is
- * playing now, in the background — see [ACTION_PREWARM_VERSION_ALIGNMENT].
- * Fire-and-forget: nothing here waits on or reports back the result, which
- * arrives later through [targetSong]'s own cached offset.
- */
-fun MediaController.prewarmVersionAlignment(targetSong: Song) {
-    sendCustomCommand(
-        SessionCommand(ACTION_PREWARM_VERSION_ALIGNMENT, Bundle.EMPTY),
-        bundleOf(EXTRA_SWAP_MEDIA_ITEM to targetSong.toSongBundle()),
-    )
-}
-
 fun Song.toSongBundle(): Bundle = bundleOf(
     "videoId" to videoId,
     "title" to title,
@@ -405,9 +392,7 @@ val MediaItem.fromAutoplay: Boolean
 /** @see Song.queueTier */
 val MediaItem.queueTier: QueueTier
     get() {
-        val raw = mediaMetadata.extras?.getString(EXTRA_QUEUE_TIER)
-            ?: mediaMetadata.genre?.toString()
-        return when (raw) {
+        return when (mediaMetadata.extras?.getString(EXTRA_QUEUE_TIER)) {
             "USER_QUEUE" -> QueueTier.USER_QUEUE
             "CONTEXT" -> QueueTier.CONTEXT
             "AUTOPLAY" -> QueueTier.AUTOPLAY
@@ -422,7 +407,6 @@ val MediaItem.queueTier: QueueTier
 /** @see Song.queueEntryId */
 val MediaItem.queueEntryId: String?
     get() = mediaMetadata.extras?.getString(EXTRA_QUEUE_ENTRY_ID)
-        ?: mediaMetadata.writer?.toString()
 
 /** Public metadata keys for queue categorization and immutable queue entry identity. */
 const val EXTRA_QUEUE_TIER = "bitchord.queueTier"
@@ -635,8 +619,6 @@ fun Song.toMediaItem(): MediaItem {
             .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
             .setIsPlayable(true)
             .setIsBrowsable(false)
-            .setGenre(queueTier.name)
-            .setWriter(queueEntryId)
             // What a queue entry has to carry about itself: which section of
             // the queue it belongs to, whether it is playing off the device,
             // and how long the row that queued it said it runs. The uri two

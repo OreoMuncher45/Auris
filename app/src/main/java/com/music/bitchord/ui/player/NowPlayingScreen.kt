@@ -25,13 +25,9 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -74,6 +70,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.animation.core.animateDpAsState
 import kotlinx.coroutines.delay
@@ -97,9 +94,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListItemInfo
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -119,7 +118,6 @@ import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Translate
-import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -1048,14 +1046,9 @@ fun NowPlayingScreen(
     isLoading: Boolean,
     positionMs: Long,
     durationMs: Long,
-    /** True only while this current item is the manual catalogue-audio match. */
-    isAudioVersion: Boolean,
-    /** A catalogue lookup is in progress for this video's manual conversion. */
+    /** A version switch (video vs audio-only), triggered from the player's
+     * menu, is fetching and measuring the target cut. */
     audioVersionSwitching: Boolean,
-    /** Whether an alternate (video vs audio) version exists for this track. */
-    hasAlternateVersion: Boolean = false,
-    /** Legacy alias for [hasAlternateVersion]. */
-    hasVideoVersion: Boolean = false,
     /** The player has just swapped this item to a higher-quality source. */
     qualityUpgraded: Boolean,
     queue: List<Song>,
@@ -1092,7 +1085,6 @@ fun NowPlayingScreen(
      * freshest duration is.
      */
     onSeekFraction: (Float) -> Unit,
-    onToggleAudioVersion: () -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeat: () -> Unit,
     onToggleAutoplay: () -> Unit,
@@ -2437,10 +2429,7 @@ fun NowPlayingScreen(
             song = song,
             isPlaying = isPlaying,
             isLoading = isLoading || audioVersionSwitching,
-            isAudioVersion = isAudioVersion,
             audioVersionSwitching = audioVersionSwitching,
-            hasAlternateVersion = hasAlternateVersion || hasVideoVersion,
-            onToggleAudioVersion = onToggleAudioVersion,
             positionMs = positionMs,
             durationMs = durationMs,
             hasPrevious = hasPrevious,
@@ -4224,25 +4213,10 @@ fun NowPlayingScreen(
                             )
                         }
                     } else {
-                        // The pill's own loading dot has to cover the same
-                        // span the scrubber's sheen does — fetch and measure,
-                        // not just the initial resolve — or the tap that
-                        // started the whole thing goes dark here the moment
-                        // the resolve step ends while the switch is still
-                        // running. Declared fresh rather than reused from
-                        // further up: this segment is composed unconditionally
-                        // once music-only mode is off, so it cannot depend on
-                        // a `val` scoped to a block music-only mode might skip.
-                        val pillVersionAligning by AppSettings.versionAlignmentInProgress
-                            .collectAsStateWithLifecycle()
                         OutputPartyPill(
                             onOutput = openAudioOutput,
                             onParty = onListenTogether,
                             onOpenMembers = openListenTogetherMembers,
-                            onChangeTrack = onToggleAudioVersion,
-                            isAudioVersion = isAudioVersion,
-                            audioVersionSwitching = audioVersionSwitching || pillVersionAligning,
-                            showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                         )
                     }
                 }
@@ -4421,11 +4395,7 @@ private fun WidePlayerControls(
     song: Song,
     isPlaying: Boolean,
     isLoading: Boolean,
-    isAudioVersion: Boolean = false,
     audioVersionSwitching: Boolean = false,
-    hasAlternateVersion: Boolean = false,
-    hasVideoVersion: Boolean = false,
-    onToggleAudioVersion: () -> Unit = {},
     positionMs: Long,
     durationMs: Long,
     hasPrevious: Boolean,
@@ -4778,13 +4748,6 @@ private fun WidePlayerControls(
                                 onOutput = onOpenOutput,
                                 onParty = onListenTogether,
                                 onOpenMembers = onOpenListenTogetherMembers,
-                                onChangeTrack = onToggleAudioVersion,
-                                isAudioVersion = isAudioVersion,
-                                // Covers fetch and measure as well as the
-                                // resolve step — see [versionSwitching] and
-                                // its twin at the portrait call site.
-                                audioVersionSwitching = versionSwitching,
-                                showChangeTrack = hasAlternateVersion || hasVideoVersion || audioVersionSwitching,
                             )
                         }
                     }
@@ -7041,9 +7004,9 @@ private val BOTTOM_ACTION_SIZE = 44.dp
 private val PILL_SEGMENT_WIDTH = 64.dp
 
 /**
- * Segment width for [OutputPartyPill] once a third icon joins the row — see
- * its own note. The two-up spacing left each glyph with room the eye read as
- * empty even at two; a third icon at the same width just multiplied that
+ * Segment width for the Shuffle/Repeat/Autoplay capsule, which is always
+ * three icons: the two-up spacing left each glyph with room the eye read as
+ * empty even at two, and a third icon at the same width just multiplied that
  * empty space instead of tightening it.
  */
 private val PILL_SEGMENT_WIDTH_TRIPLE = 52.dp
@@ -7104,75 +7067,33 @@ private fun PillDivider() {
     )
 }
 
+/**
+ * The two ends of "where is this playing": the output capsule.
+ *
+ * Both halves answer the same question and so belong to one control rather than
+ * two glyphs that happen to sit side by side — headphones for which speaker the
+ * sound leaves by, the party for which *people* it reaches.
+ *
+ * Video vs audio-only used to live here as a third segment; it now lives in
+ * the player's own three-dot menu, beside Revert to original and Upgrade
+ * quality — the same kind of choice, offered the same way. This capsule is
+ * back to the two icons it always otherwise had, at their original spacing.
+ */
 @Composable
 private fun OutputPartyPill(
     onOutput: () -> Unit,
     onParty: () -> Unit,
     /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
     onOpenMembers: () -> Unit,
-    onChangeTrack: (() -> Unit)? = null,
-    isAudioVersion: Boolean = false,
-    audioVersionSwitching: Boolean = false,
-    showChangeTrack: Boolean = false,
 ) {
     val badge = rememberPartyBadge()
-    // Three icons in one capsule read as cramped at the two-up spacing, so
-    // the segment narrows to make room — but only while the third one is
-    // actually showing. The two-up case (no alternate version, or a Listen
-    // Together party where the toggle is hidden entirely) keeps the spacing
-    // it always had; nothing about that layout changed.
-    val segmentWidth = if (showChangeTrack) PILL_SEGMENT_WIDTH_TRIPLE else PILL_SEGMENT_WIDTH
     Pill {
         PillSegment(
             icon = Icons.Rounded.Headphones,
             iconSize = PILL_HEADPHONES_SIZE,
             contentDescription = stringResource(R.string.audio_output),
             onClick = onOutput,
-            width = segmentWidth,
         )
-        AnimatedVisibility(
-            visible = showChangeTrack && onChangeTrack != null,
-            enter = fadeIn(animationSpec = tween(280, easing = FastOutSlowInEasing)) +
-                expandHorizontally(
-                    animationSpec = spring(
-                        dampingRatio = 0.82f,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
-                    expandFrom = Alignment.CenterHorizontally,
-                    clip = true,
-                ),
-            exit = fadeOut(animationSpec = tween(200, easing = FastOutSlowInEasing)) +
-                shrinkHorizontally(
-                    animationSpec = spring(
-                        dampingRatio = 0.82f,
-                        stiffness = Spring.StiffnessMediumLow,
-                    ),
-                    shrinkTowards = Alignment.CenterHorizontally,
-                    clip = true,
-                ),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PillDivider()
-                PillSegment(
-                    icon = if (isAudioVersion) BitChordIcons.MusicNote else Icons.Rounded.Videocam,
-                    // No explicit size: the default [PILL_ICON_SIZE] is what
-                    // the output and party glyphs beside it use undeclared,
-                    // and the smaller override here read as visibly off
-                    // against them in the same row.
-                    contentDescription = stringResource(
-                        if (isAudioVersion) R.string.revert_to_original else R.string.convert_to_audio
-                    ),
-                    onClick = onChangeTrack ?: {},
-                    highlighted = isAudioVersion,
-                    // The resolve half of the switch; the alignment half runs
-                    // its loading bar along the scrubber — see
-                    // [ThinSlider.loading]. Lit here as well so the tap that
-                    // starts the whole thing visibly registered.
-                    loading = audioVersionSwitching,
-                    width = segmentWidth,
-                )
-            }
-        }
         PillDivider()
         PillSegment(
             // Person rather than Groups: the three-person glyph is drawn half
@@ -7194,10 +7115,6 @@ private fun OutputPartyPill(
             onClick = if (badge.inParty) onOpenMembers else onParty,
             highlighted = badge.inParty,
             trailingLabel = badge.members.takeIf { badge.inParty }?.toString(),
-            // Party never coincides with the three-up layout — the toggle is
-            // hidden for the whole time a Listen Together session is active —
-            // so this only ever narrows alongside a real third segment.
-            width = segmentWidth,
         )
     }
 }
@@ -7731,19 +7648,61 @@ private fun Modifier.fadingEdges(): Modifier = this
         )
     }
 
-/** A row in the structured queue drawer (header or track). */
-private sealed interface QueueRow {
-    data class SectionHeader(
-        val title: String,
-        val canClear: Boolean = false,
-        val subtitle: String? = null,
-    ) : QueueRow
-    data class Track(
-        val timelineIndex: Int,
-        val song: Song,
-        val entryId: String,
-    ) : QueueRow
+/** One track in [InlineQueue], and where it sits in the player's timeline. */
+private data class QueueTrack(val timelineIndex: Int, val song: Song, val key: String)
+
+/** The groups a queue row can be dragged within; a drag never leaves its own. */
+private enum class QueueSection { USER, CONTEXT, AUTOPLAY }
+
+/** The queue as [InlineQueue] lists it: what's playing, then each section in running order. */
+private class QueueTracks(
+    val nowPlaying: QueueTrack?,
+    val user: List<QueueTrack>,
+    val context: List<QueueTrack>,
+    val autoplay: List<QueueTrack>,
+) {
+    operator fun get(section: QueueSection): List<QueueTrack> = when (section) {
+        QueueSection.USER -> user
+        QueueSection.CONTEXT -> context
+        QueueSection.AUTOPLAY -> autoplay
+    }
+
+    companion object {
+        val EMPTY = QueueTracks(null, emptyList(), emptyList(), emptyList())
+    }
 }
+
+private fun splitQueue(queue: List<Song>, currentIndex: Int): QueueTracks {
+    if (currentIndex !in queue.indices) return QueueTracks.EMPTY
+    // Keyed by the entry's own id, so a row keeps its identity through a reorder.
+    // Entries without one (a party's tracks, a queue restored from before ids
+    // existed) fall back to the song plus how many times it has come up so far
+    // — never its position, which changes on every swap and would end the drag.
+    val seen = HashMap<String, Int>()
+    val occurrence = IntArray(queue.size) { i ->
+        val id = queue[i].videoId
+        seen.getOrDefault(id, 0).also { seen[id] = it + 1 }
+    }
+    fun track(index: Int, prefix: String): QueueTrack {
+        val song = queue[index]
+        return QueueTrack(index, song, prefix + "_" + (song.queueEntryId ?: "${song.videoId}#${occurrence[index]}"))
+    }
+    val user = ArrayList<QueueTrack>()
+    val context = ArrayList<QueueTrack>()
+    val autoplay = ArrayList<QueueTrack>()
+    for (index in currentIndex + 1 until queue.size) {
+        when (queue[index].queueTier) {
+            QueueTier.USER_QUEUE -> user += track(index, "user")
+            QueueTier.CONTEXT -> context += track(index, "context")
+            QueueTier.AUTOPLAY -> autoplay += track(index, "autoplay")
+        }
+    }
+    return QueueTracks(track(currentIndex, "np"), user, context, autoplay)
+}
+
+/** Placement-only item motion; see [QUEUE_ROW_MOTION]. */
+private fun LazyItemScope.queueMotion(): Modifier =
+    Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = QUEUE_ROW_MOTION)
 
 /** The live queue, in the player itself. */
 @Composable
@@ -7778,104 +7737,26 @@ private fun InlineQueue(
         onReveal = onRevealPlayer,
         onHide = onHidePlayer,
     )
+    val tracks = remember(queue, currentIndex) { splitQueue(queue, currentIndex) }
+    val drag = rememberQueueDrag(listState, tracks, onMove, onDragActiveChange)
+    val nowPlaying = tracks.nowPlaying
+    val contextSong = tracks.context.firstOrNull()?.song
+    val contextTitle = contextSong?.playbackSource?.takeIf { it.isNotBlank() }
+        ?: contextSong?.albumName?.takeIf { it.isNotBlank() }
+        ?: nowPlaying?.song?.playbackSource?.takeIf { it.isNotBlank() }
+        ?: nowPlaying?.song?.albumName?.takeIf { it.isNotBlank() }
 
-    val nowPlayingTrack = remember(queue, currentIndex) {
-        if (currentIndex in queue.indices) {
-            val s = queue[currentIndex]
-            QueueRow.Track(currentIndex, s, "np_${s.queueEntryId ?: "${s.videoId}_$currentIndex"}")
-        } else null
-    }
-
-    val (userQueueTracks, contextTracks, autoplayTracks) = remember(queue, currentIndex) {
-        if (currentIndex !in queue.indices) {
-            Triple(emptyList<QueueRow.Track>(), emptyList<QueueRow.Track>(), emptyList<QueueRow.Track>())
-        } else {
-            val user = ArrayList<QueueRow.Track>()
-            val context = ArrayList<QueueRow.Track>()
-            val autoplay = ArrayList<QueueRow.Track>()
-            for (idx in (currentIndex + 1 until queue.size)) {
-                val s = queue[idx]
-                when (s.queueTier) {
-                    QueueTier.USER_QUEUE -> user.add(QueueRow.Track(idx, s, "user_${s.queueEntryId ?: "${s.videoId}_$idx"}"))
-                    QueueTier.CONTEXT -> context.add(QueueRow.Track(idx, s, "context_${s.queueEntryId ?: "${s.videoId}_$idx"}"))
-                    QueueTier.AUTOPLAY -> autoplay.add(QueueRow.Track(idx, s, "autoplay_${s.queueEntryId ?: "${s.videoId}_$idx"}"))
-                }
-            }
-            Triple(user, context, autoplay)
-        }
-    }
-
-    val contextTitle = remember(contextTracks, nowPlayingTrack) {
-        contextTracks.firstOrNull()?.song?.playbackSource?.takeIf { it.isNotBlank() }
-            ?: contextTracks.firstOrNull()?.song?.albumName?.takeIf { it.isNotBlank() }
-            ?: nowPlayingTrack?.song?.playbackSource?.takeIf { it.isNotBlank() }
-            ?: nowPlayingTrack?.song?.albumName?.takeIf { it.isNotBlank() }
-    }
-
-    val preUserQueueCount = if (nowPlayingTrack != null) 2 else 0
-
-    val userQueueLazyStart = preUserQueueCount + if (userQueueTracks.isNotEmpty()) 1 else 0
-    val userQueueRange = if (userQueueTracks.isNotEmpty()) {
-        userQueueLazyStart until (userQueueLazyStart + userQueueTracks.size)
-    } else {
-        IntRange.EMPTY
-    }
-    val userQueueLazyOffset = userQueueLazyStart - (currentIndex + 1)
-    val userQueueCount = if (userQueueTracks.isNotEmpty()) 1 + userQueueTracks.size else 0
-
-    val contextLazyStart = preUserQueueCount + userQueueCount + if (contextTracks.isNotEmpty()) 1 else 0
-    val contextRange = if (contextTracks.isNotEmpty()) {
-        contextLazyStart until (contextLazyStart + contextTracks.size)
-    } else {
-        IntRange.EMPTY
-    }
-    val contextTimelineStart = currentIndex + 1 + userQueueTracks.size
-    val contextLazyOffset = contextLazyStart - contextTimelineStart
-    val contextCount = if (contextTracks.isNotEmpty()) 1 + contextTracks.size else 0
-
-    val autoplayHeadingShown = autoplayEnabled || autoplayTracks.isNotEmpty()
-    val autoplayLazyStart = preUserQueueCount + userQueueCount + contextCount + if (autoplayHeadingShown) 1 else 0
-    val autoplayRange = if (autoplayTracks.isNotEmpty()) {
-        autoplayLazyStart until (autoplayLazyStart + autoplayTracks.size)
-    } else {
-        IntRange.EMPTY
-    }
-    val autoplayTimelineStart = currentIndex + 1 + userQueueTracks.size + contextTracks.size
-    val autoplayLazyOffset = autoplayLazyStart - autoplayTimelineStart
-
-    val userQueueDrag = rememberQueueDragState(
-        listState = listState,
-        lazyRange = userQueueRange,
-        lazyOffset = userQueueLazyOffset,
-        onMove = onMove,
-        onDragActiveChange = onDragActiveChange,
-    )
-    val contextDrag = rememberQueueDragState(
-        listState = listState,
-        lazyRange = contextRange,
-        lazyOffset = contextLazyOffset,
-        onMove = onMove,
-        onDragActiveChange = onDragActiveChange,
-    )
-    val autoplayDrag = rememberQueueDragState(
-        listState = listState,
-        lazyRange = autoplayRange,
-        lazyOffset = autoplayLazyOffset,
-        onMove = onMove,
-        onDragActiveChange = onDragActiveChange,
-    )
-
+    // Back to the top on a track change — snapped the first time, animated
+    // after — but never mid-drag, which would pull the list from under the finger.
     var hasScrolledOnce by remember { mutableStateOf(false) }
     LaunchedEffect(currentIndex) {
-        val holding = userQueueDrag.draggedKey != null || contextDrag.draggedKey != null || autoplayDrag.draggedKey != null
-        if (!holding && nowPlayingTrack != null) {
-            if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
-                if (hasScrolledOnce) {
-                    listState.animateScrollToItem(0)
-                } else {
-                    listState.scrollToItem(0)
-                    hasScrolledOnce = true
-                }
+        val scrolledAway = listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0
+        if (drag.held == null && nowPlaying != null && scrolledAway) {
+            if (hasScrolledOnce) {
+                listState.animateScrollToItem(0)
+            } else {
+                listState.scrollToItem(0)
+                hasScrolledOnce = true
             }
         }
     }
@@ -7891,254 +7772,89 @@ private fun InlineQueue(
                 color = Color.White,
                 modifier = Modifier.weight(1f),
             )
-            if (userQueueTracks.isNotEmpty()) {
-                Text(
-                    text = stringResource(R.string.clear),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = if (controlsLocked) 0.25f else 0.75f),
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(percent = 50))
-                        .clickable(enabled = !controlsLocked, onClick = onClear)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
+            if (tracks.user.isNotEmpty()) {
+                QueueClearButton(MaterialTheme.typography.titleMedium, controlsLocked, onClear)
             }
         }
         Spacer(Modifier.height(4.dp))
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .bleedHorizontally(PLAYER_GUTTER)
-                .nestedScroll(keepScroll)
-                .then(
-                    if (collapsePlayerOnScroll) Modifier.nestedScroll(controlsOnScroll)
-                    else Modifier,
-                )
                 .fadingEdges(),
-            contentPadding = PaddingValues(horizontal = PLAYER_GUTTER),
         ) {
-            if (nowPlayingTrack != null) {
-                item(key = "header-now-playing") {
-                    Text(
-                        text = stringResource(R.string.now_playing),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White.copy(alpha = 0.75f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp, bottom = 6.dp),
-                    )
-                }
-                item(key = nowPlayingTrack.entryId) {
-                    InlineQueueRow(
-                        song = nowPlayingTrack.song,
-                        isCurrent = true,
-                        onClick = { onJumpTo(nowPlayingTrack.timelineIndex) },
-                        onRemove = { onRemove(nowPlayingTrack.timelineIndex) },
-                        locked = controlsLocked,
-                        draggable = false,
-                        dragging = false,
-                        onDragStart = {},
-                        onDrag = {},
-                        onDragEnd = {},
-                        modifier = Modifier.animateItem(
-                            fadeInSpec = null,
-                            fadeOutSpec = null,
-                            placementSpec = QUEUE_ROW_MOTION,
-                        ),
-                    )
-                }
-            }
-
-            if (userQueueTracks.isNotEmpty()) {
-                item(key = "header-user-queue") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp, bottom = 6.dp)
-                            .animateItem(
-                                fadeInSpec = null,
-                                fadeOutSpec = null,
-                                placementSpec = QUEUE_ROW_MOTION,
-                            ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = stringResource(R.string.next_in_queue),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White.copy(alpha = 0.75f),
-                            modifier = Modifier.weight(1f),
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // Without this the sheet treats the list's leftover scroll as a
+                    // drag on itself and slides the whole player away.
+                    .nestedScroll(keepScroll)
+                    .then(if (collapsePlayerOnScroll) Modifier.nestedScroll(controlsOnScroll) else Modifier),
+                contentPadding = PaddingValues(horizontal = PLAYER_GUTTER),
+            ) {
+                if (nowPlaying != null) {
+                    item(key = "header-now-playing") {
+                        QueueHeading(
+                            title = stringResource(R.string.now_playing),
+                            modifier = Modifier.padding(top = 12.dp, bottom = 6.dp),
                         )
-                        Text(
-                            text = stringResource(R.string.clear),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = Color.White.copy(alpha = if (controlsLocked) 0.25f else 0.75f),
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(percent = 50))
-                                .clickable(enabled = !controlsLocked, onClick = onClear)
-                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                    }
+                    item(key = nowPlaying.key) {
+                        InlineQueueRow(
+                            song = nowPlaying.song,
+                            isCurrent = true,
+                            onClick = { onJumpTo(nowPlaying.timelineIndex) },
+                            onRemove = { onRemove(nowPlaying.timelineIndex) },
+                            locked = controlsLocked,
+                            modifier = queueMotion(),
                         )
                     }
                 }
-                itemsIndexed(
-                    items = userQueueTracks,
-                    key = { _, track -> track.entryId },
-                ) { _, track ->
-                    val key = track.entryId
-                    val dragging = userQueueDrag.draggedKey == key
-                    InlineQueueRow(
-                        song = track.song,
-                        isCurrent = false,
-                        onClick = { onJumpTo(track.timelineIndex) },
-                        onRemove = { onRemove(track.timelineIndex) },
-                        locked = controlsLocked,
-                        draggable = !controlsLocked,
-                        dragging = dragging,
-                        onDragStart = { userQueueDrag.onDragStart(key) },
-                        onDrag = userQueueDrag::onDrag,
-                        onDragEnd = userQueueDrag::onDragEnd,
-                        modifier = Modifier
-                            .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer { translationY = if (dragging) userQueueDrag.renderOffset else 0f }
-                            .then(
-                                if (userQueueDrag.draggedKey != null) {
-                                    Modifier
-                                } else {
-                                    Modifier.animateItem(
-                                        fadeInSpec = null,
-                                        fadeOutSpec = null,
-                                        placementSpec = QUEUE_ROW_MOTION,
-                                    )
-                                },
-                            ),
-                    )
-                }
-            }
-
-            if (contextTracks.isNotEmpty()) {
-                item(key = "header-context") {
-                    val title = if (contextTitle != null) {
-                        stringResource(R.string.next_from, contextTitle)
-                    } else {
-                        stringResource(R.string.queue)
-                    }
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White.copy(alpha = 0.75f),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp, bottom = 6.dp)
-                            .animateItem(
-                                fadeInSpec = null,
-                                fadeOutSpec = null,
-                                placementSpec = QUEUE_ROW_MOTION,
-                            ),
-                    )
-                }
-                itemsIndexed(
-                    items = contextTracks,
-                    key = { _, track -> track.entryId },
-                ) { _, track ->
-                    val key = track.entryId
-                    val dragging = contextDrag.draggedKey == key
-                    InlineQueueRow(
-                        song = track.song,
-                        isCurrent = false,
-                        onClick = { onJumpTo(track.timelineIndex) },
-                        onRemove = { onRemove(track.timelineIndex) },
-                        locked = controlsLocked,
-                        draggable = !controlsLocked,
-                        dragging = dragging,
-                        onDragStart = { contextDrag.onDragStart(key) },
-                        onDrag = contextDrag::onDrag,
-                        onDragEnd = contextDrag::onDragEnd,
-                        modifier = Modifier
-                            .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer { translationY = if (dragging) contextDrag.renderOffset else 0f }
-                            .then(
-                                if (contextDrag.draggedKey != null) {
-                                    Modifier
-                                } else {
-                                    Modifier.animateItem(
-                                        fadeInSpec = null,
-                                        fadeOutSpec = null,
-                                        placementSpec = QUEUE_ROW_MOTION,
-                                    )
-                                },
-                            ),
-                    )
-                }
-            }
-
-            if (autoplayHeadingShown) {
-                item(key = "autoplay-heading") {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .animateItem(
-                                fadeInSpec = null,
-                                fadeOutSpec = null,
-                                placementSpec = QUEUE_ROW_MOTION,
-                            )
-                            .padding(vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            BitChordIcons.Infinity,
-                            contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.75f),
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = stringResource(R.string.autoplay),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color.White,
-                            )
-                            Text(
-                                text = if (autoplayTracks.isNotEmpty()) {
-                                    stringResource(R.string.autoplay_queue_description)
-                                } else {
-                                    stringResource(R.string.autoplay_empty_description)
-                                },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.55f),
-                            )
+                if (tracks.user.isNotEmpty()) {
+                    item(key = "header-user-queue") {
+                        QueueHeading(
+                            title = stringResource(R.string.next_in_queue),
+                            modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion()),
+                        ) {
+                            QueueClearButton(MaterialTheme.typography.labelLarge, controlsLocked, onClear)
                         }
                     }
+                    queueSection(tracks.user, QueueSection.USER, drag, controlsLocked, onJumpTo, onRemove)
                 }
-                itemsIndexed(
-                    items = autoplayTracks,
-                    key = { _, track -> track.entryId },
-                ) { _, track ->
-                    val key = track.entryId
-                    val dragging = autoplayDrag.draggedKey == key
+                if (tracks.context.isNotEmpty()) {
+                    item(key = "header-context") {
+                        QueueHeading(
+                            title = if (contextTitle != null) {
+                                stringResource(R.string.next_from, contextTitle)
+                            } else {
+                                stringResource(R.string.queue)
+                            },
+                            modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion()),
+                        )
+                    }
+                    queueSection(tracks.context, QueueSection.CONTEXT, drag, controlsLocked, onJumpTo, onRemove)
+                }
+                if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
+                    item(key = "autoplay-heading") {
+                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
+                    }
+                    queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove)
+                }
+            }
+            // The held row, drawn over the list where the finger is. Positioned
+            // from the finger alone, so nothing the list does underneath — a
+            // swap, a relayout, a scroll — can move it.
+            drag.held?.let { held ->
+                Box(Modifier.matchParentSize().padding(horizontal = PLAYER_GUTTER)) {
                     InlineQueueRow(
-                        song = track.song,
+                        song = held.song,
                         isCurrent = false,
-                        onClick = { onJumpTo(track.timelineIndex) },
-                        onRemove = { onRemove(track.timelineIndex) },
-                        locked = controlsLocked,
-                        draggable = !controlsLocked,
-                        dragging = dragging,
-                        onDragStart = { autoplayDrag.onDragStart(key) },
-                        onDrag = autoplayDrag::onDrag,
-                        onDragEnd = autoplayDrag::onDragEnd,
-                        modifier = Modifier
-                            .zIndex(if (dragging) 1f else 0f)
-                            .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
-                            .then(
-                                if (autoplayDrag.draggedKey != null) {
-                                    Modifier
-                                } else {
-                                    Modifier.animateItem(
-                                        fadeInSpec = null,
-                                        fadeOutSpec = null,
-                                        placementSpec = QUEUE_ROW_MOTION,
-                                    )
-                                },
-                            ),
+                        onClick = {},
+                        onRemove = {},
+                        draggable = true,
+                        lifted = true,
+                        modifier = Modifier.offset { IntOffset(0, drag.heldTop.roundToInt()) },
                     )
                 }
             }
@@ -8147,17 +7863,100 @@ private fun InlineQueue(
 }
 
 /**
- * A key per row, stable across a reorder and unique even when the same song
- * appears twice — the Nth time a given videoId is seen gets suffixed with
- * that count, so two copies of one song each keep their own identity instead
- * of colliding on the same LazyColumn key.
+ * One section's rows. The row being dragged stays in the list as an invisible
+ * stand-in: it keeps the gesture and trades slots with its neighbours, which
+ * slide aside, while the copy the user sees is drawn over the list by
+ * [InlineQueue].
  */
-private fun List<Song>.stableQueueKeys(): List<String> {
-    val seen = HashMap<String, Int>()
-    return map { song ->
-        val n = seen.getOrDefault(song.videoId, 0)
-        seen[song.videoId] = n + 1
-        if (n == 0) song.videoId else "${song.videoId}#$n"
+private fun LazyListScope.queueSection(
+    rows: List<QueueTrack>,
+    section: QueueSection,
+    drag: QueueDrag,
+    locked: Boolean,
+    onJumpTo: (Int) -> Unit,
+    onRemove: (Int) -> Unit,
+) {
+    items(rows, key = { it.key }) { track ->
+        val held = drag.held?.key == track.key
+        if (held) {
+            // Scrolled far enough to be disposed, the row takes its gesture
+            // with it and neither drag-end callback runs — end the drag here.
+            DisposableEffect(Unit) { onDispose { drag.end(track.key) } }
+        }
+        InlineQueueRow(
+            song = track.song,
+            isCurrent = false,
+            onClick = { onJumpTo(track.timelineIndex) },
+            onRemove = { onRemove(track.timelineIndex) },
+            locked = locked,
+            draggable = !locked,
+            onDragStart = { drag.start(track.key, section) },
+            onDrag = drag::drag,
+            onDragEnd = { drag.end(track.key) },
+            modifier = if (held) Modifier.alpha(0f) else queueMotion(),
+        )
+    }
+}
+
+@Composable
+private fun QueueHeading(
+    title: String,
+    modifier: Modifier = Modifier,
+    trailing: @Composable () -> Unit = {},
+) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = Color.White.copy(alpha = 0.75f),
+            modifier = Modifier.weight(1f),
+        )
+        trailing()
+    }
+}
+
+@Composable
+private fun QueueClearButton(style: TextStyle, locked: Boolean, onClear: () -> Unit) {
+    Text(
+        text = stringResource(R.string.clear),
+        style = style,
+        color = Color.White.copy(alpha = if (locked) 0.25f else 0.75f),
+        modifier = Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .clickable(enabled = !locked, onClick = onClear)
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
+
+@Composable
+private fun AutoplayHeading(hasTracks: Boolean, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            BitChordIcons.Infinity,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.75f),
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                text = stringResource(R.string.autoplay),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+            )
+            Text(
+                text = stringResource(
+                    if (hasTracks) R.string.autoplay_queue_description else R.string.autoplay_empty_description,
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.55f),
+            )
+        }
     }
 }
 
@@ -8207,333 +8006,176 @@ internal fun edgeScrollSpeed(
     return if (reach < 0f) -ramp else ramp
 }
 
-/**
- * Drag-to-reorder for one contiguous section of [InlineQueue]'s LazyColumn —
- * the user's own queue and AutoPlay's each get their own instance, since a
- * drag never crosses the boundary between them.
- *
- * Each swap goes to the player the moment the dragged row crosses a
- * neighbour, so the live queue is always what's on screen and the rows the
- * drag displaces animate to their new slots off it. The dragged row is
- * tracked by its LazyColumn key rather than by index, because the index under
- * it changes with every swap.
- *
- * [lazyRange] is the section's span of LazyColumn indices, and [lazyOffset]
- * the distance from those to queue indices — the AutoPlay heading is a row
- * of the list too, so below it the two no longer line up.
- */
 @Composable
-private fun rememberQueueDragState(
+private fun rememberQueueDrag(
     listState: LazyListState,
-    lazyRange: IntRange,
-    lazyOffset: Int,
+    tracks: QueueTracks,
     onMove: (Int, Int) -> Unit,
-    onDragActiveChange: (Boolean) -> Unit = {},
-): QueueDragState {
-    val state = remember(listState) { QueueDragState(listState) }
-    state.lazyRange = lazyRange
-    state.lazyOffset = lazyOffset
-    state.onMove = onMove
-    state.onDragActiveChange = onDragActiveChange
+    onActiveChange: (Boolean) -> Unit,
+): QueueDrag {
+    val drag = remember(listState) { QueueDrag(listState) }
+    drag.tracks = tracks
+    drag.onMove = onMove
+    drag.onActiveChange = onActiveChange
     with(LocalDensity.current) {
-        state.edgeZone = QUEUE_EDGE_SCROLL_ZONE.toPx()
-        state.edgeSpeed = QUEUE_EDGE_SCROLL_SPEED.toPx()
+        drag.edgeZone = QUEUE_EDGE_SCROLL_ZONE.toPx()
+        drag.edgeSpeed = QUEUE_EDGE_SCROLL_SPEED.toPx()
     }
-
-    // Held near either end of the list, the row scrolls it. A track can be
-    // moved across a queue many screens long without letting go, where before
-    // the only way down was to drop the row at the edge, scroll by hand and
-    // pick it up again, once per screenful.
-    //
-    // What the scroll moves is the list, not the finger, and
-    // [QueueDragState.onScrolled] says exactly that: the held position stays
-    // where it is and the new layout is read back against it. The row sits
-    // still on screen while the rows above or below slide past it, and swaps
-    // through them on the same terms it would if the finger had covered the
-    // distance itself.
-    val direction = state.autoScrollDir
-    LaunchedEffect(state, direction) {
+    // Held near either edge, the row scrolls the list under itself. The finger
+    // stays put, so each frame's scroll is settled as if the list had moved and
+    // the row hadn't — it swaps through the rows going past on the same terms.
+    val direction = drag.autoScrollDir
+    LaunchedEffect(drag, direction) {
         if (direction == 0) return@LaunchedEffect
         listState.scroll {
             var previous = withFrameNanos { it }
             while (true) {
                 val now = withFrameNanos { it }
-                // A frame the system dropped, paid back in full, lands as a
-                // lurch — so it isn't.
+                // A dropped frame paid back in full lands as a lurch, so it isn't.
                 val seconds = ((now - previous) / 1_000_000_000f).coerceAtMost(1f / 30f)
                 previous = now
-                val scrolled = scrollBy(state.autoScrollSpeed * seconds)
-                // Nowhere left to scroll, or the row has left the edge and the
-                // speed has gone to nothing. Let the list's scroll go rather
-                // than spin on it holding the lock: the row can still be
-                // dragged the rest of the way by hand, and coming back to an
-                // edge starts this over.
-                if (scrolled == 0f) break
-                state.onScrolled()
+                // Nowhere left to scroll: let go of the list rather than spin.
+                if (scrollBy(drag.autoScrollSpeed * seconds) == 0f) break
+                drag.scrolled()
             }
         }
     }
-    return state
+    return drag
 }
 
 /**
- * Where a held row is being held, what it may do from there, and the moves it
- * has sent to the player on the way.
+ * The one drag [InlineQueue] can have at a time.
  *
- * The whole thing turns on one number: [heldCenter], where the row's centre is
- * being held, in the LazyColumn's own viewport pixels. The finger moves it and
- * nothing else does — not a scroll, not a swap, not a relayout. Everything
- * drawn or decided is then read back off the live layout against it: the row
- * is drawn at whatever its slot currently is plus the distance to
- * [heldCenter], and it trades places with whichever neighbour's slot
- * [heldCenter] has reached into.
- *
- * Tracking where the row is rather than how far it has come is what lets the
- * drag survive the list moving underneath it. The offset this replaces was
- * kept by hand — corrected on every scrolled pixel and again on every swap —
- * and held together only for as long as it was told about every last thing
- * that moved the list. It wasn't: LazyColumn re-anchors its own scroll
- * position when the row it measures from is reordered elsewhere (see
- * [swapTarget]), and one such jump left the offset a full row wrong, the row
- * drawn a row off the finger and its slot pushed clean out of the viewport.
- * Read fresh off the layout there is nothing left to be wrong — wherever the
- * list has ended up, the row is still under the finger.
+ * Everything turns on [heldCenter], where the finger holds the row's centre in
+ * the list's viewport. Only the finger moves it. Swaps are read off the live
+ * layout against it, each sent to the player the moment the row crosses a
+ * neighbour, and the row itself is drawn at [heldTop] by an overlay — never
+ * from its own slot, which jumps a whole row the frame a swap lands.
  */
-private class QueueDragState(private val listState: LazyListState) {
-    var lazyRange: IntRange = IntRange.EMPTY
-    var lazyOffset: Int = 0
+private class QueueDrag(private val listState: LazyListState) {
+    var tracks = QueueTracks.EMPTY
     var onMove: (Int, Int) -> Unit = { _, _ -> }
 
-    /**
-     * A row started or stopped being dragged — see [PartySync.beginQueueDrag].
-     * Every neighbour crossed while dragging is still its own [onMove] call, so
-     * the local queue and the party's copy of it can be told apart: the party
-     * only needs to hear about the reorder once, when the row is dropped.
-     */
-    var onDragActiveChange: (Boolean) -> Unit = {}
+    /** See [PartySync.beginQueueDrag]: a jam hears about the reorder once, on drop. */
+    var onActiveChange: (Boolean) -> Unit = {}
 
     /** [QUEUE_EDGE_SCROLL_ZONE] and [QUEUE_EDGE_SCROLL_SPEED], in pixels. */
-    var edgeZone: Float = 0f
-    var edgeSpeed: Float = 0f
+    var edgeZone = 0f
+    var edgeSpeed = 0f
 
-    /** LazyColumn key of the row being dragged; null at rest. */
-    var draggedKey by mutableStateOf<Any?>(null)
+    /** The row being moved; null at rest. */
+    var held by mutableStateOf<QueueTrack?>(null)
         private set
 
-    /**
-     * How far from its own slot to draw the held row, in pixels.
-     *
-     * Not simply the distance to [heldCenter]: a queue longer than the screen
-     * has nowhere to show a row above its first slot or below its last, so a
-     * finger held past either end was drawing the row off the list into
-     * nothing. Kept inside the viewport it sits at whichever edge it reached
-     * and stays visible there while the auto-scroll carries the list under it.
-     */
-    var renderOffset by mutableFloatStateOf(0f)
+    /** Where the held row is drawn: its top in the viewport, kept on screen. */
+    var heldTop by mutableFloatStateOf(0f)
         private set
 
-    /**
-     * Which way the list is scrolling itself under the held row: -1 towards the
-     * start of the queue, 1 towards its end, 0 not at all. State, because this
-     * is what starts and stops the loop that does the scrolling.
-     */
+    /** -1, 0 or 1 — state, because it starts and stops the scroll loop. */
     var autoScrollDir by mutableIntStateOf(0)
         private set
 
-    /**
-     * How fast it is doing so, signed, in pixels a second — and deliberately
-     * *not* state. It changes with every pixel of drag travel, and only the
-     * loop reads it, once a frame; as state it would recompose the whole queue
-     * on every touch event to tell the composition something it has no use for.
-     */
-    var autoScrollSpeed: Float = 0f
+    /** Signed, px a second. Not state: only the loop reads it, once a frame. */
+    var autoScrollSpeed = 0f
         private set
 
-    /**
-     * Where the finger is holding the row's centre, in viewport pixels. NaN
-     * until the first drag event, which takes it from the row's own slot — a
-     * drag begins with the row exactly where it already was.
-     */
-    private var heldCenter: Float = Float.NaN
+    private var section = QueueSection.USER
+    private var heldCenter = 0f
+    private var heldSize = 0
 
-    /** Where the last swap put the row, until the list is laid out with it. */
+    /** Where the last swap sent will put the row, until the list shows it there. */
     private var awaiting: Int? = null
 
-    fun onDragStart(key: Any) {
-        draggedKey = key
-        heldCenter = Float.NaN
-        renderOffset = 0f
+    fun start(key: String, section: QueueSection) {
+        val track = tracks[section].firstOrNull { it.key == key } ?: return
+        val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
+        this.section = section
+        heldSize = item.size
+        heldCenter = item.offset + item.size / 2f
+        heldTop = item.offset.toFloat()
         awaiting = null
-        setAutoScroll(0f)
-        onDragActiveChange(true)
+        held = track
+        onActiveChange(true)
     }
 
-    /** The finger moved [deltaY] pixels and the list stayed put. */
-    fun onDrag(deltaY: Float) = settle(deltaY)
+    fun drag(deltaY: Float) = settle(deltaY)
 
-    /** The list moved under the finger and the finger stayed put. */
-    fun onScrolled() = settle(0f)
+    fun scrolled() = settle(0f)
 
-    fun onDragEnd() {
-        draggedKey = null
-        heldCenter = Float.NaN
-        renderOffset = 0f
+    fun end(key: String) {
+        if (held?.key != key) return
+        held = null
         awaiting = null
         setAutoScroll(0f)
-        onDragActiveChange(false)
+        onActiveChange(false)
     }
 
-    /**
-     * Takes the drag in [deltaY] pixels further, then reads the list back to
-     * see where that leaves the row: where to draw it, whether it has reached
-     * an edge, and whether it has reached a neighbour worth trading with.
-     */
     private fun settle(deltaY: Float) {
-        val key = draggedKey ?: return
-        val items = listState.layoutInfo.visibleItemsInfo
-        // The row's own slot is off screen. There is nothing to measure an
-        // edge or a swap against and nothing to draw against either, so the
-        // way back is to stand still and let the swap already sent land and
-        // bring the slot into view. If the row has been disposed outright
-        // rather than merely scrolled past, it ends the drag itself on the
-        // way out — see the disposal guard in [InlineQueueRow].
-        val dragged = items.find { it.key == key } ?: run {
-            setAutoScroll(0f)
-            return
+        val key = held?.key ?: return
+        val rows = tracks[section]
+        val info = listState.layoutInfo
+        val items = info.visibleItemsInfo
+        val half = heldSize / 2f
+
+        // Stopped at the ends of its own section where those are on screen,
+        // rather than running on past them into rows it can't trade with.
+        var center = heldCenter + deltaY
+        rows.firstOrNull()?.let { first ->
+            items.firstOrNull { it.key == first.key }?.let { center = center.coerceAtLeast(it.offset + half) }
         }
-        val half = dragged.size / 2f
-        if (heldCenter.isNaN()) heldCenter = dragged.offset + half
-        heldCenter += deltaY
-        holdToSection(items, dragged)
+        rows.lastOrNull()?.let { last ->
+            items.firstOrNull { it.key == last.key }?.let { center = center.coerceAtMost(it.offset + it.size - half) }
+        }
+        heldCenter = center
+        val top = center - half
+        val minTop = info.viewportStartOffset.toFloat()
+        heldTop = top.coerceIn(minTop, (info.viewportEndOffset - heldSize).toFloat().coerceAtLeast(minTop))
 
-        val top = heldCenter - half
-        // Aimed before the guard below, not after: a swap in flight is a frame
-        // or two of the list not having caught up yet, and the scroll should
-        // carry on evenly through those rather than stutter once per row.
-        aimAutoScroll(top, dragged)
-        renderOffset = insideViewport(top, dragged.size) - dragged.offset
+        // Its slot is out of view: nothing to swap against until the list brings it back.
+        val dragged = items.firstOrNull { it.key == key } ?: return setAutoScroll(0f)
+        aimAutoScroll(top, key, rows)
 
-        // A swap already sent but not yet laid out: deciding the next one off
-        // a position the list has moved on from would send a second move for
-        // a swap that has already happened, and the two would fight.
+        // A swap already sent but not laid out yet — deciding another off the
+        // old layout would send the same one twice.
         awaiting?.let {
             if (dragged.index != it) return
             awaiting = null
         }
-        val target = swapTarget(items, dragged) ?: return
-        onMove(dragged.index - lazyOffset, target.index - lazyOffset)
+        val target = items
+            .filter { item -> item.key != key && rows.any { it.key == item.key } }
+            .minByOrNull { abs(it.offset + it.size / 2f - center) }
+            ?: return
+        // Half a row of overlap per swap, so a row isn't traded back and forth
+        // over a single pixel of travel.
+        if (abs(center - (target.offset + target.size / 2f)) > target.size / 2f) return
+        // LazyColumn keeps its place by the key of its first visible row; move
+        // that row while there's list above it and the whole list follows it
+        // along by a row. Waiting a few frames for the scroll to bring in the
+        // next row up avoids it.
+        if (target.index == listState.firstVisibleItemIndex && listState.canScrollBackward) return
+        val from = rows.firstOrNull { it.key == key }?.timelineIndex ?: return
+        val to = rows.firstOrNull { it.key == target.key }?.timelineIndex ?: return
+        onMove(from, to)
         awaiting = target.index
     }
 
-    /**
-     * The neighbour [heldCenter] has reached far enough into to trade places
-     * with, or null while there is none to trade with yet.
-     */
-    private fun swapTarget(
-        items: List<LazyListItemInfo>,
-        dragged: LazyListItemInfo,
-    ): LazyListItemInfo? {
-        // Only rows of this section are fair targets — the heading and the
-        // other section's rows share the LazyColumn but not this range.
-        val target = items
-            .filter { it.index in lazyRange && it.index != dragged.index }
-            .minByOrNull { abs((it.offset + it.size / 2f) - heldCenter) }
-            ?: return null
-        // Held short of halfway the rows would swap back and forth over a
-        // single pixel of travel; a full half-height of overlap is what makes
-        // one swap per row crossed.
-        if (abs(heldCenter - (target.offset + target.size / 2f)) > target.size / 2f) return null
-        // Never with the row the list is keeping its own place by, while there
-        // is still list above it to scroll.
-        //
-        // LazyColumn remembers where it is scrolled to as the *key* of its
-        // first visible row plus an offset into it. Reorder that particular
-        // row and it follows the key to wherever the row went, which slides
-        // the entire list along by a row — and the held row, which has just
-        // moved into the slot that row left, goes off the top of the viewport
-        // with it. LazyColumn then disposes it, and disposal cancels the drag
-        // gesture outright: neither onDragEnd nor onDragCancel runs, so the
-        // row was left highlighted and offset with nothing dragging it,
-        // stranded a row above where it was picked up. Dragging *down* never
-        // met this, because the row traded with is the one below and the list
-        // anchors on the one at the top; dragging up, the row traded with is
-        // precisely the one the edge scroll is drawing in at the top, which is
-        // why one direction worked and the other did not.
-        //
-        // Declining to swap this frame is the whole fix. The scroll that
-        // brought the row here carries on, the next row up becomes the one the
-        // list is anchored by, and the trade goes through a few frames later —
-        // by which time it moves nothing the list is holding on to. With no
-        // list left above to scroll there is no jump to decline in the first
-        // place, so a row can still be dropped into the first slot of its
-        // section.
-        if (target.index == listState.firstVisibleItemIndex && listState.canScrollBackward) {
-            return null
-        }
-        return target
-    }
-
-    /**
-     * Points the auto-scroll at whichever edge the row now spanning [top] has
-     * reached, if either — but only while there is both a row that way for it
-     * to swap with and list left to scroll. Held past the last row of its own
-     * section it would otherwise keep the list moving with no move left to
-     * make, carrying the row's slot away under a finger that has nothing left
-     * to answer with.
-     */
-    private fun aimAutoScroll(top: Float, dragged: LazyListItemInfo) {
+    /** Only while there's a row that way to trade with, and list left to scroll. */
+    private fun aimAutoScroll(top: Float, key: String, rows: List<QueueTrack>) {
         val info = listState.layoutInfo
         val speed = edgeScrollSpeed(
             top = top,
-            bottom = top + dragged.size,
+            bottom = top + heldSize,
             viewportStart = info.viewportStartOffset,
             viewportEnd = info.viewportEndOffset,
             zone = edgeZone,
             speed = edgeSpeed,
         )
         val blocked = when {
-            speed < 0f -> dragged.index <= lazyRange.first || !listState.canScrollBackward
-            speed > 0f -> dragged.index >= lazyRange.last || !listState.canScrollForward
+            speed < 0f -> rows.firstOrNull()?.key == key || !listState.canScrollBackward
+            speed > 0f -> rows.lastOrNull()?.key == key || !listState.canScrollForward
             else -> true
         }
         setAutoScroll(if (blocked) 0f else speed)
-    }
-
-    /**
-     * Holds the drag inside the section it started in.
-     *
-     * A row can only be dropped between the first and last slots of its own
-     * section — the playing track and the history above it are not the user's
-     * to reorder, and neither is the far side of the AutoPlay heading. The
-     * swap loop already respects that, by having no target to offer past
-     * either end; what it does not do is stop [heldCenter] running on past the
-     * boundary, and a finger a screen beyond it then has that whole distance
-     * to travel back before the row answers again. Held at the boundary it
-     * stops there under the finger, which is what "this is as far as it goes"
-     * ought to look like.
-     *
-     * Only the ends actually on screen bound anything. A section that runs off
-     * the viewport has more of itself that way for the auto-scroll to bring
-     * in, and holding to whichever of its rows happens to be measured would
-     * stop the drag at the edge of the screen instead of at the edge of the
-     * section.
-     */
-    private fun holdToSection(items: List<LazyListItemInfo>, dragged: LazyListItemInfo) {
-        val half = dragged.size / 2f
-        items.firstOrNull { it.index == lazyRange.first }?.let {
-            heldCenter = heldCenter.coerceAtLeast(it.offset + half)
-        }
-        items.firstOrNull { it.index == lazyRange.last }?.let {
-            heldCenter = heldCenter.coerceAtMost(it.offset + it.size - half)
-        }
-    }
-
-    /** [top], kept where a row of [size] can still be seen — see [renderOffset]. */
-    private fun insideViewport(top: Float, size: Int): Float {
-        val info = listState.layoutInfo
-        val minTop = info.viewportStartOffset.toFloat()
-        val maxTop = (info.viewportEndOffset - size).toFloat().coerceAtLeast(minTop)
-        return top.coerceIn(minTop, maxTop)
     }
 
     private fun setAutoScroll(speed: Float) {
@@ -8553,38 +8195,24 @@ private fun InlineQueueRow(
     isCurrent: Boolean,
     onClick: () -> Unit,
     onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
     /** @see InlineQueue */
     locked: Boolean = false,
-    modifier: Modifier = Modifier,
+    /** Shows the handle; drags on it go to the callbacks below. */
     draggable: Boolean = false,
-    dragging: Boolean = false,
+    /** The copy drawn under the finger while the row is being moved. */
+    lifted: Boolean = false,
     onDragStart: () -> Unit = {},
     onDrag: (Float) -> Unit = {},
     onDragEnd: () -> Unit = {},
 ) {
-    // LazyColumn disposes a row the instant its slot leaves the viewport, and
-    // that takes the drag gesture below down with it: the coroutine running
-    // [detectDragGestures] is cancelled where it stands, so neither onDragEnd
-    // nor onDragCancel is ever reached and the drag is left held by nothing —
-    // the row comes back into view highlighted and offset from its slot, and
-    // stays that way until the queue is closed. The swap guard in
-    // [QueueDragState.swapTarget] is what stops the slot being thrown out of
-    // the viewport in the first place; this is here because "the gesture ended
-    // and nothing was told" should not be a state the queue can be left in at
-    // all, whatever put it there.
-    val heldOnDispose by rememberUpdatedState(dragging)
-    val endDrag by rememberUpdatedState(onDragEnd)
-    DisposableEffect(Unit) {
-        onDispose { if (heldOnDispose) endDrag() }
-    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(if (dragging) Color.White.copy(alpha = 0.06f) else Color.Transparent)
-            // Disabled rather than merely ignored: a clickable that answers a
-            // tap with a ripple and then does nothing reads as the app having
-            // missed the tap, which is what this looked like while locked.
+            .background(if (lifted) Color.White.copy(alpha = 0.06f) else Color.Transparent)
+            // Disabled rather than ignored: a tap that ripples and then does
+            // nothing reads as the app having missed it.
             .clickable(enabled = !locked, onClick = onClick)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -8596,18 +8224,17 @@ private fun InlineQueueRow(
                 tint = Color.White.copy(alpha = 0.4f),
                 modifier = Modifier
                     .size(20.dp)
-                    // DragHandle's glyph sits well inset from the edges of
-                    // its own bounding box — this pulls it back to the row's
-                    // actual left edge instead of leaving a gap in front of it.
+                    // The glyph sits well inset in its own box; this pulls it
+                    // back to the row's edge.
                     .offset(x = (-4).dp)
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = { onDragStart() },
                             onDragEnd = { onDragEnd() },
                             onDragCancel = { onDragEnd() },
-                            onDrag = { change, dragAmount ->
+                            onDrag = { change, amount ->
                                 change.consume()
-                                onDrag(dragAmount.y)
+                                onDrag(amount.y)
                             },
                         )
                     },

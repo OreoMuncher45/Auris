@@ -40,16 +40,20 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
@@ -57,6 +61,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -350,16 +355,8 @@ fun FrostedTopBar(
                 }
             }
         }
-        // The divider and the loader line share the bar's bottom edge; the box
-        // only grows to the line's height while a refresh is actually showing.
-        Box(Modifier.fillMaxWidth()) {
-            HorizontalDivider(thickness = 0.5.dp, color = dividerColor)
-            RefreshLine(
-                refreshing = refreshing,
-                pullFraction = pullFraction,
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
+        HorizontalDivider(thickness = 0.5.dp, color = dividerColor)
+        RefreshPuck(refreshing = refreshing, pullFraction = pullFraction)
     }
 }
 
@@ -590,47 +587,85 @@ fun TopBarAccountButton(
 }
 
 /**
- * The refresh indicator: a line along the bottom of the bar, directly under the
- * status bar. It tracks the drag on the way down — filling left to right as the
- * pull approaches the threshold — then sweeps indefinitely once the refresh is
- * away, so the two phases read as one continuous gesture.
+ * The refresh indicator: a round puck that slides out from under the bar's
+ * bottom edge as the list is pulled, Chrome-style.
+ *
+ * It is drawn by the bar rather than by the pull-to-refresh box, so it lands on
+ * top of the glass instead of behind it, and it is clipped to the band just
+ * below the bar so it emerges from the edge instead of appearing over the
+ * status bar. Its position is the pull state's own distance fraction — which
+ * the pull box holds at 1 while refreshing and animates back to 0 when done —
+ * so the slide down, the rest while loading and the slide back up are all one
+ * value. The arc fills with the drag, then spins once the refresh is away.
+ *
+ * Laid out at zero height, so the bar keeps its size and the puck overhangs
+ * the content without taking any touches from it.
  */
 @Composable
-private fun RefreshLine(refreshing: Boolean, pullFraction: () -> Float, modifier: Modifier = Modifier) {
-    val fraction = pullFraction()
-    val pulling = fraction > 0.01f
-    AnimatedVisibility(
-        visible = refreshing || pulling,
-        enter = fadeIn(tween(120)),
-        exit = fadeOut(tween(220)),
-        modifier = modifier,
-    ) {
-        val lineModifier = Modifier
+private fun RefreshPuck(refreshing: Boolean, pullFraction: () -> Float, modifier: Modifier = Modifier) {
+    val currentFraction by rememberUpdatedState(pullFraction)
+    val pulling by remember { derivedStateOf { currentFraction() > 0f } }
+    if (!refreshing && !pulling) return
+
+    val travel = with(LocalDensity.current) { (PUCK_REST + PUCK_SIZE).toPx() }
+    Box(
+        modifier = modifier
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                layout(placeable.width, 0) { placeable.place(0, 0) }
+            }
             .fillMaxWidth()
-            .height(LINE_HEIGHT)
-        if (refreshing) {
-            LinearProgressIndicator(
-                modifier = lineModifier,
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = Color.Transparent,
-                strokeCap = StrokeCap.Butt,
-                gapSize = 0.dp,
-            )
-        } else {
-            LinearProgressIndicator(
-                progress = { fraction.coerceIn(0f, 1f) },
-                modifier = lineModifier,
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = Color.Transparent,
-                strokeCap = StrokeCap.Butt,
-                gapSize = 0.dp,
-                drawStopIndicator = {},
-            )
+            .height(PUCK_REST + PUCK_SIZE + PUCK_OVERSHOOT + 12.dp)
+            .clipToBounds(),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        Box(
+            modifier = Modifier
+                .graphicsLayer {
+                    val f = currentFraction().coerceIn(0f, 2f)
+                    // Past the threshold the puck keeps following, but
+                    // reluctantly, like the list under it.
+                    val eased = if (f <= 1f) f else 1f + (f - 1f) * 0.35f
+                    translationY = travel * eased - PUCK_SIZE.toPx()
+                    alpha = (f * 3f).coerceAtMost(1f)
+                }
+                .shadow(6.dp, CircleShape)
+                .size(PUCK_SIZE)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            val indicatorModifier = Modifier.size(22.dp)
+            if (refreshing) {
+                CircularProgressIndicator(
+                    modifier = indicatorModifier,
+                    color = MaterialTheme.colorScheme.primary,
+                    strokeWidth = 2.5.dp,
+                    strokeCap = StrokeCap.Round,
+                )
+            } else {
+                CircularProgressIndicator(
+                    progress = { (currentFraction() * 0.8f).coerceIn(0f, 0.8f) },
+                    modifier = indicatorModifier.graphicsLayer {
+                        rotationZ = currentFraction().coerceIn(0f, 2f) * 180f
+                    },
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = Color.Transparent,
+                    strokeWidth = 2.5.dp,
+                    strokeCap = StrokeCap.Round,
+                    gapSize = 0.dp,
+                )
+            }
         }
     }
 }
 
-private val LINE_HEIGHT = 2.5.dp
+private val PUCK_SIZE = 40.dp
+
+/** How far below the bar's edge the puck rests while a refresh runs. */
+private val PUCK_REST = 16.dp
+
+/** Headroom for the damped travel past the threshold. */
+private val PUCK_OVERSHOOT = 20.dp
 
 /**
  * The account photo's diameter.

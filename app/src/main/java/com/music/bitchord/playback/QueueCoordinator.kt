@@ -8,6 +8,13 @@ import com.music.bitchord.data.model.Song
 import java.util.UUID
 
 /**
+ * The tier of the queue row at [index]. The functions below take this as a
+ * parameter so unit tests can supply tiers directly — on the JVM the metadata
+ * bundle a MediaItem carries its tier in is a stub that stores nothing.
+ */
+private fun Player.queueTierAt(index: Int): QueueTier = getMediaItemAt(index).queueTier
+
+/**
  * Information about where a queue or track was started from in the UI.
  */
 data class QueueSource(
@@ -172,15 +179,14 @@ object QueueCoordinator {
      *
      * Invariant: CONTEXT and AUTOPLAY tracks are completely untouched.
      */
-    fun clearUserQueue(player: Player) {
+    fun clearUserQueue(player: Player, tierAt: (Int) -> QueueTier = player::queueTierAt) {
         val currentIndex = player.currentMediaItemIndex
         val count = player.mediaItemCount
         if (count == 0) return
 
         val userQueueIndices = mutableListOf<Int>()
         for (i in (currentIndex + 1) until count) {
-            val item = player.getMediaItemAt(i)
-            if (item.queueTier == QueueTier.USER_QUEUE) {
+            if (tierAt(i) == QueueTier.USER_QUEUE) {
                 userQueueIndices.add(i)
             }
         }
@@ -198,17 +204,16 @@ object QueueCoordinator {
      * consumed USER_QUEUE entries are safely removed so that Media3's native REPEAT_MODE_ALL
      * will only cycle through CONTEXT items.
      */
-    fun consumePlayedUserQueue(player: Player) {
+    fun consumePlayedUserQueue(player: Player, tierAt: (Int) -> QueueTier = player::queueTierAt) {
         val currentIndex = player.currentMediaItemIndex
         if (currentIndex <= 0) return
 
-        val currentItem = player.currentMediaItem ?: return
-        if (currentItem.queueTier != QueueTier.CONTEXT) return
+        if (player.currentMediaItem == null) return
+        if (tierAt(currentIndex) != QueueTier.CONTEXT) return
 
         val playedIndices = mutableListOf<Int>()
         for (i in 0 until currentIndex) {
-            val item = player.getMediaItemAt(i)
-            if (item.queueTier == QueueTier.USER_QUEUE) {
+            if (tierAt(i) == QueueTier.USER_QUEUE) {
                 playedIndices.add(i)
             }
         }
@@ -226,10 +231,12 @@ object QueueCoordinator {
      *    (indicating a backward jump or active track tap handled via standard player seek).
      * 2. [QueueTier.AUTOPLAY]: The tapped track becomes the active track promoted to [QueueTier.CONTEXT]
      *    (starting a fresh radio/station). All future [QueueTier.USER_QUEUE] items across the entire
-     *    timeline are preserved immediately after it. Old context and bypassed autoplay items are discarded.
+     *    timeline are preserved immediately after it, then the autoplay items after it. Old context and
+     *    bypassed autoplay items are discarded.
      * 3. [QueueTier.CONTEXT]: The tapped track becomes active. All future [QueueTier.USER_QUEUE] items
      *    across the entire timeline are preserved immediately after it. Context items strictly after
-     *    [targetIndex] follow after the user queue. Bypassed context items are discarded.
+     *    [targetIndex] follow after the user queue, then all autoplay items. Bypassed context items are
+     *    discarded.
      * 4. [QueueTier.USER_QUEUE]: Preceding user queue items between [currentIndex] + 1 and [targetIndex]
      *    were bypassed within the manual queue and are consumed. Subsequent user queue items, along with
      *    all future context and autoplay tracks, are preserved.
@@ -249,6 +256,10 @@ object QueueCoordinator {
         val targetSong = currentTimeline[targetIndex]
         val allFutureUserQueue = currentTimeline.subList(currentIndex + 1, currentTimeline.size)
             .filter { it.queueTier == QueueTier.USER_QUEUE }
+        // Only what the jump skipped over is dropped; AutoPlay lined up past the
+        // target stays, or tapping any row above it would empty the AutoPlay list.
+        val remainingAutoplay = currentTimeline.subList(targetIndex + 1, currentTimeline.size)
+            .filter { it.queueTier == QueueTier.AUTOPLAY }
 
         return when (targetSong.queueTier) {
             QueueTier.AUTOPLAY -> {
@@ -257,12 +268,12 @@ object QueueCoordinator {
                     playbackSource = sourceTitle,
                     playbackSourceType = targetSong.playbackSourceType ?: PlaybackSourceType.QUEUE,
                 ).asQueueEntry(QueueTier.CONTEXT)
-                listOf(promotedTarget) + allFutureUserQueue
+                listOf(promotedTarget) + allFutureUserQueue + remainingAutoplay
             }
             QueueTier.CONTEXT -> {
                 val remainingContext = currentTimeline.subList(targetIndex + 1, currentTimeline.size)
                     .filter { it.queueTier == QueueTier.CONTEXT }
-                listOf(targetSong) + allFutureUserQueue + remainingContext
+                listOf(targetSong) + allFutureUserQueue + remainingContext + remainingAutoplay
             }
             QueueTier.USER_QUEUE -> {
                 val subsequentUserQueue = currentTimeline.subList(targetIndex + 1, currentTimeline.size)

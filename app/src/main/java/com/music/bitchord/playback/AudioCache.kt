@@ -392,7 +392,12 @@ object AudioCache {
             ?: spec.uri.takeIf { it.authority == "source" }?.let { uri ->
                 val source = uri.getQueryParameter("s")
                 val track = uri.getQueryParameter("t")
-                if (source != null && track != null) "$source|$track" else null
+                if (source != null && track != null) {
+                    val base = "$source|$track"
+                    QualityUpgrade.cacheTag(uri)?.let { "$base#$it" } ?: base
+                } else {
+                    null
+                }
             }
             ?: spec.key
             ?: spec.uri.toString()
