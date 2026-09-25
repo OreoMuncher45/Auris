@@ -7,6 +7,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.audiofx.AudioEffect
 import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Bundle
@@ -572,6 +573,9 @@ class PlaybackService : MediaLibraryService() {
     private var loudnessEnhancerSessionId: Int = C.AUDIO_SESSION_ID_UNSET
     private var loudnessRetryJob: Job? = null
 
+    /** The platform audio session currently advertised to system audio tools. */
+    private var advertisedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+
     /**
      * Whether the format currently arriving at the active player's decoder
      * is Dolby Atmos (E-AC-3 JOC). Widening a JOC stream would fight the
@@ -744,6 +748,11 @@ class PlaybackService : MediaLibraryService() {
      * time: the one [player] names.
      */
     private val playbackListener = object : Player.Listener {
+        override fun onEvents(player: Player, events: Player.Events) {
+            val activePlayer = this@PlaybackService.player ?: return
+            if (player === activePlayer) updateAudioEffectSession(activePlayer)
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
@@ -2564,6 +2573,49 @@ class PlaybackService : MediaLibraryService() {
     private fun setSessionOwner(target: ExoPlayer, owns: Boolean) {
         target.setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ owns)
         target.setHandleAudioBecomingNoisy(owns)
+    }
+
+    /**
+     * Publishes the standard music-session lifecycle used by system and
+     * third-party audio controllers. Keep the session open while playback is
+     * preparing as well as while it is audible, so an effect can attach before
+     * the first decoded buffer reaches the output device.
+     */
+    private fun updateAudioEffectSession(activePlayer: ExoPlayer) {
+        val sessionId = activePlayer.audioSessionId
+        val shouldAdvertise = activePlayer.playWhenReady &&
+            (activePlayer.playbackState == Player.STATE_BUFFERING ||
+                activePlayer.playbackState == Player.STATE_READY) &&
+            sessionId != C.AUDIO_SESSION_ID_UNSET && sessionId > 0
+
+        if (!shouldAdvertise) {
+            closeAudioEffectSession()
+            return
+        }
+        if (advertisedAudioEffectSessionId == sessionId) return
+
+        closeAudioEffectSession()
+        advertisedAudioEffectSessionId = sessionId
+        sendBroadcast(
+            Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION).apply {
+                putExtra(AudioEffect.EXTRA_AUDIO_SESSION, sessionId)
+                putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
+                putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
+            },
+        )
+    }
+
+    private fun closeAudioEffectSession() {
+        val sessionId = advertisedAudioEffectSessionId
+        if (sessionId == C.AUDIO_SESSION_ID_UNSET) return
+
+        advertisedAudioEffectSessionId = C.AUDIO_SESSION_ID_UNSET
+        sendBroadcast(
+            Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION).apply {
+                putExtra(AudioEffect.EXTRA_AUDIO_SESSION, sessionId)
+                putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
+            },
+        )
     }
 
     /**
@@ -6045,6 +6097,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        closeAudioEffectSession()
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         partySync?.stop()

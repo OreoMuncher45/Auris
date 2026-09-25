@@ -6,6 +6,13 @@
     <string name="download_notification_title">ダウンロード中</string>
     <string name="download_notification_starting">開始しています</string>
     <string name="download_notification_queued">%1$s · あと%2$d件が待機中</string>
+    <string name="upload_channel_name">アップロード</string>
+    <string name="upload_channel_description">WebDAVサーバーへ送信中の曲</string>
+    <string name="upload_notification_title">アップロード中</string>
+    <string name="upload_notification_queued">%1$s · ほか%2$d曲が待機中</string>
+    <plurals name="uploading_song_count">
+        <item quantity="other">%1$d曲をアップロード中</item>
+    </plurals>
     <string name="cancel">キャンセル</string>
     <string name="save">保存</string>
     <string name="close">閉じる</string>
@@ -14,6 +21,7 @@
     <string name="search">検索</string>
     <string name="clear_search">検索をクリア</string>
     <string name="library">ライブラリ</string>
+    <string name="home">ホーム</string>
     <string name="play">再生</string>
     <string name="explore">見つける</string>
     <string name="listen_now">今すぐ聴く</string>
@@ -80,6 +88,8 @@
     <string name="rich_presence">リッチプレゼンス</string>
     <string name="scrobbling">スクロブリング</string>
     <string name="now_playing">再生中</string>
+    <string name="next_in_queue">キューの次の曲</string>
+    <string name="next_from">次の再生元: %1$s</string>
     <string name="selected">選択済み</string>
     <string name="password">パスワード</string>
     <string name="username">ユーザー名</string>
@@ -129,6 +139,7 @@
     <string name="download_wifi_only">Wi-Fi接続時のみダウンロード</string>
     <string name="spatial_audio">空間オーディオ</string>
     <string name="spatial_audio_subtitle">よりイマーシブな体験のためにステレオトラックを広げます</string>
+    <string name="spatial_audio_atmos_subtitle">この曲では一時停止中 — Dolby Atmosはすでに空間オーディオです</string>
     <string name="animated_cover_cellular">モバイルデータでアニメーションカバーを再生</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">よく聴いた曲、アーティスト、アルバム、ジャンル</string>
@@ -182,6 +193,7 @@
     <string name="automix">オートミックス [BETA]</string>
     <string name="skip_silence">無音をスキップ</string>
     <string name="skip_silence_subtitle">1秒より長い無音部分をカットします</string>
+    <string name="skip_silence_float_subtitle">32ビット浮動小数点出力では使用できません</string>
     <string name="equalizer">イコライザー</string>
     <string name="equalizer_subtitle">デバイスのシステムパネル</string>
     <string name="show_nerd_stats">技術情報を表示</string>
@@ -207,6 +219,8 @@
     <string name="stop_music_on_close_subtitle">アプリを最近のアプリから消すと再生を停止します</string>
     <string name="hide_volume_bar">音量バーを隠す</string>
     <string name="hide_volume_bar_subtitle">メインプレイヤーから音量スライダーを削除します</string>
+    <string name="hide_song_status">曲のステータスを隠す</string>
+    <string name="hide_song_status_subtitle">メインプレーヤーの「再生元」や「再生者」の表示を隠します</string>
     <string name="off">オフ</string>
     <string name="low">低</string>
     <string name="medium">中</string>
@@ -253,9 +267,14 @@
     <string name="clear_name">名前を消去</string>
     <string name="close_lyrics">歌詞を閉じる</string>
     <string name="translate_lyrics">歌詞を翻訳</string>
+    <string name="romanize_lyrics">歌詞をローマ字化</string>
     <string name="show_original_lyrics">元の歌詞を表示</string>
     <string name="translating_lyrics_to">%1$sに翻訳中…</string>
     <string name="lyrics_translated_to">%1$sに翻訳済み</string>
+    <string name="romanizing_lyrics">歌詞をローマ字化しています…</string>
+    <string name="lyrics_romanized">ローマ字読み</string>
+    <string name="lyrics_already_romanized">この歌詞はすでにラテン文字です</string>
+    <string name="lyrics_romanization_unavailable">この歌詞はローマ字化できません</string>
     <string name="lyrics_already_in_language">この歌詞はすでに%1$sです</string>
     <string name="lyrics_translation_unavailable">現在、翻訳を利用できません</string>
     <string name="connect_account_first">先にアカウントを連携してください</string>
@@ -273,6 +292,8 @@
     <string name="discord_button_variables">{song_name}、{artist_name}、{album_name}は現在の曲に置き換えられます。</string>
     <string name="discord_buttons_footer">{song_name}、{artist_name}、{album_name}は曲の情報に置き換えられます。1つ目のボタンはYouTube Musicで曲を開き、2つ目はこのプロジェクトを開きます。</string>
     <string name="discord_presence_footer">曲、再生位置、再生状態が変わるとカードが更新されます。再生が止まると消去されます。</string>
+    <string name="discord_show_audio_quality">音質を表示</string>
+    <string name="discord_show_audio_quality_subtitle">ステータスカードにハイレゾ・ロスレス・Dolbyの仕様を表示</string>
     <string name="discord_sign_in_footer">ログインするとDiscordのログインページが開きます。BitChordに何かが入力されることはありません。</string>
     <string name="discord_token">Discordトークン</string>
     <string name="discord_token_description">Discordアカウントトークンを貼り付けてください。このデバイス内で暗号化され、Discordにのみ送信されます。</string>
@@ -294,6 +315,13 @@
     <string name="instrumental">インストゥルメンタル</string>
     <string name="pause">一時停止</string>
     <string name="lyrics_by">歌詞提供：%1$s</string>
+    <string name="change_lyrics_provider">変更</string>
+    <string name="choose_lyrics_provider">歌詞の提供元を選択</string>
+    <string name="lyrics_provider_current">現在の提供元</string>
+    <string name="lyrics_provider_found">歌詞が見つかりました · タップして使用</string>
+    <string name="lyrics_provider_not_found">歌詞が見つかりません</string>
+    <string name="lyrics_provider_fetching">歌詞を取得中…</string>
+    <string name="lyrics_provider_not_fetched">タップして取得</string>
     <string name="no_lyrics_found">歌詞が見つかりません</string>
     <string name="lyrics_saved_with_download">このダウンロードに歌詞を保存済み</string>
     <string name="shuffle_on">シャッフル: オン</string>
@@ -445,11 +473,23 @@
     <string name="sources_order_footer">ソースにトラックがない、またはアクセスできない場合、BitChordは次のソースを試します。YouTubeより上のソースは、より良いバージョンが見つかった場合にその録音を置き換えられます。</string>
     <string name="sources_order_header">ソース（この順番で試行）</string>
     <string name="sources_quality_capped">この接続は「高音質」より低く設定されているため、ストリームはその上限に合わせてトランスコードされます。ダウンロードには影響しません。</string>
+    <string name="jiosaavn_mismatch_warning">曲の別バージョンに一致してしまうことがあります。自己責任で有効にしてください。</string>
+    <string name="enable_jiosaavn">JioSaavnを有効にしますか？</string>
+    <string name="enable_anyway">有効にする</string>
     <string name="sources_subtitle">音声の取得元と使用する順序</string>
+    <string name="source_matching">ソースの照合</string>
+    <string name="upgrade_length_slack">曲の長さの許容差</string>
+    <string name="upgrade_length_slack_subtitle">差し替えストリームで許容する長さの最大差</string>
+    <string name="upgrade_length_slack_footer">許容差を大きくするとソースの一致が増え、小さくすると厳しくなります。既定値は3秒です。</string>
+    <string name="seconds_short">%1$d秒</string>
     <string name="spdc_token">sp_dcトークン</string>
     <string name="spotify_canvas_setup">Spotify Canvasの設定</string>
     <string name="spotify_canvas_setup_description">Spotify Canvasを使うには、Spotifyのsp_dc cookieを入力してください。</string>
     <string name="spotify_canvas_setup_steps">1. ブラウザでopen.spotify.comにログインします。\n2. デベロッパーツールを開き、[Application]と[Cookies]を選択します。\n3. sp_dc cookieの値をコピーします。\n4. 下に貼り付けます。</string>
+    <string name="spotify_canvas_auto_hide">操作ボタンを自動で隠す</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Spotify Canvasの再生中、5秒後にハーフプレーヤーを折りたたみます</string>
+    <string name="prioritize_spotify_canvas">Spotify Canvasを優先</string>
+    <string name="prioritize_spotify_canvas_subtitle">Apple Musicなどのアニメーションカバーより先にSpotifyを試します</string>
     <string name="status">ステータス</string>
     <string name="status_dialog_message">プレゼンスが有効な間、アカウントに表示される内容です。</string>
     <string name="status_dnd">取り込み中</string>
@@ -553,6 +593,33 @@
     <string name="use_all_audio_folders_subtitle">フォルダの制限を解除し、デバイス全体の音楽をスキャンします</string>
     <string name="album">アルバム</string>
     <string name="artist">アーティスト</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">サーバー上の音楽</string>
+    <string name="webdav_not_configured">「ソース」でサーバーを接続してください</string>
+    <string name="webdav_empty">WebDAVサーバーに音声ファイルが見つかりません。設定のURLを確認してください。</string>
+    <string name="webdav_description">BitChordをWebDAVの音楽フォルダーに接続します — NextcloudのMusicフォルダーや、WebDAVに対応した任意のサーバーを使えます。</string>
+    <string name="webdav_server_url">サーバーURL</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">接続を解除</string>
+    <string name="webdav_test_failed">接続できません: %1$s</string>
+    <string name="upload_to_webdav">WebDAVにアップロード</string>
+    <string name="webdav_conflict_title">「%1$s」はすでにサーバーにあります</string>
+    <string name="webdav_conflict_message">上書きしますか？それとも両方残しますか？</string>
+    <string name="webdav_overwrite">上書き</string>
+    <string name="webdav_keep_both">両方残す</string>
+    <string name="webdav_skip">スキップ</string>
+    <string name="webdav_apply_to_all">すべてに適用</string>
+    <string name="webdav_upload_summary">アップロード %1$d · スキップ %2$d · 失敗 %3$d</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">共有フォルダーの音楽</string>
+    <string name="smb_not_configured">「ソース」で共有フォルダーを接続してください</string>
+    <string name="smb_empty">SMB共有に音声ファイルが見つかりません。「ソース」でサーバーを確認してください。</string>
+    <string name="smb_description">BitChordを共有の音楽フォルダーに接続します — SMB対応のNASやWindows共有を使えます。</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">共有名（例: Music）</string>
+    <string name="smb_folder_hint">フォルダー（任意）</string>
+    <string name="smb_disconnect">接続を解除</string>
+    <string name="smb_test_failed">接続できません: %1$s</string>
     <string name="playlist">プレイリスト</string>
     <string name="open">開く</string>
     <string name="open_playlist">プレイリストを開く</string>
@@ -570,6 +637,11 @@
     <string name="analysis_refining">分析済み、調整中…</string>
     <string name="analysis_in_progress">分析中…</string>
     <string name="waiting">待機中</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">未取得</string>
+    <string name="version_cut_fetching">取得中</string>
+    <string name="version_cut_measuring">解析中</string>
+    <string name="version_cut_aligned">同期済み</string>
     <string name="automix_enabled_subtitle">トラック自体からすべての切り替えのタイミングとブレンドを計算します。端末が熱くなったり再生が途切れたりする場合はオフにしてください。</string>
     <string name="automix_disabled_subtitle">スライダーなしで切り替えのタイミングとブレンドを自動的に計算します。低スペック端末ではパフォーマンスが変わることがあります。</string>
     <string name="no_lyrics_sources_enabled">なし。歌詞は取得されません。</string>
@@ -633,15 +705,39 @@
     <string name="listen_together_sign_in_footer">一緒に聴くにはアカウントが必要です。パーティーの全員が、ほかに誰がいるかを見られるようにするためです。</string>
     <string name="listen_together_server">パーティーサーバー</string>
     <string name="listen_together_server_online">オンライン · %1$d ms</string>
+    <string name="listen_together_server_online_fallback">オンライン（既定のフォールバック） · %1$d ms</string>
     <string name="listen_together_server_offline">今は接続できません</string>
     <string name="listen_together_server_checking">確認中…</string>
     <string name="listen_together_server_unknown">タップして確認</string>
     <string name="listen_together_custom_server">自分のサーバーを使う</string>
     <string name="listen_together_custom_server_footer">空のままにすると内蔵サーバーを使います。自分でコピーを動かしている場合は、パーティーの全員が同じサーバーを指している必要があります。</string>
     <string name="listen_together_using_default">内蔵サーバーを使用中</string>
+    <string name="listen_together_remove_server">サーバーを削除</string>
+    <string name="listen_together_switched_to_default">既定のサーバーに切り替えました</string>
+    <string name="listen_together_custom_server_saved">カスタムサーバーを保存しました</string>
     <string name="listen_together_create">パーティーを作る</string>
     <string name="listen_together_create_subtitle">友だちに共有するコードを取得</string>
-    <string name="listen_together_create_footer">6文字のコードが発行されます。コードを知っている人は誰でも参加でき、自分を含めて5台までです。</string>
+    <string name="listen_together_create_footer">6文字のコードが発行されます。コードを知っている人は誰でも参加でき、自分を含めて%1$d台までです。</string>
+    <string name="listen_together_profile">パーティーでのプロフィール</string>
+    <string name="listen_together_nickname_hint">このパーティーでのニックネーム</string>
+    <string name="listen_together_party_size">パーティーの人数</string>
+    <string name="listen_together_party_size_subtitle">2〜10人から選択</string>
+    <string name="listen_together_host_controls">人数の変更やリスナーの削除はあなただけが行えます</string>
+    <string name="listen_together_remove">削除</string>
+    <string name="listen_together_activity">最近のアクティビティ</string>
+    <string name="listen_together_activity_footer">このセッションのみ · 新しい順 · 最大100件</string>
+    <string name="listen_together_activity_played">再生を開始</string>
+    <string name="listen_together_activity_paused">再生を一時停止</string>
+    <string name="listen_together_activity_seeked">再生位置を移動</string>
+    <string name="listen_together_activity_skipped">次へスキップ</string>
+    <string name="listen_together_activity_went_back">前に戻る</string>
+    <string name="listen_together_activity_added">キューに追加</string>
+    <string name="listen_together_activity_removed_track">キューから曲を削除</string>
+    <string name="listen_together_activity_cleared">次の曲をクリア</string>
+    <string name="listen_together_activity_reordered">キューを並べ替え</string>
+    <string name="listen_together_activity_removed_member">リスナーを削除</string>
+    <string name="listen_together_activity_changed_size">パーティーの人数を変更</string>
+    <string name="listen_together_activity_updated">パーティーを更新</string>
     <string name="listen_together_join">パーティーに参加</string>
     <string name="listen_together_join_action">参加</string>
     <string name="listen_together_code_hint">英字か数字6文字</string>
@@ -656,6 +752,27 @@
     <string name="listen_together_you">あなた</string>
     <string name="listen_together_host">ホスト</string>
     <string name="listen_together_away">離席中 — 枠は確保されています</string>
+    <string name="listen_together_manage">管理</string>
+    <string name="listen_together_landing_title">パーティーを始める</string>
+    <string name="listen_together_landing_subtitle">音楽はみんなで聴くともっと楽しい。友だちを招待して、どこにいてもリアルタイムで一緒に聴いたり曲を追加したりできます。</string>
+    <string name="listen_together_create_action">パーティーを作成</string>
+    <string name="listen_together_join_existing">既存のパーティーに参加</string>
+    <string name="listen_together_create_sheet_subtitle">表示のされ方と参加できる人数を選んでください。</string>
+    <string name="listen_together_creating">作成中…</string>
+    <string name="listen_together_joining">参加中…</string>
+    <string name="listen_together_full">このパーティーは満員です</string>
+    <string name="listen_together_join_question">%1$sさんのパーティーに参加しますか？</string>
+    <string name="listen_together_join_question_unnamed">このパーティーに参加しますか？</string>
+    <string name="listen_together_not_now">今はしない</string>
+    <string name="listen_together_preview_footer">パーティーの参加者にあなたの名前とプロフィール写真が表示されます。</string>
+    <string name="listen_together_invite_title">友だちをパーティーに招待</string>
+    <string name="listen_together_share_link">リンクを共有</string>
+    <string name="listen_together_scan_qr">QRコードをスキャン</string>
+    <string name="listen_together_scan_qr_subtitle">友だちにスキャンしてもらうと参加できます。</string>
+    <string name="listen_together_invite">招待</string>
+    <string name="listen_together_host_only">音楽の操作は自分だけ</string>
+    <string name="listen_together_host_only_subtitle">ほかの人は一緒に聴けて、自分のデバイスで一時停止できます</string>
+    <string name="listen_together_host_only_notice">音楽を操作できるのはホストだけです</string>
     <string name="listen_together_leave">パーティーを出る</string>
     <string name="listen_together_leave_subtitle">ほかの人はそのまま聴き続けます</string>
     <string name="listen_together_reconnecting">再接続中…</string>
@@ -665,6 +782,28 @@
     <string name="listen_together_jam_unnamed">一緒に聴いています</string>
     <string name="listen_together_open">一緒に聴く</string>
     <string name="listen_together_open_count">一緒に聴いています · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">カスタムサーバーのパーティーに参加しますか？</string>
+    <string name="listen_together_custom_server_dialog_message">このパーティーは外部サーバーでホストされています:\n\n%1$s\n\nパーティーサーバーを切り替えて、パーティー %2$s に参加しますか？</string>
+    <string name="listen_together_custom_server_switch_and_join">切り替えて参加</string>
+    <string name="listen_together_official_server_dialog_title">公式サーバーに切り替えますか？</string>
+    <string name="listen_together_official_server_dialog_message">このパーティーはBitChord公式サーバーでホストされています。\n\n公式サーバーに戻して、パーティー %1$s に参加しますか？</string>
+    <string name="listen_together_switch_failed_stayed_in_party">パーティーに参加できませんでした: %1$s。パーティー %2$s に残ります。</string>
+    <string name="listen_together_switch_failed">パーティーに参加できませんでした: %1$s。</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">サーバーURLが無効です。有効なアドレスを入力してください（例: https://your-server.com）</string>
+    <string name="listen_together_err_whitespace">サーバーURLに空白は使えません</string>
+    <string name="listen_together_err_invalid_path">サーバーURLのパスが無効です</string>
+    <string name="listen_together_err_no_path">サーバーURLにパスを含めないでください</string>
+    <string name="listen_together_err_no_query">サーバーURLにクエリパラメーターを含めないでください</string>
+    <string name="listen_together_err_no_fragment">サーバーURLにフラグメントを含めないでください</string>
+    <string name="listen_together_err_invalid_port">サーバーのポートは1〜65535の範囲で指定してください</string>
+    <string name="listen_together_custom_server_connected">カスタムサーバーに接続しました</string>
+    <string name="listen_together_custom_server_unreachable_fallback">カスタムサーバーに接続できません。既定のサーバーを使用します。</string>
+    <string name="listen_together_status_custom_online">カスタムサーバーに接続中 · %1$d ms</string>
+    <string name="listen_together_status_custom_fallback">カスタムサーバーに接続できません · 既定のフォールバックを使用中（%1$d ms）</string>
+    <string name="listen_together_status_all_offline">カスタムサーバーと既定のサーバーの両方がオフラインです</string>
+    <string name="listen_together_top_bar_fallback">フォールバック · %1$s</string>
 
     <string name="vietnamese">ベトナム語</string>
 
@@ -710,6 +849,18 @@
     <string name="output_precision">出力精度</string>
 
     <string name="prefer_usb_dac">USB DAC を優先</string>
+    <string name="loudness_normalization">音量の正規化</string>
+    <string name="loudness_normalization_subtitle">すべての曲を同じラウドネスにそろえます</string>
+    <string name="loudness_target">目標ラウドネス</string>
+    <string name="loudness_target_subtitle">小さめはヘッドホン向け、大きめは車やスマホのスピーカー向けです</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="pipeline_loudness">ラウドネス</string>
+    <string name="pipeline_loudness_gain">ゲイン</string>
+    <string name="pipeline_loudness_measured">測定値</string>
+    <string name="pipeline_bit_exact">ビットパーフェクト</string>
+    <string name="loudness_measuring">測定中…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
 
     <string name="blur_unfocused_lyrics">フォーカスされていない歌詞をぼかす</string>
 
@@ -842,6 +993,7 @@
     <string name="choose_a_channel">チャンネルを選択</string>
 
     <string name="convert_to_audio">音声に変換</string>
+    <string name="convert_to_video">動画に変換</string>
 
     <string name="converting_to_audio">音声に変換中…</string>
 
@@ -953,6 +1105,8 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">スマート音声同期</string>
+    <string name="smart_version_alignment_subtitle">波形を解析して、対応する再生位置を正確に合わせます</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
@@ -989,6 +1143,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+    <string name="equalizer_bitstream_title">現在は動作していません</string>
+    <string name="equalizer_bitstream_subtitle">この曲はデコードされずに出力へ送られます</string>
+    <string name="equalizer_bitstream_footer">イコライザーはデコード済みの音声に作用します。この曲はデバイス側でデコードするビットストリームとしてそのまま渡されるため、ここには処理できるサンプルがありません。</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -1047,6 +1204,7 @@
     <string name="medium_quality">Medium Quality</string>
 
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">デコーダーから出力までのリアルタイム信号経路</string>
 
     <string name="pipeline_track_info">Track Info</string>
 
@@ -1101,6 +1259,9 @@
     <string name="song_will_play_next">Song will play next</string>
 
     <string name="song_added_to_queue">Song added to queue</string>
+    <string name="song_added_to_playlist">プレイリストに追加しました</string>
+    <string name="song_already_in_playlist">すでにプレイリストにあります</string>
+    <string name="party_queue_full">キューがいっぱいです（パーティーの上限は%d曲）</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
 

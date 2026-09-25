@@ -152,6 +152,7 @@
     <string name="download_quality">Chất lượng tải xuống</string>
     <string name="download_wifi_only">Chỉ tải xuống qua Wi-Fi</string>
     <string name="convert_to_audio">Chuyển đổi thành âm thanh</string>
+    <string name="convert_to_video">Chuyển đổi thành video</string>
     <string name="converting_to_audio">Đang chuyển đổi thành âm thanh…</string>
     <string name="revert_to_original">Khôi phục về bản gốc</string>
     <string name="upgrade_quality">Nâng cấp chất lượng</string>
@@ -1104,7 +1105,7 @@
 
     <string name="listen_together_create_subtitle">Get a code to share with friends</string>
 
-    <string name="listen_together_create_footer">You get a six-character code. Anyone who has it can join, up to five devices including yours.</string>
+    <string name="listen_together_create_footer">Bạn sẽ nhận được mã gồm sáu ký tự. Ai có mã đều có thể tham gia, tối đa %1$d thiết bị kể cả của bạn.</string>
 
     <string name="listen_together_join">Join a party</string>
 

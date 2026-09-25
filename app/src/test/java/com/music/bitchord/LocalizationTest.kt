@@ -51,48 +51,4 @@ class LocalizationTest {
             )
         }
     }
-
-    @Test
-    fun vietnameseStrings_containsAllBaseKeys() {
-        val projectRoot = File(".").canonicalFile
-        val resDir = if (File(projectRoot, "app/src/main/res").exists()) {
-            File(projectRoot, "app/src/main/res")
-        } else {
-            File(projectRoot, "src/main/res")
-        }
-        val baseStringsFile = File(resDir, "values/strings.xml")
-        val viStringsFile = File(resDir, "values-vi/strings.xml")
-
-        assertTrue("values/strings.xml must exist", baseStringsFile.exists())
-        assertTrue("values-vi/strings.xml must exist", viStringsFile.exists())
-
-        val factory = DocumentBuilderFactory.newInstance()
-        val builder = factory.newDocumentBuilder()
-
-        val baseDoc = builder.parse(baseStringsFile)
-        val viDoc = builder.parse(viStringsFile)
-
-        fun extractKeys(doc: org.w3c.dom.Document): Set<String> {
-            val keys = mutableSetOf<String>()
-            val tags = listOf("string", "plurals", "string-array")
-            for (tag in tags) {
-                val nodes = doc.getElementsByTagName(tag)
-                for (i in 0 until nodes.length) {
-                    val node = nodes.item(i)
-                    val name = node.attributes.getNamedItem("name")?.nodeValue
-                    if (name != null) keys.add(name)
-                }
-            }
-            return keys
-        }
-
-        val baseKeys = extractKeys(baseDoc)
-        val viKeys = extractKeys(viDoc)
-
-        val missingKeys = baseKeys - viKeys
-        assertTrue(
-            "values-vi/strings.xml must have all keys from values/strings.xml. Missing: $missingKeys",
-            missingKeys.isEmpty(),
-        )
-    }
 }

@@ -6,6 +6,16 @@
     <string name="download_notification_title">Загрузка</string>
     <string name="download_notification_starting">Начало</string>
     <string name="download_notification_queued">%1$s · ещё %2$d в очереди</string>
+    <string name="upload_channel_name">Загрузки на сервер</string>
+    <string name="upload_channel_description">Песни, отправляемые на ваш сервер WebDAV</string>
+    <string name="upload_notification_title">Отправка</string>
+    <string name="upload_notification_queued">%1$s · ещё %2$d в очереди</string>
+    <plurals name="uploading_song_count">
+        <item quantity="one">Отправка %1$d песни</item>
+        <item quantity="few">Отправка %1$d песен</item>
+        <item quantity="many">Отправка %1$d песен</item>
+        <item quantity="other">Отправка %1$d песни</item>
+    </plurals>
     <string name="cancel">Отмена</string>
     <string name="save">Сохранить</string>
     <string name="close">Закрыть</string>
@@ -14,6 +24,7 @@
     <string name="search">Поиск</string>
     <string name="clear_search">Очистить поиск</string>
     <string name="library">Библиотека</string>
+    <string name="home">Главная</string>
     <string name="play">Играть</string>
     <string name="explore">Обзор</string>
     <string name="listen_now">Слушать сейчас</string>
@@ -92,6 +103,8 @@
     <string name="rich_presence">Rich Presence</string>
     <string name="scrobbling">Скробблинг</string>
     <string name="now_playing">Сейчас играет</string>
+    <string name="next_in_queue">Следующая в очереди</string>
+    <string name="next_from">Далее из: %1$s</string>
     <string name="selected">Выбрано</string>
     <string name="password">Пароль</string>
     <string name="username">Имя пользователя</string>
@@ -141,6 +154,7 @@
     <string name="download_wifi_only">Загружать только по Wi-Fi</string>
     <string name="spatial_audio">Пространственный звук</string>
     <string name="spatial_audio_subtitle">Расширяет стереодорожки для более глубокого погружения</string>
+    <string name="spatial_audio_atmos_subtitle">Приостановлено для этого трека — Dolby Atmos уже пространственный</string>
     <string name="animated_cover_cellular">Воспроизводить анимированную обложку через мобильные данные</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Ваши любимые песни, исполнители, альбомы и жанры</string>
@@ -194,6 +208,7 @@
     <string name="automix">Автомикс [БЕТА]</string>
     <string name="skip_silence">Пропускать тишину</string>
     <string name="skip_silence_subtitle">Обрезает паузы длиннее секунды</string>
+    <string name="skip_silence_float_subtitle">Недоступно при 32-битном выводе с плавающей точкой</string>
     <string name="equalizer">Эквалайзер</string>
     <string name="equalizer_subtitle">Системная панель вашего устройства</string>
     <string name="show_nerd_stats">Показывать техническую статистику</string>
@@ -219,6 +234,8 @@
     <string name="stop_music_on_close_subtitle">Останавливает воспроизведение при удалении приложения из недавних</string>
     <string name="hide_volume_bar">Скрыть полосу громкости</string>
     <string name="hide_volume_bar_subtitle">Убирает ползунок громкости с главного плеера</string>
+    <string name="hide_song_status">Скрыть статус песни</string>
+    <string name="hide_song_status_subtitle">Скрывает текст «Играет из» или «Воспроизводит» в основном плеере</string>
     <string name="off">Выкл</string>
     <string name="low">Низкое</string>
     <string name="medium">Среднее</string>
@@ -265,9 +282,14 @@
     <string name="clear_name">Очистить имя</string>
     <string name="close_lyrics">Закрыть текст песни</string>
     <string name="translate_lyrics">Перевести текст</string>
+    <string name="romanize_lyrics">Транслитерировать текст</string>
     <string name="show_original_lyrics">Показать оригинал</string>
     <string name="translating_lyrics_to">Перевод на %1$s…</string>
     <string name="lyrics_translated_to">Переведено на %1$s</string>
+    <string name="romanizing_lyrics">Транслитерация текста…</string>
+    <string name="lyrics_romanized">Произношение латиницей</string>
+    <string name="lyrics_already_romanized">Этот текст уже написан латиницей</string>
+    <string name="lyrics_romanization_unavailable">Транслитерация недоступна для этого текста</string>
     <string name="lyrics_already_in_language">Текст уже на языке %1$s</string>
     <string name="lyrics_translation_unavailable">Перевод сейчас недоступен</string>
     <string name="connect_account_first">Сначала подключите аккаунт</string>
@@ -285,6 +307,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} и {album_name} заменяются данными текущего трека.</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} и {album_name} заменяются данными трека. Первая кнопка открывает песню в YouTube Music, а вторая — этот проект.</string>
     <string name="discord_presence_footer">Карточка обновляется при изменении трека, позиции воспроизведения или его состояния. Она исчезает, когда воспроизведение останавливается.</string>
+    <string name="discord_show_audio_quality">Показывать качество звука</string>
+    <string name="discord_show_audio_quality_subtitle">Характеристики Hi-Res, lossless и Dolby в карточке статуса</string>
     <string name="discord_sign_in_footer">Вход открывает страницу входа Discord. В BitChord ничего не вводится.</string>
     <string name="discord_token">Токен Discord</string>
     <string name="discord_token_description">Вставьте токен своего аккаунта Discord. Он хранится в зашифрованном виде на этом устройстве и отправляется только в Discord.</string>
@@ -306,6 +330,13 @@
     <string name="instrumental">Инструментал</string>
     <string name="pause">Пауза</string>
     <string name="lyrics_by">Текст песни: %1$s</string>
+    <string name="change_lyrics_provider">Изменить</string>
+    <string name="choose_lyrics_provider">Выбрать источник текстов</string>
+    <string name="lyrics_provider_current">Текущий источник</string>
+    <string name="lyrics_provider_found">Текст найден · Нажмите, чтобы использовать</string>
+    <string name="lyrics_provider_not_found">Текст не найден</string>
+    <string name="lyrics_provider_fetching">Загрузка текста…</string>
+    <string name="lyrics_provider_not_fetched">Нажмите, чтобы загрузить</string>
     <string name="no_lyrics_found">Текст не найден</string>
     <string name="lyrics_saved_with_download">Текст сохранён вместе с этой загрузкой</string>
     <string name="shuffle_on">Перемешивание включено</string>
@@ -475,11 +506,23 @@
     <string name="sources_order_footer">Если у источника нет трека или он недоступен, BitChord пробует следующий. Источники выше YouTube могут заменить его запись, если предоставляют более качественную версию.</string>
     <string name="sources_order_header">Источники, пробуются в этом порядке</string>
     <string name="sources_quality_capped">Это соединение установлено ниже высокого качества, поэтому потоки перекодируются под это ограничение. На загрузки это не влияет.</string>
+    <string name="jiosaavn_mismatch_warning">Может подобрать не ту версию песни. Включайте на свой страх и риск.</string>
+    <string name="enable_jiosaavn">Включить JioSaavn?</string>
+    <string name="enable_anyway">Всё равно включить</string>
     <string name="sources_subtitle">Откуда поступает аудио и в каком порядке</string>
+    <string name="source_matching">Сопоставление источников</string>
+    <string name="upgrade_length_slack">Допуск по длительности</string>
+    <string name="upgrade_length_slack_subtitle">Максимальная разница в длительности для замещающего потока</string>
+    <string name="upgrade_length_slack_footer">Больший допуск принимает больше совпадений из источников; меньший — строже. По умолчанию 3 секунды.</string>
+    <string name="seconds_short">%1$d с</string>
     <string name="spdc_token">Токен sp_dc</string>
     <string name="spotify_canvas_setup">Настройка Spotify Canvas</string>
     <string name="spotify_canvas_setup_description">Чтобы использовать Spotify Canvas, укажите свой cookie sp_dc от Spotify.</string>
     <string name="spotify_canvas_setup_steps">1. Войдите на open.spotify.com в браузере.\n2. Откройте инструменты разработчика, затем Application и Cookies.\n3. Скопируйте значение cookie sp_dc.\n4. Вставьте его ниже.</string>
+    <string name="spotify_canvas_auto_hide">Автоскрытие элементов управления</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Сворачивает половину плеера через 5 секунд, пока играет Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas">Приоритет Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">Пробовать Spotify раньше Apple Music и других источников анимированных обложек</string>
     <string name="status">Статус</string>
     <string name="status_dialog_message">Что показывает ваш аккаунт, пока Presence активен.</string>
     <string name="status_dnd">Не беспокоить</string>
@@ -591,6 +634,33 @@
     <string name="use_all_audio_folders_subtitle">Снять ограничение по папкам и сканировать музыку по всему устройству</string>
     <string name="album">альбом</string>
     <string name="artist">исполнитель</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">Музыка на вашем сервере</string>
+    <string name="webdav_not_configured">Подключите сервер в разделе «Источники»</string>
+    <string name="webdav_empty">На сервере WebDAV не найдено аудиофайлов. Проверьте URL в настройках.</string>
+    <string name="webdav_description">Укажите BitChord музыкальную папку WebDAV — каталог «Музыка» в Nextcloud или любой сервер с поддержкой WebDAV.</string>
+    <string name="webdav_server_url">URL сервера</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">Отключить</string>
+    <string name="webdav_test_failed">Не удалось подключиться: %1$s</string>
+    <string name="upload_to_webdav">Отправить в WebDAV</string>
+    <string name="webdav_conflict_title">«%1$s» уже есть на сервере</string>
+    <string name="webdav_conflict_message">Перезаписать или сохранить обе копии?</string>
+    <string name="webdav_overwrite">Перезаписать</string>
+    <string name="webdav_keep_both">Сохранить обе</string>
+    <string name="webdav_skip">Пропустить</string>
+    <string name="webdav_apply_to_all">Применить ко всем</string>
+    <string name="webdav_upload_summary">Отправлено: %1$d · пропущено: %2$d · ошибок: %3$d</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">Музыка в общей папке</string>
+    <string name="smb_not_configured">Подключите общую папку в разделе «Источники»</string>
+    <string name="smb_empty">В общей папке SMB не найдено аудиофайлов. Проверьте сервер в разделе «Источники».</string>
+    <string name="smb_description">Укажите BitChord общую музыкальную папку — NAS или общую папку Windows по SMB.</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">Имя ресурса, например Music</string>
+    <string name="smb_folder_hint">Папка (необязательно)</string>
+    <string name="smb_disconnect">Отключить</string>
+    <string name="smb_test_failed">Не удалось подключиться: %1$s</string>
     <string name="playlist">плейлист</string>
     <string name="open">Открыть</string>
     <string name="open_playlist">Открыть плейлист</string>
@@ -608,6 +678,11 @@
     <string name="analysis_refining">анализ завершён, уточняется…</string>
     <string name="analysis_in_progress">анализируется…</string>
     <string name="waiting">ожидание</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">не загружено</string>
+    <string name="version_cut_fetching">загрузка</string>
+    <string name="version_cut_measuring">анализ</string>
+    <string name="version_cut_aligned">выровнено</string>
     <string name="automix_enabled_subtitle">Рассчитывает время и смешивает каждый переход на основе самих треков. Отключите, если телефон нагревается или воспроизведение прерывается.</string>
     <string name="automix_disabled_subtitle">Автоматически рассчитывает время и смешивает переходы без ползунка. Производительность может отличаться на медленных устройствах.</string>
     <string name="no_lyrics_sources_enabled">Ничего. Текст песен не будет загружаться.</string>
@@ -673,15 +748,39 @@
     <string name="listen_together_sign_in_footer">Для совместного прослушивания нужен аккаунт, чтобы все участники видели, кто ещё слушает.</string>
     <string name="listen_together_server">Сервер вечеринки</string>
     <string name="listen_together_server_online">В сети · %1$d мс</string>
+    <string name="listen_together_server_online_fallback">В сети (резервный по умолчанию) · %1$d мс</string>
     <string name="listen_together_server_offline">Сейчас недоступен</string>
     <string name="listen_together_server_checking">Проверка…</string>
     <string name="listen_together_server_unknown">Нажмите, чтобы проверить</string>
     <string name="listen_together_custom_server">Использовать свой сервер</string>
     <string name="listen_together_custom_server_footer">Оставьте пустым, чтобы использовать встроенный сервер. Если у вас своя копия, все участники должны указать один и тот же адрес.</string>
     <string name="listen_together_using_default">Используется встроенный сервер</string>
+    <string name="listen_together_remove_server">Удалить сервер</string>
+    <string name="listen_together_switched_to_default">Переключено на сервер по умолчанию</string>
+    <string name="listen_together_custom_server_saved">Свой сервер сохранён</string>
     <string name="listen_together_create">Создать вечеринку</string>
     <string name="listen_together_create_subtitle">Получите код, чтобы поделиться с друзьями</string>
-    <string name="listen_together_create_footer">Вы получите код из шести символов. Присоединиться может любой, у кого он есть, — до пяти устройств, включая ваше.</string>
+    <string name="listen_together_create_footer">Вы получите код из шести символов. Присоединиться может любой, у кого он есть, — до %1$d устройств, включая ваше.</string>
+    <string name="listen_together_profile">Ваш профиль на вечеринке</string>
+    <string name="listen_together_nickname_hint">Никнейм для этой вечеринки</string>
+    <string name="listen_together_party_size">Размер вечеринки</string>
+    <string name="listen_together_party_size_subtitle">Выберите от 2 до 10 слушателей</string>
+    <string name="listen_together_host_controls">Только вы можете менять вместимость или удалять слушателей</string>
+    <string name="listen_together_remove">Удалить</string>
+    <string name="listen_together_activity">Недавние действия</string>
+    <string name="listen_together_activity_footer">Только этот сеанс · сначала новые · до 100 действий</string>
+    <string name="listen_together_activity_played">Запустил воспроизведение</string>
+    <string name="listen_together_activity_paused">Поставил на паузу</string>
+    <string name="listen_together_activity_seeked">Перемотал трек</string>
+    <string name="listen_together_activity_skipped">Переключил вперёд</string>
+    <string name="listen_together_activity_went_back">Вернулся назад</string>
+    <string name="listen_together_activity_added">Добавил в очередь</string>
+    <string name="listen_together_activity_removed_track">Удалил трек из очереди</string>
+    <string name="listen_together_activity_cleared">Очистил следующие треки</string>
+    <string name="listen_together_activity_reordered">Изменил порядок очереди</string>
+    <string name="listen_together_activity_removed_member">Удалил слушателя</string>
+    <string name="listen_together_activity_changed_size">Изменил размер вечеринки</string>
+    <string name="listen_together_activity_updated">Обновил вечеринку</string>
     <string name="listen_together_join">Присоединиться к вечеринке</string>
     <string name="listen_together_join_action">Присоединиться</string>
     <string name="listen_together_code_hint">Шесть букв или цифр</string>
@@ -696,6 +795,27 @@
     <string name="listen_together_you">Вы</string>
     <string name="listen_together_host">Хост</string>
     <string name="listen_together_away">Отошёл — место сохранено</string>
+    <string name="listen_together_manage">Управление</string>
+    <string name="listen_together_landing_title">Начать вечеринку</string>
+    <string name="listen_together_landing_subtitle">Потому что вместе музыка звучит лучше. Приглашайте друзей слушать и добавлять песни в реальном времени, где бы они ни были.</string>
+    <string name="listen_together_create_action">Создать вечеринку</string>
+    <string name="listen_together_join_existing">Присоединиться к существующей</string>
+    <string name="listen_together_create_sheet_subtitle">Выберите, как вы будете выглядеть и сколько людей смогут присоединиться.</string>
+    <string name="listen_together_creating">Создание…</string>
+    <string name="listen_together_joining">Подключение…</string>
+    <string name="listen_together_full">Эта вечеринка заполнена</string>
+    <string name="listen_together_join_question">Присоединиться к вечеринке %1$s?</string>
+    <string name="listen_together_join_question_unnamed">Присоединиться к этой вечеринке?</string>
+    <string name="listen_together_not_now">Не сейчас</string>
+    <string name="listen_together_preview_footer">Участники вечеринки увидят ваше имя и фото профиля.</string>
+    <string name="listen_together_invite_title">Пригласите друзей на вечеринку</string>
+    <string name="listen_together_share_link">Поделиться ссылкой</string>
+    <string name="listen_together_scan_qr">Сканировать QR-код</string>
+    <string name="listen_together_scan_qr_subtitle">Друзья могут отсканировать его, чтобы присоединиться.</string>
+    <string name="listen_together_invite">Пригласить</string>
+    <string name="listen_together_host_only">Только я управляю музыкой</string>
+    <string name="listen_together_host_only_subtitle">Остальные слушают вместе и могут ставить паузу на своём устройстве</string>
+    <string name="listen_together_host_only_notice">Только хозяин может управлять музыкой</string>
     <string name="listen_together_leave">Покинуть вечеринку</string>
     <string name="listen_together_leave_subtitle">Остальные продолжат слушать</string>
     <string name="listen_together_reconnecting">Переподключение…</string>
@@ -705,6 +825,28 @@
     <string name="listen_together_jam_unnamed">Слушаем вместе</string>
     <string name="listen_together_open">Слушать вместе</string>
     <string name="listen_together_open_count">Слушаем вместе · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">Присоединиться к вечеринке на своём сервере?</string>
+    <string name="listen_together_custom_server_dialog_message">Эта вечеринка размещена на внешнем сервере:\n\n%1$s\n\nСменить сервер вечеринок и присоединиться к вечеринке %2$s?</string>
+    <string name="listen_together_custom_server_switch_and_join">Сменить и войти</string>
+    <string name="listen_together_official_server_dialog_title">Перейти на официальный сервер?</string>
+    <string name="listen_together_official_server_dialog_message">Эта вечеринка размещена на официальном сервере BitChord.\n\nВернуться на официальный сервер и присоединиться к вечеринке %1$s?</string>
+    <string name="listen_together_switch_failed_stayed_in_party">Не удалось присоединиться: %1$s. Вы остаётесь на вечеринке %2$s.</string>
+    <string name="listen_together_switch_failed">Не удалось присоединиться: %1$s.</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">Неверный URL сервера. Введите правильный адрес (например, https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">URL сервера не может содержать пробелы</string>
+    <string name="listen_together_err_invalid_path">URL сервера содержит недопустимый путь</string>
+    <string name="listen_together_err_no_path">URL сервера не должен содержать путь</string>
+    <string name="listen_together_err_no_query">URL сервера не должен содержать параметры запроса</string>
+    <string name="listen_together_err_no_fragment">URL сервера не должен содержать фрагменты</string>
+    <string name="listen_together_err_invalid_port">Порт сервера должен быть от 1 до 65535</string>
+    <string name="listen_together_custom_server_connected">Подключено к своему серверу</string>
+    <string name="listen_together_custom_server_unreachable_fallback">Свой сервер недоступен. Используется сервер по умолчанию.</string>
+    <string name="listen_together_status_custom_online">Подключено к своему серверу · %1$d мс</string>
+    <string name="listen_together_status_custom_fallback">Свой сервер недоступен · Используется резервный по умолчанию (%1$d мс)</string>
+    <string name="listen_together_status_all_offline">И свой сервер, и сервер по умолчанию недоступны</string>
+    <string name="listen_together_top_bar_fallback">Резерв · %1$s</string>
 
     <string name="vietnamese">Вьетнамский</string>
 
@@ -774,6 +916,7 @@
     <string name="choose_profile">Выберите профиль</string>
 
     <string name="convert_to_audio">Конвертировать в аудио</string>
+    <string name="convert_to_video">Преобразовать в видео</string>
 
     <string name="converting_to_audio">Конвертация в аудио…</string>
 
@@ -818,6 +961,18 @@
     <string name="playlist_action">Плейлист</string>
 
     <string name="prefer_usb_dac">Предпочитать USB ЦАП</string>
+    <string name="loudness_normalization">Нормализация громкости</string>
+    <string name="loudness_normalization_subtitle">Выравнивает громкость всех треков</string>
+    <string name="loudness_target">Целевая громкость</string>
+    <string name="loudness_target_subtitle">Тише — для наушников; громче — для машины или динамика телефона</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="pipeline_loudness">Громкость</string>
+    <string name="pipeline_loudness_gain">Усиление</string>
+    <string name="pipeline_loudness_measured">Измерено</string>
+    <string name="pipeline_bit_exact">Бит в бит</string>
+    <string name="loudness_measuring">Измерение…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
 
     <string name="profile_unavailable">На этой странице еще нет авторизованного профиля.</string>
 
@@ -995,6 +1150,8 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">Умное выравнивание аудио</string>
+    <string name="smart_version_alignment_subtitle">Анализирует звуковые волны, чтобы найти точно соответствующий момент воспроизведения</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
@@ -1031,6 +1188,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+    <string name="equalizer_bitstream_title">Сейчас не работает</string>
+    <string name="equalizer_bitstream_subtitle">Этот трек передаётся на выход без декодирования</string>
+    <string name="equalizer_bitstream_footer">Эквалайзер работает с декодированным звуком. Этот трек передаётся битстримом, и декодирует его ваше устройство, поэтому здесь нет сэмплов для обработки.</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -1089,6 +1249,7 @@
     <string name="medium_quality">Medium Quality</string>
 
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">Путь сигнала в реальном времени, от декодера до выхода</string>
 
     <string name="pipeline_track_info">Track Info</string>
 
@@ -1143,6 +1304,9 @@
     <string name="song_will_play_next">Song will play next</string>
 
     <string name="song_added_to_queue">Song added to queue</string>
+    <string name="song_added_to_playlist">Добавлено в плейлист</string>
+    <string name="song_already_in_playlist">Уже в плейлисте</string>
+    <string name="party_queue_full">Очередь заполнена (максимум %d песен на вечеринке)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
 

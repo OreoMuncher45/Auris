@@ -101,7 +101,7 @@ fun CanvasArtworkPlayer(
     /** The full player bounds required before a portrait hero may reveal its first frame. */
     portraitRevealBounds: IntSize = IntSize.Zero,
     /** Fades a full-player portrait clip away as the existing sleeve collapses. */
-    presentationAlpha: Float = 1f,
+    presentationAlpha: () -> Float = { 1f },
     /** Fires once the clip has an actual frame on screen, and again if it drops back to none. */
     onRenderedChanged: (Boolean) -> Unit = {},
     /** A single frame off the playing clip, for callers that want to re-tint around it. */
@@ -341,7 +341,7 @@ fun CanvasArtworkPlayer(
     // hidden behind a clip that is no longer mounted.
     val reportCover by rememberUpdatedState(onCoverChanged)
     LaunchedEffect(Unit) {
-        snapshotFlow { alpha * currentPresentationAlpha }.collect { reportCover(it) }
+        snapshotFlow { alpha * currentPresentationAlpha() }.collect { reportCover(it) }
     }
     DisposableEffect(Unit) {
         onDispose {
@@ -462,7 +462,10 @@ fun CanvasArtworkPlayer(
             view.alpha = if (contentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect <= 0f) {
                 0f
             } else {
-                alpha * presentationAlpha
+                // Called here, in the view's update, so a fade driven by the
+                // player's collapse re-runs this block rather than
+                // recomposing the player around it.
+                alpha * presentationAlpha()
             }
             view.applyContentTransform(clipAspect, contentMode, alignPortraitTop)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

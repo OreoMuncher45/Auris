@@ -206,7 +206,7 @@ object AppSettings {
 
     private lateinit var prefs: SharedPreferences
 
-    /** Only for the Discord token — everything else on here is plain prefs. */
+    /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
     private lateinit var authStore: AuthStore
 
     /**
@@ -777,9 +777,14 @@ object AppSettings {
     val downloadsAllowedNow: Boolean
         get() = !wifiOnlyDownloads.value || meteredConnection.value != true
 
-    fun init(context: Context) {
+    /**
+     * [authStore] is the application's own, passed in rather than opened again:
+     * each open of the encrypted store is a keystore round trip, and a second
+     * one here was a measurable slice of cold start.
+     */
+    fun init(context: Context, authStore: AuthStore) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
-        authStore = AuthStore(context)
+        this.authStore = authStore
         readAll()
         watchConnection(context)
     }

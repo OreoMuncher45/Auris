@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.player
 
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.draw.drawWithContent
 import com.music.bitchord.R
 
 import android.media.AudioFormat
@@ -60,7 +64,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -181,7 +184,11 @@ internal fun PlaybackOriginCaption(
  */
 @Composable
 internal fun PlayerScrubber(
-    shown: Float,
+    /**
+     * Where the handle is, read in here so the playhead's tick recomposes the
+     * bar and its two times rather than the player the bar sits in.
+     */
+    shown: () -> Float,
     durationMs: Long,
     /** A version switch's wait, drawn along the bar — see [ThinSlider.loading]. */
     loading: Boolean,
@@ -190,6 +197,7 @@ internal fun PlayerScrubber(
     onScrubFinished: () -> Unit,
     centerLabel: @Composable BoxScope.() -> Unit = {},
 ) {
+    val shown = shown()
     Column(Modifier.fillMaxWidth()) {
         ThinSlider(
             value = shown,
@@ -369,12 +377,14 @@ internal fun TransportRow(
     onNext: () -> Unit,
     compact: Boolean = false,
 ) {
-    val playSize = if (compact) 58.dp else 72.dp
-    val playTouch = if (compact) 76.dp else 100.dp
+    val playSize = if (compact) 58.dp else 78.dp
+    val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        // SpaceAround, not SpaceEvenly: the outer margins take half a gap, so
+        // the three buttons spread a little further apart from each other.
+        horizontalArrangement = Arrangement.SpaceAround,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportGlyph(
@@ -684,8 +694,8 @@ private fun TransportGlyph(
  * Keeping the footprint fixed turns the extra 4dp into 2dp less optical space
  * above and below, without changing the transport row's measurements.
  */
-private val PLAYER_SKIP_ICON_SIZE = 52.dp
-private val PLAYER_SKIP_TOUCH_SIZE = 48.dp
+private val PLAYER_SKIP_ICON_SIZE = 57.dp
+private val PLAYER_SKIP_TOUCH_SIZE = 57.dp
 
 private val BOTTOM_ACTION_SIZE = 44.dp
 
@@ -1456,9 +1466,8 @@ private fun ShimmerText(
     ),
     baseAlpha: Float = 0.55f,
 ) {
-    var widthPx by remember { mutableIntStateOf(0) }
     val transition = rememberInfiniteTransition(label = "lossless-shimmer")
-    val progress by transition.animateFloat(
+    val progress = transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
@@ -1468,23 +1477,34 @@ private fun ShimmerText(
         label = "lossless-shimmer-progress",
     )
     val baseColor = Color.White.copy(alpha = baseAlpha)
-    val brush = if (widthPx <= 0) {
-        Brush.linearGradient(listOf(baseColor, baseColor))
-    } else {
-        val band = widthPx * 0.6f
-        val center = -band + progress * (widthPx + 2 * band)
-        Brush.linearGradient(
-            colorStops = arrayOf(0f to baseColor, 0.5f to Color.White, 1f to baseColor),
-            start = Offset(center - band, 0f),
-            end = Offset(center + band, 0f),
-        )
-    }
+    // The glyphs are laid out and drawn once, in plain white, and the moving
+    // band is painted over them in the draw phase with SrcIn — which keeps the
+    // glyphs' coverage and takes the gradient's colour, the same pixels a
+    // brush in the text style draws. As a brush the band was part of the
+    // style, so every frame of the sweep recomposed the text for the whole
+    // length of a lossless track.
     Text(
         text = text,
-        style = style.copy(brush = brush),
+        style = style,
+        color = Color.White,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = modifier.onSizeChanged { widthPx = it.width },
+        modifier = modifier
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                val width = size.width
+                val band = width * 0.6f
+                val center = -band + progress.value * (width + 2 * band)
+                drawRect(
+                    brush = Brush.linearGradient(
+                        colorStops = arrayOf(0f to baseColor, 0.5f to Color.White, 1f to baseColor),
+                        start = Offset(center - band, 0f),
+                        end = Offset(center + band, 0f),
+                    ),
+                    blendMode = BlendMode.SrcIn,
+                )
+            },
     )
 }
 

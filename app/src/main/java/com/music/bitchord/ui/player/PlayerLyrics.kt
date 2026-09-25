@@ -473,7 +473,8 @@ internal fun adjustedLyricsSeekTarget(lineTimeMs: Long, offsetMs: Int): Long =
 internal fun CurrentLyricStrip(
     lines: List<LyricLine>,
     trackKey: String,
-    positionMs: Long,
+    /** Read in here — a tick recomposes the strip alone. */
+    positionMs: () -> Long,
     isPlaying: Boolean,
     durationMs: Long,
     lyricsUnavailable: Boolean,
@@ -493,7 +494,7 @@ internal fun CurrentLyricStrip(
             CurrentLyricLine(
                 lines = lines,
                 trackKey = trackKey,
-                positionMs = positionMs,
+                positionMs = positionMs(),
                 isPlaying = isPlaying,
                 durationMs = durationMs,
                 onClick = onClick,

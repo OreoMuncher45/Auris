@@ -6,6 +6,13 @@
     <string name="download_notification_title">正在下载</string>
     <string name="download_notification_starting">正在开始</string>
     <string name="download_notification_queued">%1$s · 还有%2$d首排队中</string>
+    <string name="upload_channel_name">上传</string>
+    <string name="upload_channel_description">正在发送到你的 WebDAV 服务器的歌曲</string>
+    <string name="upload_notification_title">正在上传</string>
+    <string name="upload_notification_queued">%1$s · 还有 %2$d 首在排队</string>
+    <plurals name="uploading_song_count">
+        <item quantity="other">正在上传 %1$d 首歌曲</item>
+    </plurals>
     <string name="cancel">取消</string>
     <string name="save">保存</string>
     <string name="close">关闭</string>
@@ -14,6 +21,7 @@
     <string name="search">搜索</string>
     <string name="clear_search">清除搜索</string>
     <string name="library">资料库</string>
+    <string name="home">首页</string>
     <string name="play">播放</string>
     <string name="explore">探索</string>
     <string name="listen_now">立即收听</string>
@@ -80,6 +88,8 @@
     <string name="rich_presence">Rich Presence</string>
     <string name="scrobbling">Scrobbling</string>
     <string name="now_playing">正在播放</string>
+    <string name="next_in_queue">队列中的下一首</string>
+    <string name="next_from">接下来来自：%1$s</string>
     <string name="selected">已选择</string>
     <string name="password">密码</string>
     <string name="username">用户名</string>
@@ -129,6 +139,7 @@
     <string name="download_wifi_only">仅通过 Wi-Fi 下载</string>
     <string name="spatial_audio">空间音频</string>
     <string name="spatial_audio_subtitle">拓宽立体声音轨，带来更沉浸的体验</string>
+    <string name="spatial_audio_atmos_subtitle">此曲目已暂停 — Dolby Atmos 本身就是空间音频</string>
     <string name="animated_cover_cellular">在移动数据下播放动态封面</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">你的热门歌曲、艺人、专辑和流派</string>
@@ -182,6 +193,7 @@
     <string name="automix">自动混音 [测试版]</string>
     <string name="skip_silence">跳过静音</string>
     <string name="skip_silence_subtitle">裁剪超过一秒的静音间隙</string>
+    <string name="skip_silence_float_subtitle">32 位浮点输出时不可用</string>
     <string name="equalizer">均衡器</string>
     <string name="equalizer_subtitle">你设备的系统面板</string>
     <string name="show_nerd_stats">显示技术统计信息</string>
@@ -207,6 +219,8 @@
     <string name="stop_music_on_close_subtitle">从最近任务中划走应用时停止播放</string>
     <string name="hide_volume_bar">隐藏音量条</string>
     <string name="hide_volume_bar_subtitle">从主播放器中移除音量滑块</string>
+    <string name="hide_song_status">隐藏歌曲状态</string>
+    <string name="hide_song_status_subtitle">隐藏主播放器中的“播放自”或“播放者”文字</string>
     <string name="off">关闭</string>
     <string name="low">低</string>
     <string name="medium">中</string>
@@ -253,9 +267,14 @@
     <string name="clear_name">清除名称</string>
     <string name="close_lyrics">关闭歌词</string>
     <string name="translate_lyrics">翻译歌词</string>
+    <string name="romanize_lyrics">罗马音歌词</string>
     <string name="show_original_lyrics">显示原歌词</string>
     <string name="translating_lyrics_to">正在翻译为%1$s…</string>
     <string name="lyrics_translated_to">已翻译为%1$s</string>
+    <string name="romanizing_lyrics">正在转换为罗马音…</string>
+    <string name="lyrics_romanized">罗马音发音</string>
+    <string name="lyrics_already_romanized">这些歌词已经是拉丁字母</string>
+    <string name="lyrics_romanization_unavailable">这些歌词无法转换为罗马音</string>
     <string name="lyrics_already_in_language">歌词已经是%1$s</string>
     <string name="lyrics_translation_unavailable">翻译目前不可用</string>
     <string name="connect_account_first">请先连接账号</string>
@@ -273,6 +292,8 @@
     <string name="discord_button_variables">{song_name}、{artist_name} 和 {album_name} 会被替换为当前曲目的信息。</string>
     <string name="discord_buttons_footer">{song_name}、{artist_name} 和 {album_name} 会被替换为该曲目的信息。第一个按钮会在 YouTube Music 中打开这首歌，第二个按钮会打开本项目。</string>
     <string name="discord_presence_footer">当曲目、播放进度或播放状态发生变化时，卡片会随之更新；播放停止时会清除。</string>
+    <string name="discord_show_audio_quality">显示音质</string>
+    <string name="discord_show_audio_quality_subtitle">在状态卡片上显示 Hi-Res、无损和 Dolby 规格</string>
     <string name="discord_sign_in_footer">登录会打开 Discord 的登录页面，你不会在 BitChord 中输入任何内容。</string>
     <string name="discord_token">Discord 令牌</string>
     <string name="discord_token_description">粘贴你的 Discord 账号令牌。它会在此设备上加密保存，且只会发送给 Discord。</string>
@@ -294,6 +315,13 @@
     <string name="instrumental">纯音乐</string>
     <string name="pause">暂停</string>
     <string name="lyrics_by">歌词来自 %1$s</string>
+    <string name="change_lyrics_provider">更改</string>
+    <string name="choose_lyrics_provider">选择歌词来源</string>
+    <string name="lyrics_provider_current">当前来源</string>
+    <string name="lyrics_provider_found">已找到歌词 · 点按以使用</string>
+    <string name="lyrics_provider_not_found">未找到歌词</string>
+    <string name="lyrics_provider_fetching">正在获取歌词…</string>
+    <string name="lyrics_provider_not_fetched">点按以获取</string>
     <string name="no_lyrics_found">未找到歌词</string>
     <string name="lyrics_saved_with_download">歌词已随此次下载保存</string>
     <string name="shuffle_on">随机播放已开启</string>
@@ -445,11 +473,23 @@
     <string name="sources_order_footer">如果某个来源没有该曲目或无法访问，BitChord 会尝试下一个来源。排在 YouTube 之前的来源如果返回更好的版本，可以替换其录音。</string>
     <string name="sources_order_header">来源，按此顺序尝试</string>
     <string name="sources_quality_capped">此连接的设置低于高品质，因此串流会被转码以符合该限制，下载不受影响。</string>
+    <string name="jiosaavn_mismatch_warning">可能匹配到歌曲的错误版本。启用风险自负。</string>
+    <string name="enable_jiosaavn">启用 JioSaavn？</string>
+    <string name="enable_anyway">仍然启用</string>
     <string name="sources_subtitle">音频的来源及使用顺序</string>
+    <string name="source_matching">来源匹配</string>
+    <string name="upgrade_length_slack">曲目时长容差</string>
+    <string name="upgrade_length_slack_subtitle">替换音频流允许的最大时长差</string>
+    <string name="upgrade_length_slack_footer">容差越大，接受的来源匹配越多；容差越小则越严格。默认为 3 秒。</string>
+    <string name="seconds_short">%1$d 秒</string>
     <string name="spdc_token">sp_dc 令牌</string>
     <string name="spotify_canvas_setup">Spotify Canvas 设置</string>
     <string name="spotify_canvas_setup_description">要使用 Spotify Canvas，请提供你的 Spotify sp_dc cookie。</string>
     <string name="spotify_canvas_setup_steps">1. 在浏览器中登录 open.spotify.com。\n2. 打开开发者工具，然后进入“应用程序”和“Cookie”。\n3. 复制 sp_dc cookie 的值。\n4. 将其粘贴到下方。</string>
+    <string name="spotify_canvas_auto_hide">自动隐藏播放控件</string>
+    <string name="spotify_canvas_auto_hide_subtitle">播放 Spotify Canvas 时，5 秒后收起半屏播放器</string>
+    <string name="prioritize_spotify_canvas">优先使用 Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">先尝试 Spotify，再尝试 Apple Music 和其他动态封面来源</string>
     <string name="status">状态</string>
     <string name="status_dialog_message">状态显示开启时，你的账号所展示的内容。</string>
     <string name="status_dnd">请勿打扰</string>
@@ -553,6 +593,33 @@
     <string name="use_all_audio_folders_subtitle">取消文件夹限制，扫描整个设备上的音乐</string>
     <string name="album">专辑</string>
     <string name="artist">艺人</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">你服务器上的音乐</string>
+    <string name="webdav_not_configured">请在“来源”中连接服务器</string>
+    <string name="webdav_empty">WebDAV 服务器上没有找到音频文件。请在设置中检查 URL。</string>
+    <string name="webdav_description">将 BitChord 指向一个 WebDAV 音乐文件夹 — 你的 Nextcloud 音乐目录或任何支持 WebDAV 的服务器。</string>
+    <string name="webdav_server_url">服务器 URL</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">断开连接</string>
+    <string name="webdav_test_failed">无法连接：%1$s</string>
+    <string name="upload_to_webdav">上传到 WebDAV</string>
+    <string name="webdav_conflict_title">“%1$s”已在服务器上</string>
+    <string name="webdav_conflict_message">要覆盖，还是保留两份？</string>
+    <string name="webdav_overwrite">覆盖</string>
+    <string name="webdav_keep_both">保留两份</string>
+    <string name="webdav_skip">跳过</string>
+    <string name="webdav_apply_to_all">全部应用</string>
+    <string name="webdav_upload_summary">已上传 %1$d · 已跳过 %2$d · 失败 %3$d</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">共享文件夹中的音乐</string>
+    <string name="smb_not_configured">请在“来源”中连接共享</string>
+    <string name="smb_empty">SMB 共享中没有找到音频文件。请在“来源”中检查服务器。</string>
+    <string name="smb_description">将 BitChord 指向一个共享音乐文件夹 — 支持 SMB 的 NAS 或 Windows 共享。</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">共享名称，例如 Music</string>
+    <string name="smb_folder_hint">文件夹（可选）</string>
+    <string name="smb_disconnect">断开连接</string>
+    <string name="smb_test_failed">无法连接：%1$s</string>
     <string name="playlist">播放列表</string>
     <string name="open">打开</string>
     <string name="open_playlist">打开播放列表</string>
@@ -570,6 +637,11 @@
     <string name="analysis_refining">已分析，正在优化…</string>
     <string name="analysis_in_progress">正在分析…</string>
     <string name="waiting">等待中</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">未获取</string>
+    <string name="version_cut_fetching">获取中</string>
+    <string name="version_cut_measuring">分析中</string>
+    <string name="version_cut_aligned">已对齐</string>
     <string name="automix_enabled_subtitle">根据曲目本身自动把控每次过渡的时机与混合效果。如果手机发热或播放卡顿，请将其关闭。</string>
     <string name="automix_disabled_subtitle">自动把控过渡的时机与混合效果，无需手动调节。在性能较弱的设备上效果可能有所不同。</string>
     <string name="no_lyrics_sources_enabled">无。将不会获取歌词。</string>
@@ -633,15 +705,39 @@
     <string name="listen_together_sign_in_footer">一起听需要账号，这样派对里的每个人都能看到还有谁在。</string>
     <string name="listen_together_server">派对服务器</string>
     <string name="listen_together_server_online">在线 · %1$d 毫秒</string>
+    <string name="listen_together_server_online_fallback">在线（默认备用）· %1$d 毫秒</string>
     <string name="listen_together_server_offline">目前无法连接</string>
     <string name="listen_together_server_checking">正在检查…</string>
     <string name="listen_together_server_unknown">点按以检查</string>
     <string name="listen_together_custom_server">使用自己的服务器</string>
     <string name="listen_together_custom_server_footer">留空则使用内置服务器。如果你运行自己的副本，派对中的所有人都必须指向同一个。</string>
     <string name="listen_together_using_default">正在使用内置服务器</string>
+    <string name="listen_together_remove_server">移除服务器</string>
+    <string name="listen_together_switched_to_default">已切换到默认服务器</string>
+    <string name="listen_together_custom_server_saved">自定义服务器已保存</string>
     <string name="listen_together_create">创建派对</string>
     <string name="listen_together_create_subtitle">获取代码，分享给朋友</string>
-    <string name="listen_together_create_footer">你会得到一个六位代码。拿到代码的人都能加入，包括你自己最多五台设备。</string>
+    <string name="listen_together_create_footer">你会得到一个六位代码。拿到代码的人都能加入，包括你自己最多 %1$d 台设备。</string>
+    <string name="listen_together_profile">你的派对资料</string>
+    <string name="listen_together_nickname_hint">此派对中的昵称</string>
+    <string name="listen_together_party_size">派对人数</string>
+    <string name="listen_together_party_size_subtitle">选择 2–10 位听众</string>
+    <string name="listen_together_host_controls">只有你可以更改人数上限或移除听众</string>
+    <string name="listen_together_remove">移除</string>
+    <string name="listen_together_activity">最近活动</string>
+    <string name="listen_together_activity_footer">仅本次会话 · 最新在前 · 最多 100 条</string>
+    <string name="listen_together_activity_played">开始播放</string>
+    <string name="listen_together_activity_paused">暂停播放</string>
+    <string name="listen_together_activity_seeked">调整了播放进度</string>
+    <string name="listen_together_activity_skipped">跳到下一首</string>
+    <string name="listen_together_activity_went_back">返回上一首</string>
+    <string name="listen_together_activity_added">添加到队列</string>
+    <string name="listen_together_activity_removed_track">从队列中移除了一首</string>
+    <string name="listen_together_activity_cleared">清空了待播曲目</string>
+    <string name="listen_together_activity_reordered">重新排列了队列</string>
+    <string name="listen_together_activity_removed_member">移除了一位听众</string>
+    <string name="listen_together_activity_changed_size">更改了派对人数</string>
+    <string name="listen_together_activity_updated">更新了派对</string>
     <string name="listen_together_join">加入派对</string>
     <string name="listen_together_join_action">加入</string>
     <string name="listen_together_code_hint">六位字母或数字</string>
@@ -656,6 +752,27 @@
     <string name="listen_together_you">你</string>
     <string name="listen_together_host">主持人</string>
     <string name="listen_together_away">暂离 — 位置为其保留</string>
+    <string name="listen_together_manage">管理</string>
+    <string name="listen_together_landing_title">开始派对</string>
+    <string name="listen_together_landing_subtitle">因为一起听的音乐更动听。邀请朋友一起收听，并实时添加歌曲，无论他们身在何处。</string>
+    <string name="listen_together_create_action">创建派对</string>
+    <string name="listen_together_join_existing">加入现有派对</string>
+    <string name="listen_together_create_sheet_subtitle">选择你的显示方式，以及可加入的人数。</string>
+    <string name="listen_together_creating">正在创建…</string>
+    <string name="listen_together_joining">正在加入…</string>
+    <string name="listen_together_full">此派对已满</string>
+    <string name="listen_together_join_question">加入 %1$s 的派对？</string>
+    <string name="listen_together_join_question_unnamed">加入此派对？</string>
+    <string name="listen_together_not_now">以后再说</string>
+    <string name="listen_together_preview_footer">派对中的人会看到你的名字和头像。</string>
+    <string name="listen_together_invite_title">邀请朋友加入你的派对</string>
+    <string name="listen_together_share_link">分享链接</string>
+    <string name="listen_together_scan_qr">扫描二维码</string>
+    <string name="listen_together_scan_qr_subtitle">让朋友扫描此码即可加入。</string>
+    <string name="listen_together_invite">邀请</string>
+    <string name="listen_together_host_only">只有我能控制音乐</string>
+    <string name="listen_together_host_only_subtitle">其他人一起收听，并可在自己的设备上暂停</string>
+    <string name="listen_together_host_only_notice">只有主持人可以控制音乐</string>
     <string name="listen_together_leave">离开派对</string>
     <string name="listen_together_leave_subtitle">其他人继续收听</string>
     <string name="listen_together_reconnecting">正在重新连接…</string>
@@ -665,6 +782,28 @@
     <string name="listen_together_jam_unnamed">一起听</string>
     <string name="listen_together_open">一起听</string>
     <string name="listen_together_open_count">一起听 · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">加入自定义服务器上的派对？</string>
+    <string name="listen_together_custom_server_dialog_message">此派对托管在外部服务器上：\n\n%1$s\n\n要切换派对服务器并加入派对 %2$s 吗？</string>
+    <string name="listen_together_custom_server_switch_and_join">切换并加入</string>
+    <string name="listen_together_official_server_dialog_title">切换到官方服务器？</string>
+    <string name="listen_together_official_server_dialog_message">此派对托管在 BitChord 官方服务器上。\n\n要切换回官方服务器并加入派对 %1$s 吗？</string>
+    <string name="listen_together_switch_failed_stayed_in_party">无法加入派对：%1$s。仍留在派对 %2$s 中。</string>
+    <string name="listen_together_switch_failed">无法加入派对：%1$s。</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">服务器 URL 无效。请输入有效地址（例如 https://your-server.com）</string>
+    <string name="listen_together_err_whitespace">服务器 URL 不能包含空格</string>
+    <string name="listen_together_err_invalid_path">服务器 URL 包含无效路径</string>
+    <string name="listen_together_err_no_path">服务器 URL 不能包含路径</string>
+    <string name="listen_together_err_no_query">服务器 URL 不能包含查询参数</string>
+    <string name="listen_together_err_no_fragment">服务器 URL 不能包含片段</string>
+    <string name="listen_together_err_invalid_port">服务器端口必须在 1 到 65535 之间</string>
+    <string name="listen_together_custom_server_connected">已连接到自定义服务器</string>
+    <string name="listen_together_custom_server_unreachable_fallback">无法连接自定义服务器。正在使用默认备用服务器。</string>
+    <string name="listen_together_status_custom_online">已连接到自定义服务器 · %1$d 毫秒</string>
+    <string name="listen_together_status_custom_fallback">无法连接自定义服务器 · 正在使用默认备用（%1$d 毫秒）</string>
+    <string name="listen_together_status_all_offline">自定义服务器和默认服务器均已离线</string>
+    <string name="listen_together_top_bar_fallback">备用 · %1$s</string>
 
     <string name="vietnamese">越南语</string>
 
@@ -731,6 +870,7 @@
     <string name="choose_profile">选择个人资料</string>
 
     <string name="convert_to_audio">转换为音频</string>
+    <string name="convert_to_video">转换为视频</string>
 
     <string name="converting_to_audio">正在转换为音频…</string>
 
@@ -775,6 +915,18 @@
     <string name="playlist_action">播放列表</string>
 
     <string name="prefer_usb_dac">首选 USB DAC</string>
+    <string name="loudness_normalization">响度标准化</string>
+    <string name="loudness_normalization_subtitle">将每首曲目调整到相同响度</string>
+    <string name="loudness_target">目标响度</string>
+    <string name="loudness_target_subtitle">较低适合耳机；较高适合车载或手机扬声器</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="pipeline_loudness">响度</string>
+    <string name="pipeline_loudness_gain">增益</string>
+    <string name="pipeline_loudness_measured">测量值</string>
+    <string name="pipeline_bit_exact">比特精确</string>
+    <string name="loudness_measuring">正在测量…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
 
     <string name="profile_unavailable">此页面暂无已登录的个人资料。</string>
 
@@ -952,6 +1104,8 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">智能音频对齐</string>
+    <string name="smart_version_alignment_subtitle">分析音频波形，精确匹配对应的播放时刻</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
@@ -988,6 +1142,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+    <string name="equalizer_bitstream_title">当前未运行</string>
+    <string name="equalizer_bitstream_subtitle">此曲目未经解码直接发送到输出</string>
+    <string name="equalizer_bitstream_footer">均衡器作用于解码后的音频。此曲目以比特流形式直通，由你的设备解码，因此这里没有可供处理的采样。</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -1046,6 +1203,7 @@
     <string name="medium_quality">Medium Quality</string>
 
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">实时信号路径，从解码器到输出</string>
 
     <string name="pipeline_track_info">Track Info</string>
 
@@ -1100,6 +1258,9 @@
     <string name="song_will_play_next">Song will play next</string>
 
     <string name="song_added_to_queue">Song added to queue</string>
+    <string name="song_added_to_playlist">已添加到播放列表</string>
+    <string name="song_already_in_playlist">已在播放列表中</string>
+    <string name="party_queue_full">队列已满（派对最多 %d 首歌曲）</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
 

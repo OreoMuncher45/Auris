@@ -6,6 +6,14 @@
     <string name="download_notification_title">डाउनलोड हो रहा है</string>
     <string name="download_notification_starting">शुरू हो रहा है</string>
     <string name="download_notification_queued">%1$s · %2$d और कतार में</string>
+    <string name="upload_channel_name">अपलोड</string>
+    <string name="upload_channel_description">आपके WebDAV सर्वर पर भेजे जा रहे गाने</string>
+    <string name="upload_notification_title">अपलोड हो रहा है</string>
+    <string name="upload_notification_queued">%1$s · %2$d और कतार में</string>
+    <plurals name="uploading_song_count">
+        <item quantity="one">%1$d गाना अपलोड हो रहा है</item>
+        <item quantity="other">%1$d गाने अपलोड हो रहे हैं</item>
+    </plurals>
     <string name="cancel">रद्द करें</string>
     <string name="save">सेव करें</string>
     <string name="close">बंद करें</string>
@@ -14,6 +22,7 @@
     <string name="search">खोजें</string>
     <string name="clear_search">खोज साफ़ करें</string>
     <string name="library">लाइब्रेरी</string>
+    <string name="home">होम</string>
     <string name="play">चलाएं</string>
     <string name="explore">एक्सप्लोर करें</string>
     <string name="listen_now">अभी सुनें</string>
@@ -84,6 +93,8 @@
     <string name="rich_presence">रिच प्रेज़ेंस</string>
     <string name="scrobbling">स्क्रॉबलिंग</string>
     <string name="now_playing">अभी चल रहा है</string>
+    <string name="next_in_queue">कतार में अगला</string>
+    <string name="next_from">अगला यहाँ से: %1$s</string>
     <string name="selected">चयनित</string>
     <string name="password">पासवर्ड</string>
     <string name="username">यूज़रनेम</string>
@@ -133,6 +144,7 @@
     <string name="download_wifi_only">केवल Wi-Fi पर डाउनलोड करें</string>
     <string name="spatial_audio">स्पेशियल ऑडियो</string>
     <string name="spatial_audio_subtitle">ज़्यादा इमर्सिव अनुभव के लिए स्टीरियो ट्रैक को चौड़ा करता है</string>
+    <string name="spatial_audio_atmos_subtitle">इस ट्रैक के लिए रुका हुआ — Dolby Atmos पहले से ही स्पेशियल है</string>
     <string name="animated_cover_cellular">मोबाइल डेटा पर एनिमेटेड कवर चलाएं</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">आपके टॉप गाने, कलाकार, एल्बम और शैलियां</string>
@@ -186,6 +198,7 @@
     <string name="automix">ऑटोमिक्स [BETA]</string>
     <string name="skip_silence">खामोशी छोड़ें</string>
     <string name="skip_silence_subtitle">एक सेकंड से लंबे गैप को काटता है</string>
+    <string name="skip_silence_float_subtitle">32-बिट फ़्लोट आउटपुट पर उपलब्ध नहीं</string>
     <string name="equalizer">इक्वलाइज़र</string>
     <string name="equalizer_subtitle">आपके डिवाइस का सिस्टम पैनल</string>
     <string name="show_nerd_stats">टेक्निकल आंकड़े दिखाएं</string>
@@ -211,6 +224,8 @@
     <string name="stop_music_on_close_subtitle">ऐप को हाल के ऐप्स से हटाने पर प्लेबैक रोक देता है</string>
     <string name="hide_volume_bar">वॉल्यूम बार छिपाएं</string>
     <string name="hide_volume_bar_subtitle">मुख्य प्लेयर से वॉल्यूम स्लाइडर हटा देता है</string>
+    <string name="hide_song_status">गाने का स्टेटस छिपाएँ</string>
+    <string name="hide_song_status_subtitle">मुख्य प्लेयर में “यहाँ से चल रहा है” या “इन्होंने चलाया” टेक्स्ट छिपाता है</string>
     <string name="off">बंद</string>
     <string name="low">कम</string>
     <string name="medium">मध्यम</string>
@@ -257,9 +272,14 @@
     <string name="clear_name">नाम साफ़ करें</string>
     <string name="close_lyrics">लिरिक्स बंद करें</string>
     <string name="translate_lyrics">लिरिक्स का अनुवाद करें</string>
+    <string name="romanize_lyrics">लिरिक्स रोमन में दिखाएँ</string>
     <string name="show_original_lyrics">मूल लिरिक्स दिखाएँ</string>
     <string name="translating_lyrics_to">%1$s में अनुवाद हो रहा है…</string>
     <string name="lyrics_translated_to">%1$s में अनुवादित</string>
+    <string name="romanizing_lyrics">लिरिक्स रोमन में बदले जा रहे हैं…</string>
+    <string name="lyrics_romanized">रोमन उच्चारण</string>
+    <string name="lyrics_already_romanized">ये लिरिक्स पहले से लैटिन अक्षरों में हैं</string>
+    <string name="lyrics_romanization_unavailable">इन लिरिक्स के लिए रोमन रूप उपलब्ध नहीं है</string>
     <string name="lyrics_already_in_language">ये लिरिक्स पहले से %1$s में हैं</string>
     <string name="lyrics_translation_unavailable">अनुवाद अभी उपलब्ध नहीं है</string>
     <string name="connect_account_first">पहले कोई खाता कनेक्ट करें</string>
@@ -277,6 +297,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} और {album_name} की जगह मौजूदा ट्रैक की जानकारी आ जाती है।</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} और {album_name} की जगह ट्रैक की जानकारी आ जाती है। पहला बटन गाने को YouTube Music पर खोलता है और दूसरा इस प्रोजेक्ट को खोलता है।</string>
     <string name="discord_presence_footer">ट्रैक, पोज़िशन या प्लेबैक स्थिति बदलने पर कार्ड अपडेट होता है। प्लेबैक रुकने पर यह साफ़ हो जाता है।</string>
+    <string name="discord_show_audio_quality">ऑडियो क्वालिटी दिखाएँ</string>
+    <string name="discord_show_audio_quality_subtitle">स्टेटस कार्ड पर Hi-Res, लॉसलेस और Dolby जानकारी</string>
     <string name="discord_sign_in_footer">साइन इन करने पर Discord का लॉगिन पेज खुलता है। BitChord में कुछ भी टाइप नहीं किया जाता।</string>
     <string name="discord_token">Discord टोकन</string>
     <string name="discord_token_description">अपना Discord खाता टोकन पेस्ट करें। यह इस डिवाइस पर एन्क्रिप्टेड रहता है और केवल Discord को भेजा जाता है।</string>
@@ -298,6 +320,13 @@
     <string name="instrumental">इंस्ट्रूमेंटल</string>
     <string name="pause">रोकें</string>
     <string name="lyrics_by">%1$s द्वारा लिरिक्स</string>
+    <string name="change_lyrics_provider">बदलें</string>
+    <string name="choose_lyrics_provider">लिरिक्स प्रदाता चुनें</string>
+    <string name="lyrics_provider_current">मौजूदा प्रदाता</string>
+    <string name="lyrics_provider_found">लिरिक्स मिल गए · इस्तेमाल करने के लिए टैप करें</string>
+    <string name="lyrics_provider_not_found">लिरिक्स नहीं मिले</string>
+    <string name="lyrics_provider_fetching">लिरिक्स लाए जा रहे हैं…</string>
+    <string name="lyrics_provider_not_fetched">लाने के लिए टैप करें</string>
     <string name="no_lyrics_found">कोई लिरिक्स नहीं मिले</string>
     <string name="lyrics_saved_with_download">इस डाउनलोड के साथ लिरिक्स सेव किए गए</string>
     <string name="shuffle_on">शफ़ल चालू</string>
@@ -458,11 +487,23 @@
     <string name="sources_order_footer">अगर किसी स्रोत के पास कोई ट्रैक नहीं है या उस तक पहुंचा नहीं जा सकता, तो BitChord अगला स्रोत आज़माता है। YouTube से ऊपर के स्रोत बेहतर वर्शन मिलने पर उसकी रिकॉर्डिंग बदल सकते हैं।</string>
     <string name="sources_order_header">स्रोत, इसी क्रम में आज़माए जाते हैं</string>
     <string name="sources_quality_capped">यह कनेक्शन हाई क्वालिटी से नीचे सेट है, इसलिए स्ट्रीम को उस सीमा में फिट करने के लिए ट्रांसकोड किया जाता है। डाउनलोड पर कोई असर नहीं पड़ता।</string>
+    <string name="jiosaavn_mismatch_warning">गाने का गलत वर्शन मिल सकता है। अपने जोखिम पर चालू करें।</string>
+    <string name="enable_jiosaavn">JioSaavn चालू करें?</string>
+    <string name="enable_anyway">फिर भी चालू करें</string>
     <string name="sources_subtitle">ऑडियो कहां से आता है और किस क्रम में इस्तेमाल होता है</string>
+    <string name="source_matching">स्रोत मिलान</string>
+    <string name="upgrade_length_slack">ट्रैक लंबाई की छूट</string>
+    <string name="upgrade_length_slack_subtitle">बदले जाने वाले स्ट्रीम के लिए अवधि का अधिकतम अंतर</string>
+    <string name="upgrade_length_slack_footer">ज़्यादा छूट से ज़्यादा स्रोत मिलान स्वीकार होते हैं; कम छूट ज़्यादा सख़्त है। डिफ़ॉल्ट 3 सेकंड है।</string>
+    <string name="seconds_short">%1$d से.</string>
     <string name="spdc_token">sp_dc टोकन</string>
     <string name="spotify_canvas_setup">Spotify Canvas सेटअप</string>
     <string name="spotify_canvas_setup_description">Spotify Canvas इस्तेमाल करने के लिए, अपनी Spotify sp_dc कुकी दें।</string>
     <string name="spotify_canvas_setup_steps">1. ब्राउज़र में open.spotify.com पर साइन इन करें।\n2. Developer Tools खोलें, फिर Application और Cookies पर जाएं।\n3. sp_dc कुकी की वैल्यू कॉपी करें।\n4. इसे नीचे पेस्ट करें।</string>
+    <string name="spotify_canvas_auto_hide">प्लेयर कंट्रोल अपने-आप छिपाएँ</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Spotify Canvas चलते समय 5 सेकंड बाद आधा प्लेयर छोटा कर देता है</string>
+    <string name="prioritize_spotify_canvas">Spotify Canvas को प्राथमिकता दें</string>
+    <string name="prioritize_spotify_canvas_subtitle">Apple Music और दूसरे एनिमेटेड कवर प्रदाताओं से पहले Spotify आज़माएँ</string>
     <string name="status">स्टेटस</string>
     <string name="status_dialog_message">प्रेज़ेंस चालू रहते हुए आपका खाता क्या दिखाता है।</string>
     <string name="status_dnd">डिस्टर्ब न करें</string>
@@ -570,6 +611,33 @@
     <string name="use_all_audio_folders_subtitle">फ़ोल्डर की सीमा हटाएं और पूरे डिवाइस में संगीत स्कैन करें</string>
     <string name="album">एल्बम</string>
     <string name="artist">कलाकार</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">आपके सर्वर पर संगीत</string>
+    <string name="webdav_not_configured">स्रोत में जाकर सर्वर कनेक्ट करें</string>
+    <string name="webdav_empty">WebDAV सर्वर पर कोई ऑडियो फ़ाइल नहीं मिली। सेटिंग्स में URL जाँचें।</string>
+    <string name="webdav_description">BitChord को किसी WebDAV संगीत फ़ोल्डर से जोड़ें — आपकी Nextcloud Music डायरेक्टरी या WebDAV सपोर्ट करने वाला कोई भी सर्वर।</string>
+    <string name="webdav_server_url">सर्वर URL</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">डिस्कनेक्ट करें</string>
+    <string name="webdav_test_failed">कनेक्ट नहीं हो सका: %1$s</string>
+    <string name="upload_to_webdav">WebDAV पर अपलोड करें</string>
+    <string name="webdav_conflict_title">“%1$s” पहले से सर्वर पर है</string>
+    <string name="webdav_conflict_message">ओवरराइट करें, या दोनों कॉपी रखें?</string>
+    <string name="webdav_overwrite">ओवरराइट करें</string>
+    <string name="webdav_keep_both">दोनों रखें</string>
+    <string name="webdav_skip">छोड़ें</string>
+    <string name="webdav_apply_to_all">सभी पर लागू करें</string>
+    <string name="webdav_upload_summary">%1$d अपलोड · %2$d छोड़े · %3$d विफल</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">शेयर किए गए फ़ोल्डर में संगीत</string>
+    <string name="smb_not_configured">स्रोत में जाकर शेयर कनेक्ट करें</string>
+    <string name="smb_empty">SMB शेयर पर कोई ऑडियो फ़ाइल नहीं मिली। स्रोत में सर्वर जाँचें।</string>
+    <string name="smb_description">BitChord को किसी शेयर किए गए संगीत फ़ोल्डर से जोड़ें — SMB वाला कोई NAS या Windows शेयर।</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">शेयर का नाम, जैसे Music</string>
+    <string name="smb_folder_hint">फ़ोल्डर (वैकल्पिक)</string>
+    <string name="smb_disconnect">डिस्कनेक्ट करें</string>
+    <string name="smb_test_failed">कनेक्ट नहीं हो सका: %1$s</string>
     <string name="playlist">प्लेलिस्ट</string>
     <string name="open">खोलें</string>
     <string name="open_playlist">प्लेलिस्ट खोलें</string>
@@ -587,6 +655,11 @@
     <string name="analysis_refining">विश्लेषित, सुधार हो रहा है…</string>
     <string name="analysis_in_progress">विश्लेषण हो रहा है…</string>
     <string name="waiting">प्रतीक्षा में</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">नहीं लाया गया</string>
+    <string name="version_cut_fetching">लाया जा रहा है</string>
+    <string name="version_cut_measuring">विश्लेषण हो रहा है</string>
+    <string name="version_cut_aligned">अलाइन हो गया</string>
     <string name="automix_enabled_subtitle">ट्रैक्स से खुद हर ट्रांज़िशन का समय और मिश्रण तय करता है। फ़ोन गर्म होने या प्लेबैक अटकने पर इसे बंद कर दें।</string>
     <string name="automix_disabled_subtitle">बिना स्लाइडर के, ट्रांज़िशन का समय और मिश्रण अपने आप तय करता है। धीमे डिवाइस पर परफ़ॉर्मेंस अलग हो सकती है।</string>
     <string name="no_lyrics_sources_enabled">कोई नहीं। लिरिक्स नहीं लिए जाएंगे।</string>
@@ -651,15 +724,39 @@
     <string name="listen_together_sign_in_footer">साथ में सुनने के लिए अकाउंट चाहिए, ताकि पार्टी में सबको दिखे कि और कौन है।</string>
     <string name="listen_together_server">पार्टी सर्वर</string>
     <string name="listen_together_server_online">ऑनलाइन · %1$d मि.से.</string>
+    <string name="listen_together_server_online_fallback">ऑनलाइन (डिफ़ॉल्ट फ़ॉलबैक) · %1$d मि.से.</string>
     <string name="listen_together_server_offline">अभी पहुँच में नहीं है</string>
     <string name="listen_together_server_checking">जाँच हो रही है…</string>
     <string name="listen_together_server_unknown">जाँचने के लिए टैप करें</string>
     <string name="listen_together_custom_server">अपना सर्वर इस्तेमाल करें</string>
     <string name="listen_together_custom_server_footer">बिल्ट-इन सर्वर इस्तेमाल करने के लिए इसे खाली छोड़ दें। अगर आप अपनी कॉपी चलाते हैं, तो पार्टी में सबको वही सर्वर देना होगा।</string>
     <string name="listen_together_using_default">बिल्ट-इन सर्वर इस्तेमाल हो रहा है</string>
+    <string name="listen_together_remove_server">सर्वर हटाएँ</string>
+    <string name="listen_together_switched_to_default">डिफ़ॉल्ट सर्वर पर स्विच किया गया</string>
+    <string name="listen_together_custom_server_saved">कस्टम सर्वर सेव हो गया</string>
     <string name="listen_together_create">पार्टी बनाएँ</string>
     <string name="listen_together_create_subtitle">दोस्तों के साथ शेयर करने के लिए कोड पाएँ</string>
-    <string name="listen_together_create_footer">आपको छह अक्षरों का कोड मिलेगा। जिसके पास यह है वह जुड़ सकता है — आपके साथ मिलाकर पाँच डिवाइस तक।</string>
+    <string name="listen_together_create_footer">आपको छह अक्षरों का कोड मिलेगा। जिसके पास यह है वह जुड़ सकता है — आपके साथ मिलाकर %1$d डिवाइस तक।</string>
+    <string name="listen_together_profile">आपकी पार्टी प्रोफ़ाइल</string>
+    <string name="listen_together_nickname_hint">इस पार्टी के लिए उपनाम</string>
+    <string name="listen_together_party_size">पार्टी का आकार</string>
+    <string name="listen_together_party_size_subtitle">2–10 श्रोता चुनें</string>
+    <string name="listen_together_host_controls">सिर्फ़ आप क्षमता बदल सकते हैं या श्रोताओं को हटा सकते हैं</string>
+    <string name="listen_together_remove">हटाएँ</string>
+    <string name="listen_together_activity">हाल की गतिविधि</string>
+    <string name="listen_together_activity_footer">सिर्फ़ यह सेशन · नया पहले · अधिकतम 100 गतिविधियाँ</string>
+    <string name="listen_together_activity_played">प्लेबैक शुरू किया</string>
+    <string name="listen_together_activity_paused">प्लेबैक रोका</string>
+    <string name="listen_together_activity_seeked">ट्रैक में आगे-पीछे किया</string>
+    <string name="listen_together_activity_skipped">आगे बढ़ाया</string>
+    <string name="listen_together_activity_went_back">पीछे गए</string>
+    <string name="listen_together_activity_added">कतार में जोड़ा</string>
+    <string name="listen_together_activity_removed_track">कतार से एक ट्रैक हटाया</string>
+    <string name="listen_together_activity_cleared">आने वाले ट्रैक साफ़ किए</string>
+    <string name="listen_together_activity_reordered">कतार का क्रम बदला</string>
+    <string name="listen_together_activity_removed_member">एक श्रोता को हटाया</string>
+    <string name="listen_together_activity_changed_size">पार्टी का आकार बदला</string>
+    <string name="listen_together_activity_updated">पार्टी अपडेट की</string>
     <string name="listen_together_join">पार्टी में शामिल हों</string>
     <string name="listen_together_join_action">शामिल हों</string>
     <string name="listen_together_code_hint">छह अक्षर या अंक</string>
@@ -674,6 +771,27 @@
     <string name="listen_together_you">आप</string>
     <string name="listen_together_host">होस्ट</string>
     <string name="listen_together_away">दूर हैं — उनकी जगह रखी है</string>
+    <string name="listen_together_manage">मैनेज करें</string>
+    <string name="listen_together_landing_title">पार्टी शुरू करें</string>
+    <string name="listen_together_landing_subtitle">क्योंकि संगीत साथ में बेहतर लगता है। दोस्तों को साथ सुनने और रियल टाइम में गाने जोड़ने के लिए बुलाएँ, चाहे वे कहीं भी हों।</string>
+    <string name="listen_together_create_action">पार्टी बनाएँ</string>
+    <string name="listen_together_join_existing">मौजूदा पार्टी में शामिल हों</string>
+    <string name="listen_together_create_sheet_subtitle">चुनें कि आप कैसे दिखेंगे, और कितने लोग शामिल हो सकते हैं।</string>
+    <string name="listen_together_creating">बनाई जा रही है…</string>
+    <string name="listen_together_joining">शामिल हो रहे हैं…</string>
+    <string name="listen_together_full">यह पार्टी भर गई है</string>
+    <string name="listen_together_join_question">%1$s की पार्टी में शामिल हों?</string>
+    <string name="listen_together_join_question_unnamed">इस पार्टी में शामिल हों?</string>
+    <string name="listen_together_not_now">अभी नहीं</string>
+    <string name="listen_together_preview_footer">पार्टी के लोग आपका नाम और प्रोफ़ाइल फ़ोटो देखेंगे।</string>
+    <string name="listen_together_invite_title">दोस्तों को अपनी पार्टी में बुलाएँ</string>
+    <string name="listen_together_share_link">लिंक शेयर करें</string>
+    <string name="listen_together_scan_qr">QR कोड स्कैन करें</string>
+    <string name="listen_together_scan_qr_subtitle">शामिल होने के लिए दोस्त इसे स्कैन करें।</string>
+    <string name="listen_together_invite">आमंत्रित करें</string>
+    <string name="listen_together_host_only">संगीत सिर्फ़ मैं कंट्रोल करूँ</string>
+    <string name="listen_together_host_only_subtitle">बाकी सब साथ सुनते हैं और अपने डिवाइस पर रोक सकते हैं</string>
+    <string name="listen_together_host_only_notice">सिर्फ़ होस्ट संगीत कंट्रोल कर सकता है</string>
     <string name="listen_together_leave">पार्टी छोड़ें</string>
     <string name="listen_together_leave_subtitle">बाकी लोग सुनते रहेंगे</string>
     <string name="listen_together_reconnecting">दोबारा जुड़ रहे हैं…</string>
@@ -683,6 +801,28 @@
     <string name="listen_together_jam_unnamed">साथ में सुन रहे हैं</string>
     <string name="listen_together_open">साथ में सुनें</string>
     <string name="listen_together_open_count">साथ में सुन रहे हैं · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">कस्टम सर्वर की पार्टी में शामिल हों?</string>
+    <string name="listen_together_custom_server_dialog_message">यह पार्टी एक बाहरी सर्वर पर चल रही है:\n\n%1$s\n\nक्या आप अपना पार्टी सर्वर बदलकर पार्टी %2$s में शामिल होना चाहते हैं?</string>
+    <string name="listen_together_custom_server_switch_and_join">बदलें और शामिल हों</string>
+    <string name="listen_together_official_server_dialog_title">आधिकारिक सर्वर पर जाएँ?</string>
+    <string name="listen_together_official_server_dialog_message">यह पार्टी BitChord के आधिकारिक सर्वर पर चल रही है।\n\nक्या आप आधिकारिक सर्वर पर लौटकर पार्टी %1$s में शामिल होना चाहते हैं?</string>
+    <string name="listen_together_switch_failed_stayed_in_party">पार्टी में शामिल नहीं हो सके: %1$s। आप पार्टी %2$s में बने रहेंगे।</string>
+    <string name="listen_together_switch_failed">पार्टी में शामिल नहीं हो सके: %1$s।</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">सर्वर URL अमान्य है। कृपया सही पता डालें (जैसे https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">सर्वर URL में स्पेस नहीं हो सकते</string>
+    <string name="listen_together_err_invalid_path">सर्वर URL में अमान्य पाथ है</string>
+    <string name="listen_together_err_no_path">सर्वर URL में पाथ नहीं होना चाहिए</string>
+    <string name="listen_together_err_no_query">सर्वर URL में क्वेरी पैरामीटर नहीं होने चाहिए</string>
+    <string name="listen_together_err_no_fragment">सर्वर URL में फ़्रैगमेंट नहीं होने चाहिए</string>
+    <string name="listen_together_err_invalid_port">सर्वर पोर्ट 1 से 65535 के बीच होना चाहिए</string>
+    <string name="listen_together_custom_server_connected">कस्टम सर्वर से कनेक्ट हो गया</string>
+    <string name="listen_together_custom_server_unreachable_fallback">कस्टम सर्वर तक नहीं पहुँच सके। डिफ़ॉल्ट फ़ॉलबैक सर्वर इस्तेमाल हो रहा है।</string>
+    <string name="listen_together_status_custom_online">कस्टम सर्वर से कनेक्टेड · %1$d मि.से.</string>
+    <string name="listen_together_status_custom_fallback">कस्टम सर्वर तक नहीं पहुँच सके · डिफ़ॉल्ट फ़ॉलबैक इस्तेमाल हो रहा है (%1$d मि.से.)</string>
+    <string name="listen_together_status_all_offline">कस्टम सर्वर और डिफ़ॉल्ट सर्वर दोनों ऑफ़लाइन हैं</string>
+    <string name="listen_together_top_bar_fallback">फ़ॉलबैक · %1$s</string>
 
     <string name="vietnamese">वियतनामी</string>
 
@@ -750,6 +890,7 @@
     <string name="choose_profile">प्रोफ़ाइल चुनें</string>
 
     <string name="convert_to_audio">ऑडियो में बदलें</string>
+    <string name="convert_to_video">वीडियो में बदलें</string>
 
     <string name="converting_to_audio">ऑडियो में बदला जा रहा है…</string>
 
@@ -794,6 +935,18 @@
     <string name="playlist_action">प्लेलिस्ट</string>
 
     <string name="prefer_usb_dac">USB DAC को प्राथमिकता दें</string>
+    <string name="loudness_normalization">लाउडनेस नॉर्मलाइज़ेशन</string>
+    <string name="loudness_normalization_subtitle">हर ट्रैक को एक जैसी लाउडनेस पर लाता है</string>
+    <string name="loudness_target">लक्ष्य लाउडनेस</string>
+    <string name="loudness_target_subtitle">कम हेडफ़ोन के लिए ठीक है; ज़्यादा कार या फ़ोन स्पीकर के लिए</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="pipeline_loudness">लाउडनेस</string>
+    <string name="pipeline_loudness_gain">गेन</string>
+    <string name="pipeline_loudness_measured">मापा गया</string>
+    <string name="pipeline_bit_exact">बिट-एग्ज़ैक्ट</string>
+    <string name="loudness_measuring">माप रहे हैं…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
 
     <string name="profile_unavailable">इस पृष्ठ पर अभी कोई साइन-इन प्रोफ़ाइल उपलब्ध नहीं है।</string>
 
@@ -971,6 +1124,8 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">स्मार्ट ऑडियो अलाइनमेंट</string>
+    <string name="smart_version_alignment_subtitle">ठीक मेल खाने वाला प्लेबैक पल ढूँढने के लिए ऑडियो वेवफ़ॉर्म का विश्लेषण करता है</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
@@ -1007,6 +1162,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+    <string name="equalizer_bitstream_title">अभी चालू नहीं है</string>
+    <string name="equalizer_bitstream_subtitle">यह ट्रैक बिना डीकोड किए आउटपुट पर भेजा जा रहा है</string>
+    <string name="equalizer_bitstream_footer">इक्वलाइज़र डीकोड किए गए ऑडियो पर काम करता है। यह ट्रैक बिटस्ट्रीम के रूप में आपके डिवाइस को डीकोड करने के लिए भेजा जाता है, इसलिए यहाँ फ़िल्टर करने के लिए कोई सैंपल नहीं है।</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -1065,6 +1223,7 @@
     <string name="medium_quality">Medium Quality</string>
 
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">डीकोडर से आउटपुट तक लाइव सिग्नल पाथ</string>
 
     <string name="pipeline_track_info">Track Info</string>
 
@@ -1119,6 +1278,9 @@
     <string name="song_will_play_next">Song will play next</string>
 
     <string name="song_added_to_queue">Song added to queue</string>
+    <string name="song_added_to_playlist">प्लेलिस्ट में जोड़ा गया</string>
+    <string name="song_already_in_playlist">पहले से प्लेलिस्ट में है</string>
+    <string name="party_queue_full">कतार भर गई है (पार्टी में अधिकतम %d गाने)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
 

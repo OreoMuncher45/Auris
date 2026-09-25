@@ -7,6 +7,15 @@
     <string name="download_notification_title">מוריד</string>
     <string name="download_notification_starting">מתחיל</string>
     <string name="download_notification_queued">%1$s · עוד %2$d בתור</string>
+    <string name="upload_channel_name">העלאות</string>
+    <string name="upload_channel_description">שירים שנשלחים לשרת ה-WebDAV שלכם</string>
+    <string name="upload_notification_title">מעלה</string>
+    <string name="upload_notification_queued">%1$s · עוד %2$d בתור</string>
+    <plurals name="uploading_song_count">
+        <item quantity="one">מעלה שיר אחד</item>
+        <item quantity="two">מעלה %1$d שירים</item>
+        <item quantity="other">מעלה %1$d שירים</item>
+    </plurals>
     <string name="cancel">ביטול</string>
     <string name="save">שמירה</string>
     <string name="close">סגירה</string>
@@ -15,6 +24,7 @@
     <string name="search">חיפוש</string>
     <string name="clear_search">ניקוי חיפוש</string>
     <string name="library">ספרייה</string>
+    <string name="home">בית</string>
     <string name="play">הפעלה</string>
     <string name="explore">גלה</string>
     <string name="listen_now">האזן עכשיו</string>
@@ -85,6 +95,8 @@
     <string name="rich_presence">נוכחות עשירה</string>
     <string name="scrobbling">סקרובלינג</string>
     <string name="now_playing">מתנגן כעת</string>
+    <string name="next_in_queue">הבא בתור</string>
+    <string name="next_from">הבא מתוך: %1$s</string>
     <string name="selected">נבחר</string>
     <string name="password">סיסמה</string>
     <string name="username">שם משתמש</string>
@@ -134,6 +146,7 @@
     <string name="download_wifi_only">הורדה ב-Wi-Fi בלבד</string>
     <string name="spatial_audio">אודיו מרחבי</string>
     <string name="spatial_audio_subtitle">מרחיב רצועות סטריאו לתחושה סוחפת יותר</string>
+    <string name="spatial_audio_atmos_subtitle">מושהה עבור הרצועה הזו — Dolby Atmos כבר מרחבי</string>
     <string name="animated_cover_cellular">הפעלת עטיפה מונפשת ברשת הסלולרית</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">השירים, האמנים, האלבומים והז\'אנרים המובילים שלך</string>
@@ -186,6 +199,7 @@
     <string name="automix">Automix [BETA]</string>
     <string name="skip_silence">דילוג על שקט</string>
     <string name="skip_silence_subtitle">קיצוץ הפסקות ארוכות משנייה</string>
+    <string name="skip_silence_float_subtitle">לא זמין בפלט float של 32 סיביות</string>
     <string name="equalizer">אקולייזר</string>
     <string name="equalizer_subtitle">פאנל המערכת של המכשיר שלך</string>
     <string name="show_nerd_stats">הצגת נתונים לחנונים</string>
@@ -211,6 +225,8 @@
     <string name="stop_music_on_close_subtitle">עוצר את ההשמעה כשמחליקים את האפליקציה החוצה ממסך האפליקציות האחרונות</string>
     <string name="hide_volume_bar">הסתרת סרגל עוצמת הקול</string>
     <string name="hide_volume_bar_subtitle">מסיר את מחוון עוצמת הקול מהנגן הראשי</string>
+    <string name="hide_song_status">הסתרת סטטוס השיר</string>
+    <string name="hide_song_status_subtitle">מסתיר את הטקסט „מושמע מתוך” או „הושמע על ידי” בנגן הראשי</string>
     <string name="off">כבוי</string>
     <string name="low">נמוך</string>
     <string name="medium">בינוני</string>
@@ -257,9 +273,14 @@
     <string name="clear_name">נקה שם</string>
     <string name="close_lyrics">סגור מילים</string>
     <string name="translate_lyrics">תרגם מילים</string>
+    <string name="romanize_lyrics">תעתיק לטיני למילים</string>
     <string name="show_original_lyrics">הצג מילים מקוריות</string>
     <string name="translating_lyrics_to">מתרגם ל%1$s…</string>
     <string name="lyrics_translated_to">תורגם ל%1$s</string>
+    <string name="romanizing_lyrics">מתעתק את המילים…</string>
+    <string name="lyrics_romanized">הגייה בתעתיק לטיני</string>
+    <string name="lyrics_already_romanized">המילים האלה כבר כתובות באותיות לטיניות</string>
+    <string name="lyrics_romanization_unavailable">תעתיק לטיני לא זמין למילים האלה</string>
     <string name="lyrics_already_in_language">המילים כבר ב%1$s</string>
     <string name="lyrics_translation_unavailable">התרגום אינו זמין כרגע</string>
     <string name="connect_account_first">חבר חשבון תחילה</string>
@@ -277,6 +298,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} ו-{album_name} מוחלפים בשיר הנוכחי.</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} ו-{album_name} מוחלפים בשיר. הכפתור הראשון פותח את השיר ב-YouTube Music והשני פותח פרויקט זה.</string>
     <string name="discord_presence_footer">הכרטיס מתעדכן כאשר הרצועה, המיקום או מצב ההפעלה משתנים. הוא נמחק כאשר ההפעלה נפסקת.</string>
+    <string name="discord_show_audio_quality">הצגת איכות השמע</string>
+    <string name="discord_show_audio_quality_subtitle">מפרטי Hi-Res, Lossless ו-Dolby בכרטיס הנוכחות</string>
     <string name="discord_sign_in_footer">הכניסה פותחת את עמוד ההתחברות של דיסקורד. שום דבר אינו מוקלד ב-BitChord.</string>
     <string name="discord_token">אסימון דיסקורד</string>
     <string name="discord_token_description">הדבק את אסימון החשבון שלך בדיסקורד. הוא נשאר מוצפן על המכשיר הזה ונשלח רק לדיסקורד.</string>
@@ -298,6 +321,13 @@
     <string name="instrumental">אינסטרומנטלי</string>
     <string name="pause">השהה</string>
     <string name="lyrics_by">מילים מאת %1$s</string>
+    <string name="change_lyrics_provider">שינוי</string>
+    <string name="choose_lyrics_provider">בחירת ספק מילים</string>
+    <string name="lyrics_provider_current">הספק הנוכחי</string>
+    <string name="lyrics_provider_found">נמצאו מילים · הקישו לשימוש</string>
+    <string name="lyrics_provider_not_found">לא נמצאו מילים</string>
+    <string name="lyrics_provider_fetching">מביא מילים…</string>
+    <string name="lyrics_provider_not_fetched">הקישו כדי להביא</string>
     <string name="no_lyrics_found">לא נמצאו מילים</string>
     <string name="lyrics_saved_with_download">מילים נשמרו יחד עם ההורדה הזו</string>
     <string name="shuffle_on">ערבוב מופעל</string>
@@ -422,7 +452,15 @@
     <string name="sources_order_footer">אם למקור אין רצועה, BitChord מנסה את הבא. מקורות מעל YouTube יכולים להחליפו כשהם מוצאים גרסה טובה יותר.</string>
     <string name="sources_order_header">מקורות, נוסו בסדר זה</string>
     <string name="sources_quality_capped">חיבור זה מוגדר מתחת לאיכות גבוהה, ולכן השידורים מומרים כדי להתאים למגבלה. הורדות אינן מושפעות.</string>
+    <string name="jiosaavn_mismatch_warning">עלול להתאים גרסה שגויה של שיר. ההפעלה על אחריותכם.</string>
+    <string name="enable_jiosaavn">להפעיל את JioSaavn?</string>
+    <string name="enable_anyway">להפעיל בכל זאת</string>
     <string name="sources_subtitle">מאיפה מגיע האודיו והסדר שבו נעשה שימוש</string>
+    <string name="source_matching">התאמת מקורות</string>
+    <string name="upgrade_length_slack">סבילות אורך רצועה</string>
+    <string name="upgrade_length_slack_subtitle">הפרש המשך המרבי המותר לזרם חלופי</string>
+    <string name="upgrade_length_slack_footer">סבילות גדולה יותר מקבלת יותר התאמות ממקורות; סבילות קטנה יותר מחמירה יותר. ברירת המחדל היא 3 שניות.</string>
+    <string name="seconds_short">%1$d שנ׳</string>
     <string name="spdc_token">אסימון sp_dc</string>
     <string name="spotify_canvas_setup">הגדרת Spotify Canvas</string>
     <string name="spotify_canvas_setup_description">כדי להשתמש ב-Spotify Canvas, ספק את קובץ ה-cookie של sp_dc שלך מספוטיפיי.</string>
@@ -430,6 +468,10 @@
 2. פתח כלים למפתחים &gt; Application &gt; Cookies.
 3. העתק את הערך של העוגייה sp_dc.
 4. הדבק למטה.</string>
+    <string name="spotify_canvas_auto_hide">הסתרה אוטומטית של פקדי הנגן</string>
+    <string name="spotify_canvas_auto_hide_subtitle">מכווץ את חצי הנגן אחרי 5 שניות בזמן ש-Spotify Canvas פועל</string>
+    <string name="prioritize_spotify_canvas">העדפת Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">לנסות את Spotify לפני Apple Music וספקי עטיפות מונפשות אחרים</string>
     <string name="status">סטטוס</string>
     <string name="status_dialog_message">מה החשבון שלך מראה בזמן שהנוכחות פעילה.</string>
     <string name="status_dnd">נא לא להפריע</string>
@@ -521,6 +563,33 @@
     <string name="use_all_audio_folders_subtitle">מבטל את מגבלת התיקייה וסורק מוזיקה בכל המכשיר</string>
     <string name="album">אלבום</string>
     <string name="artist">אמן</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">מוזיקה בשרת שלכם</string>
+    <string name="webdav_not_configured">חברו שרת בקטע „מקורות”</string>
+    <string name="webdav_empty">לא נמצאו קובצי שמע בשרת ה-WebDAV. בדקו את הכתובת בהגדרות.</string>
+    <string name="webdav_description">כוונו את BitChord לתיקיית מוזיקה ב-WebDAV — תיקיית המוזיקה שלכם ב-Nextcloud או כל שרת שתומך ב-WebDAV.</string>
+    <string name="webdav_server_url">כתובת השרת</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">ניתוק</string>
+    <string name="webdav_test_failed">אין גישה: %1$s</string>
+    <string name="upload_to_webdav">העלאה ל-WebDAV</string>
+    <string name="webdav_conflict_title">„%1$s” כבר נמצא בשרת</string>
+    <string name="webdav_conflict_message">לדרוס, או לשמור את שני העותקים?</string>
+    <string name="webdav_overwrite">דריסה</string>
+    <string name="webdav_keep_both">שמירת שניהם</string>
+    <string name="webdav_skip">דילוג</string>
+    <string name="webdav_apply_to_all">החלה על הכול</string>
+    <string name="webdav_upload_summary">%1$d הועלו · %2$d דולגו · %3$d נכשלו</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">מוזיקה בתיקייה משותפת</string>
+    <string name="smb_not_configured">חברו תיקייה משותפת בקטע „מקורות”</string>
+    <string name="smb_empty">לא נמצאו קובצי שמע בתיקיית ה-SMB. בדקו את השרת בקטע „מקורות”.</string>
+    <string name="smb_description">כוונו את BitChord לתיקיית מוזיקה משותפת — NAS או שיתוף Windows דרך SMB.</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">שם השיתוף, למשל Music</string>
+    <string name="smb_folder_hint">תיקייה (אופציונלי)</string>
+    <string name="smb_disconnect">ניתוק</string>
+    <string name="smb_test_failed">אין גישה: %1$s</string>
     <string name="playlist">רשימת השמעה</string>
     <string name="open">פתח</string>
     <string name="open_playlist">פתח רשימת השמעה</string>
@@ -538,6 +607,11 @@
     <string name="analysis_refining">נותח, משפר…</string>
     <string name="analysis_in_progress">מנתח…</string>
     <string name="waiting">ממתין</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">לא הובא</string>
+    <string name="version_cut_fetching">מביא</string>
+    <string name="version_cut_measuring">מנתח</string>
+    <string name="version_cut_aligned">מיושר</string>
     <string name="automix_enabled_subtitle">מתזמן ומשלב כל מעבר מהרצועות עצמן. כבה זאת אם הטלפון מתחמם או ההפעלה מגמגמת.</string>
     <string name="automix_disabled_subtitle">מתזמן ומשלב מעברים באופן אוטומטי, ללא מחוון. הביצועים עשויים להשתנות במכשירים איטיים.</string>
     <string name="no_lyrics_sources_enabled">אין. מילים לא יורדו.</string>
@@ -655,15 +729,39 @@
     <string name="listen_together_sign_in_footer">האזנה משותפת דורשת חשבון, כדי שכל מי שבמסיבה יראה מי עוד נמצא בה.</string>
     <string name="listen_together_server">שרת המסיבה</string>
     <string name="listen_together_server_online">מחובר · %1$d מ״ש</string>
+    <string name="listen_together_server_online_fallback">מחובר (גיבוי ברירת מחדל) · %1$d מ״ש</string>
     <string name="listen_together_server_offline">לא ניתן להגיע אליו כרגע</string>
     <string name="listen_together_server_checking">בבדיקה…</string>
     <string name="listen_together_server_unknown">הקישו לבדיקה</string>
     <string name="listen_together_custom_server">שימוש בשרת שלכם</string>
     <string name="listen_together_custom_server_footer">השאירו ריק כדי להשתמש בשרת המובנה. אם אתם מריצים עותק משלכם, כל מי שבמסיבה צריך להפנות לאותו שרת.</string>
     <string name="listen_together_using_default">נעשה שימוש בשרת המובנה</string>
+    <string name="listen_together_remove_server">הסרת השרת</string>
+    <string name="listen_together_switched_to_default">עברתם לשרת ברירת המחדל</string>
+    <string name="listen_together_custom_server_saved">השרת המותאם אישית נשמר</string>
     <string name="listen_together_create">יצירת מסיבה</string>
     <string name="listen_together_create_subtitle">קבלו קוד לשיתוף עם חברים</string>
-    <string name="listen_together_create_footer">תקבלו קוד של שישה תווים. כל מי שיש לו אותו יכול להצטרף, עד חמישה מכשירים כולל שלכם.</string>
+    <string name="listen_together_create_footer">תקבלו קוד של שישה תווים. כל מי שיש לו אותו יכול להצטרף, עד %1$d מכשירים כולל שלכם.</string>
+    <string name="listen_together_profile">פרופיל המסיבה שלכם</string>
+    <string name="listen_together_nickname_hint">כינוי למסיבה הזו</string>
+    <string name="listen_together_party_size">גודל המסיבה</string>
+    <string name="listen_together_party_size_subtitle">בחרו 2–10 מאזינים</string>
+    <string name="listen_together_host_controls">רק אתם יכולים לשנות את הקיבולת או להסיר מאזינים</string>
+    <string name="listen_together_remove">הסרה</string>
+    <string name="listen_together_activity">פעילות אחרונה</string>
+    <string name="listen_together_activity_footer">הסשן הזה בלבד · החדש ביותר קודם · עד 100 פעולות</string>
+    <string name="listen_together_activity_played">התחיל/ה השמעה</string>
+    <string name="listen_together_activity_paused">השהה/תה השמעה</string>
+    <string name="listen_together_activity_seeked">דילג/ה בתוך הרצועה</string>
+    <string name="listen_together_activity_skipped">דילג/ה קדימה</string>
+    <string name="listen_together_activity_went_back">חזר/ה אחורה</string>
+    <string name="listen_together_activity_added">הוסיף/ה לתור</string>
+    <string name="listen_together_activity_removed_track">הסיר/ה רצועה מהתור</string>
+    <string name="listen_together_activity_cleared">ניקה/תה את הרצועות הבאות</string>
+    <string name="listen_together_activity_reordered">סידר/ה מחדש את התור</string>
+    <string name="listen_together_activity_removed_member">הסיר/ה מאזין</string>
+    <string name="listen_together_activity_changed_size">שינה/תה את גודל המסיבה</string>
+    <string name="listen_together_activity_updated">עדכן/ה את המסיבה</string>
     <string name="listen_together_join">הצטרפות למסיבה</string>
     <string name="listen_together_join_action">הצטרפות</string>
     <string name="listen_together_code_hint">שש אותיות או ספרות</string>
@@ -678,6 +776,27 @@
     <string name="listen_together_you">אתם</string>
     <string name="listen_together_host">מארח</string>
     <string name="listen_together_away">מרוחק — המקום נשמר</string>
+    <string name="listen_together_manage">ניהול</string>
+    <string name="listen_together_landing_title">התחלת מסיבה</string>
+    <string name="listen_together_landing_subtitle">כי מוזיקה נשמעת טוב יותר ביחד. הזמינו חברים להאזין ולהוסיף שירים בזמן אמת, איפה שהם לא יהיו.</string>
+    <string name="listen_together_create_action">יצירת מסיבה</string>
+    <string name="listen_together_join_existing">הצטרפות למסיבה קיימת</string>
+    <string name="listen_together_create_sheet_subtitle">בחרו איך תופיעו, וכמה אנשים יוכלו להצטרף.</string>
+    <string name="listen_together_creating">יוצר…</string>
+    <string name="listen_together_joining">מצטרף…</string>
+    <string name="listen_together_full">המסיבה הזו מלאה</string>
+    <string name="listen_together_join_question">להצטרף למסיבה של %1$s?</string>
+    <string name="listen_together_join_question_unnamed">להצטרף למסיבה הזו?</string>
+    <string name="listen_together_not_now">לא עכשיו</string>
+    <string name="listen_together_preview_footer">המשתתפים במסיבה יראו את השם ותמונת הפרופיל שלכם.</string>
+    <string name="listen_together_invite_title">הזמינו חברים למסיבה שלכם</string>
+    <string name="listen_together_share_link">שיתוף קישור</string>
+    <string name="listen_together_scan_qr">סריקת קוד QR</string>
+    <string name="listen_together_scan_qr_subtitle">חברים יכולים לסרוק את זה כדי להצטרף.</string>
+    <string name="listen_together_invite">הזמנה</string>
+    <string name="listen_together_host_only">רק אני שולט/ת במוזיקה</string>
+    <string name="listen_together_host_only_subtitle">כל השאר מאזינים יחד ויכולים להשהות במכשיר שלהם</string>
+    <string name="listen_together_host_only_notice">רק המארח/ת יכול/ה לשלוט במוזיקה</string>
     <string name="listen_together_leave">יציאה מהמסיבה</string>
     <string name="listen_together_leave_subtitle">האחרים ממשיכים להאזין</string>
     <string name="listen_together_reconnecting">מתחבר מחדש…</string>
@@ -687,6 +806,28 @@
     <string name="listen_together_jam_unnamed">מאזינים ביחד</string>
     <string name="listen_together_open">להאזין ביחד</string>
     <string name="listen_together_open_count">מאזינים ביחד · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">להצטרף למסיבה בשרת מותאם אישית?</string>
+    <string name="listen_together_custom_server_dialog_message">המסיבה הזו מתארחת בשרת חיצוני:\n\n%1$s\n\nלהחליף את שרת המסיבות ולהצטרף למסיבה %2$s?</string>
+    <string name="listen_together_custom_server_switch_and_join">החלפה והצטרפות</string>
+    <string name="listen_together_official_server_dialog_title">לעבור לשרת הרשמי?</string>
+    <string name="listen_together_official_server_dialog_message">המסיבה הזו מתארחת בשרת הרשמי של BitChord.\n\nלחזור לשרת הרשמי ולהצטרף למסיבה %1$s?</string>
+    <string name="listen_together_switch_failed_stayed_in_party">לא ניתן להצטרף למסיבה: %1$s. נשארתם במסיבה %2$s.</string>
+    <string name="listen_together_switch_failed">לא ניתן להצטרף למסיבה: %1$s.</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">כתובת שרת לא תקינה. הזינו כתובת תקינה (למשל https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">כתובת השרת לא יכולה לכלול רווחים</string>
+    <string name="listen_together_err_invalid_path">כתובת השרת כוללת נתיב לא תקין</string>
+    <string name="listen_together_err_no_path">כתובת השרת לא יכולה לכלול נתיב</string>
+    <string name="listen_together_err_no_query">כתובת השרת לא יכולה לכלול פרמטרים של שאילתה</string>
+    <string name="listen_together_err_no_fragment">כתובת השרת לא יכולה לכלול מקטעים</string>
+    <string name="listen_together_err_invalid_port">פורט השרת חייב להיות בין 1 ל-65535</string>
+    <string name="listen_together_custom_server_connected">מחובר לשרת המותאם אישית</string>
+    <string name="listen_together_custom_server_unreachable_fallback">אין גישה לשרת המותאם אישית. נעשה שימוש בשרת הגיבוי המוגדר כברירת מחדל.</string>
+    <string name="listen_together_status_custom_online">מחובר לשרת המותאם אישית · %1$d מ״ש</string>
+    <string name="listen_together_status_custom_fallback">אין גישה לשרת המותאם אישית · שימוש בגיבוי ברירת המחדל (%1$d מ״ש)</string>
+    <string name="listen_together_status_all_offline">גם השרת המותאם אישית וגם שרת ברירת המחדל לא מחוברים</string>
+    <string name="listen_together_top_bar_fallback">גיבוי · %1$s</string>
 
     <string name="vietnamese">וייטנאמית</string>
 
@@ -754,6 +895,7 @@
     <string name="choose_profile">בחר פרופיל</string>
 
     <string name="convert_to_audio">המר לאודיו</string>
+    <string name="convert_to_video">המרה לווידאו</string>
 
     <string name="converting_to_audio">ממיר לאודיו…</string>
 
@@ -798,6 +940,18 @@
     <string name="playlist_action">פלייליסט</string>
 
     <string name="prefer_usb_dac">העדף USB DAC</string>
+    <string name="loudness_normalization">נרמול עוצמה</string>
+    <string name="loudness_normalization_subtitle">מביא כל רצועה לאותה עוצמה נשמעת</string>
+    <string name="loudness_target">עוצמת יעד</string>
+    <string name="loudness_target_subtitle">שקט יותר מתאים לאוזניות; חזק יותר לרכב או לרמקול הטלפון</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="pipeline_loudness">עוצמה</string>
+    <string name="pipeline_loudness_gain">הגבר</string>
+    <string name="pipeline_loudness_measured">נמדד</string>
+    <string name="pipeline_bit_exact">זהה ברמת הביט</string>
+    <string name="loudness_measuring">מודד…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
 
     <string name="profile_unavailable">אין עדיין פרופיל מחובר זמין בדף זה.</string>
 
@@ -975,6 +1129,8 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">יישור אודיו חכם</string>
+    <string name="smart_version_alignment_subtitle">ניתוח צורות הגל כדי למצוא בדיוק את רגע ההשמעה התואם</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
@@ -1011,6 +1167,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
+    <string name="equalizer_bitstream_title">לא פועל כרגע</string>
+    <string name="equalizer_bitstream_subtitle">הרצועה הזו נשלחת לפלט בלי פענוח</string>
+    <string name="equalizer_bitstream_footer">האקולייזר פועל על אודיו מפוענח. הרצועה הזו מועברת כ-bitstream שהמכשיר שלכם מפענח בעצמו, כך שאין כאן דגימות לסנן.</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -1069,6 +1228,7 @@
     <string name="medium_quality">Medium Quality</string>
 
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">נתיב האות בזמן אמת, מהמפענח ועד הפלט</string>
 
     <string name="pipeline_track_info">Track Info</string>
 
@@ -1123,6 +1283,9 @@
     <string name="song_will_play_next">Song will play next</string>
 
     <string name="song_added_to_queue">Song added to queue</string>
+    <string name="song_added_to_playlist">נוסף לרשימת ההשמעה</string>
+    <string name="song_already_in_playlist">כבר ברשימת ההשמעה</string>
+    <string name="party_queue_full">התור מלא (עד %d שירים במסיבה)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
 

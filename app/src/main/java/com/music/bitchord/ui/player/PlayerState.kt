@@ -1,5 +1,8 @@
 package com.music.bitchord.ui.player
 
+import kotlinx.coroutines.flow.first
+import androidx.compose.runtime.snapshotFlow
+import com.music.bitchord.playback.PlaybackPosition
 import android.content.Context
 import android.database.ContentObserver
 import android.media.AudioManager
@@ -233,7 +236,7 @@ internal class PlayerScrub {
 }
 
 @Composable
-internal fun rememberPlayerScrub(trackId: String, positionMs: Long, durationMs: Long): PlayerScrub {
+internal fun rememberPlayerScrub(trackId: String, position: PlaybackPosition, durationMs: Long): PlayerScrub {
     val scrub = remember { PlayerScrub() }
     var pendingSeek by scrub::pendingSeek
 
@@ -252,11 +255,16 @@ internal fun rememberPlayerScrub(trackId: String, positionMs: Long, durationMs: 
     // Tolerance is absolute rather than a share of the duration: two percent is
     // a quarter-second on a jingle and twelve seconds on a long mix, and it is
     // the wall-clock gap that decides whether the handle appears to jump.
-    LaunchedEffect(positionMs, durationMs, pendingSeek) {
+    //
+    // Watched from inside the effect rather than keyed on the position, so the
+    // screen that owns this does not have to read the playhead to drive it.
+    LaunchedEffect(durationMs, pendingSeek) {
         val target = pendingSeek ?: return@LaunchedEffect
-        if (durationMs > 0 && abs(positionMs - (target * durationMs).toLong()) < SEEK_SETTLE_TOLERANCE_MS) {
-            pendingSeek = null
+        if (durationMs <= 0) return@LaunchedEffect
+        snapshotFlow { position.positionMs }.first { positionMs ->
+            abs(positionMs - (target * durationMs).toLong()) < SEEK_SETTLE_TOLERANCE_MS
         }
+        pendingSeek = null
     }
     LaunchedEffect(pendingSeek) {
         if (pendingSeek == null) return@LaunchedEffect
@@ -343,4 +351,13 @@ internal fun rememberPlayerVolume(): PlayerVolume {
     }
 
     return volume
+}
+
+/**
+ * Reads the playhead inside a recomposition scope of its own, so a tick
+ * recomposes [content] and not the screen around it — see [PlaybackPosition].
+ */
+@Composable
+internal fun PlaybackPositionScope(positionMs: () -> Long, content: @Composable (Long) -> Unit) {
+    content(positionMs())
 }

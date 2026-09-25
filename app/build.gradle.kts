@@ -155,16 +155,19 @@ android {
             // release build, and it is the one that most needs the marker.
             if (betaSuffix.isNotEmpty()) versionNameSuffix = "-$betaSuffix"
             /*
-             * Off deliberately. Stream resolution runs YouTube's own player
-             * JavaScript through Rhino, and NewPipe, Ktor and
-             * kotlinx.serialization all reach for classes reflectively — none
-             * of which R8 can see. Shrinking that reliably is a set of keep
-             * rules to be written and then proven on a device, because the
-             * breakage it causes appears at runtime rather than at build time.
-             * Until then, a larger APK that works beats a smaller one that
-             * might not. The rules below stay wired up for when it's revisited.
+             * On for what it does to speed, not size. Compose is written to be
+             * run through R8 — without it every composable keeps the debug-era
+             * shape the compiler emits, and the whole UI runs measurably slower.
+             *
+             * Nothing is renamed (-dontobfuscate), and every library that reaches
+             * for classes by name — Rhino running YouTube's player JavaScript,
+             * NewPipe, InnerTubeX, QuickJS, SMBJ and BouncyCastle, ONNX's JNI,
+             * protobuf-lite, Ktor — is kept whole: see proguard-rules.pro. What R8
+             * is left to optimise is Compose, Media3, coroutines and our own
+             * code, which is where the time goes. Checked on a device through the
+             * `benchmark` build type below before it ships.
              */
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -172,6 +175,20 @@ android {
             // Null without a keystore to sign with: the build then produces
             // app-release-unsigned.apk instead of failing outright.
             signingConfig = signingConfigs.findByName("release")
+        }
+        /*
+         * The release build, installable next to the dev and prod apps: same R8,
+         * same non-debuggable runtime, signed with the debug key under its own
+         * package so it never replaces either. For measuring startup the way
+         * users get it and for checking that shrinking broke nothing — a debug
+         * build is interpreted and verified at runtime and says little about
+         * either. `./gradlew installDevBenchmark`.
+         */
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            applicationIdSuffix = ".benchmark"
+            matchingFallbacks += listOf("release")
         }
     }
     compileOptions {
@@ -369,3 +386,37 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.3.0")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
 }
+
+/*
+ * A debug APK lands on the device uncompiled — `dumpsys package dexopt` reports
+ * it as run-from-apk — so every launch verifies the whole app's classes at
+ * runtime before a line of our code runs. Measured on the BlueStacks box, that
+ * was about two seconds of every cold start and most of why the dev build felt
+ * so much slower than a release one. `verify` is the cheapest filter that
+ * removes it (~15s once per install), and unlike `speed` it leaves the debug
+ * build debuggable exactly as before.
+ *
+ * Runs after `installDevDebug` from the command line. Android Studio's Run
+ * button deploys on its own and never reaches this task, so from there run
+ * `./gradlew verifyDevInstall` after installing.
+ */
+val verifyDevInstall = tasks.register("verifyDevInstall") {
+    group = "install"
+    description = "Pre-verifies the installed dev build on every connected device."
+    val adb = androidComponents.sdkComponents.adb
+    doLast {
+        val adbPath = adb.get().asFile.absolutePath
+        val serials = ProcessBuilder(adbPath, "devices").start()
+            .inputStream.bufferedReader().readLines()
+            .drop(1)
+            .mapNotNull { line -> line.split('\t').takeIf { it.size == 2 && it[1] == "device" }?.get(0) }
+        serials.forEach { serial ->
+            logger.lifecycle("verifyDevInstall: compiling com.dev.bitchord on $serial")
+            ProcessBuilder(
+                adbPath, "-s", serial, "shell", "cmd", "package", "compile",
+                "-m", "verify", "-f", "com.dev.bitchord",
+            ).inheritIO().start().waitFor()
+        }
+    }
+}
+tasks.matching { it.name == "installDevDebug" }.configureEach { finalizedBy(verifyDevInstall) }
