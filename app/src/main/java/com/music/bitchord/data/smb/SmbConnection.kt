@@ -62,8 +62,11 @@ object SmbConnection {
         val newClient = SMBClient(config)
         try {
             val newConnection = newClient.connect(host, SmbAuth.port)
+            // Never anonymous(): smbj 0.15 derives SMB3 keys from a session key
+            // an anonymous login has none of, and crashes on servers that do not
+            // flag the session as null (Samba) - hierynomus/smbj#872.
             val auth = if (SmbAuth.username.isBlank() && SmbAuth.password.isBlank()) {
-                AuthenticationContext.anonymous()
+                AuthenticationContext.guest()
             } else {
                 AuthenticationContext(SmbAuth.username, SmbAuth.password.toCharArray(), "")
             }

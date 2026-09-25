@@ -649,7 +649,7 @@
     <string name="smb_description">Trỏ BitChord tới thư mục nhạc chia sẻ — NAS hoặc máy Windows hỗ trợ SMB.</string>
     <string name="smb_server_hint">nas.local hoặc 192.168.1.10:4445</string>
     <string name="smb_share_hint">Tên share, ví dụ Music</string>
-    <string name="smb_folder_hint">Thư mục (không bắt buộc)</string>
+    <string name="smb_folder_hint">Thư mục trong share, ví dụ media/music (không bắt buộc)</string>
     <string name="smb_disconnect">Ngắt kết nối</string>
     <string name="smb_test_failed">Không thể kết nối: %1$s</string>
     <string name="playlist">danh sách phát</string>

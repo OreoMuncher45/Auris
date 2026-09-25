@@ -1232,9 +1232,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
-            AppSettings.smbHost.drop(1).collect {
-                reloadRemoteDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID)
-            }
+            combine(
+                AppSettings.smbHost,
+                AppSettings.smbShare,
+                AppSettings.smbBasePath,
+                AppSettings.smbUsername,
+                AppSettings.smbPassword,
+            ) { fields -> fields.toList() }
+                .drop(1)
+                .debounce(300)
+                .collect { reloadRemoteDetail(com.music.bitchord.data.smb.SmbConfig.BROWSE_ID) }
         }
         viewModelScope.launch {
             // A leftover APK only means "Install Now" for the session that
