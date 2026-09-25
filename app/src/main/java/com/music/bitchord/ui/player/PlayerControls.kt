@@ -377,7 +377,7 @@ internal fun TransportRow(
     onNext: () -> Unit,
     compact: Boolean = false,
 ) {
-    val playSize = if (compact) 58.dp else 78.dp
+    val playSize = if (compact) 58.dp else 74.dp
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
     Row(
@@ -696,8 +696,8 @@ private fun TransportGlyph(
 }
 
 /** The skip glyphs' width, and their touch box, beside the larger play button. */
-private val PLAYER_SKIP_ICON_SIZE = 57.dp
-private val PLAYER_SKIP_TOUCH_SIZE = 57.dp
+private val PLAYER_SKIP_ICON_SIZE = 53.dp
+private val PLAYER_SKIP_TOUCH_SIZE = 53.dp
 
 /**
  * The skip glyphs are drawn a little flatter than they are wide, so the pair

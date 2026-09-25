@@ -2923,7 +2923,7 @@ fun NowPlayingScreen(
             // which sit close enough together to read as one. Both of its own
             // gaps take half the spread, so on a tall screen it holds the
             // centre rather than drifting up under the seek bar.
-            Spacer(Modifier.height(6.dp + controlSpread / 2))
+            Spacer(Modifier.height(8.dp + controlSpread / 2))
 
             TransportRow(
                 isPlaying = isPlaying,
@@ -2940,7 +2940,7 @@ fun NowPlayingScreen(
             // hidden. Removing the slot itself shortened the controls by 50dp
             // and moved every control below it. A display preference should not
             // change the half-player's geometry.
-            Spacer(Modifier.height(10.dp + controlSpread / 2))
+            Spacer(Modifier.height(12.dp + controlSpread / 2))
 
             if (!hideVolumeBar) {
                 VolumeRow(

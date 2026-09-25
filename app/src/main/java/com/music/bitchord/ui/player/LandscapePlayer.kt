@@ -357,10 +357,10 @@ internal fun LandscapeMainPane(
         Spacer(Modifier.height(if (compact) 2.dp else 10.dp))
         lyricStrip?.invoke()
         scrubber()
-        Spacer(Modifier.height(if (compact) 0.dp else 6.dp))
+        Spacer(Modifier.height(if (compact) 0.dp else 8.dp))
         transport()
         if (volume != null) {
-            Spacer(Modifier.height(if (compact) 0.dp else 10.dp))
+            Spacer(Modifier.height(if (compact) 0.dp else 12.dp))
             volume()
         }
     }
