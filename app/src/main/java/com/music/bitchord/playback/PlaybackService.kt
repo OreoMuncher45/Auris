@@ -163,7 +163,10 @@ const val ACTION_TOGGLE_AUTOPLAY = "com.music.bitchord.action.TOGGLE_AUTOPLAY"
 const val ACTION_SWAP_VERSION = "com.music.bitchord.action.SWAP_VERSION"
 const val EXTRA_SWAP_MEDIA_ITEM = "bitchord.swap.media_item"
 
-/** Session command used by the media notification's Shuffle button. */
+/** Session command used by the media notification's and the 4×1 widget's Favorite button. */
+const val ACTION_TOGGLE_FAVORITE = "com.music.bitchord.action.TOGGLE_FAVORITE"
+
+/** Session command used by the media notification's and the 4×1 widget's Shuffle button. */
 const val ACTION_TOGGLE_SHUFFLE = "com.music.bitchord.action.TOGGLE_SHUFFLE"
 
 /** Session actions exposed to Android Auto for the track that is playing. */
@@ -1178,6 +1181,7 @@ class PlaybackService : MediaLibraryService() {
             QueueShuffle.enabled
                 .collectLatest {
                     refreshCustomLayouts()
+                    publishWidgetState()
                 }
         }
         scope.launch {
@@ -1186,6 +1190,7 @@ class PlaybackService : MediaLibraryService() {
                 .distinctUntilChanged()
                 .collectLatest {
                     refreshCustomLayouts()
+                    publishWidgetState()
                 }
         }
 
@@ -1682,18 +1687,27 @@ class PlaybackService : MediaLibraryService() {
         return notificationButtons() + listOfNotNull(station, revert)
     }
 
+    /** Android Auto / Automotive controllers currently connected to the session. */
+    private val carControllers = mutableSetOf<MediaSession.ControllerInfo>()
+
     /**
      * Pushes the current button state to every surface. The phone/lock-screen
      * notification is driven by Media3's own internal controller, so it gets
      * an explicit override limited to Favorite/Shuffle; every other connected
-     * controller (Android Auto, Bluetooth, Wear) falls back to the broadcast
-     * layout, which also carries Radio/Revert.
+     * controller falls back to the broadcast layout, which also carries
+     * Radio/Revert.
+     *
+     * Media3 mirrors the notification controller's layout into the platform
+     * session's custom actions, and Android Auto reads the platform session,
+     * not the broadcast layout. So while a car is connected the notification
+     * override carries the car buttons too, or Radio/Revert vanish from Auto.
      */
     private fun refreshCustomLayouts() {
         val session = mediaSession ?: return
-        session.setCustomLayout(carButtons())
+        val car = carButtons()
+        session.setCustomLayout(car)
         session.getMediaNotificationControllerInfo()?.let {
-            session.setCustomLayout(it, notificationButtons())
+            session.setCustomLayout(it, if (carControllers.isEmpty()) notificationButtons() else car)
         }
     }
 
@@ -1828,7 +1842,7 @@ class PlaybackService : MediaLibraryService() {
                     activePlayer.seekTo(currentIndex, pos)
                     if (wasPlaying) activePlayer.play()
                     onSwapCommitted?.invoke()
-                    mediaSession?.setCustomLayout(notificationButtons())
+                    refreshCustomLayouts()
                     swappingMediaId = null
                     return@launch
                 }
@@ -1894,7 +1908,7 @@ class PlaybackService : MediaLibraryService() {
                     reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
                     alreadyAudible = true,
                 )
-                mediaSession?.setCustomLayout(notificationButtons())
+                refreshCustomLayouts()
                 return@launch
             }
 
@@ -2148,7 +2162,7 @@ class PlaybackService : MediaLibraryService() {
         outgoing.volume = 1f
 
         swappingMediaId = null
-        mediaSession?.setCustomLayout(notificationButtons())
+        refreshCustomLayouts()
 
         onTrackBecameCurrent(
             incoming.currentMediaItem,
@@ -4934,6 +4948,13 @@ class PlaybackService : MediaLibraryService() {
     private fun publishWidgetState(playing: Boolean? = null) {
         val exoPlayer = player ?: return
         val song = exoPlayer.currentMediaItem?.toSong() ?: return
+        // LikeState only knows ratings this process has seen: a fresh service
+        // started from the widget or a restart has none until something seeds
+        // it. Unknown is not "not liked", so keep what was last published for
+        // this same track rather than emptying a heart that was right.
+        val liked = LikeState.overrides.value[song.videoId]?.let { it == LikeStatus.LIKE }
+            ?: MediaWidgetSnapshot.load(this).takeIf { it.mediaId == song.videoId }?.isLiked
+            ?: false
         MediaWidgetSnapshot.save(
             this,
             MediaWidgetSnapshot(
@@ -4945,6 +4966,8 @@ class PlaybackService : MediaLibraryService() {
                 isPlaying = playing ?: exoPlayer.playWhenReady,
                 hasPrevious = exoPlayer.hasPreviousMediaItem(),
                 hasNext = exoPlayer.hasNextMediaItem(),
+                isLiked = liked,
+                shuffleEnabled = QueueShuffle.enabled.value,
             ),
         )
         MediaWidget.refresh(this)
@@ -6599,6 +6622,17 @@ class PlaybackService : MediaLibraryService() {
                 .build()
         }
 
+        override fun onPostConnect(session: MediaSession, controller: MediaSession.ControllerInfo) {
+            if (session.isAutoCompanionController(controller) || session.isAutomotiveController(controller)) {
+                carControllers += controller
+                refreshCustomLayouts()
+            }
+        }
+
+        override fun onDisconnected(session: MediaSession, controller: MediaSession.ControllerInfo) {
+            if (carControllers.remove(controller)) refreshCustomLayouts()
+        }
+
         override fun onCustomCommand(
             session: MediaSession,
             controller: MediaSession.ControllerInfo,
@@ -7437,7 +7471,6 @@ class PlaybackService : MediaLibraryService() {
 
         const val CHANNEL_ID = "bitchord_playback"
         const val SESSION_ID = "BitChordPlayback"
-        const val ACTION_TOGGLE_FAVORITE = "com.music.bitchord.action.TOGGLE_FAVORITE"
 
         /** How often played-seconds are sampled off the player. */
         const val PROGRESS_SAMPLE_MS = 5_000L

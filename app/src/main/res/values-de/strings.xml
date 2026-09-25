@@ -140,6 +140,9 @@
     <string name="widget_open_bitchord">BitChord öffnen</string>
     <string name="widget_preview_title">Songtitel</string>
     <string name="widget_preview_artist">Künstler</string>
+    <string name="widget_pill_label">Wird wiedergegeben 4×1</string>
+    <string name="widget_pill_description">Titel mit „Gefällt mir“, Zufallswiedergabe und Wiedergabesteuerung in einer Zeile.</string>
+    <string name="widget_preview_pill">Songtitel - Künstler</string>
     <string name="download_quality">Download-Qualität</string>
     <string name="download_wifi_only">Nur über WLAN herunterladen</string>
     <string name="spatial_audio">Räumliches Audio</string>

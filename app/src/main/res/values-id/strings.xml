@@ -135,6 +135,9 @@
     <string name="widget_open_bitchord">Buka BitChord</string>
     <string name="widget_preview_title">Judul lagu</string>
     <string name="widget_preview_artist">Artis</string>
+    <string name="widget_pill_label">Sedang diputar 4×1</string>
+    <string name="widget_pill_description">Lagu dengan Suka, Acak, dan kontrol pemutaran dalam satu baris.</string>
+    <string name="widget_preview_pill">Judul lagu - Artis</string>
     <string name="download_quality">Kualitas unduhan</string>
     <string name="download_wifi_only">Unduh hanya lewat Wi-Fi</string>
     <string name="spatial_audio">Audio spasial</string>

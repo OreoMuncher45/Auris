@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.ui.utils.containSheetGestures
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.haptics.Haptic
@@ -99,6 +100,7 @@ internal fun LyricsOffsetSheet(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .containSheetGestures()
             .background(ScrimColor.copy(alpha = ScrimColor.alpha * scrimAlpha))
             .clickable(
                 indication = null,

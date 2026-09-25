@@ -392,6 +392,7 @@ internal fun TransportRow(
             contentDescription = stringResource(R.string.widget_previous),
             size = skipSize,
             touchSize = PLAYER_SKIP_TOUCH_SIZE,
+            heightScale = PLAYER_SKIP_HEIGHT_SCALE,
             onClick = onPrevious,
             enabled = previousEnabled,
             haptic = Haptic.SkipPrevious,
@@ -421,6 +422,7 @@ internal fun TransportRow(
             contentDescription = stringResource(R.string.widget_next),
             size = skipSize,
             touchSize = PLAYER_SKIP_TOUCH_SIZE,
+            heightScale = PLAYER_SKIP_HEIGHT_SCALE,
             onClick = onNext,
             enabled = nextEnabled,
             haptic = Haptic.SkipNext,
@@ -660,6 +662,8 @@ private fun TransportGlyph(
     onClick: () -> Unit,
     enabled: Boolean = true,
     haptic: Haptic = Haptic.Tap,
+    /** Vertical squash of the glyph alone; its width and touch box are untouched. */
+    heightScale: Float = 1f,
 ) {
     val haptics = rememberHaptics()
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
@@ -684,18 +688,22 @@ private fun TransportGlyph(
             painter = painterResource(icon),
             contentDescription = contentDescription,
             tint = Color.White.copy(alpha = alpha),
-            modifier = Modifier.size(size),
+            modifier = Modifier
+                .size(size)
+                .then(if (heightScale != 1f) Modifier.graphicsLayer { scaleY = heightScale } else Modifier),
         )
     }
 }
 
-/**
- * The skip glyphs draw a little beyond their fixed 48dp button footprint.
- * Keeping the footprint fixed turns the extra 4dp into 2dp less optical space
- * above and below, without changing the transport row's measurements.
- */
+/** The skip glyphs' width, and their touch box, beside the larger play button. */
 private val PLAYER_SKIP_ICON_SIZE = 57.dp
 private val PLAYER_SKIP_TOUCH_SIZE = 57.dp
+
+/**
+ * The skip glyphs are drawn a little flatter than they are wide, so the pair
+ * reads lower and longer next to the play button without losing any width.
+ */
+private const val PLAYER_SKIP_HEIGHT_SCALE = 0.85f
 
 private val BOTTOM_ACTION_SIZE = 44.dp
 

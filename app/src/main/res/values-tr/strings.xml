@@ -149,6 +149,9 @@
     <string name="widget_open_bitchord">BitChord\'u Aç</string>
     <string name="widget_preview_title">Şarkı adı</string>
     <string name="widget_preview_artist">Sanatçı</string>
+    <string name="widget_pill_label">Şu an çalıyor 4×1</string>
+    <string name="widget_pill_description">Beğen, karışık çalma ve çalma kontrolleriyle parça, tek satırda.</string>
+    <string name="widget_preview_pill">Şarkı adı - Sanatçı</string>
     <string name="download_quality">İndirme kalitesi</string>
     <string name="download_wifi_only">Yalnızca Wi-Fi üzerinden indir</string>
     <string name="convert_to_audio">Sese dönüştür</string>

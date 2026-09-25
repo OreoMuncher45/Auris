@@ -142,6 +142,9 @@
     <string name="widget_open_bitchord">פתיחת BitChord</string>
     <string name="widget_preview_title">שם השיר</string>
     <string name="widget_preview_artist">אמן</string>
+    <string name="widget_pill_label">מתנגן כעת 4×1</string>
+    <string name="widget_pill_description">הרצועה עם לייק, ערבוב ופקדי הפעלה, בשורה אחת.</string>
+    <string name="widget_preview_pill">שם השיר - אמן</string>
     <string name="download_quality">איכות הורדה</string>
     <string name="download_wifi_only">הורדה ב-Wi-Fi בלבד</string>
     <string name="spatial_audio">אודיו מרחבי</string>

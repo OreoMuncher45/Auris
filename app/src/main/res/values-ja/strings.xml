@@ -135,6 +135,9 @@
     <string name="widget_open_bitchord">BitChordを開く</string>
     <string name="widget_preview_title">曲名</string>
     <string name="widget_preview_artist">アーティスト</string>
+    <string name="widget_pill_label">再生中 4×1</string>
+    <string name="widget_pill_description">曲名といいね、シャッフル、再生コントロールを1行に。</string>
+    <string name="widget_preview_pill">曲名 - アーティスト</string>
     <string name="download_quality">ダウンロード品質</string>
     <string name="download_wifi_only">Wi-Fi接続時のみダウンロード</string>
     <string name="spatial_audio">空間オーディオ</string>

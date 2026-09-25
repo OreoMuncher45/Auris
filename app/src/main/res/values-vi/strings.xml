@@ -149,6 +149,9 @@
     <string name="widget_open_bitchord">Mở BitChord</string>
     <string name="widget_preview_title">Tên bài hát</string>
     <string name="widget_preview_artist">Nghệ sĩ</string>
+    <string name="widget_pill_label">Đang phát 4×1</string>
+    <string name="widget_pill_description">Bản nhạc kèm Thích, trộn bài và điều khiển phát trên một hàng.</string>
+    <string name="widget_preview_pill">Tên bài hát - Nghệ sĩ</string>
     <string name="download_quality">Chất lượng tải xuống</string>
     <string name="download_wifi_only">Chỉ tải xuống qua Wi-Fi</string>
     <string name="convert_to_audio">Chuyển đổi thành âm thanh</string>

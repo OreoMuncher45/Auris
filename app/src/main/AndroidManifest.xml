@@ -293,6 +293,19 @@
                 android:resource="@xml/widget_media_wide" />
         </receiver>
 
+        <!-- The 4×1 capsule. Its own provider and layout; see MediaWidgetPill. -->
+        <receiver
+            android:name=".widget.MediaWidgetPill"
+            android:exported="false"
+            android:label="@string/widget_pill_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_media_pill" />
+        </receiver>
+
         <!-- The transport buttons. Reached only by this app's own PendingIntents. -->
         <receiver
             android:name=".widget.MediaWidgetActions"

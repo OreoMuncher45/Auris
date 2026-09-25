@@ -135,6 +135,9 @@
     <string name="widget_open_bitchord">打开 BitChord</string>
     <string name="widget_preview_title">歌曲标题</string>
     <string name="widget_preview_artist">艺人</string>
+    <string name="widget_pill_label">正在播放 4×1</string>
+    <string name="widget_pill_description">单行显示曲目，以及喜欢、随机播放和播放控件。</string>
+    <string name="widget_preview_pill">歌曲标题 - 艺人</string>
     <string name="download_quality">下载质量</string>
     <string name="download_wifi_only">仅通过 Wi-Fi 下载</string>
     <string name="spatial_audio">空间音频</string>

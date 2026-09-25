@@ -141,6 +141,9 @@
     <string name="widget_open_bitchord">Ouvrir BitChord</string>
     <string name="widget_preview_title">Titre de la chanson</string>
     <string name="widget_preview_artist">Artiste</string>
+    <string name="widget_pill_label">Lecture en cours 4×1</string>
+    <string name="widget_pill_description">Le titre avec J\'aime, lecture aléatoire et commandes de lecture, sur une seule ligne.</string>
+    <string name="widget_preview_pill">Titre de la chanson - Artiste</string>
     <string name="download_quality">Qualité de téléchargement</string>
     <string name="download_wifi_only">Télécharger uniquement en Wi-Fi</string>
     <string name="spatial_audio">Audio spatial</string>

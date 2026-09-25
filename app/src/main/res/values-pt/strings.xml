@@ -142,6 +142,9 @@
     <string name="widget_open_bitchord">Abrir BitChord</string>
     <string name="widget_preview_title">Título da música</string>
     <string name="widget_preview_artist">Artista</string>
+    <string name="widget_pill_label">Tocando agora 4×1</string>
+    <string name="widget_pill_description">A faixa com Curtir, ordem aleatória e controles de reprodução em uma única linha.</string>
+    <string name="widget_preview_pill">Título da música - Artista</string>
     <string name="download_quality">Qualidade de download</string>
     <string name="download_wifi_only">Baixar apenas por Wi-Fi</string>
     <string name="spatial_audio">Áudio espacial</string>

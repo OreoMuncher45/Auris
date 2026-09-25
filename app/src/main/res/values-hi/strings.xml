@@ -140,6 +140,9 @@
     <string name="widget_open_bitchord">BitChord खोलें</string>
     <string name="widget_preview_title">गाने का शीर्षक</string>
     <string name="widget_preview_artist">कलाकार</string>
+    <string name="widget_pill_label">अभी चल रहा है 4×1</string>
+    <string name="widget_pill_description">ट्रैक के साथ लाइक, शफ़ल और प्लेबैक नियंत्रण, एक ही पंक्ति में।</string>
+    <string name="widget_preview_pill">गाने का शीर्षक - कलाकार</string>
     <string name="download_quality">डाउनलोड क्वालिटी</string>
     <string name="download_wifi_only">केवल Wi-Fi पर डाउनलोड करें</string>
     <string name="spatial_audio">स्पेशियल ऑडियो</string>

@@ -143,6 +143,9 @@
     <string name="widget_open_bitchord">Open BitChord</string>
     <string name="widget_preview_title">Tytuł utworu</string>
     <string name="widget_preview_artist">Artysta</string>
+    <string name="widget_pill_label">Now playing 4×1</string>
+    <string name="widget_pill_description">Utwór z polubieniem, losowaniem i kontrolkami odtwarzania w jednym wierszu.</string>
+    <string name="widget_preview_pill">Tytuł utworu - Artysta</string>
     <string name="download_quality">Jakość pobierania</string>
     <string name="download_wifi_only">Pobieraj tylko przez Wi-Fi</string>
     <string name="spatial_audio">Dźwięk przestrzenny</string>

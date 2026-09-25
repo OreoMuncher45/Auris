@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.ui.utils.containSheetGestures
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
@@ -132,6 +133,7 @@ fun AudioPipelineDialog(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .containSheetGestures()
             .background(PIPELINE_SCRIM_COLOR)
             .clickable(
                 indication = null,
