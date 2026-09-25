@@ -305,65 +305,39 @@ fun AudioPipelineDialog(
 
                             val currentFlowAlpha = flowAlpha
                             val currentProgress = pulseProgress
-
-                            // 1. Static Signal Path (Calm, Precision Hardware Schematic)
-                            val busAlpha = if (currentFlowAlpha > 0f) 0.20f + 0.05f * currentFlowAlpha else 0.14f
-                            drawLine(
-                                color = Color.White.copy(alpha = busAlpha),
-                                start = Offset(xCenter, y0),
-                                end = Offset(xCenter, y4),
-                                strokeWidth = 1.dp.toPx(),
-                                cap = StrokeCap.Round,
-                            )
-
-                            // Subtle ambient under-glow along the bus when powered
-                            if (currentFlowAlpha > 0f) {
-                                drawLine(
-                                    color = Color.White.copy(alpha = 0.04f * currentFlowAlpha),
-                                    start = Offset(xCenter, y0),
-                                    end = Offset(xCenter, y4),
-                                    strokeWidth = 4.dp.toPx(),
-                                    cap = StrokeCap.Round,
-                                )
-                            }
-
-                            // 2. Precision Node Anchors at each Stage (Behind the 15dp Icons)
                             val stagePoints = listOf(p0, p1, p2, p3, p4)
-                            val ringRadius = 10.5.dp.toPx()
+                            val nodeRadius = 11.5.dp.toPx()
 
-                            for (i in stagePoints.indices) {
-                                val stageCenter = Offset(xCenter, stagePoints[i].y)
-                                val act = calculateStageActivation(i, currentProgress, currentFlowAlpha, stageCenters, interactionRadiusPx)
+                            // 1. Static Node-to-Node Signal Bus Segments (~2.dp, butt caps at node rims)
+                            val busAlpha = if (currentFlowAlpha > 0f) 0.22f + 0.06f * currentFlowAlpha else 0.18f
+                            val busStroke = 2.dp.toPx()
 
-                                // Soft aura behind active component
-                                if (currentFlowAlpha > 0f && act > 0.01f) {
-                                    val auraAlpha = 0.22f * act * currentFlowAlpha
-                                    drawCircle(
-                                        brush = Brush.radialGradient(
-                                            colors = listOf(
-                                                Color.White.copy(alpha = auraAlpha),
-                                                Color.White.copy(alpha = auraAlpha * 0.35f),
-                                                Color.Transparent,
-                                            ),
-                                            center = stageCenter,
-                                            radius = 16.dp.toPx(),
-                                        ),
-                                        radius = 16.dp.toPx(),
-                                        center = stageCenter,
+                            for (i in 0 until stagePoints.size - 1) {
+                                val yStart = stagePoints[i].y + nodeRadius
+                                val yEnd = stagePoints[i + 1].y - nodeRadius
+                                if (yEnd > yStart) {
+                                    drawLine(
+                                        color = Color.White.copy(alpha = busAlpha),
+                                        start = Offset(xCenter, yStart),
+                                        end = Offset(xCenter, yEnd),
+                                        strokeWidth = busStroke,
+                                        cap = StrokeCap.Butt,
                                     )
-                                }
 
-                                // Precision micro-ring framing the icon
-                                val ringAlpha = (0.08f + 0.36f * act * currentFlowAlpha).coerceIn(0f, 1f)
-                                drawCircle(
-                                    color = Color.White.copy(alpha = ringAlpha),
-                                    radius = ringRadius,
-                                    center = stageCenter,
-                                    style = Stroke(width = 0.75.dp.toPx()),
-                                )
+                                    // Subtle ambient under-glow along the bus when powered
+                                    if (currentFlowAlpha > 0f) {
+                                        drawLine(
+                                            color = Color.White.copy(alpha = 0.05f * currentFlowAlpha),
+                                            start = Offset(xCenter, yStart),
+                                            end = Offset(xCenter, yEnd),
+                                            strokeWidth = 4.5.dp.toPx(),
+                                            cap = StrokeCap.Butt,
+                                        )
+                                    }
+                                }
                             }
 
-                            // 3. Dynamic Travelling Signal Pulse (When Playing)
+                            // 2. Dynamic Travelling Signal Pulse along Segments (When Playing)
                             if (currentFlowAlpha > 0f && currentProgress <= 0.95f) {
                                 val pulseVisibility = if (currentProgress <= 0.85f) {
                                     1f
@@ -375,72 +349,137 @@ fun AudioPipelineDialog(
                                     val s = (currentProgress / 0.85f).coerceIn(0f, 1f)
                                     val yPulse = y0 + s * totalHeight
 
-                                    val tailLength = 44.dp.toPx()
-                                    val leadLength = 10.dp.toPx()
-                                    val segmentStart = max(y0, yPulse - tailLength)
-                                    val segmentEnd = min(y4, yPulse + leadLength)
+                                    val tailLength = 38.dp.toPx()
+                                    val leadLength = 8.dp.toPx()
 
-                                    if (segmentEnd > segmentStart) {
-                                        // A. Soft Halo Line
-                                        val haloBrush = Brush.verticalGradient(
-                                            colorStops = arrayOf(
-                                                0.0f to Color.Transparent,
-                                                0.60f to Color.White.copy(alpha = 0.12f * pulseVisibility),
-                                                0.88f to Color.White.copy(alpha = 0.25f * pulseVisibility),
-                                                1.0f to Color.Transparent,
-                                            ),
-                                            startY = yPulse - tailLength,
-                                            endY = yPulse + leadLength,
-                                        )
-                                        drawLine(
-                                            brush = haloBrush,
-                                            start = Offset(xCenter, segmentStart),
-                                            end = Offset(xCenter, segmentEnd),
-                                            strokeWidth = 5.5.dp.toPx(),
-                                            cap = StrokeCap.Round,
-                                        )
+                                    for (i in 0 until stagePoints.size - 1) {
+                                        val yStart = stagePoints[i].y + nodeRadius
+                                        val yEnd = stagePoints[i + 1].y - nodeRadius
+                                        if (yEnd <= yStart) continue
 
-                                        // B. Brilliant Core Energy Line
-                                        val coreBrush = Brush.verticalGradient(
-                                            colorStops = arrayOf(
-                                                0.0f to Color.Transparent,
-                                                0.50f to Color.White.copy(alpha = 0.40f * pulseVisibility),
-                                                0.86f to Color.White.copy(alpha = 0.95f * pulseVisibility),
-                                                1.0f to Color.Transparent,
-                                            ),
-                                            startY = yPulse - tailLength,
-                                            endY = yPulse + leadLength,
-                                        )
-                                        drawLine(
-                                            brush = coreBrush,
-                                            start = Offset(xCenter, segmentStart),
-                                            end = Offset(xCenter, segmentEnd),
-                                            strokeWidth = 1.75.dp.toPx(),
-                                            cap = StrokeCap.Round,
-                                        )
+                                        val pStart = max(yStart, yPulse - tailLength)
+                                        val pEnd = min(yEnd, yPulse + leadLength)
 
-                                        // C. Leading Micro-Photon / Energy Pip at pulse head
-                                        if (yPulse in y0..y4) {
-                                            val headCenter = Offset(xCenter, yPulse)
-                                            drawCircle(
-                                                brush = Brush.radialGradient(
-                                                    colors = listOf(
-                                                        Color.White.copy(alpha = 0.35f * pulseVisibility),
-                                                        Color.Transparent,
-                                                    ),
-                                                    center = headCenter,
-                                                    radius = 8.dp.toPx(),
+                                        if (pEnd > pStart) {
+                                            // A. Soft Halo Line along Segment
+                                            val haloBrush = Brush.verticalGradient(
+                                                colorStops = arrayOf(
+                                                    0.0f to Color.Transparent,
+                                                    0.60f to Color.White.copy(alpha = 0.14f * pulseVisibility),
+                                                    0.88f to Color.White.copy(alpha = 0.28f * pulseVisibility),
+                                                    1.0f to Color.Transparent,
                                                 ),
-                                                radius = 8.dp.toPx(),
-                                                center = headCenter,
+                                                startY = yPulse - tailLength,
+                                                endY = yPulse + leadLength,
                                             )
-                                            drawCircle(
-                                                color = Color.White.copy(alpha = 0.95f * pulseVisibility),
-                                                radius = 1.75.dp.toPx(),
-                                                center = headCenter,
+                                            drawLine(
+                                                brush = haloBrush,
+                                                start = Offset(xCenter, pStart),
+                                                end = Offset(xCenter, pEnd),
+                                                strokeWidth = 6.dp.toPx(),
+                                                cap = StrokeCap.Butt,
                                             )
+
+                                            // B. Brilliant Core Energy Line along Segment
+                                            val coreBrush = Brush.verticalGradient(
+                                                colorStops = arrayOf(
+                                                    0.0f to Color.Transparent,
+                                                    0.50f to Color.White.copy(alpha = 0.45f * pulseVisibility),
+                                                    0.86f to Color.White.copy(alpha = 0.98f * pulseVisibility),
+                                                    1.0f to Color.Transparent,
+                                                ),
+                                                startY = yPulse - tailLength,
+                                                endY = yPulse + leadLength,
+                                            )
+                                            drawLine(
+                                                brush = coreBrush,
+                                                start = Offset(xCenter, pStart),
+                                                end = Offset(xCenter, pEnd),
+                                                strokeWidth = 2.25.dp.toPx(),
+                                                cap = StrokeCap.Butt,
+                                            )
+
+                                            // C. Leading Micro-Photon Pip (when pulse head is on this segment)
+                                            if (yPulse in yStart..yEnd) {
+                                                val headCenter = Offset(xCenter, yPulse)
+                                                drawCircle(
+                                                    brush = Brush.radialGradient(
+                                                        colors = listOf(
+                                                            Color.White.copy(alpha = 0.35f * pulseVisibility),
+                                                            Color.Transparent,
+                                                        ),
+                                                        center = headCenter,
+                                                        radius = 7.dp.toPx(),
+                                                    ),
+                                                    radius = 7.dp.toPx(),
+                                                    center = headCenter,
+                                                )
+                                                drawCircle(
+                                                    color = Color.White.copy(alpha = 0.98f * pulseVisibility),
+                                                    radius = 1.75.dp.toPx(),
+                                                    center = headCenter,
+                                                )
+                                            }
                                         }
                                     }
+                                }
+                            }
+
+                            // 3. Precision Node Anchors & White Outline Glow at Each Stage
+                            for (i in stagePoints.indices) {
+                                val stageCenter = Offset(xCenter, stagePoints[i].y)
+                                val act = calculateStageActivation(i, currentProgress, currentFlowAlpha, stageCenters, interactionRadiusPx)
+
+                                // A. Dark Backing Base (Seamless with card, guarantees zero bleed into icon interior)
+                                drawCircle(
+                                    color = Color(0xFF131315),
+                                    radius = nodeRadius,
+                                    center = stageCenter,
+                                )
+
+                                // B. Subtle White Ambient Halo (Restrained when idle, blooms gently when active)
+                                val haloAlpha = 0.10f + 0.24f * act * currentFlowAlpha
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colorStops = arrayOf(
+                                            0.0f to Color.White.copy(alpha = haloAlpha * 0.40f),
+                                            0.45f to Color.White.copy(alpha = haloAlpha),
+                                            1.0f to Color.Transparent,
+                                        ),
+                                        center = stageCenter,
+                                        radius = nodeRadius + 5.dp.toPx(),
+                                    ),
+                                    radius = nodeRadius + 5.dp.toPx(),
+                                    center = stageCenter,
+                                )
+
+                                // C. Active Outer Luminous Flare Ring (When pulse arrives)
+                                if (currentFlowAlpha > 0f && act > 0.02f) {
+                                    drawCircle(
+                                        color = Color.White.copy(alpha = 0.20f * act * currentFlowAlpha),
+                                        radius = nodeRadius + 1.2.dp.toPx(),
+                                        center = stageCenter,
+                                        style = Stroke(width = 2.dp.toPx()),
+                                    )
+                                }
+
+                                // D. Precision White Outline Micro-Ring (Crisp hardware boundary)
+                                val ringAlpha = (0.35f + 0.55f * act * currentFlowAlpha).coerceIn(0f, 1f)
+                                drawCircle(
+                                    color = Color.White.copy(alpha = ringAlpha),
+                                    radius = nodeRadius,
+                                    center = stageCenter,
+                                    style = Stroke(width = 1.dp.toPx()),
+                                )
+
+                                // E. High-Luminance Core Edge (When peak active)
+                                if (currentFlowAlpha > 0f && act > 0.05f) {
+                                    drawCircle(
+                                        color = Color.White.copy(alpha = 0.60f * act * currentFlowAlpha),
+                                        radius = nodeRadius,
+                                        center = stageCenter,
+                                        style = Stroke(width = 1.5.dp.toPx()),
+                                    )
                                 }
                             }
                         }
@@ -482,7 +521,7 @@ fun AudioPipelineDialog(
                     // 2. Decoder Stage
                     val decoderName = outputStatus.decoderName ?: "—"
 
-                    PipelineRule(Modifier.padding(start = 36.dp))
+                    PipelineRule()
                     PipelineSection(
                         stageIndex = 1,
                         icon = Icons.Rounded.Memory,
@@ -521,7 +560,7 @@ fun AudioPipelineDialog(
                         else -> "Resampled"
                     }
 
-                    PipelineRule(Modifier.padding(start = 36.dp))
+                    PipelineRule()
                     PipelineSection(
                         stageIndex = 2,
                         icon = Icons.Rounded.Tune,
@@ -579,7 +618,7 @@ fun AudioPipelineDialog(
                         stringResource(R.string.loudness_lufs, "%+.1f".format(Locale.ROOT, it))
                     } ?: "—"
 
-                    PipelineRule(Modifier.padding(start = 36.dp))
+                    PipelineRule()
                     PipelineSection(
                         stageIndex = 3,
                         icon = Icons.Rounded.GraphicEq,
@@ -625,7 +664,7 @@ fun AudioPipelineDialog(
                     val audioTrackRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz ?: 48000
                     val audioTrackText = "$audioTrackEncoding / $audioTrackRate Hz"
 
-                    PipelineRule(Modifier.padding(start = 36.dp))
+                    PipelineRule()
                     PipelineSection(
                         stageIndex = 4,
                         icon = Icons.AutoMirrored.Rounded.VolumeUp,
@@ -765,12 +804,16 @@ private fun PipelineSection(
         }
     }
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(start = 14.dp, end = 16.dp, top = 12.dp, bottom = 12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        // Left Column: Dedicated Icon / Signal Node lane (icon size strictly preserved at 15dp)
+        Box(
+            modifier = Modifier.size(24.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(
                 imageVector = icon,
                 contentDescription = null,
@@ -782,26 +825,35 @@ private fun PipelineSection(
                     }
                     .graphicsLayer {
                         val act = stageActivationProvider(stageIndex)
-                        alpha = (0.60f + 0.38f * act).coerceIn(0f, 1f)
+                        alpha = (0.80f + 0.20f * act).coerceIn(0f, 1f)
                     },
             )
-            Spacer(Modifier.width(7.dp))
+        }
+
+        Spacer(Modifier.width(14.dp))
+
+        // Right Column: Dedicated Information lane (Title + Telemetry Rows)
+        Column(
+            modifier = Modifier.weight(1f),
+        ) {
             Text(
                 text = title.uppercase(),
                 style = MaterialTheme.typography.bodyMedium.copy(
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.W600,
-                    letterSpacing = 0.4.sp,
+                    letterSpacing = 0.5.sp,
                 ),
                 color = Color.White,
-                modifier = Modifier.graphicsLayer {
-                    val act = stageActivationProvider(stageIndex)
-                    alpha = (0.55f + 0.35f * act).coerceIn(0f, 1f)
-                },
+                modifier = Modifier
+                    .padding(top = 3.dp)
+                    .graphicsLayer {
+                        val act = stageActivationProvider(stageIndex)
+                        alpha = (0.65f + 0.32f * act).coerceIn(0f, 1f)
+                    },
             )
+            Spacer(Modifier.height(7.dp))
+            content()
         }
-        Spacer(Modifier.height(8.dp))
-        content()
     }
 }
 
@@ -830,9 +882,9 @@ private fun PipelineRow(label: String, value: String) {
     }
 }
 
-/** Hairline separator between the header and each stage, matching [AlertRule]'s weight. */
+/** Hairline separator between stages, indented to align with the text column and clear the signal lane. */
 @Composable
-private fun PipelineRule(modifier: Modifier = Modifier) {
+private fun PipelineRule(modifier: Modifier = Modifier.padding(start = 52.dp, end = 16.dp)) {
     Box(
         modifier
             .fillMaxWidth()
