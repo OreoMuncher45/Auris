@@ -412,14 +412,12 @@
     <string name="no_playlists_yet">Aucune playlist pour le moment. Utilisez la rangée ci-dessus pour en créer une.</string>
     <string name="no_tracks_here">Aucun titre ici</string>
     <string name="not_connected">Non connecté</string>
-    <string name="nothing_playing">Rien en cours de lecture</string>
     <string name="one_hour">1 heure</string>
     <string name="open_album">Ouvrir l\'album</string>
     <string name="open_artist">Ouvrir l\'artiste</string>
     <string name="pause_after_a_while">Mettre la lecture en pause après un moment</string>
     <string name="pause_after_song">Pause à la fin de cette chanson</string>
     <string name="pause_countdown">%1$s avant la pause de la lecture</string>
-    <string name="pick_something">Choisissez quelque chose et cela apparaîtra ici</string>
     <string name="play_to_preview">Lancez la lecture de quelque chose pour remplir l\'aperçu.</string>
     <string name="playlist_name">Nom de la playlist</string>
     <string name="presence">Présence</string>

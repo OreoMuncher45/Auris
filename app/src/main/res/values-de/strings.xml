@@ -412,14 +412,12 @@
     <string name="no_playlists_yet">Noch keine Playlists. Nutze die Zeile oben, um eine zu erstellen.</string>
     <string name="no_tracks_here">Keine Titel hier</string>
     <string name="not_connected">Nicht verbunden</string>
-    <string name="nothing_playing">Nichts spielt gerade</string>
     <string name="one_hour">1 Stunde</string>
     <string name="open_album">Album öffnen</string>
     <string name="open_artist">Künstler öffnen</string>
     <string name="pause_after_a_while">Wiedergabe nach einer Weile pausieren</string>
     <string name="pause_after_song">Pausiert, wenn dieser Song endet</string>
     <string name="pause_countdown">%1$s bis die Wiedergabe pausiert</string>
-    <string name="pick_something">Wähle etwas aus, und es erscheint hier</string>
     <string name="play_to_preview">Spiele etwas ab, um die Vorschau zu füllen.</string>
     <string name="playlist_name">Playlist-Name</string>
     <string name="presence">Presence</string>

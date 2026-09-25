@@ -399,14 +399,12 @@
     <string name="no_playlists_yet">プレイリストはまだありません。上の行から作成してください。</string>
     <string name="no_tracks_here">ここにはトラックがありません</string>
     <string name="not_connected">未接続</string>
-    <string name="nothing_playing">再生中の曲はありません</string>
     <string name="one_hour">1時間</string>
     <string name="open_album">アルバムを開く</string>
     <string name="open_artist">アーティストを開く</string>
     <string name="pause_after_a_while">しばらくしたら再生を一時停止</string>
     <string name="pause_after_song">この曲が終わったら一時停止します</string>
     <string name="pause_countdown">あと%1$sで再生が一時停止します</string>
-    <string name="pick_something">何かを選ぶとここに表示されます</string>
     <string name="play_to_preview">プレビューを表示するには何かを再生してください。</string>
     <string name="playlist_name">プレイリスト名</string>
     <string name="presence">プレゼンス</string>

@@ -597,14 +597,12 @@
     <string name="no_playlists_yet">No playlists yet. Use the row above to create one.</string>
     <string name="no_tracks_here">No tracks here</string>
     <string name="not_connected">Not connected</string>
-    <string name="nothing_playing">Nothing playing</string>
     <string name="one_hour">1 hour</string>
     <string name="open_album">Open album</string>
     <string name="open_artist">Open artist</string>
     <string name="pause_after_a_while">Pause playback after a while</string>
     <string name="pause_after_song">Pausing when this song ends</string>
     <string name="pause_countdown">%1$s until playback pauses</string>
-    <string name="pick_something">Choose something and it will appear here</string>
     <string name="play_to_preview">Play something to fill in the preview.</string>
     <string name="playlist_name">Playlist name</string>
     <string name="presence">Presence</string>

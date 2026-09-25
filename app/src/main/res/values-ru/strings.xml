@@ -429,14 +429,12 @@
     <string name="no_playlists_yet">Пока нет плейлистов. Используйте строку выше, чтобы создать новый.</string>
     <string name="no_tracks_here">Здесь нет треков</string>
     <string name="not_connected">Не подключено</string>
-    <string name="nothing_playing">Ничего не играет</string>
     <string name="one_hour">1 час</string>
     <string name="open_album">Открыть альбом</string>
     <string name="open_artist">Открыть исполнителя</string>
     <string name="pause_after_a_while">Приостановить воспроизведение через некоторое время</string>
     <string name="pause_after_song">Пауза после окончания этой песни</string>
     <string name="pause_countdown">%1$s до паузы</string>
-    <string name="pick_something">Выберите что-нибудь, и это появится здесь</string>
     <string name="play_to_preview">Воспроизведите что-нибудь, чтобы заполнить предпросмотр.</string>
     <string name="playlist_name">Название плейлиста</string>
     <string name="presence">Presence</string>

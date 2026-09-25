@@ -427,14 +427,12 @@
     <string name="no_playlists_yet">ยังไม่มีเพลย์ลิสต์ ใช้แถวด้านบนเพื่อสร้างเพลย์ลิสต์</string>
     <string name="no_tracks_here">ไม่มีแทร็กที่นี่</string>
     <string name="not_connected">ไม่ได้เชื่อมต่อ</string>
-    <string name="nothing_playing">ไม่มีเพลงกำลังเล่น</string>
     <string name="one_hour">1 ชั่วโมง</string>
     <string name="open_album">เปิดอัลบั้ม</string>
     <string name="open_artist">เปิดหน้าศิลปิน</string>
     <string name="pause_after_a_while">หยุดเล่นชั่วคราวหลังจากผ่านไปสักครู่</string>
     <string name="pause_after_song">จะหยุดชั่วคราวเมื่อเพลงนี้จบ</string>
     <string name="pause_countdown">อีก %1$s จะหยุดเล่นชั่วคราว</string>
-    <string name="pick_something">เลือกอะไรสักอย่างแล้วจะปรากฏที่นี่</string>
     <string name="play_to_preview">เล่นอะไรสักอย่างเพื่อดูตัวอย่าง</string>
     <string name="playlist_name">ชื่อเพลย์ลิสต์</string>
     <string name="presence">การแสดงสถานะ</string>

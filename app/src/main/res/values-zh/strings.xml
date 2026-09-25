@@ -399,14 +399,12 @@
     <string name="no_playlists_yet">还没有播放列表，使用上方的选项创建一个吧。</string>
     <string name="no_tracks_here">这里没有曲目</string>
     <string name="not_connected">未连接</string>
-    <string name="nothing_playing">当前没有播放内容</string>
     <string name="one_hour">1 小时</string>
     <string name="open_album">打开专辑</string>
     <string name="open_artist">打开艺人</string>
     <string name="pause_after_a_while">一段时间后暂停播放</string>
     <string name="pause_after_song">这首歌结束后暂停</string>
     <string name="pause_countdown">还有 %1$s 播放将暂停</string>
-    <string name="pick_something">选择一些内容，它们会显示在这里</string>
     <string name="play_to_preview">播放一些内容即可填充预览。</string>
     <string name="playlist_name">播放列表名称</string>
     <string name="presence">状态</string>

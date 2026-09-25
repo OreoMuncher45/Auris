@@ -379,14 +379,12 @@
     <string name="no_playlists_yet">Brak playlist. Użyj rzędu powyżej, by jedną stworzyć.</string>
     <string name="no_tracks_here">Nie ma tu utworów</string>
     <string name="not_connected">Nie połączono</string>
-    <string name="nothing_playing">Nic nie gra</string>
     <string name="one_hour">1 godzina</string>
     <string name="open_album">Otwórz album</string>
     <string name="open_artist">Otwórz artystę</string>
     <string name="pause_after_a_while">Zatrzymaj odtwarzanie po pewnym czasie</string>
     <string name="pause_after_song">Wstrzymanie po zakończeniu tego utworu</string>
     <string name="pause_countdown">%1$s do wstrzymania odtwarzania</string>
-    <string name="pick_something">Wybierz coś, a pojawi się to tutaj</string>
     <string name="play_to_preview">Odtwórz coś, aby wypełnić podgląd.</string>
     <string name="playlist_name">Nazwa playlisty</string>
     <string name="presence">Aktywność</string>

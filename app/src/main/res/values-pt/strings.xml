@@ -377,14 +377,12 @@
     <string name="no_playlists_yet">Nenhuma playlist ainda. Use a linha acima para criar uma.</string>
     <string name="no_tracks_here">Nenhuma faixa aqui</string>
     <string name="not_connected">Não conectado</string>
-    <string name="nothing_playing">Nada tocando</string>
     <string name="one_hour">1 hora</string>
     <string name="open_album">Abrir álbum</string>
     <string name="open_artist">Abrir artista</string>
     <string name="pause_after_a_while">Pausar reprodução depois de um tempo</string>
     <string name="pause_after_song">Pausando quando esta música terminar</string>
     <string name="pause_countdown">%1$s até a reprodução pausar</string>
-    <string name="pick_something">Escolha algo e aparecerá aqui</string>
     <string name="play_to_preview">Toque algo para preencher a visualização.</string>
     <string name="playlist_name">Nome da playlist</string>
     <string name="presence">Presença</string>

@@ -376,14 +376,12 @@
     <string name="no_playlists_yet">עדיין אין רשימות השמעה. השתמש בשורה למעלה כדי ליצור אחת.</string>
     <string name="no_tracks_here">אין כאן רצועות</string>
     <string name="not_connected">לא מחובר</string>
-    <string name="nothing_playing">שום דבר לא מתנגן</string>
     <string name="one_hour">שעה אחת</string>
     <string name="open_album">פתח אלבום</string>
     <string name="open_artist">פתח אמן</string>
     <string name="pause_after_a_while">השהה את ההפעלה לאחר זמן מה</string>
     <string name="pause_after_song">מושהה כששיר זה יסתיים</string>
     <string name="pause_countdown">%1$s עד להשהיית ההפעלה</string>
-    <string name="pick_something">בחר משהו וזה יופיע כאן</string>
     <string name="play_to_preview">הפעל משהו כדי למלא את התצוגה המקדימה.</string>
     <string name="playlist_name">שם רשימת ההשמעה</string>
     <string name="presence">נוכחות</string>

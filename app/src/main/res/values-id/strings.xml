@@ -399,14 +399,12 @@
     <string name="no_playlists_yet">Belum ada playlist. Gunakan baris di atas untuk membuat satu.</string>
     <string name="no_tracks_here">Tidak ada trek di sini</string>
     <string name="not_connected">Tidak terhubung</string>
-    <string name="nothing_playing">Tidak ada yang diputar</string>
     <string name="one_hour">1 jam</string>
     <string name="open_album">Buka album</string>
     <string name="open_artist">Buka artis</string>
     <string name="pause_after_a_while">Jeda pemutaran setelah beberapa saat</string>
     <string name="pause_after_song">Menjeda saat lagu ini berakhir</string>
     <string name="pause_countdown">%1$s hingga pemutaran dijeda</string>
-    <string name="pick_something">Pilih sesuatu dan itu akan muncul di sini</string>
     <string name="play_to_preview">Putar sesuatu untuk mengisi pratinjau.</string>
     <string name="playlist_name">Nama playlist</string>
     <string name="presence">Presence</string>

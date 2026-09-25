@@ -441,14 +441,12 @@
     <string name="no_playlists_yet">Henüz çalma listesi yok. Bir tane oluşturmak için yukarıdaki satırı kullan.</string>
     <string name="no_tracks_here">Burada parça yok</string>
     <string name="not_connected">Bağlı değil</string>
-    <string name="nothing_playing">Hiçbir şey çalmıyor</string>
     <string name="one_hour">1 saat</string>
     <string name="open_album">Albümü aç</string>
     <string name="open_artist">Sanatçıyı aç</string>
     <string name="pause_after_a_while">Bir süre sonra çalmayı duraklat</string>
     <string name="pause_after_song">Bu şarkı bitince duraklatılıyor</string>
     <string name="pause_countdown">Çalma duraklatılana kadar %1$s</string>
-    <string name="pick_something">Bir şey seç, burada görünecek</string>
     <string name="play_to_preview">Önizlemeyi doldurmak için bir şey çal.</string>
     <string name="playlist_name">Çalma listesi adı</string>
     <string name="presence">Varlık</string>

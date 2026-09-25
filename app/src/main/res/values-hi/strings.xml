@@ -412,14 +412,12 @@
     <string name="no_playlists_yet">अभी तक कोई प्लेलिस्ट नहीं है। एक बनाने के लिए ऊपर दी गई पंक्ति का इस्तेमाल करें।</string>
     <string name="no_tracks_here">यहां कोई ट्रैक नहीं है</string>
     <string name="not_connected">कनेक्टेड नहीं</string>
-    <string name="nothing_playing">कुछ नहीं चल रहा</string>
     <string name="one_hour">1 घंटा</string>
     <string name="open_album">एल्बम खोलें</string>
     <string name="open_artist">कलाकार खोलें</string>
     <string name="pause_after_a_while">थोड़ी देर बाद प्लेबैक रोकें</string>
     <string name="pause_after_song">यह गाना खत्म होने पर रुक जाएगा</string>
     <string name="pause_countdown">प्लेबैक रुकने में %1$s बाकी</string>
-    <string name="pick_something">कुछ चुनें और वह यहां दिखेगा</string>
     <string name="play_to_preview">प्रीव्यू भरने के लिए कुछ चलाएं।</string>
     <string name="playlist_name">प्लेलिस्ट का नाम</string>
     <string name="presence">प्रेज़ेंस</string>

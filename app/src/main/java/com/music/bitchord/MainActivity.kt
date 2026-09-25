@@ -236,8 +236,6 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.NowPlayingScreen
-import com.music.bitchord.ui.player.dockedPlayerAvailable
-import com.music.bitchord.ui.player.dockedPlayerWidth
 import com.music.bitchord.ui.player.landscapePlayerFitsScreen
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.ExploreScreen
@@ -445,40 +443,22 @@ private fun BitChordApp(
     // and the page is a sibling of the bar rather than a child.
     val navBarScroll = rememberFloatingTabBarScrollConnection()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
-    // Whether there is room to keep the player open beside the page rather than
-    // raising it over one. Read all over what follows, because most of what the
-    // page does about the player is really about which of the two it is: no mini
-    // player standing in for one that is already there, no sheet to raise, and
-    // the bottom inset the mini player was holding handed back to the page.
-    // Docking the player beside the page — reachable via [dockedPlayerAvailable]
-    // — is switched off. The reference this app is matching keeps the player as
-    // a full-screen take-over on every window size, tablet landscape included,
-    // with the library staying full-screen behind a mini player and the ordinary
-    // bottom tabs rather than losing a lane to a permanent pane.
-    // [dockedPlayerWidth] and the pane it feeds ([DockedPlayer], below) stay in
-    // place rather than being deleted, in case docking comes back as an explicit
-    // choice later — this is the one line that turns it off.
-    @Suppress("KotlinConstantConditions")
-    val playerDocked = false
     /**
-     * Whether the player's *sheet* is up.
-     *
-     * Only ever set where there is a sheet to set it for. Docked, the player is
-     * open whatever this says, and the things that read it — the light status
-     * bar glyphs the artwork needs, the sheet itself — are all asking the one
-     * question this used to answer on its own: is the player covering the page?
+     * Whether the player's sheet is up. The player is always a full-screen
+     * take-over raised over the page, on every window size — the library
+     * stays full-screen behind a mini player rather than losing a lane to a
+     * permanent pane.
      */
     var showNowPlaying by remember { mutableStateOf(false) }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
     // [PlayerDeepLink.handled]. The sheet itself is gated on there being a track,
     // so on a cold launch this simply arms it and it opens as the controller
-    // connects. Docked there is nothing to raise: the player is already up, and
-    // the tap has been honoured by the time it arrives.
+    // connects.
     val openPlayerRequested by PlayerDeepLink.pending.collectAsStateWithLifecycle()
     LaunchedEffect(openPlayerRequested) {
         if (openPlayerRequested) {
-            if (!playerDocked) showNowPlaying = true
+            showNowPlaying = true
             PlayerDeepLink.handled()
         }
     }
@@ -1965,7 +1945,7 @@ private fun BitChordApp(
     // See [topBarContentPadding].
     val listPadding = PaddingValues(
         top = topBarContentPadding(),
-        bottom = if (player.song != null && !playerDocked) 210.dp else 140.dp,
+        bottom = if (player.song != null) 210.dp else 140.dp,
     )
 
     // What colour the page currently under the bars is. The fades either end
@@ -1989,10 +1969,9 @@ private fun BitChordApp(
     // ---- The track in the player ----
     // Whatever started this track knew its title and its artwork, but rarely
     // which album or artist page it belongs to. Fill that in while the player
-    // is actually up: on a tablet that is from the moment the track starts,
-    // since the pane never goes down; on a phone it is when the sheet is
-    // raised, so playing an album from the mini player still costs nothing.
-    val playerShowing = playerDocked || showNowPlaying
+    // is actually up — when the sheet is raised, so playing an album from the
+    // mini player still costs nothing.
+    val playerShowing = showNowPlaying
     var links by remember { mutableStateOf<Song?>(null) }
     LaunchedEffect(player.song?.videoId, playerShowing) {
         links = null
@@ -2022,11 +2001,9 @@ private fun BitChordApp(
         }
     }
 
-    // The player's whole parameter list, in one place because there are two
-    // places it can be mounted: the sheet a phone raises over the page, and
-    // the pane a tablet keeps beside it. [docked] is the only difference
-    // between the two, and only ever one of them is in the tree.
-    val nowPlaying: @Composable (Song, Boolean) -> Unit = { song, docked ->
+    // The player's whole parameter list, kept apart from the sheet that
+    // mounts it so the sheet's own setup reads on its own.
+    val nowPlaying: @Composable (Song) -> Unit = { song ->
         val effectiveSong = optimisticVersionSong?.takeIf {
             it.videoId == convertedAudioId || it.videoId == convertedVideoId || it.videoId == keepVideoId ||
             it.videoId == YtMusicRepository.cachedAudioVersion(song.videoId)?.videoId ||
@@ -2247,14 +2224,10 @@ private fun BitChordApp(
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsOffsetOpen = showLyricsOffset,
             onDismissLyricsOffset = { showLyricsOffset = false },
-            docked = docked,
             onListenTogether = {
-                // A phone's player is a sheet over the page, so it has to come
-                // down for the page to be read at all. A tablet's is a pane
-                // beside it: the settings page opens in the half that is
-                // already free, and taking the player away would be closing
-                // something nobody asked to close.
-                if (!docked) showNowPlaying = false
+                // The player is a sheet over the page, so it has to come down
+                // for the page to be read at all.
+                showNowPlaying = false
                 showSettings = true
                 showListenTogether = true
             },
@@ -3252,7 +3225,7 @@ private fun BitChordApp(
 
                 // Drawn before the bars so their own glass reads on top of it.
                 BottomFadeScrim(
-                    withMiniPlayer = player.song != null && !playerDocked,
+                    withMiniPlayer = player.song != null,
                     // Not the wash: by the foot of the screen the page has finished
                     // easing out of it and into this, so this is what is actually
                     // under the tab bar.
@@ -3298,7 +3271,7 @@ private fun BitChordApp(
                         selectedIndex = selectedTab,
                         onTabSelected = onTabSelected,
                         scrollConnection = navBarScroll,
-                        song = player.song?.takeUnless { playerDocked },
+                        song = player.song,
                         isPlaying = player.isPlaying,
                         isLoading = playPauseBusy,
                         onPlayPause = {
@@ -3325,10 +3298,7 @@ private fun BitChordApp(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     QueueActionNoticeHost(queueNotice)
-                    // Only where the player isn't already open beside the page:
-                    // a bar whose whole job is to stand in for the player, next
-                    // to the player, is a second copy of what is already there.
-                    player.song?.takeUnless { playerDocked }?.let { song ->
+                    player.song?.let { song ->
                         MiniPlayer(
                             song = song,
                             isPlaying = player.isPlaying,
@@ -3355,16 +3325,6 @@ private fun BitChordApp(
                 }
             }
 
-            // The player, open for as long as the app is. There is no way to
-            // put it away and nothing to put it away for — the pane is its
-            // own space rather than something borrowed from the page.
-            if (playerDocked) {
-                DockedPlayer(
-                    song = playerSong,
-                    width = dockedPlayerWidth(windowWidth),
-                    content = { current -> nowPlaying(current, true) },
-                )
-            }
         }
 
         // A phone stays upright everywhere but in the player. The pages behind
@@ -3374,7 +3334,7 @@ private fun BitChordApp(
         // phone follows the user's own rotation setting, and puts itself back
         // upright the moment the player goes. A screen too small for that
         // shape stays pinned rather than squashing the portrait player.
-        val playerRaised = !playerDocked && showNowPlaying && playerSong != null
+        val playerRaised = showNowPlaying && playerSong != null
         val phoneRotatesInPlayer = remember(context) {
             val configuration = context.resources.configuration
             !context.resources.getBoolean(R.bool.allow_rotation) &&
@@ -3394,7 +3354,6 @@ private fun BitChordApp(
         }
 
         // ---- Now Playing ----
-        // Only raised where it isn't already open beside the page.
         if (playerRaised) {
             val nowPlayingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             ModalBottomSheet(
@@ -3420,7 +3379,7 @@ private fun BitChordApp(
                 // Keeps a sheet still "settling" after a lyrics or queue
                 // scroll from taking the next touch meant for that list.
                 Box(Modifier.guardSheetFromContentTouches(nowPlayingSheetState)) {
-                    nowPlaying(playerSong, false)
+                    nowPlaying(playerSong)
                 }
             }
         }
@@ -4621,86 +4580,6 @@ private fun formatDurationText(ms: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return "%d:%02d".format(Locale.ROOT, minutes, seconds)
-}
-
-/**
- * The pane a wide window keeps the player in, down the right-hand edge.
- *
- * It is a fixed [width] rather than a share of the row because the player has a
- * width it wants and a page does not: past a point the sleeve and the transport
- * stop being improved by more room and the feed beside them still is, so the
- * pane takes what it needs and the page has the rest — see [dockedPlayerWidth].
- *
- * The pane is there whether or not anything is playing. A player that appears
- * and disappears would take a third of the page's width with it every time
- * something started or stopped, which is the layout jumping under the finger
- * rather than the app reacting to it; so with nothing to show it says so.
- */
-@Composable
-private fun DockedPlayer(
-    song: Song?,
-    width: Dp,
-    content: @Composable (Song) -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .width(width)
-            .fillMaxHeight()
-            .background(MaterialTheme.colorScheme.surface),
-    ) {
-        if (song != null) {
-            content(song)
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Icon(
-                    imageVector = BitChordIcons.MusicNote,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
-                    modifier = Modifier.size(44.dp),
-                )
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    text = stringResource(R.string.nothing_playing),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = stringResource(R.string.pick_something),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-        // The status bar runs across both panes and its glyphs can only be one
-        // colour, and that colour follows the page: in a light theme they are
-        // dark ink, which over a plain surface is a clock nobody can read. Only
-        // painted for the empty state, where the pane really is flat
-        // [colorScheme.surface] behind the placeholder copy.
-        //
-        // A song mounts [NowPlayingScreen] instead, and that already runs its
-        // own backdrop — the mesh gradient, and the hero banner's artwork —
-        // up behind the inset, with its own scrim once the banner settles (see
-        // its [heroT] scrim). Painting flat over that here was covering the
-        // player's own backdrop with a solid rectangle every frame, which is
-        // the black bar across the top of a playing dock: the artwork stopped
-        // at this box instead of running to the edge like it does on a phone.
-        if (song == null) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .fillMaxWidth()
-                    .windowInsetsTopHeight(WindowInsets.statusBars)
-                    .background(MaterialTheme.colorScheme.background),
-            )
-        }
-    }
 }
 
 /**

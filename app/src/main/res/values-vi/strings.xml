@@ -460,14 +460,12 @@
     <string name="no_playlists_yet">Chưa có danh sách phát nào. Dùng hàng bên trên để tạo danh sách phát.</string>
     <string name="no_tracks_here">Không có bản nhạc nào ở đây</string>
     <string name="not_connected">Chưa kết nối</string>
-    <string name="nothing_playing">Không có nội dung đang phát</string>
     <string name="one_hour">1 giờ</string>
     <string name="open_album">Mở album</string>
     <string name="open_artist">Mở nghệ sĩ</string>
     <string name="pause_after_a_while">Tạm dừng phát sau một khoảng thời gian</string>
     <string name="pause_after_song">Sẽ tạm dừng khi hết bài hát này</string>
     <string name="pause_countdown">%1$s cho đến khi tạm dừng phát</string>
-    <string name="pick_something">Chọn một nội dung và thông tin sẽ xuất hiện ở đây</string>
     <string name="play_to_preview">Phát một bài hát để xem trước.</string>
     <string name="playlist_name">Tên danh sách phát</string>
     <string name="presence">Trạng thái hoạt động</string>

@@ -458,14 +458,12 @@
     <string name="no_playlists_yet">Ancora nessuna playlist. Usa la riga sopra per crearne una.</string>
     <string name="no_tracks_here">Nessun brano qui</string>
     <string name="not_connected">Non connesso</string>
-    <string name="nothing_playing">Nessuna riproduzione in corso</string>
     <string name="one_hour">1 ora</string>
     <string name="open_album">Apri album</string>
     <string name="open_artist">Apri artista</string>
     <string name="pause_after_a_while">Metti in pausa la riproduzione dopo un po\'</string>
     <string name="pause_after_song">In pausa alla fine di questo brano</string>
     <string name="pause_countdown">%1$s alla pausa della riproduzione</string>
-    <string name="pick_something">Scegli qualcosa e apparirà qui</string>
     <string name="play_to_preview">Riproduci qualcosa per riempire l\'anteprima.</string>
     <string name="playlist_name">Nome playlist</string>
     <string name="presence">Presenza</string>

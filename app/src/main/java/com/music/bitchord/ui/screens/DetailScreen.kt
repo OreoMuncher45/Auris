@@ -345,16 +345,9 @@ fun DetailScreen(
                 // width is the page's, so the ratio decides it and both can work it out
                 // alone.
                 //
-                // Measured rather than read off the window, because the two are not the
-                // same number everywhere: on a tablet the page is the column left over
-                // once the player has its pane, and a height derived from the whole
-                // window there is a sleeve half again as tall as it is wide.
-                //
-                // That assumption — a tablet's page is always the narrow docked
-                // column — no longer holds: the player runs full-screen at every
-                // window size now (see [dockedPlayerAvailable]'s call site), so this
-                // page's own width in landscape is the *whole* window, not a leftover
-                // column beside a pane. Straight off that width, the ratio hands back
+                // Measured rather than read off the window. The player runs
+                // full-screen at every window size, so this page's own width in
+                // landscape is the *whole* window. Straight off that width, the ratio hands back
                 // a hero taller than the window itself — the artwork and track list
                 // end up scrolled out of sight beneath what reads as a blank page.
                 // Capping against the window's own height is what keeps the ratio's
