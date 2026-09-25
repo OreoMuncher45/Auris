@@ -62,12 +62,7 @@ object SmbConnection {
         val newClient = SMBClient(config)
         try {
             val newConnection = newClient.connect(host, SmbAuth.port)
-            val auth = if (SmbAuth.username.isBlank() && SmbAuth.password.isBlank()) {
-                AuthenticationContext.anonymous()
-            } else {
-                AuthenticationContext(SmbAuth.username, SmbAuth.password.toCharArray(), "")
-            }
-            val session: Session = newConnection.authenticate(auth)
+            val session: Session = newConnection.authenticate(authFor(SmbAuth.username, SmbAuth.password))
             val diskShare = session.connectShare(shareName) as? DiskShare
                 ?: throw SmbException("\"$shareName\" is not a file share")
             client = newClient
@@ -79,6 +74,19 @@ object SmbConnection {
             throw e
         }
     }
+
+    /**
+     * Never anonymous(): smbj 0.15 derives SMB3 keys from a session key an
+     * anonymous login has none of, and crashes on servers that do not flag
+     * the session as null (Samba) - hierynomus/smbj#872. Guest sends a real
+     * NTLMv2 exchange and lands on the guest path smbj handles.
+     */
+    internal fun authFor(username: String, password: String): AuthenticationContext =
+        if (username.isBlank() && password.isBlank()) {
+            AuthenticationContext.guest()
+        } else {
+            AuthenticationContext(username, password.toCharArray(), "")
+        }
 
     class SmbException(message: String) : IOException(message)
 }
