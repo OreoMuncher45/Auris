@@ -2162,6 +2162,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * A failed listing names its cause: a share that answers with an error is
+     * not an empty share, and "no audio files" would send the user hunting
+     * through folder paths for a login or network problem.
+     */
+    private suspend fun remoteSongsState(remote: RemoteLibrary): UiState<List<Song>> =
+        runCatching { remote.songs() }.fold(
+            onSuccess = { songs ->
+                if (songs.isEmpty()) UiState.Error(text(remote.emptyRes)) else UiState.Success(songs)
+            },
+            onFailure = { UiState.Error(it.message?.takeIf(String::isNotBlank) ?: it.javaClass.simpleName) },
+        )
+
+    /**
      * Re-reads an open remote-library page after its server settings change.
      * A no-op when the page isn't open — the next visit lists fresh anyway.
      */
@@ -2227,11 +2240,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var subscription: SubscriptionState? = null
             val remote = remoteLibrary(browseId)
             val state = when {
-                remote != null -> {
-                    val songs = remote.songs()
-                    if (songs.isEmpty()) UiState.Error(text(remote.emptyRes))
-                    else UiState.Success(songs)
-                }
+                remote != null -> remoteSongsState(remote)
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
                     if (songs.isEmpty()) UiState.Error(text(R.string.downloaded_playlist_empty))
@@ -2341,11 +2350,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val context = getApplication<Application>()
             val remote = remoteLibrary(browseId)
             val state: UiState<List<Song>> = when {
-                remote != null -> {
-                    val songs = remote.songs()
-                    if (songs.isEmpty()) UiState.Error(text(remote.emptyRes))
-                    else UiState.Success(songs)
-                }
+                remote != null -> remoteSongsState(remote)
                 Downloads.recordIdOf(browseId) != null -> {
                     val songs = downloadedPlaylist(browseId)
                     if (songs.isEmpty()) UiState.Error(text(R.string.downloaded_playlist_empty))

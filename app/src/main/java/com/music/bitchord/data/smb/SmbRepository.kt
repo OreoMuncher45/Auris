@@ -24,7 +24,7 @@ object SmbRepository {
         if (!isConfigured()) return@withContext emptyList()
         val host = SmbAuth.host
         val share = SmbAuth.share
-        val listing = SmbClient.listLibrary().getOrNull() ?: return@withContext emptyList()
+        val listing = SmbClient.listLibrary().getOrThrow()
         val artByDir = listing.images.groupBy { dirKey(it.path) }
         listing.audio.map { entry ->
             toSong(host, share, entry, artByDir[dirKey(entry.path)].orEmpty())
