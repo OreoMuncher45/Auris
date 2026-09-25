@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DragHandle
+import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.PlayCircle
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -54,6 +56,8 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.smb.SmbRepository
+import com.music.bitchord.data.webdav.WebDavRepository
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.sources.AddonSource
 import com.music.bitchord.data.sources.SourceConfig
@@ -99,6 +103,10 @@ fun SourcesScreen(
      * this subtree.
      */
     onEditWebDav: () -> Unit,
+    /** As [onEditWebDav], for the SMB share editor. */
+    onEditSmb: () -> Unit,
+    /** Opens the full-window warning before JioSaavn is opted into. */
+    onConfirmJioSaavn: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -110,9 +118,10 @@ fun SourcesScreen(
     val webdavUrl by AppSettings.webdavUrl.collectAsStateWithLifecycle()
     val webdavUsername by AppSettings.webdavUsername.collectAsStateWithLifecycle()
     val webdavPassword by AppSettings.webdavPassword.collectAsStateWithLifecycle()
-    var webdavTesting by remember { mutableStateOf(false) }
-    var webdavTestResult by remember { mutableStateOf<String?>(null) }
-    val webdavScope = rememberCoroutineScope()
+    val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
+    val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
+    val smbUsername by AppSettings.smbUsername.collectAsStateWithLifecycle()
+    val smbPassword by AppSettings.smbPassword.collectAsStateWithLifecycle()
 
     /** Last known reachability per source, filled in as the probes come back. */
     val health = remember { mutableStateMapOf<String, SourceHealth>() }
@@ -227,7 +236,13 @@ fun SourcesScreen(
                         onToggle = if (config.kind == SourceKind.YOUTUBE) {
                             null
                         } else {
-                            ({ SourceRegistry.setEnabled(config.id, it) })
+                            ({ enabled ->
+                                if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
+                                    onConfirmJioSaavn()
+                                } else {
+                                    SourceRegistry.setEnabled(config.id, enabled)
+                                }
+                            })
                         },
                         handle = handle,
                     )
@@ -257,67 +272,58 @@ fun SourcesScreen(
         // holds the listener's own files instead of answering for YouTube's,
         // so it takes no part in the ranking and gets its own group. The
         // editor is raised to the activity like every other alert.
-        SettingsGroup(
-            header = stringResource(R.string.webdav),
-            footer = stringResource(R.string.webdav_description),
-        ) {
-            SettingsRow(
-                icon = Icons.Rounded.Cloud,
-                title = stringResource(R.string.webdav),
-                subtitle = if (webdavUrl.isBlank()) {
-                    stringResource(R.string.webdav_not_configured)
-                } else if (webdavUsername.isNotBlank()) {
-                    "$webdavUrl · $webdavUsername"
-                } else {
-                    webdavUrl
-                },
-                onClick = onEditWebDav,
-            )
-            if (webdavUrl.isNotBlank()) {
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.Dns,
-                    title = if (webdavTesting) {
-                        stringResource(R.string.testing)
-                    } else {
-                        webdavTestResult ?: stringResource(R.string.test)
-                    },
-                    subtitle = stringResource(R.string.webdav_subtitle),
-                    onClick = {
-                        if (webdavTesting) return@SettingsRow
-                        webdavTesting = true
-                        webdavTestResult = null
-                        webdavScope.launch {
-                            com.music.bitchord.data.webdav.WebDavRepository.testConnection(
-                                webdavUrl,
-                                webdavUsername,
-                                webdavPassword,
-                            ).fold(
-                                onSuccess = {
-                                    webdavTestResult = context.getString(R.string.connected)
-                                },
-                                onFailure = {
-                                    webdavTestResult = context.getString(
-                                        R.string.webdav_test_failed,
-                                        it.message ?: context.getString(R.string.failed),
-                                    )
-                                },
-                            )
-                            webdavTesting = false
-                        }
-                    },
+        RemoteLibrarySection(
+            icon = Icons.Rounded.Cloud,
+            title = stringResource(R.string.webdav),
+            description = stringResource(R.string.webdav_description),
+            subtitle = if (webdavUrl.isBlank()) {
+                stringResource(R.string.webdav_not_configured)
+            } else if (webdavUsername.isNotBlank()) {
+                "$webdavUrl · $webdavUsername"
+            } else {
+                webdavUrl
+            },
+            listSubtitle = stringResource(R.string.webdav_subtitle),
+            disconnectTitle = stringResource(R.string.webdav_disconnect),
+            configured = webdavUrl.isNotBlank(),
+            testFailedRes = R.string.webdav_test_failed,
+            onEdit = onEditWebDav,
+            onTest = {
+                WebDavRepository.testConnection(webdavUrl, webdavUsername, webdavPassword)
+            },
+            onDisconnect = { AppSettings.clearWebDav() },
+        )
+
+        // A personal library on a file share, filed next to the WebDAV one
+        // for the same reason: it holds the listener's own files instead of
+        // answering for YouTube's, so it takes no part in the ranking above.
+        RemoteLibrarySection(
+            icon = Icons.Rounded.Storage,
+            title = stringResource(R.string.smb),
+            description = stringResource(R.string.smb_description),
+            subtitle = if (smbHost.isBlank() || smbShare.isBlank()) {
+                stringResource(R.string.smb_not_configured)
+            } else if (smbUsername.isNotBlank()) {
+                "$smbHost · $smbShare · $smbUsername"
+            } else {
+                "$smbHost · $smbShare"
+            },
+            listSubtitle = stringResource(R.string.smb_subtitle),
+            disconnectTitle = stringResource(R.string.smb_disconnect),
+            configured = smbHost.isNotBlank() && smbShare.isNotBlank(),
+            testFailedRes = R.string.smb_test_failed,
+            onEdit = onEditSmb,
+            onTest = {
+                SmbRepository.testConnection(
+                    smbHost,
+                    smbShare,
+                    AppSettings.smbBasePath.value,
+                    smbUsername,
+                    smbPassword,
                 )
-                RowDivider()
-                SettingsRow(
-                    icon = Icons.Rounded.DeleteSweep,
-                    title = stringResource(R.string.webdav_disconnect),
-                    onClick = {
-                        AppSettings.clearWebDav()
-                        webdavTestResult = null
-                    },
-                )
-            }
-        }
+            },
+            onDisconnect = { AppSettings.clearSmb() },
+        )
 
         SettingsGroup(
             header = stringResource(R.string.source_matching),
@@ -344,6 +350,76 @@ fun SourcesScreen(
 
 }
 
+
+/**
+ * A personal library section: the server row, plus test and disconnect rows
+ * once something is configured. Shared by WebDAV and SMB, which differ only
+ * in what "configured" means and which repository answers the test — the
+ * test state lives here rather than in the screen, so each section tracks
+ * its own result.
+ */
+@Composable
+private fun RemoteLibrarySection(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    subtitle: String,
+    listSubtitle: String,
+    disconnectTitle: String,
+    configured: Boolean,
+    testFailedRes: Int,
+    onEdit: () -> Unit,
+    onTest: suspend () -> Result<Unit>,
+    onDisconnect: () -> Unit,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var testing by remember { mutableStateOf(false) }
+    var testResult by remember { mutableStateOf<String?>(null) }
+    SettingsGroup(header = title, footer = description) {
+        SettingsRow(icon = icon, title = title, subtitle = subtitle, onClick = onEdit)
+        if (configured) {
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Dns,
+                title = if (testing) {
+                    stringResource(R.string.testing)
+                } else {
+                    testResult ?: stringResource(R.string.test)
+                },
+                subtitle = listSubtitle,
+                onClick = {
+                    if (testing) return@SettingsRow
+                    testing = true
+                    testResult = null
+                    scope.launch {
+                        onTest().fold(
+                            onSuccess = {
+                                testResult = context.getString(R.string.connected)
+                            },
+                            onFailure = {
+                                testResult = context.getString(
+                                    testFailedRes,
+                                    it.message ?: context.getString(R.string.failed),
+                                )
+                            },
+                        )
+                        testing = false
+                    }
+                },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.DeleteSweep,
+                title = disconnectTitle,
+                onClick = {
+                    onDisconnect()
+                    testResult = null
+                },
+            )
+        }
+    }
+}
 /**
  * The addon rows, draggable by their handles to set which is asked first.
  *
@@ -698,6 +774,7 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
 @Composable
 private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
     !isComplete -> stringResource(R.string.source_setup_required)
+    kind == SourceKind.JIOSAAVN -> stringResource(R.string.jiosaavn_mismatch_warning)
     health is SourceHealth.Ok -> listOfNotNull(
         health.detail,
         kind.labels.take(3).joinToString(" · "),

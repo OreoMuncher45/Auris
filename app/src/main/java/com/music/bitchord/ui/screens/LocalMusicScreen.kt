@@ -105,6 +105,7 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.TopBarContentGap
 import com.music.bitchord.ui.components.topBarHeight
@@ -532,7 +533,7 @@ private fun SongsTab(
                     modifier = Modifier.padding(horizontal = 0.dp, vertical = 10.dp),
                 )
             }
-            itemsIndexed(songs) { index, song ->
+            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
                 SongGridCard(
                     song = song,
                     selected = song.videoId in selectedIds,
@@ -555,7 +556,7 @@ private fun SongsTab(
                     title = pluralStringResource(R.plurals.song_count_plural, songs.size, songs.size),
                 )
             }
-            itemsIndexed(songs) { index, song ->
+            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
                 SongRow(
                     song = song,
                     selected = song.videoId in selectedIds,
@@ -1047,9 +1048,13 @@ private fun AlbumGridCard(
                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.size(36.dp),
             )
-            if (entry.thumbnailUrl != null) {
+            // Albums grouped off tags have no cover of their own; the first
+            // track's embedded picture stands in until the real one exists.
+            val fetchedArt = rememberRemoteArtworkUrl(entry.songs.firstOrNull())
+            val cardArt = entry.thumbnailUrl ?: fetchedArt
+            if (cardArt != null) {
                 AsyncImage(
-                    model = entry.thumbnailUrl.artworkAt(CARD_ART_PX),
+                    model = cardArt.artworkAt(CARD_ART_PX),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -1096,6 +1101,9 @@ private fun AlbumRow(
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
 ) {
+    // Hoisted out of the artwork call below: a conditional hook would
+    // reshuffle composition groups when a refresh fills the cover in.
+    val fetchedArt = rememberRemoteArtworkUrl(entry.songs.firstOrNull())
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1105,7 +1113,7 @@ private fun AlbumRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CollectionArtwork(
-            url = entry.thumbnailUrl,
+            url = entry.thumbnailUrl ?: fetchedArt,
             playlist = entry.playlist,
             size = 48.dp,
         )
@@ -1375,7 +1383,7 @@ private fun DrillDownSongList(
                     onShuffle = onShuffle,
                 )
             }
-            itemsIndexed(songs) { index, song ->
+            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
                 SongGridCard(
                     song = song,
                     selected = song.videoId in selectedIds,
@@ -1408,7 +1416,7 @@ private fun DrillDownSongList(
                     onShuffle = onShuffle,
                 )
             }
-            itemsIndexed(songs) { index, song ->
+            itemsIndexed(songs, key = { index, song -> "${song.videoId}_$index" }) { index, song ->
                 SongRow(
                     song = song,
                     selected = song.videoId in selectedIds,

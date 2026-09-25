@@ -30,11 +30,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -43,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.ImeAction
@@ -56,6 +60,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.player.edgeScrollSpeed
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -155,29 +160,25 @@ fun LyricsSourcesDialog(
             // phone, taking Reset and Done with it. Still a plain Column
             // inside — the drag measures itself against a fixed row pitch and
             // a lazy list would recycle the row being dragged out from under
-            // the finger.
-            Box(
-                modifier = Modifier
-                    .heightIn(max = SOURCES_MAX_HEIGHT)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                ReorderableSourceList(
-                    order = savedOrder,
-                    selected = selected,
-                    onReorder = AppSettings::setLyricsSourceOrder,
-                    onToggle = { source ->
-                        val checked = source in selected
-                        // The last one standing can't be unchecked — an empty
-                        // list is indistinguishable from switching lyrics off,
-                        // and there is already a switch for that a row above
-                        // this dialog.
-                        if (checked && selected.size <= 1) return@ReorderableSourceList
-                        AppSettings.setLyricsSources(
-                            if (checked) selected - source else selected + source,
-                        )
-                    },
-                )
-            }
+            // the finger. The cap and its scroll state live inside
+            // [ReorderableSourceList] itself, since the edge auto-scroll needs
+            // both.
+            ReorderableSourceList(
+                order = savedOrder,
+                selected = selected,
+                onReorder = AppSettings::setLyricsSourceOrder,
+                onToggle = { source ->
+                    val checked = source in selected
+                    // The last one standing can't be unchecked — an empty
+                    // list is indistinguishable from switching lyrics off,
+                    // and there is already a switch for that a row above
+                    // this dialog.
+                    if (checked && selected.size <= 1) return@ReorderableSourceList
+                    AppSettings.setLyricsSources(
+                        if (checked) selected - source else selected + source,
+                    )
+                },
+            )
 
             AlertRule()
             AlertAction(
@@ -304,6 +305,11 @@ private fun SyllableSyncToggle(checked: Boolean, onToggle: () -> Unit) {
  * those, so neither can drift from the other however many swaps happen on the
  * way. See [SWAP_THRESHOLD] for why the crossing point is past the halfway
  * mark rather than on it.
+ *
+ * Owns its own cap and scroll here — there are enough providers now that the
+ * list runs off both ends of the card on a phone — rather than being scrolled
+ * by a wrapper outside it, because the edge auto-scroll below needs the same
+ * [ScrollState] the list is drawn with.
  */
 @Composable
 private fun ReorderableSourceList(
@@ -334,7 +340,106 @@ private fun ReorderableSourceList(
     var pitchPx by remember { mutableStateOf(0f) }
     var lockedPitchPx by remember { mutableStateOf(0f) }
 
-    Column {
+    val scrollState = rememberScrollState()
+    var viewportHeightPx by remember { mutableStateOf(0f) }
+    val autoScroll = remember { SourceDragAutoScroll() }
+    val density = LocalDensity.current
+    val edgeZonePx = with(density) { SOURCE_EDGE_SCROLL_ZONE.toPx() }
+    val edgeSpeedPx = with(density) { SOURCE_EDGE_SCROLL_SPEED.toPx() }
+
+    // Because [totalDrag] and [startIndex] are the only state a swap needs
+    // (see the class doc above), scrolling the card by some amount and adding
+    // that same amount to [totalDrag] cancel out exactly: the row's position
+    // relative to the *content* moves with the scroll, but its position in
+    // the *viewport* — which is what the finger is actually holding — does
+    // not. Every pixel the auto-scroll below moves the card is fed back
+    // through here for exactly that reason, the same way a real further drag
+    // would be.
+    fun advanceDrag(delta: Float) {
+        val source = draggedSource ?: return
+        val pitch = lockedPitchPx
+        if (pitch <= 0f) return
+        var index = liveOrder.indexOf(source)
+        if (index < 0) return
+
+        // Held past either end the row stops there under the finger, rather
+        // than running off the list and having to be dragged all the way back
+        // before it answers again.
+        totalDrag = (totalDrag + delta).coerceIn(
+            -startIndex * pitch,
+            (liveOrder.lastIndex - startIndex) * pitch,
+        )
+
+        // A loop, not an `if`: one pointer event — or one frame of
+        // auto-scroll — can cover several rows when it's quick, and settling
+        // one row per event would leave the list trailing behind it.
+        while (true) {
+            val travelled = totalDrag / pitch
+            val moved = (index - startIndex).toFloat()
+            if (travelled > moved + SWAP_THRESHOLD && index < liveOrder.lastIndex) {
+                liveOrder = liveOrder.toMutableList().apply { add(index + 1, removeAt(index)) }
+                index++
+            } else if (travelled < moved - SWAP_THRESHOLD && index > 0) {
+                liveOrder = liveOrder.toMutableList().apply { add(index - 1, removeAt(index)) }
+                index--
+            } else {
+                break
+            }
+        }
+
+        // Read fresh off the same numbers [advanceDrag] just moved, rather
+        // than tracked separately: the row's top in the viewport is its
+        // content position — [startIndex] times the pitch, plus how far it has
+        // travelled — less however far the card itself has scrolled.
+        val top = startIndex * pitch + totalDrag - scrollState.value
+        val speed = edgeScrollSpeed(
+            top = top,
+            bottom = top + pitch,
+            viewportStart = 0,
+            viewportEnd = viewportHeightPx.toInt(),
+            zone = edgeZonePx,
+            speed = edgeSpeedPx,
+        )
+        val blocked = when {
+            speed < 0f -> index <= 0 || !scrollState.canScrollBackward
+            speed > 0f -> index >= liveOrder.lastIndex || !scrollState.canScrollForward
+            else -> true
+        }
+        autoScroll.setSpeed(if (blocked) 0f else speed)
+    }
+
+    // Runs only while [autoScroll] is pointed somewhere — see
+    // [rememberQueueDrag] in the main queue for the same shape of loop,
+    // scrolling a different kind of list.
+    LaunchedEffect(autoScroll.dir) {
+        if (autoScroll.dir == 0) return@LaunchedEffect
+        scrollState.scroll {
+            var previous = withFrameNanos { it }
+            while (true) {
+                val now = withFrameNanos { it }
+                val seconds = ((now - previous) / 1_000_000_000f).coerceAtMost(1f / 30f)
+                previous = now
+                val scrolled = scrollBy(autoScroll.speed * seconds)
+                if (scrolled == 0f) break
+                advanceDrag(scrolled)
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .heightIn(max = SOURCES_MAX_HEIGHT)
+            // Measured outside [verticalScroll] on purpose: inside it, this
+            // would report the full, unclipped height of every row stacked up
+            // rather than the capped card height, since verticalScroll gives
+            // its child unbounded height to grow into. That made the bottom
+            // edge of the auto-scroll zone measure against a boundary far
+            // below the real one, so it only ever triggered scrolling toward
+            // the top of the list where the zone is anchored to the fixed 0
+            // rather than to this height.
+            .onSizeChanged { viewportHeightPx = it.height.toFloat() }
+            .verticalScroll(scrollState),
+    ) {
         liveOrder.forEach { source ->
             // Without this, Compose matches each row to its slot by position
             // rather than by which source it is — so the instant a swap moved
@@ -410,55 +515,22 @@ private fun ReorderableSourceList(
                                             totalDrag = 0f
                                             startIndex = liveOrder.indexOf(source)
                                             lockedPitchPx = pitchPx
+                                            autoScroll.setSpeed(0f)
                                         },
                                         onDrag = { change, delta ->
                                             change.consume()
-                                            val pitch = lockedPitchPx
-                                            if (pitch <= 0f) return@detectDragGestures
-                                            var index = liveOrder.indexOf(source)
-                                            if (index < 0) return@detectDragGestures
-
-                                            // Held past either end the row stops
-                                            // there under the finger, rather than
-                                            // running off the list and having to
-                                            // be dragged all the way back before
-                                            // it answers again.
-                                            totalDrag = (totalDrag + delta.y).coerceIn(
-                                                -startIndex * pitch,
-                                                (liveOrder.lastIndex - startIndex) * pitch,
-                                            )
-
-                                            // A loop, not an `if`: one pointer
-                                            // event can cover several rows when
-                                            // the finger is quick, and settling
-                                            // one row per event would leave the
-                                            // list trailing the drag.
-                                            while (true) {
-                                                val travelled = totalDrag / pitch
-                                                val moved = (index - startIndex).toFloat()
-                                                if (travelled > moved + SWAP_THRESHOLD && index < liveOrder.lastIndex) {
-                                                    liveOrder = liveOrder.toMutableList().apply {
-                                                        add(index + 1, removeAt(index))
-                                                    }
-                                                    index++
-                                                } else if (travelled < moved - SWAP_THRESHOLD && index > 0) {
-                                                    liveOrder = liveOrder.toMutableList().apply {
-                                                        add(index - 1, removeAt(index))
-                                                    }
-                                                    index--
-                                                } else {
-                                                    break
-                                                }
-                                            }
+                                            advanceDrag(delta.y)
                                         },
                                         onDragEnd = {
                                             draggedSource = null
                                             totalDrag = 0f
+                                            autoScroll.setSpeed(0f)
                                             onReorder(liveOrder)
                                         },
                                         onDragCancel = {
                                             draggedSource = null
                                             totalDrag = 0f
+                                            autoScroll.setSpeed(0f)
                                             liveOrder = order
                                         },
                                     )
@@ -514,3 +586,35 @@ private const val SWAP_THRESHOLD = 0.6f
 
 /** How tall the source list may get before it scrolls inside the card. */
 private val SOURCES_MAX_HEIGHT = 340.dp
+
+/**
+ * Held within this of the top or bottom edge of the card, the list scrolls
+ * itself at up to [SOURCE_EDGE_SCROLL_SPEED] — the same shape of auto-scroll
+ * as the main queue's, sized down for a card a few rows tall rather than a
+ * screen-filling list.
+ */
+private val SOURCE_EDGE_SCROLL_ZONE = 28.dp
+private val SOURCE_EDGE_SCROLL_SPEED = 220.dp
+
+/**
+ * Which way [ReorderableSourceList] is scrolling its card while a row is held
+ * near one of its edges, and how fast — [dir] is state because it is what
+ * starts and stops the auto-scroll loop; [speed] deliberately is not, since it
+ * changes with every pixel of drag travel and only that loop ever reads it.
+ */
+private class SourceDragAutoScroll {
+    var dir by mutableIntStateOf(0)
+        private set
+    var speed: Float = 0f
+        private set
+
+    fun setSpeed(value: Float) {
+        speed = value
+        val next = when {
+            value > 0f -> 1
+            value < 0f -> -1
+            else -> 0
+        }
+        if (dir != next) dir = next
+    }
+}

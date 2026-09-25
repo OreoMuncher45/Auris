@@ -24,6 +24,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.onSizeChanged
@@ -335,14 +336,16 @@ fun SongRow(
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
     var boxWidth by remember { mutableFloatStateOf(0f) }
 
+    val currentOnSwipeToQueue by rememberUpdatedState(onSwipeToQueue)
+
     val swipeState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled && onSwipeToQueue != null) {
+            if (value != SwipeToDismissBoxValue.Settled && currentOnSwipeToQueue != null) {
                 val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
                 // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
                 if (abs(offset) >= boxWidth * 0.45f) {
                     haptics.play(Haptic.Select)
-                    onSwipeToQueue()
+                    currentOnSwipeToQueue?.invoke()
                 }
             }
             false // never actually dismiss; snap back
@@ -515,7 +518,7 @@ private fun SongRowContent(
             }
         } else {
             AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
+                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)
@@ -622,10 +625,10 @@ fun DownloadedBadge(videoId: String, tint: Color, modifier: Modifier = Modifier)
  * Pull-to-refresh for the tab feeds, with the usual circular puck suppressed.
  *
  * The feeds sit under a frosted bar that already occupies the top 96dp, so a
- * puck dropping into that space would be blurred out by the glass it lands
- * behind. The drag feedback is the loader line along the bottom edge of the
- * bar instead — which is why [state] is hoisted: the bar lives beside this
- * content, not inside it, and has to follow the same drag.
+ * puck drawn here would be blurred out by the glass it lands behind. The bar
+ * draws its own puck instead, sliding out from under its bottom edge — which
+ * is why [state] is hoisted: the bar lives beside this content, not inside it,
+ * and has to follow the same drag.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

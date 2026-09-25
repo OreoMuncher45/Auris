@@ -24,7 +24,8 @@ import java.util.Locale
  *   Listening to BitChord          <- activityName, or the app's own name
  *   ┌────┐  Song title             <- details
  *   │art │  Artist                 <- state
- *   └────┘  ▁▁▁▁▁▁ 1:04 / 3:47     <- from the timestamps
+ *   └────┘  Hi-Res Lossless · FLAC · 4608 kbps · 24-bit · 96 kHz
+ *           ▁▁▁▁▁▁ 1:04 / 3:47     <- from the timestamps
  *   [ Listen on YouTube Music ]    <- button 1
  *   [ Visit BitChord           ]   <- button 2
  * ```
@@ -65,6 +66,7 @@ class DiscordRPC(
         button2Visible: Boolean = true,
         activityType: String = "listening",
         activityName: String = "",
+        audioQuality: String? = null,
     ) = runCatching {
         val currentTime = System.currentTimeMillis()
 
@@ -123,7 +125,10 @@ class DiscordRPC(
                 song.artworkAt(ART_PX)?.takeIf { it.startsWith("http") } ?: FALLBACK_ART_URL,
             ),
             smallImage = null,
-            largeText = song.albumName,
+            // The card's optional third information line. Kept absent for
+            // ordinary lossy streams so Discord only calls attention to a
+            // measured premium format.
+            largeText = audioQuality,
             smallText = null,
             buttons = if (buttonsList.isNotEmpty()) buttonsList else null,
             type = type,

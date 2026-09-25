@@ -78,7 +78,7 @@ object Downloader {
 
         while (position < total) {
             coroutineContext.ensureActive()
-            val length = minOf(CHUNK_BYTES, total - position)
+            val length = minOf(CHUNK_BYTES, PlayerClient.rangeBytesFor(url), total - position)
 
             val response = try {
                 open(url, position, length)
@@ -247,7 +247,7 @@ object Downloader {
                 .url(url)
                 .header("Range", "bytes=$position-${position + length - 1}")
                 .apply {
-                    PlayerClient.forStreamUrl(url).mediaHeaders()
+                    StreamResolver.mediaHeadersFor(url)
                         .forEach { (name, value) -> header(name, value) }
                 }
                 .build(),

@@ -22,6 +22,7 @@
     <string name="search">Tìm kiếm</string>
     <string name="clear_search">Xóa tìm kiếm</string>
     <string name="library">Thư viện</string>
+    <string name="home">Trang chủ</string>
     <string name="play">Phát</string>
     <string name="explore">Khám phá</string>
     <string name="listen_now">Nghe ngay</string>
@@ -126,6 +127,8 @@
     <string name="personalized_recommendations">Nhận các đề xuất dành riêng cho bạn</string>
     <string name="play_next">Phát tiếp theo</string>
     <string name="queue">Hàng đợi</string>
+    <string name="next_in_queue">Tiếp theo trong hàng đợi</string>
+    <string name="next_from">Tiếp theo từ: %1$s</string>
     <string name="source_unrecognised">BitChord không nhận dạng được liên kết đó</string>
     <string name="source_already_added">Đã được thêm dưới tên %1$s</string>
     <string name="source_setup_required">Nhấn để hoàn tất thiết lập</string>
@@ -146,9 +149,13 @@
     <string name="widget_open_bitchord">Mở BitChord</string>
     <string name="widget_preview_title">Tên bài hát</string>
     <string name="widget_preview_artist">Nghệ sĩ</string>
+    <string name="widget_pill_label">Đang phát 4×1</string>
+    <string name="widget_pill_description">Bản nhạc kèm Thích, trộn bài và điều khiển phát trên một hàng.</string>
+    <string name="widget_preview_pill">Tên bài hát - Nghệ sĩ</string>
     <string name="download_quality">Chất lượng tải xuống</string>
     <string name="download_wifi_only">Chỉ tải xuống qua Wi-Fi</string>
     <string name="convert_to_audio">Chuyển đổi thành âm thanh</string>
+    <string name="convert_to_video">Chuyển đổi thành video</string>
     <string name="converting_to_audio">Đang chuyển đổi thành âm thanh…</string>
     <string name="revert_to_original">Khôi phục về bản gốc</string>
     <string name="upgrade_quality">Nâng cấp chất lượng</string>
@@ -157,6 +164,7 @@
     <string name="dolby_atmos_unavailable">Thiết bị này không hỗ trợ Atmos, các bài hát sẽ phát ở phiên bản thông thường</string>
     <string name="spatial_audio">Âm thanh không gian</string>
     <string name="spatial_audio_subtitle">Mở rộng âm trường stereo cho cảm giác đắm chìm hơn</string>
+    <string name="spatial_audio_atmos_subtitle">Tạm dừng ở bản nhạc này — Dolby Atmos vốn đã có âm thanh không gian</string>
     <string name="animated_cover_cellular">Phát ảnh bìa động qua dữ liệu di động</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Bài hát, nghệ sĩ, album và thể loại hàng đầu của bạn</string>
@@ -219,6 +227,7 @@
     <string name="automix_mode_performance_subtitle">4 luồng · phân tích nhanh nhất · tỏa nhiệt và tốn pin hơn</string>
     <string name="skip_silence">Bỏ qua đoạn im lặng</string>
     <string name="skip_silence_subtitle">Cắt bớt các khoảng lặng dài hơn 1 giây</string>
+    <string name="skip_silence_float_subtitle">Không khả dụng với đầu ra float 32-bit</string>
     <string name="equalizer">Bộ chỉnh âm</string>
     <string name="equalizer_subtitle">Bảng điều khiển hệ thống của thiết bị</string>
     <string name="show_nerd_stats">Thống kê chi tiết</string>
@@ -249,6 +258,8 @@
     <string name="stop_music_on_close_subtitle">Dừng phát nhạc khi vuốt đóng khỏi danh sách ứng dụng gần đây</string>
     <string name="hide_volume_bar">Ẩn thanh âm lượng</string>
     <string name="hide_volume_bar_subtitle">Bỏ thanh trượt âm lượng khỏi trình phát chính</string>
+    <string name="hide_song_status">Ẩn trạng thái bài hát</string>
+    <string name="hide_song_status_subtitle">Ẩn dòng “Phát từ” hoặc “Được phát bởi” trong trình phát chính</string>
     <string name="off">Tắt</string>
     <string name="low">Thấp</string>
     <string name="medium">Trung bình</string>
@@ -312,6 +323,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} và {album_name} sẽ được thay thế bằng bài hát hiện tại.</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} và {album_name} sẽ được thay thế bằng bài hát. Nút đầu tiên mở bài hát trên YouTube Music và nút thứ hai mở dự án này.</string>
     <string name="discord_presence_footer">Thẻ sẽ cập nhật khi bài hát, vị trí phát hoặc trạng thái phát thay đổi. Thẻ sẽ biến mất khi dừng phát.</string>
+    <string name="discord_show_audio_quality">Hiển thị chất lượng âm thanh</string>
+    <string name="discord_show_audio_quality_subtitle">Thông số Hi-Res, lossless và Dolby trên thẻ trạng thái</string>
     <string name="discord_sign_in_footer">Đăng nhập sẽ mở trang đăng nhập của Discord. Không có thông tin nào được nhập vào BitChord.</string>
     <string name="discord_token">Token Discord</string>
     <string name="discord_token_description">Dán mã token tài khoản Discord của bạn. Token được mã hóa an toàn trên thiết bị này và chỉ được gửi đến Discord.</string>
@@ -333,6 +346,13 @@
     <string name="instrumental">Nhạc không lời</string>
     <string name="pause">Tạm dừng</string>
     <string name="lyrics_by">Lời bài hát bởi %1$s</string>
+    <string name="change_lyrics_provider">Đổi</string>
+    <string name="choose_lyrics_provider">Chọn nguồn lời bài hát</string>
+    <string name="lyrics_provider_current">Nguồn hiện tại</string>
+    <string name="lyrics_provider_found">Đã tìm thấy lời bài hát · Chạm để dùng</string>
+    <string name="lyrics_provider_not_found">Không tìm thấy lời bài hát</string>
+    <string name="lyrics_provider_fetching">Đang tải lời bài hát…</string>
+    <string name="lyrics_provider_not_fetched">Chạm để tải</string>
     <string name="no_lyrics_found">Không tìm thấy lời bài hát</string>
     <string name="lyrics_saved_with_download">Lời bài hát được lưu kèm bản tải này</string>
     <string name="shuffle_on">Bật trộn bài</string>
@@ -444,14 +464,12 @@
     <string name="no_playlists_yet">Chưa có danh sách phát nào. Dùng hàng bên trên để tạo danh sách phát.</string>
     <string name="no_tracks_here">Không có bản nhạc nào ở đây</string>
     <string name="not_connected">Chưa kết nối</string>
-    <string name="nothing_playing">Không có nội dung đang phát</string>
     <string name="one_hour">1 giờ</string>
     <string name="open_album">Mở album</string>
     <string name="open_artist">Mở nghệ sĩ</string>
     <string name="pause_after_a_while">Tạm dừng phát sau một khoảng thời gian</string>
     <string name="pause_after_song">Sẽ tạm dừng khi hết bài hát này</string>
     <string name="pause_countdown">%1$s cho đến khi tạm dừng phát</string>
-    <string name="pick_something">Chọn một nội dung và thông tin sẽ xuất hiện ở đây</string>
     <string name="play_to_preview">Phát một bài hát để xem trước.</string>
     <string name="playlist_name">Tên danh sách phát</string>
     <string name="presence">Trạng thái hoạt động</string>
@@ -627,6 +645,16 @@
     <string name="webdav_skip">Bỏ qua</string>
     <string name="webdav_apply_to_all">Áp dụng cho tất cả</string>
     <string name="webdav_upload_summary">%1$d đã tải lên · %2$d bỏ qua · %3$d thất bại</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">Nhạc trên thư mục chia sẻ</string>
+    <string name="smb_not_configured">Kết nối thư mục chia sẻ trong mục Nguồn</string>
+    <string name="smb_empty">Không tìm thấy tệp âm thanh nào trên thư mục chia sẻ SMB. Kiểm tra máy chủ trong mục Nguồn.</string>
+    <string name="smb_description">Trỏ BitChord tới thư mục nhạc chia sẻ — NAS hoặc máy Windows hỗ trợ SMB.</string>
+    <string name="smb_server_hint">nas.local hoặc 192.168.1.10:4445</string>
+    <string name="smb_share_hint">Tên share, ví dụ Music</string>
+    <string name="smb_folder_hint">Thư mục trong share, ví dụ media/music (không bắt buộc)</string>
+    <string name="smb_disconnect">Ngắt kết nối</string>
+    <string name="smb_test_failed">Không thể kết nối: %1$s</string>
     <string name="playlist">danh sách phát</string>
     <string name="playlist_action">Danh sách phát</string>
     <string name="open">Mở</string>
@@ -642,10 +670,16 @@
     <string name="running">Đang chạy</string>
     <string name="automix_analysis_status">Automix · bài này: %1$s · tiếp theo: %2$s</string>
     <string name="automix_not_supported_video">Automix không được hỗ trợ trên các bài hát dạng video</string>
+    <string name="automix_stopped_in_party">Automix: đã dừng trong Listen together</string>
     <string name="analysis_complete">đã phân tích</string>
     <string name="analysis_refining">đã phân tích, đang tinh chỉnh…</string>
     <string name="analysis_in_progress">đang phân tích…</string>
     <string name="waiting">đang chờ</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">chưa tải</string>
+    <string name="version_cut_fetching">đang tải</string>
+    <string name="version_cut_measuring">đang phân tích</string>
+    <string name="version_cut_aligned">đã khớp</string>
     <string name="automix_enabled_subtitle">Tự động căn thời gian và hòa âm từng đoạn chuyển bài dựa trên bản nhạc. Tắt đi nếu điện thoại nóng lên hoặc nhạc bị giật lag.</string>
     <string name="automix_disabled_subtitle">Tự động căn thời gian và hòa âm đoạn chuyển bài mà không cần thanh trượt. Hiệu năng có thể khác nhau trên các thiết bị yếu hơn.</string>
     <string name="no_lyrics_sources_enabled">Không có. Sẽ không tải lời bài hát.</string>
@@ -721,6 +755,14 @@
     <string name="export_compatible_downloads">Xuất bản tải xuống tương thích</string>
     <string name="output_precision">Độ chính xác đầu ra</string>
     <string name="prefer_usb_dac">Ưu tiên DAC USB</string>
+    <string name="loudness_normalization">Chuẩn hóa âm lượng</string>
+    <string name="loudness_normalization_subtitle">Cân bằng âm lượng giữa các bài hát</string>
+    <string name="loudness_target">Âm lượng mục tiêu</string>
+    <string name="loudness_target_subtitle">Nhỏ hơn hợp với tai nghe; lớn hơn hợp với ô tô hoặc loa điện thoại</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="loudness_measuring">Đang đo…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
     <string name="blur_unfocused_lyrics">Làm mờ lời không tập trung</string>
     <string name="blur_unfocused_lyrics_subtitle">Tập trung vào câu hát hiện tại</string>
     <string name="advanced_options">Tùy chọn nâng cao</string>
@@ -822,6 +864,10 @@
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
 
+    <string name="smart_version_alignment">Smart audio alignment</string>
+
+    <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
+
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
     <string name="equalizer_dynamic">Dynamic</string>
@@ -857,12 +903,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
+    <string name="equalizer_bitstream_title">Hiện không hoạt động</string>
+    <string name="equalizer_bitstream_subtitle">Bản nhạc này được gửi tới đầu ra mà không giải mã</string>
+    <string name="equalizer_bitstream_footer">Bộ chỉnh âm chỉ hoạt động trên âm thanh đã giải mã. Bản nhạc này được truyền thẳng dưới dạng bitstream để thiết bị của bạn tự giải mã, nên ở đây không có mẫu âm thanh nào để lọc.</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -906,11 +949,21 @@
 
     <string name="translate_lyrics">Translate lyrics</string>
 
+    <string name="romanize_lyrics">Chuyển lời bài hát sang chữ Latinh</string>
+
     <string name="show_original_lyrics">Show original lyrics</string>
 
     <string name="translating_lyrics_to">Translating to %1$s…</string>
 
     <string name="lyrics_translated_to">Translated to %1$s</string>
+
+    <string name="romanizing_lyrics">Đang chuyển lời bài hát sang chữ Latinh…</string>
+
+    <string name="lyrics_romanized">Phiên âm Latinh</string>
+
+    <string name="lyrics_already_romanized">Lời bài hát này đã dùng ký tự Latinh</string>
+
+    <string name="lyrics_romanization_unavailable">Không thể chuyển lời bài hát này sang chữ Latinh</string>
 
     <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
 
@@ -923,6 +976,10 @@
     <string name="translation_language_app_default">App language</string>
 
     <string name="translation_language_subtitle">Follows the app language</string>
+
+    <string name="jiosaavn_mismatch_warning">Có thể khớp nhầm phiên bản bài hát. Hãy tự chịu rủi ro khi bật.</string>
+    <string name="enable_jiosaavn">Bật JioSaavn?</string>
+    <string name="enable_anyway">Vẫn bật</string>
 
     <string name="search_languages">Search languages</string>
 
@@ -967,6 +1024,14 @@
     <string name="pipeline_quality">Quality</string>
 
     <string name="pipeline_pcm_format">PCM Format</string>
+
+    <string name="pipeline_loudness">Loudness</string>
+
+    <string name="pipeline_loudness_gain">Gain</string>
+
+    <string name="pipeline_loudness_measured">Measured</string>
+
+    <string name="pipeline_bit_exact">Bit-exact</string>
 
     <string name="pipeline_eq_preset">EQ Preset</string>
 
@@ -1032,15 +1097,18 @@
 
     <string name="listen_together_custom_server">Use your own server</string>
 
-    <string name="listen_together_custom_server_footer">Leave this empty to use the built-in server. If you run your own copy, everyone in the party has to be pointed at the same one.</string>
+    <string name="listen_together_custom_server_footer">Để trống mục này để sử dụng máy chủ mặc định. Nếu bạn chạy bản sao riêng, mọi người trong nhóm phải trỏ đến cùng một máy chủ.</string>
 
-    <string name="listen_together_using_builtin">Using the built-in server</string>
+    <string name="listen_together_using_default">Đang sử dụng máy chủ mặc định</string>
+    <string name="listen_together_remove_server">Xóa máy chủ</string>
+    <string name="listen_together_switched_to_default">Đã chuyển sang máy chủ mặc định</string>
+    <string name="listen_together_custom_server_saved">Đã lưu máy chủ tùy chỉnh</string>
 
     <string name="listen_together_create">Create a party</string>
 
     <string name="listen_together_create_subtitle">Get a code to share with friends</string>
 
-    <string name="listen_together_create_footer">You get a six-character code. Anyone who has it can join, up to five devices including yours.</string>
+    <string name="listen_together_create_footer">Bạn sẽ nhận được mã gồm sáu ký tự. Ai có mã đều có thể tham gia, tối đa %1$d thiết bị kể cả của bạn.</string>
 
     <string name="listen_together_join">Join a party</string>
 
@@ -1070,6 +1138,28 @@
 
     <string name="listen_together_away">Away — their slot is held</string>
 
+    <string name="listen_together_manage">Quản lý</string>
+    <string name="listen_together_create_action">Tạo bữa tiệc</string>
+    <string name="listen_together_create_sheet_subtitle">Chọn cách bạn xuất hiện và số người có thể tham gia.</string>
+    <string name="listen_together_creating">Đang tạo…</string>
+    <string name="listen_together_full">Bữa tiệc đã đầy</string>
+    <string name="listen_together_invite">Mời</string>
+    <string name="listen_together_invite_title">Mời bạn bè vào bữa tiệc</string>
+    <string name="listen_together_join_existing">Tham gia bữa tiệc có sẵn</string>
+    <string name="listen_together_join_question">Tham gia bữa tiệc của %1$s?</string>
+    <string name="listen_together_join_question_unnamed">Tham gia bữa tiệc này?</string>
+    <string name="listen_together_joining">Đang tham gia…</string>
+    <string name="listen_together_landing_subtitle">Vì âm nhạc hay hơn khi nghe cùng nhau. Mời bạn bè cùng nghe và thêm bài hát theo thời gian thực, dù họ ở đâu.</string>
+    <string name="listen_together_landing_title">Bắt đầu một bữa tiệc</string>
+    <string name="listen_together_not_now">Để sau</string>
+    <string name="listen_together_preview_footer">Mọi người trong bữa tiệc sẽ thấy tên và ảnh đại diện của bạn.</string>
+    <string name="listen_together_scan_qr">Quét mã QR</string>
+    <string name="listen_together_scan_qr_subtitle">Để bạn bè quét mã này và tham gia.</string>
+    <string name="listen_together_share_link">Chia sẻ liên kết</string>
+    <string name="listen_together_host_only">Chỉ tôi điều khiển nhạc</string>
+    <string name="listen_together_host_only_subtitle">Những người khác cùng nghe và có thể tạm dừng trên thiết bị của họ</string>
+    <string name="listen_together_host_only_notice">Chỉ chủ phòng mới có thể điều khiển nhạc</string>
+
     <string name="listen_together_leave">Leave the party</string>
 
     <string name="listen_together_leave_subtitle">The others carry on listening</string>
@@ -1086,7 +1176,57 @@
 
     <string name="listen_together_open">Listen together</string>
 
+    <string name="party_queue_full">Queue is full (maximum %d songs in party)</string>
+    <string name="listen_together_profile">Your party profile</string>
+    <string name="listen_together_nickname_hint">Nickname for this party</string>
+    <string name="listen_together_party_size">Party size</string>
+    <string name="listen_together_party_size_subtitle">Choose 2–10 listeners</string>
+    <string name="listen_together_host_controls">Only you can change capacity or remove listeners</string>
+    <string name="listen_together_remove">Remove</string>
+    <string name="listen_together_activity">Recent activity</string>
+    <string name="listen_together_activity_footer">This session only · latest first · up to 100 actions</string>
+    <string name="listen_together_activity_played">Started playback</string>
+    <string name="listen_together_activity_paused">Paused playback</string>
+    <string name="listen_together_activity_seeked">Sought in the track</string>
+    <string name="listen_together_activity_skipped">Skipped ahead</string>
+    <string name="listen_together_activity_went_back">Went back</string>
+    <string name="listen_together_activity_added">Added to the queue</string>
+    <string name="listen_together_activity_removed_track">Removed a queued track</string>
+    <string name="listen_together_activity_cleared">Cleared upcoming tracks</string>
+    <string name="listen_together_activity_reordered">Reordered the queue</string>
+    <string name="listen_together_activity_removed_member">Removed a listener</string>
+    <string name="listen_together_activity_changed_size">Changed party size</string>
+    <string name="listen_together_activity_updated">Updated the party</string>
+    <string name="listen_together_custom_server_dialog_title">Join party on custom server?</string>
+    <string name="listen_together_custom_server_dialog_message">This party is hosted on an external server:\n\n%1$s\n\nDo you want to switch your party server and join party %2$s?</string>
+    <string name="listen_together_custom_server_switch_and_join">Switch &amp; Join</string>
+    <string name="listen_together_official_server_dialog_title">Switch to official server?</string>
+    <string name="listen_together_official_server_dialog_message">This party is hosted on the official BitChord server.\n\nDo you want to switch back to the official server and join party %1$s?</string>
+    <string name="listen_together_switch_failed_stayed_in_party">Couldn’t join party: %1$s. Remaining in party %2$s.</string>
+    <string name="listen_together_switch_failed">Couldn’t join party: %1$s.</string>
     <string name="listen_together_open_count">Listening together · %1$d</string>
-
+    <string name="audio_pipeline_subtitle">Live signal path, decoder to output</string>
+    <string name="song_added_to_playlist">Added to playlist</string>
+    <string name="song_already_in_playlist">Already in playlist</string>
+    <string name="listen_together_server_online_fallback">Trực tuyến (dự phòng mặc định) · %1$d ms</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">URL máy chủ không hợp lệ. Vui lòng nhập địa chỉ hợp lệ (ví dụ: https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">URL máy chủ không được chứa khoảng trắng</string>
+    <string name="listen_together_err_invalid_path">Đường dẫn URL máy chủ không hợp lệ</string>
+    <string name="listen_together_err_no_path">URL máy chủ không được bao gồm đường dẫn</string>
+    <string name="listen_together_err_no_query">URL máy chủ không được bao gồm tham số truy vấn</string>
+    <string name="listen_together_err_no_fragment">URL máy chủ không được bao gồm phân đoạn (fragment)</string>
+    <string name="listen_together_err_invalid_port">Cổng máy chủ phải nằm trong khoảng từ 1 đến 65535</string>
+    <string name="listen_together_custom_server_connected">Đã kết nối với máy chủ tùy chỉnh</string>
+    <string name="listen_together_custom_server_unreachable_fallback">Không thể kết nối máy chủ tùy chỉnh. Đang sử dụng máy chủ mặc định dự phòng.</string>
+    <string name="listen_together_status_custom_online">Đã kết nối với máy chủ tùy chỉnh · %1$d ms</string>
+    <string name="listen_together_status_custom_fallback">Máy chủ tùy chỉnh không thể kết nối · Đang dùng mặc định dự phòng (%1$d ms)</string>
+    <string name="listen_together_status_all_offline">Cả máy chủ tùy chỉnh và máy chủ mặc định đều ngoại tuyến</string>
+    <string name="listen_together_top_bar_fallback">Dự phòng · %1$s</string>
+    <string name="spotify_canvas_auto_hide">Tự động ẩn điều khiển trình phát</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Thu gọn nửa trình phát sau 5 giây khi Spotify Canvas đang phát</string>
+    <string name="prioritize_spotify_canvas">Ưu tiên Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">Thử Spotify trước Apple Music và các nhà cung cấp ảnh bìa động khác</string>
 
 </resources>

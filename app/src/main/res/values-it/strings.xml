@@ -6,6 +6,15 @@
     <string name="download_notification_title">Download in corso</string>
     <string name="download_notification_starting">Avvio</string>
     <string name="download_notification_queued">%1$s · altri %2$d in coda</string>
+    <string name="upload_channel_name">Caricamenti</string>
+    <string name="upload_channel_description">Brani inviati al tuo server WebDAV</string>
+    <string name="upload_notification_title">Caricamento</string>
+    <string name="upload_notification_queued">%1$s · altri %2$d in coda</string>
+    <plurals name="uploading_song_count">
+        <item quantity="one">Caricamento di %1$d brano</item>
+        <item quantity="many">Caricamento di %1$d brani</item>
+        <item quantity="other">Caricamento di %1$d brani</item>
+    </plurals>
     <string name="cancel">Annulla</string>
     <string name="save">Salva</string>
     <string name="close">Chiudi</string>
@@ -14,6 +23,7 @@
     <string name="search">Cerca</string>
     <string name="clear_search">Cancella ricerca</string>
     <string name="library">Libreria</string>
+    <string name="home">Home</string>
     <string name="play">Riproduci</string>
     <string name="explore">Esplora</string>
     <string name="listen_now">Ascolta ora</string>
@@ -105,6 +115,8 @@
     <string name="rich_presence">Presenza avanzata</string>
     <string name="scrobbling">Scrobbling</string>
     <string name="now_playing">In riproduzione</string>
+    <string name="next_in_queue">Prossimo in coda</string>
+    <string name="next_from">Prossimo da: %1$s</string>
     <string name="selected">Selezionato</string>
     <string name="select_all">Seleziona tutto</string>
     <string name="password">Password</string>
@@ -155,13 +167,18 @@
     <string name="widget_open_bitchord">Apri BitChord</string>
     <string name="widget_preview_title">Titolo brano</string>
     <string name="widget_preview_artist">Artista</string>
+    <string name="widget_pill_label">In riproduzione 4×1</string>
+    <string name="widget_pill_description">Il brano con Mi piace, Casuale e controlli di riproduzione, su una sola riga.</string>
+    <string name="widget_preview_pill">Titolo brano - Artista</string>
     <string name="download_quality">Qualità download</string>
     <string name="download_wifi_only">Scarica solo via Wi-Fi</string>
     <string name="convert_to_audio">Converti in audio</string>
+    <string name="convert_to_video">Converti in video</string>
     <string name="converting_to_audio">Conversione in audio…</string>
     <string name="revert_to_original">Ripristina originale</string>
     <string name="spatial_audio">Audio spaziale</string>
     <string name="spatial_audio_subtitle">Amplia le tracce stereo per un ascolto più immersivo</string>
+    <string name="spatial_audio_atmos_subtitle">In pausa per questo brano: il Dolby Atmos è già spaziale</string>
     <string name="animated_cover_cellular">Riproduci copertina animata con dati mobili</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">I tuoi brani, artisti, album e generi più ascoltati</string>
@@ -224,6 +241,7 @@
     <string name="automix_mode_performance_subtitle">4 thread · analisi più veloce · maggiore calore e consumo batteria</string>
     <string name="skip_silence">Salta i silenzi</string>
     <string name="skip_silence_subtitle">Taglia le pause più lunghe di un secondo</string>
+    <string name="skip_silence_float_subtitle">Non disponibile con uscita float a 32 bit</string>
     <string name="equalizer">Equalizzatore</string>
     <string name="equalizer_subtitle">Il pannello di sistema del tuo dispositivo</string>
     <string name="show_nerd_stats">Mostra statistiche per nerd</string>
@@ -252,6 +270,8 @@
     <string name="stop_music_on_close_subtitle">Interrompe la riproduzione quando l\'app viene rimossa dalle app recenti</string>
     <string name="hide_volume_bar">Nascondi barra volume</string>
     <string name="hide_volume_bar_subtitle">Rimuove il cursore del volume dal player principale</string>
+    <string name="hide_song_status">Nascondi stato del brano</string>
+    <string name="hide_song_status_subtitle">Nasconde il testo «In riproduzione da» o «Riprodotto da» nel player principale</string>
     <string name="off">Disattivato</string>
     <string name="low">Bassa</string>
     <string name="medium">Media</string>
@@ -298,9 +318,14 @@
     <string name="clear_name">Cancella nome</string>
     <string name="close_lyrics">Chiudi testi</string>
     <string name="translate_lyrics">Traduci testo</string>
+    <string name="romanize_lyrics">Traslittera il testo</string>
     <string name="show_original_lyrics">Mostra testo originale</string>
     <string name="translating_lyrics_to">Traduzione in %1$s…</string>
     <string name="lyrics_translated_to">Tradotto in %1$s</string>
+    <string name="romanizing_lyrics">Traslitterazione del testo…</string>
+    <string name="lyrics_romanized">Pronuncia traslitterata</string>
+    <string name="lyrics_already_romanized">Questo testo usa già caratteri latini</string>
+    <string name="lyrics_romanization_unavailable">La traslitterazione non è disponibile per questo testo</string>
     <string name="lyrics_already_in_language">Questo testo è già in %1$s</string>
     <string name="lyrics_translation_unavailable">La traduzione non è disponibile al momento</string>
     <string name="connect_account_first">Collega prima un account</string>
@@ -318,6 +343,8 @@
     <string name="discord_button_variables">{song_name}, {artist_name} e {album_name} vengono sostituiti con il brano attuale.</string>
     <string name="discord_buttons_footer">{song_name}, {artist_name} e {album_name} vengono sostituiti con il brano. Il primo pulsante apre il brano su YouTube Music e il secondo apre questo progetto.</string>
     <string name="discord_presence_footer">La scheda si aggiorna quando cambiano il brano, la posizione o lo stato di riproduzione. Si azzera quando la riproduzione si interrompe.</string>
+    <string name="discord_show_audio_quality">Mostra qualità audio</string>
+    <string name="discord_show_audio_quality_subtitle">Specifiche Hi-Res, lossless e Dolby sulla scheda di stato</string>
     <string name="discord_sign_in_footer">L\'accesso apre la pagina di login di Discord. Nulla viene digitato in BitChord.</string>
     <string name="discord_token">Token Discord</string>
     <string name="discord_token_description">Incolla il token del tuo account Discord. Resta cifrato su questo dispositivo e viene inviato solo a Discord.</string>
@@ -339,6 +366,13 @@
     <string name="instrumental">Strumentale</string>
     <string name="pause">Pausa</string>
     <string name="lyrics_by">Testi di %1$s</string>
+    <string name="change_lyrics_provider">Cambia</string>
+    <string name="choose_lyrics_provider">Scegli la fonte dei testi</string>
+    <string name="lyrics_provider_current">Fonte attuale</string>
+    <string name="lyrics_provider_found">Testo trovato · Tocca per usarlo</string>
+    <string name="lyrics_provider_not_found">Testo non trovato</string>
+    <string name="lyrics_provider_fetching">Recupero del testo…</string>
+    <string name="lyrics_provider_not_fetched">Tocca per recuperare</string>
     <string name="no_lyrics_found">Nessun testo trovato</string>
     <string name="lyrics_saved_with_download">Testi salvati con questo download</string>
     <string name="shuffle_on">Casuale attivo</string>
@@ -458,14 +492,12 @@
     <string name="no_playlists_yet">Ancora nessuna playlist. Usa la riga sopra per crearne una.</string>
     <string name="no_tracks_here">Nessun brano qui</string>
     <string name="not_connected">Non connesso</string>
-    <string name="nothing_playing">Nessuna riproduzione in corso</string>
     <string name="one_hour">1 ora</string>
     <string name="open_album">Apri album</string>
     <string name="open_artist">Apri artista</string>
     <string name="pause_after_a_while">Metti in pausa la riproduzione dopo un po\'</string>
     <string name="pause_after_song">In pausa alla fine di questo brano</string>
     <string name="pause_countdown">%1$s alla pausa della riproduzione</string>
-    <string name="pick_something">Scegli qualcosa e apparirà qui</string>
     <string name="play_to_preview">Riproduci qualcosa per riempire l\'anteprima.</string>
     <string name="playlist_name">Nome playlist</string>
     <string name="presence">Presenza</string>
@@ -506,11 +538,23 @@
     <string name="sources_order_footer">Se una sorgente non ha un brano o non è raggiungibile, BitChord prova la successiva. Le sorgenti sopra YouTube possono sostituire la sua registrazione quando restituiscono una versione migliore.</string>
     <string name="sources_order_header">Sorgenti, provate in quest\'ordine</string>
     <string name="sources_quality_capped">Questa connessione è impostata sotto Alta qualità, quindi gli stream vengono transcodificati per rispettare questo limite. I download non ne risentono.</string>
+    <string name="jiosaavn_mismatch_warning">Potrebbe trovare la versione sbagliata di un brano. Attivalo a tuo rischio.</string>
+    <string name="enable_jiosaavn">Attivare JioSaavn?</string>
+    <string name="enable_anyway">Attiva comunque</string>
     <string name="sources_subtitle">Da dove proviene l\'audio e l\'ordine usato</string>
+    <string name="source_matching">Corrispondenza delle sorgenti</string>
+    <string name="upgrade_length_slack">Tolleranza sulla durata</string>
+    <string name="upgrade_length_slack_subtitle">Differenza di durata massima consentita per uno stream sostitutivo</string>
+    <string name="upgrade_length_slack_footer">Una tolleranza più ampia accetta più corrispondenze; una più stretta è più severa. Il valore predefinito è 3 secondi.</string>
+    <string name="seconds_short">%1$d s</string>
     <string name="spdc_token">Token sp_dc</string>
     <string name="spotify_canvas_setup">Configurazione Spotify Canvas</string>
     <string name="spotify_canvas_setup_description">Per usare Spotify Canvas, fornisci il tuo cookie sp_dc di Spotify.</string>
     <string name="spotify_canvas_setup_steps">1. Accedi su open.spotify.com in un browser.\n2. Apri gli Strumenti per sviluppatori, poi Applicazione e Cookie.\n3. Copia il valore del cookie sp_dc.\n4. Incollalo qui sotto.</string>
+    <string name="spotify_canvas_auto_hide">Nascondi automaticamente i controlli</string>
+    <string name="spotify_canvas_auto_hide_subtitle">Riduce il mezzo player dopo 5 secondi mentre è in riproduzione uno Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas">Dai priorità a Spotify Canvas</string>
+    <string name="prioritize_spotify_canvas_subtitle">Prova Spotify prima di Apple Music e degli altri fornitori di copertine animate</string>
     <string name="status">Stato</string>
     <string name="status_dialog_message">Cosa mostra il tuo account mentre la presenza è attiva.</string>
     <string name="status_dnd">Non disturbare</string>
@@ -618,6 +662,33 @@
     <string name="use_all_audio_folders_subtitle">Rimuove il limite delle cartelle e cerca musica in tutto il dispositivo</string>
     <string name="album">album</string>
     <string name="artist">artista</string>
+    <string name="webdav">WebDAV</string>
+    <string name="webdav_subtitle">Musica sul tuo server</string>
+    <string name="webdav_not_configured">Collega un server in Sorgenti</string>
+    <string name="webdav_empty">Nessun file audio trovato sul server WebDAV. Controlla l\'URL nelle Impostazioni.</string>
+    <string name="webdav_description">Collega BitChord a una cartella musicale WebDAV: la tua cartella Musica di Nextcloud o qualsiasi server compatibile WebDAV.</string>
+    <string name="webdav_server_url">URL del server</string>
+    <string name="webdav_server_url_hint">https://cloud.example.com/remote.php/dav/files/user/Music</string>
+    <string name="webdav_disconnect">Disconnetti</string>
+    <string name="webdav_test_failed">Impossibile raggiungerlo: %1$s</string>
+    <string name="upload_to_webdav">Carica su WebDAV</string>
+    <string name="webdav_conflict_title">«%1$s» è già sul server</string>
+    <string name="webdav_conflict_message">Sovrascriverlo o tenere entrambe le copie?</string>
+    <string name="webdav_overwrite">Sovrascrivi</string>
+    <string name="webdav_keep_both">Tieni entrambi</string>
+    <string name="webdav_skip">Salta</string>
+    <string name="webdav_apply_to_all">Applica a tutti</string>
+    <string name="webdav_upload_summary">%1$d caricati · %2$d saltati · %3$d non riusciti</string>
+    <string name="smb">SMB</string>
+    <string name="smb_subtitle">Musica su una condivisione di rete</string>
+    <string name="smb_not_configured">Collega una condivisione in Sorgenti</string>
+    <string name="smb_empty">Nessun file audio trovato sulla condivisione SMB. Controlla il server in Sorgenti.</string>
+    <string name="smb_description">Collega BitChord a una cartella musicale condivisa: un NAS o una condivisione Windows via SMB.</string>
+    <string name="smb_server_hint">nas.local or 192.168.1.10:4445</string>
+    <string name="smb_share_hint">Nome condivisione, es. Music</string>
+    <string name="smb_folder_hint">Cartella (facoltativa)</string>
+    <string name="smb_disconnect">Disconnetti</string>
+    <string name="smb_test_failed">Impossibile raggiungerlo: %1$s</string>
     <string name="playlist">playlist</string>
     <string name="playlist_action">Playlist</string>
     <string name="open">Apri</string>
@@ -633,10 +704,16 @@
     <string name="running">In esecuzione</string>
     <string name="automix_analysis_status">Automix · questo brano: %1$s · successivo: %2$s</string>
     <string name="automix_not_supported_video">Automix non supportato sui video musicali</string>
+    <string name="automix_stopped_in_party">Automix: interrotto in “Ascoltare insieme”</string>
     <string name="analysis_complete">analizzato</string>
     <string name="analysis_refining">analizzato, rifinitura…</string>
     <string name="analysis_in_progress">analisi in corso…</string>
     <string name="waiting">in attesa</string>
+    <string name="version_alignment_status">%1$s · %2$s</string>
+    <string name="version_cut_not_fetched">non recuperato</string>
+    <string name="version_cut_fetching">recupero</string>
+    <string name="version_cut_measuring">analisi</string>
+    <string name="version_cut_aligned">allineato</string>
     <string name="automix_enabled_subtitle">Calcola i tempi e fonde ogni transizione dai brani stessi. Disattivalo se il telefono si scalda o la riproduzione si blocca.</string>
     <string name="automix_disabled_subtitle">Calcola i tempi e fonde le transizioni automaticamente, senza un cursore. Le prestazioni possono variare sui dispositivi più lenti.</string>
     <string name="no_lyrics_sources_enabled">Nessuna. I testi non verranno recuperati.</string>
@@ -718,15 +795,39 @@
     <string name="listen_together_sign_in_footer">Per ascoltare insieme serve un account, così tutti nel party vedono chi altro c’è.</string>
     <string name="listen_together_server">Server del party</string>
     <string name="listen_together_server_online">Online · %1$d ms</string>
+    <string name="listen_together_server_online_fallback">Online (riserva predefinita) · %1$d ms</string>
     <string name="listen_together_server_offline">Non raggiungibile in questo momento</string>
     <string name="listen_together_server_checking">Controllo…</string>
     <string name="listen_together_server_unknown">Tocca per controllare</string>
     <string name="listen_together_custom_server">Usa il tuo server</string>
     <string name="listen_together_custom_server_footer">Lascia vuoto per usare il server integrato. Se ne gestisci una copia tua, tutti nel party devono puntare alla stessa.</string>
-    <string name="listen_together_using_builtin">Si usa il server integrato</string>
+    <string name="listen_together_using_default">Si usa il server integrato</string>
+    <string name="listen_together_remove_server">Rimuovi server</string>
+    <string name="listen_together_switched_to_default">Passato al server predefinito</string>
+    <string name="listen_together_custom_server_saved">Server personalizzato salvato</string>
     <string name="listen_together_create">Crea un party</string>
     <string name="listen_together_create_subtitle">Ottieni un codice da condividere con gli amici</string>
-    <string name="listen_together_create_footer">Ricevi un codice di sei caratteri. Chi lo ha può entrare, fino a cinque dispositivi compreso il tuo.</string>
+    <string name="listen_together_create_footer">Ricevi un codice di sei caratteri. Chi lo ha può entrare, fino a %1$d dispositivi compreso il tuo.</string>
+    <string name="listen_together_profile">Il tuo profilo nel party</string>
+    <string name="listen_together_nickname_hint">Soprannome per questo party</string>
+    <string name="listen_together_party_size">Dimensione del party</string>
+    <string name="listen_together_party_size_subtitle">Scegli da 2 a 10 ascoltatori</string>
+    <string name="listen_together_host_controls">Solo tu puoi cambiare la capienza o rimuovere ascoltatori</string>
+    <string name="listen_together_remove">Rimuovi</string>
+    <string name="listen_together_activity">Attività recenti</string>
+    <string name="listen_together_activity_footer">Solo questa sessione · prima le più recenti · fino a 100 azioni</string>
+    <string name="listen_together_activity_played">Ha avviato la riproduzione</string>
+    <string name="listen_together_activity_paused">Ha messo in pausa</string>
+    <string name="listen_together_activity_seeked">Si è spostato nel brano</string>
+    <string name="listen_together_activity_skipped">È andato avanti</string>
+    <string name="listen_together_activity_went_back">È tornato indietro</string>
+    <string name="listen_together_activity_added">Ha aggiunto alla coda</string>
+    <string name="listen_together_activity_removed_track">Ha rimosso un brano dalla coda</string>
+    <string name="listen_together_activity_cleared">Ha svuotato i brani successivi</string>
+    <string name="listen_together_activity_reordered">Ha riordinato la coda</string>
+    <string name="listen_together_activity_removed_member">Ha rimosso un ascoltatore</string>
+    <string name="listen_together_activity_changed_size">Ha cambiato la dimensione del party</string>
+    <string name="listen_together_activity_updated">Ha aggiornato il party</string>
     <string name="listen_together_join">Entra in un party</string>
     <string name="listen_together_join_action">Entra</string>
     <string name="listen_together_code_hint">Sei lettere o cifre</string>
@@ -741,6 +842,27 @@
     <string name="listen_together_you">Tu</string>
     <string name="listen_together_host">Host</string>
     <string name="listen_together_away">Assente — il posto è tenuto</string>
+    <string name="listen_together_manage">Gestisci</string>
+    <string name="listen_together_landing_title">Avvia un party</string>
+    <string name="listen_together_landing_subtitle">Perché la musica suona meglio in compagnia. Invita gli amici ad ascoltare e aggiungere brani in tempo reale, ovunque si trovino.</string>
+    <string name="listen_together_create_action">Crea un party</string>
+    <string name="listen_together_join_existing">Entra in uno esistente</string>
+    <string name="listen_together_create_sheet_subtitle">Scegli come apparire e quante persone possono entrare.</string>
+    <string name="listen_together_creating">Creazione…</string>
+    <string name="listen_together_joining">Accesso…</string>
+    <string name="listen_together_full">Questo party è al completo</string>
+    <string name="listen_together_join_question">Entrare nel party di %1$s?</string>
+    <string name="listen_together_join_question_unnamed">Entrare in questo party?</string>
+    <string name="listen_together_not_now">Non ora</string>
+    <string name="listen_together_preview_footer">Le persone nel party vedranno il tuo nome e la tua foto profilo.</string>
+    <string name="listen_together_invite_title">Invita amici al tuo party</string>
+    <string name="listen_together_share_link">Condividi link</string>
+    <string name="listen_together_scan_qr">Scansiona codice QR</string>
+    <string name="listen_together_scan_qr_subtitle">Fallo scansionare agli amici per entrare.</string>
+    <string name="listen_together_invite">Invita</string>
+    <string name="listen_together_host_only">Solo io controllo la musica</string>
+    <string name="listen_together_host_only_subtitle">Gli altri ascoltano con te e possono mettere in pausa sul proprio dispositivo</string>
+    <string name="listen_together_host_only_notice">Solo l\'host può controllare la musica</string>
     <string name="listen_together_leave">Esci dal party</string>
     <string name="listen_together_leave_subtitle">Gli altri continuano ad ascoltare</string>
     <string name="listen_together_reconnecting">Riconnessione…</string>
@@ -750,6 +872,28 @@
     <string name="listen_together_jam_unnamed">Ascolto insieme</string>
     <string name="listen_together_open">Ascolta insieme</string>
     <string name="listen_together_open_count">Ascolto insieme · %1$d</string>
+    <string name="listen_together_custom_server_dialog_title">Entrare nel party su un server personalizzato?</string>
+    <string name="listen_together_custom_server_dialog_message">Questo party è ospitato su un server esterno:\n\n%1$s\n\nVuoi cambiare server dei party ed entrare nel party %2$s?</string>
+    <string name="listen_together_custom_server_switch_and_join">Cambia ed entra</string>
+    <string name="listen_together_official_server_dialog_title">Passare al server ufficiale?</string>
+    <string name="listen_together_official_server_dialog_message">Questo party è ospitato sul server ufficiale di BitChord.\n\nVuoi tornare al server ufficiale ed entrare nel party %1$s?</string>
+    <string name="listen_together_switch_failed_stayed_in_party">Impossibile entrare nel party: %1$s. Resti nel party %2$s.</string>
+    <string name="listen_together_switch_failed">Impossibile entrare nel party: %1$s.</string>
+    <string name="listen_together_ping">%1$d ms</string>
+    <string name="listen_together_server_offline_dash">—</string>
+    <string name="listen_together_invalid_server_url">URL del server non valido. Inserisci un indirizzo valido (es. https://your-server.com)</string>
+    <string name="listen_together_err_whitespace">Gli URL del server non possono contenere spazi</string>
+    <string name="listen_together_err_invalid_path">L\'URL del server contiene un percorso non valido</string>
+    <string name="listen_together_err_no_path">L\'URL del server non deve includere un percorso</string>
+    <string name="listen_together_err_no_query">L\'URL del server non deve includere parametri di query</string>
+    <string name="listen_together_err_no_fragment">L\'URL del server non deve includere frammenti</string>
+    <string name="listen_together_err_invalid_port">La porta del server deve essere compresa tra 1 e 65535</string>
+    <string name="listen_together_custom_server_connected">Connesso al server personalizzato</string>
+    <string name="listen_together_custom_server_unreachable_fallback">Server personalizzato non raggiungibile. Uso del server predefinito di riserva.</string>
+    <string name="listen_together_status_custom_online">Connesso al server personalizzato · %1$d ms</string>
+    <string name="listen_together_status_custom_fallback">Server personalizzato non raggiungibile · Riserva predefinita in uso (%1$d ms)</string>
+    <string name="listen_together_status_all_offline">Sia il server personalizzato sia quello predefinito sono offline</string>
+    <string name="listen_together_top_bar_fallback">Riserva · %1$s</string>
 
     <string name="vietnamese">Vietnamita</string>
 
@@ -793,6 +937,18 @@
     <string name="output_precision">Precisione di uscita</string>
 
     <string name="prefer_usb_dac">Preferisci DAC USB</string>
+    <string name="loudness_normalization">Normalizzazione del volume</string>
+    <string name="loudness_normalization_subtitle">Porta ogni brano alla stessa intensità sonora</string>
+    <string name="loudness_target">Intensità di destinazione</string>
+    <string name="loudness_target_subtitle">Più bassa per le cuffie; più alta per l\'auto o l\'altoparlante del telefono</string>
+    <string name="loudness_target_value">%1$s LUFS</string>
+    <string name="pipeline_loudness">Intensità</string>
+    <string name="pipeline_loudness_gain">Guadagno</string>
+    <string name="pipeline_loudness_measured">Misurata</string>
+    <string name="pipeline_bit_exact">Bit-exact</string>
+    <string name="loudness_measuring">Misurazione…</string>
+    <string name="loudness_gain_db">%1$s dB</string>
+    <string name="loudness_lufs">%1$s LUFS</string>
 
     <string name="shelf_100_on_repeat">In ripetizione continua</string>
 
@@ -910,6 +1066,8 @@
     <string name="prefer_music_only">Prefer music-only version</string>
 
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
+    <string name="smart_version_alignment">Allineamento audio intelligente</string>
+    <string name="smart_version_alignment_subtitle">Analizza le forme d\'onda per trovare l\'esatto punto di riproduzione corrispondente</string>
 
     <string name="equalizer_footer">Shapes the sound inside BitChord, before it reaches the system.</string>
 
@@ -946,12 +1104,9 @@
     <string name="equalizer_balance_right">R</string>
 
     <string name="equalizer_balance_footer">Shifts the sound towards one ear by quietening the other.</string>
-
-    <string name="equalizer_float_title">Not running right now</string>
-
-    <string name="equalizer_float_subtitle">32-bit float output is in use</string>
-
-    <string name="equalizer_float_footer">Android plays float audio through a path with no room for effects, so the equaliser, spatial audio and silence skipping are all bypassed. Set output to 16-bit PCM to use them.</string>
+    <string name="equalizer_bitstream_title">Non attivo al momento</string>
+    <string name="equalizer_bitstream_subtitle">Questo brano viene inviato all\'uscita senza decodifica</string>
+    <string name="equalizer_bitstream_footer">L\'equalizzatore lavora sull\'audio decodificato. Questo brano passa come bitstream che il tuo dispositivo decodifica da solo, quindi qui non ci sono campioni da filtrare.</string>
 
     <string name="system_equalizer">System equalizer</string>
 
@@ -1010,6 +1165,7 @@
     <string name="medium_quality">Medium Quality</string>
 
     <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="audio_pipeline_subtitle">Percorso del segnale in tempo reale, dal decoder all\'uscita</string>
 
     <string name="pipeline_track_info">Track Info</string>
 
@@ -1064,6 +1220,9 @@
     <string name="song_will_play_next">Song will play next</string>
 
     <string name="song_added_to_queue">Song added to queue</string>
+    <string name="song_added_to_playlist">Aggiunto alla playlist</string>
+    <string name="song_already_in_playlist">Già nella playlist</string>
+    <string name="party_queue_full">La coda è piena (massimo %d brani nel party)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
 

@@ -1,5 +1,6 @@
 package com.music.bitchord.data.lyrics
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -88,6 +89,15 @@ object LyricsRepository {
         order: List<LyricsSource> = LyricsSource.entries,
         prioritizeSyllableSync: Boolean = false,
         isrc: String? = null,
+        /** Called from the provider job itself, including for lazily-started providers. */
+        onSourceStarted: ((LyricsSource) -> Unit)? = null,
+        /**
+         * Reports a completed provider attempt. A null result is a genuine miss;
+         * a cancelled race loser is deliberately not reported as one.
+         */
+        onSourceResult: ((LyricsSource, Result?) -> Unit)? = null,
+        /** Lets callers turn a cancelled race loser back into "not fetched". */
+        onSourceCancelled: ((LyricsSource) -> Unit)? = null,
     ): Result? = coroutineScope {
         val sequence = order.filter { it in sources } +
             LyricsSource.entries.filter { it in sources && it !in order }
@@ -111,10 +121,30 @@ object LyricsRepository {
 
         // Genius is a plain text web scraper. To preserve bandwidth and avoid rate-limiting,
         // it starts lazily and is only contacted if all higher-priority synced sources miss.
-        val racing: List<Pair<LyricsSource, Deferred<List<LyricLine>?>>> = sequence.map { source ->
+        val racing: List<Pair<LyricsSource, Deferred<Result?>>> = sequence.map { source ->
             val startMode = if (source == LyricsSource.GENIUS) kotlinx.coroutines.CoroutineStart.LAZY else kotlinx.coroutines.CoroutineStart.DEFAULT
             source to async(Dispatchers.IO, start = startMode) {
-                fetch(source, videoId, searchTitle, searchArtist, durationMs, album, recording, hit)
+                onSourceStarted?.invoke(source)
+                try {
+                    val found = fetch(
+                        source,
+                        videoId,
+                        searchTitle,
+                        searchArtist,
+                        durationMs,
+                        album,
+                        recording,
+                        hit,
+                    )?.let { result(source, it) }
+                    onSourceResult?.invoke(source, found)
+                    found
+                } catch (cancelled: CancellationException) {
+                    onSourceCancelled?.invoke(source)
+                    throw cancelled
+                } catch (_: Exception) {
+                    onSourceResult?.invoke(source, null)
+                    null
+                }
             }
         }
 
@@ -124,12 +154,12 @@ object LyricsRepository {
                 // If we already found a line-synced or better result, skip Genius completely
                 if (lineSynced != null && source == LyricsSource.GENIUS) continue
 
-                val lines = runCatching { job.await() }.getOrNull() ?: continue
-                if (lines.any { it.isWordSynced }) return@coroutineScope result(source, lines)
-                if (!prioritizeSyllableSync && lines.any { it.timeMs > 0 }) {
-                    return@coroutineScope result(source, lines)
+                val found = runCatching { job.await() }.getOrNull() ?: continue
+                if (found.lines.any { it.isWordSynced }) return@coroutineScope found
+                if (!prioritizeSyllableSync && found.lines.any { it.timeMs > 0 }) {
+                    return@coroutineScope found
                 }
-                if (lineSynced == null) lineSynced = result(source, lines)
+                if (lineSynced == null) lineSynced = found
             }
             lineSynced
         } finally {

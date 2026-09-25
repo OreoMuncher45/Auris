@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbDownOffAlt
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -82,6 +83,7 @@ import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
+import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
@@ -155,6 +157,17 @@ fun SongActionsSheet(
      * See [com.music.bitchord.playback.OriginalVersion].
      */
     onUpgradeQuality: (() -> Unit)? = null,
+    /** Keeps the upgrade row visible but untappable while its lookup is running. */
+    upgradeQualityInProgress: Boolean = false,
+    /**
+     * Switches the playing track between its video and audio-only cuts. Null
+     * hides the row — offered only from the player, and only once an
+     * alternate cut is known to exist. See
+     * [com.music.bitchord.playback.PlaybackService.smoothSwapCurrentTrackVersion].
+     */
+    onToggleAudioVersion: (() -> Unit)? = null,
+    /** Which cut is playing now, so the row can offer the other one. */
+    isAudioVersion: Boolean = false,
     onShare: (() -> Unit)? = null,
     /**
      * Copies what the app logged while starting this track. Null everywhere
@@ -202,23 +215,39 @@ fun SongActionsSheet(
         // a substituted copy, the other for a track held on YouTube's own —
         // and between them they are the whole of the choice, which is why they
         // sit in the same place under the same divider.
-        (onRollbackToOriginal ?: onUpgradeQuality)?.let {
-            ActionRow(
-                icon = if (onRollbackToOriginal != null) {
-                    Icons.AutoMirrored.Rounded.Undo
-                } else {
-                    Icons.Rounded.HighQuality
-                },
-                label = stringResource(
-                    if (onRollbackToOriginal != null) {
-                        R.string.revert_to_original
+        if (onRollbackToOriginal != null || onUpgradeQuality != null || onToggleAudioVersion != null) {
+            (onRollbackToOriginal ?: onUpgradeQuality)?.let {
+                ActionRow(
+                    icon = if (onRollbackToOriginal != null) {
+                        Icons.AutoMirrored.Rounded.Undo
                     } else {
-                        R.string.upgrade_quality
+                        Icons.Rounded.HighQuality
                     },
-                ),
-                accent = palette.accent,
-                onClick = it,
-            )
+                    label = stringResource(
+                        if (onRollbackToOriginal != null) {
+                            R.string.revert_to_original
+                        } else {
+                            R.string.upgrade_quality
+                        },
+                    ),
+                    accent = palette.accent,
+                    enabled = onRollbackToOriginal != null || !upgradeQualityInProgress,
+                    onClick = it,
+                )
+            }
+            // Which recording, not which quality — a different question from
+            // the row above, so it sits right under it rather than merged
+            // into it, but still ahead of the divider both share.
+            onToggleAudioVersion?.let {
+                ActionRow(
+                    icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
+                    label = stringResource(
+                        if (isAudioVersion) R.string.convert_to_video else R.string.convert_to_audio,
+                    ),
+                    accent = palette.accent,
+                    onClick = it,
+                )
+            }
             HorizontalDivider(
                 modifier = Modifier.padding(vertical = 6.dp),
                 thickness = 0.5.dp,
@@ -688,26 +717,31 @@ internal fun ActionRow(
     value: String? = null,
     tint: Color? = null,
     accent: Color = MaterialTheme.colorScheme.primary,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 22.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint ?: MaterialTheme.colorScheme.onBackground,
+            tint = (tint ?: MaterialTheme.colorScheme.onBackground).copy(
+                alpha = if (enabled) 1f else 0.4f,
+            ),
             modifier = Modifier.size(22.dp),
         )
         Spacer(Modifier.width(18.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = MaterialTheme.colorScheme.onBackground.copy(
+                alpha = if (enabled) 1f else 0.4f,
+            ),
             modifier = Modifier.weight(1f),
         )
         if (value != null) {
@@ -715,7 +749,7 @@ internal fun ActionRow(
             Text(
                 text = value,
                 style = MaterialTheme.typography.bodyLarge,
-                color = accent,
+                color = accent.copy(alpha = if (enabled) 1f else 0.4f),
                 maxLines = 1,
             )
         }

@@ -34,6 +34,10 @@ internal data class MediaWidgetSnapshot(
     val isPlaying: Boolean,
     val hasPrevious: Boolean,
     val hasNext: Boolean,
+    /** Whether the track is liked. Drawn by the 4×1 widget's heart. */
+    val isLiked: Boolean = false,
+    /** Whether shuffle is on. Drawn by the 4×1 widget's Shuffle. */
+    val shuffleEnabled: Boolean = false,
 ) {
     /** Whether there is a track to draw at all. */
     val hasTrack: Boolean get() = mediaId != null
@@ -59,6 +63,8 @@ internal data class MediaWidgetSnapshot(
                 .putBoolean(KEY_PLAYING, snapshot.isPlaying)
                 .putBoolean(KEY_HAS_PREVIOUS, snapshot.hasPrevious)
                 .putBoolean(KEY_HAS_NEXT, snapshot.hasNext)
+                .putBoolean(KEY_LIKED, snapshot.isLiked)
+                .putBoolean(KEY_SHUFFLE, snapshot.shuffleEnabled)
                 .apply()
         }
 
@@ -75,6 +81,8 @@ internal data class MediaWidgetSnapshot(
                     isPlaying = prefs.getBoolean(KEY_PLAYING, false),
                     hasPrevious = prefs.getBoolean(KEY_HAS_PREVIOUS, false),
                     hasNext = prefs.getBoolean(KEY_HAS_NEXT, false),
+                    isLiked = prefs.getBoolean(KEY_LIKED, false),
+                    shuffleEnabled = prefs.getBoolean(KEY_SHUFFLE, false),
                 )
             }
             return EMPTY
@@ -90,5 +98,7 @@ internal data class MediaWidgetSnapshot(
         private const val KEY_PLAYING = "playing"
         private const val KEY_HAS_PREVIOUS = "has_previous"
         private const val KEY_HAS_NEXT = "has_next"
+        private const val KEY_LIKED = "liked"
+        private const val KEY_SHUFFLE = "shuffle"
     }
 }

@@ -188,6 +188,13 @@ enum class LibraryViewType {
     GRID,
 }
 
+/** The surface that was last open inside the expanded player. */
+enum class LastPlayerScreen {
+    MAIN,
+    LYRICS,
+    QUEUE,
+}
+
 /**
  * App settings, backed by SharedPreferences and exposed as flows.
  *
@@ -199,7 +206,7 @@ object AppSettings {
 
     private lateinit var prefs: SharedPreferences
 
-    /** Only for the Discord token — everything else on here is plain prefs. */
+    /** Only for the Discord, WebDAV and SMB secrets — everything else on here is plain prefs. */
     private lateinit var authStore: AuthStore
 
     /**
@@ -291,6 +298,28 @@ object AppSettings {
 
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
+
+    /**
+     * Level every track to the same loudness, using YouTube's own
+     * normalization figure for it — see
+     * [com.music.bitchord.playback.PlaybackService.setupLoudnessEnhancer].
+     *
+     * On by default, which is the one genuinely contentious thing about it.
+     * The case for it: a queue drawn from several sources is a queue of
+     * several mastering eras, and the gap between a 1980s CD transfer and a
+     * modern master is routinely fifteen decibels — loud enough that the
+     * listener's own volume control is the wrong tool, because the setting
+     * that suits one track hurts at the next. Every streaming service
+     * normalizes by default for the same reason.
+     *
+     * The case against it is that a constant gain is still a multiplication,
+     * so this is the first thing in BitChord that is *on* out of the box and
+     * alters samples. Rather than hide that, the Audio Pipeline readout names
+     * it: its Bit-exact row reports the first stage in the chain that is
+     * altering samples, and switching this off is the first thing a listener
+     * chasing an untouched signal would do.
+     */
+    val loudnessNormalization = MutableStateFlow(true)
 
     /**
      * Whether a source offering a Dolby Atmos rendition is allowed to serve it.
@@ -392,6 +421,9 @@ object AppSettings {
     /** Hides the volume slider on the main player, leaving the rest of the layout to reflow. */
     val hideVolumeBar = MutableStateFlow(false)
 
+    /** Hides the "Playing from" / "Played by" caption at the top of the main player. */
+    val hideSongStatus = MutableStateFlow(false)
+
     /** Swiping a song row plays it next instead of adding it to the end of the queue. */
     val swipeToPlayNext = MutableStateFlow(false)
 
@@ -404,6 +436,9 @@ object AppSettings {
      * metadata appears immediately while the catalogue match is resolved.
      */
     val preferMusicOnly = MutableStateFlow(false)
+
+    /** Analyzes audio waveform/envelope to align matching playback moment between versions. */
+    val smartVersionAlignment = MutableStateFlow(true)
 
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
@@ -455,6 +490,12 @@ object AppSettings {
      */
     val canvasOverCellular = MutableStateFlow(false)
 
+    /** Automatically collapses the lower controls after Spotify Canvas settles. */
+    val spotifyCanvasAutoHide = MutableStateFlow(true)
+
+    /** Tries Spotify before Apple Music and the other animated-art providers. */
+    val prioritizeSpotifyCanvas = MutableStateFlow(false)
+
     /**
      * Blows the player's cover art out to a full-bleed banner running off the
      * top of the screen, rather than sitting it in a square card.
@@ -483,6 +524,9 @@ object AppSettings {
      * reason is one a listener has to agree with.
      */
     val legacyMeshGradient = MutableStateFlow(false)
+
+    /** Restores the expanded player to the surface the listener left open. */
+    val lastPlayerScreen = MutableStateFlow(LastPlayerScreen.MAIN)
 
     /**
      * Time-synced lyrics on the player, lit up as they are sung.
@@ -572,6 +616,23 @@ object AppSettings {
     val webdavUrl = MutableStateFlow("")
     val webdavUsername = MutableStateFlow("")
     val webdavPassword = MutableStateFlow("")
+
+    // ── SMB ───────────────────────────────────────────────────────────────
+
+    /**
+     * Remote music library on an SMB file share (a NAS, a Windows box).
+     *
+     * Stored like the WebDAV settings: host, share, base folder and username
+     * in plain prefs, the password mirrored out of [AuthStore] so it stays
+     * encrypted at rest and out of backup exports. Empty host or share means
+     * unconfigured, and the library simply reads as empty.
+     */
+    val smbHost = MutableStateFlow("")
+    val smbShare = MutableStateFlow("")
+    val smbBasePath = MutableStateFlow("")
+    val smbUsername = MutableStateFlow("")
+    val smbPassword = MutableStateFlow("")
+
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
      * order they were pinned.
@@ -634,6 +695,9 @@ object AppSettings {
     /** Put the track title on the bold profile line, in place of the artist. */
     val discordUseDetails = MutableStateFlow(false)
 
+    /** Show measured Hi-Res, Lossless, or Dolby specs on the presence card. */
+    val discordShowAudioQuality = MutableStateFlow(true)
+
     /** Reveals the presence-shape controls: status, activity type/name, buttons. */
     val discordAdvancedMode = MutableStateFlow(false)
 
@@ -666,6 +730,16 @@ object AppSettings {
      * something a plain crossfade could not.
      */
     val smartMixInProgress = MutableStateFlow(false)
+
+    /**
+     * True while a version switch is fetching and analysing the other cut
+     * before playback actually moves. Drains into the loading bar drawn along
+     * the scrubber itself — `ThinSlider.loading` — so the wait reads as work
+     * in progress rather than as a player frozen on a version that is about to
+     * change, and lights the toggle button's spinner through the half of the
+     * switch that has nothing else showing.
+     */
+    val versionAlignmentInProgress = MutableStateFlow(false)
 
     /**
      * How much of the *upcoming* transition has been analysed, for stats for
@@ -703,9 +777,14 @@ object AppSettings {
     val downloadsAllowedNow: Boolean
         get() = !wifiOnlyDownloads.value || meteredConnection.value != true
 
-    fun init(context: Context) {
+    /**
+     * [authStore] is the application's own, passed in rather than opened again:
+     * each open of the encrypted store is a keystore round trip, and a second
+     * one here was a measurable slice of cold start.
+     */
+    fun init(context: Context, authStore: AuthStore) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
-        authStore = AuthStore(context)
+        this.authStore = authStore
         readAll()
         watchConnection(context)
     }
@@ -753,6 +832,7 @@ object AppSettings {
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
+        loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
@@ -780,9 +860,11 @@ object AppSettings {
         )
         stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
+        hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
+        smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
@@ -795,8 +877,15 @@ object AppSettings {
         }
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
+        spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
+        prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
         fullBleedArtwork.value = prefs.getBoolean(KEY_FULL_BLEED_ARTWORK, true)
         legacyMeshGradient.value = prefs.getBoolean(KEY_LEGACY_MESH_GRADIENT, false)
+        lastPlayerScreen.value = runCatching {
+            LastPlayerScreen.valueOf(
+                prefs.getString(KEY_LAST_PLAYER_SCREEN, null) ?: LastPlayerScreen.MAIN.name,
+            )
+        }.getOrDefault(LastPlayerScreen.MAIN)
         syncedLyrics.value = prefs.getBoolean(KEY_SYNCED_LYRICS, true)
         lyricsSources.value = readLyricsSources()
         lyricsSourceOrder.value = readLyricsSourceOrder()
@@ -836,6 +925,18 @@ object AppSettings {
         webdavUrl.value = prefs.getString(KEY_WEBDAV_URL, "").orEmpty()
         webdavUsername.value = prefs.getString(KEY_WEBDAV_USERNAME, "").orEmpty()
         webdavPassword.value = authStore.webdavPassword.orEmpty()
+        smbHost.value = prefs.getString(KEY_SMB_HOST, "").orEmpty()
+        smbShare.value = prefs.getString(KEY_SMB_SHARE, "").orEmpty()
+        smbBasePath.value = prefs.getString(KEY_SMB_BASE_PATH, "").orEmpty()
+        smbUsername.value = prefs.getString(KEY_SMB_USERNAME, "").orEmpty()
+        smbPassword.value = authStore.smbPassword.orEmpty()
+        com.music.bitchord.data.smb.SmbAuth.update(
+            smbHost.value,
+            smbShare.value,
+            smbBasePath.value,
+            smbUsername.value,
+            smbPassword.value,
+        )
         com.music.bitchord.data.webdav.WebDavAuth.update(
             webdavUrl.value,
             webdavUsername.value,
@@ -848,6 +949,7 @@ object AppSettings {
         discordAvatar.value = prefs.getString(KEY_DISCORD_AVATAR, "").orEmpty()
         discordRpcEnabled.value = prefs.getBoolean(KEY_DISCORD_RPC_ENABLED, true)
         discordUseDetails.value = prefs.getBoolean(KEY_DISCORD_USE_DETAILS, false)
+        discordShowAudioQuality.value = prefs.getBoolean(KEY_DISCORD_SHOW_AUDIO_QUALITY, true)
         discordAdvancedMode.value = prefs.getBoolean(KEY_DISCORD_ADVANCED_MODE, false)
         discordStatus.value = prefs.getString(KEY_DISCORD_STATUS, "online").orEmpty()
         discordActivityType.value = prefs.getString(KEY_DISCORD_ACTIVITY_TYPE, "listening").orEmpty()
@@ -1126,6 +1228,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_HIDE_VOLUME_BAR, value).apply()
     }
 
+    fun setHideSongStatus(value: Boolean) {
+        hideSongStatus.value = value
+        prefs.edit().putBoolean(KEY_HIDE_SONG_STATUS, value).apply()
+    }
+
     fun setSwipeToPlayNext(value: Boolean) {
         swipeToPlayNext.value = value
         prefs.edit().putBoolean(KEY_SWIPE_TO_PLAY_NEXT, value).apply()
@@ -1139,6 +1246,11 @@ object AppSettings {
     fun setPreferMusicOnly(value: Boolean) {
         preferMusicOnly.value = value
         prefs.edit().putBoolean(KEY_PREFER_MUSIC_ONLY, value).apply()
+    }
+
+    fun setSmartVersionAlignment(value: Boolean) {
+        smartVersionAlignment.value = value
+        prefs.edit().putBoolean(KEY_SMART_VERSION_ALIGNMENT, value).apply()
     }
 
     fun setReduceDynamicBlur(value: Boolean) {
@@ -1304,6 +1416,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_CANVAS_OVER_CELLULAR, value).apply()
     }
 
+    fun setSpotifyCanvasAutoHide(value: Boolean) {
+        spotifyCanvasAutoHide.value = value
+        prefs.edit().putBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, value).apply()
+    }
+
+    fun setPrioritizeSpotifyCanvas(value: Boolean) {
+        prioritizeSpotifyCanvas.value = value
+        prefs.edit().putBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, value).apply()
+    }
+
     fun setFullBleedArtwork(value: Boolean) {
         fullBleedArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_BLEED_ARTWORK, value).apply()
@@ -1312,6 +1434,12 @@ object AppSettings {
     fun setLegacyMeshGradient(value: Boolean) {
         legacyMeshGradient.value = value
         prefs.edit().putBoolean(KEY_LEGACY_MESH_GRADIENT, value).apply()
+    }
+
+    fun setLastPlayerScreen(value: LastPlayerScreen) {
+        if (lastPlayerScreen.value == value) return
+        lastPlayerScreen.value = value
+        prefs.edit().putString(KEY_LAST_PLAYER_SCREEN, value.name).apply()
     }
 
     /** Clamped to [DEFAULT_CACHE_LIMIT_BYTES]..[MAX_CACHE_LIMIT_BYTES] — the floor is the default, not zero. */
@@ -1381,6 +1509,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_PREFER_USB_DAC, value).apply()
     }
 
+    fun setLoudnessNormalization(value: Boolean) {
+        loudnessNormalization.value = value
+        prefs.edit().putBoolean(KEY_LOUDNESS_NORMALIZATION, value).apply()
+    }
+
     fun setExportDownloads(value: Boolean) {
         exportDownloads.value = value
         prefs.edit().putBoolean(KEY_EXPORT_DOWNLOADS, value).apply()
@@ -1446,6 +1579,11 @@ object AppSettings {
     fun setDiscordUseDetails(value: Boolean) {
         discordUseDetails.value = value
         prefs.edit().putBoolean(KEY_DISCORD_USE_DETAILS, value).apply()
+    }
+
+    fun setDiscordShowAudioQuality(value: Boolean) {
+        discordShowAudioQuality.value = value
+        prefs.edit().putBoolean(KEY_DISCORD_SHOW_AUDIO_QUALITY, value).apply()
     }
 
     fun setDiscordAdvancedMode(value: Boolean) {
@@ -1571,6 +1709,60 @@ object AppSettings {
         setWebDavUrl("")
         setWebDavUsername("")
         setWebDavPassword("")
+    }
+
+    fun setSmbHost(value: String) {
+        val normalized = value.trim()
+        smbHost.value = normalized
+        prefs.edit().putString(KEY_SMB_HOST, normalized).apply()
+        publishSmbAuth()
+    }
+
+    fun setSmbShare(value: String) {
+        val normalized = value.trim().trim('/')
+        smbShare.value = normalized
+        prefs.edit().putString(KEY_SMB_SHARE, normalized).apply()
+        publishSmbAuth()
+    }
+
+    fun setSmbBasePath(value: String) {
+        val normalized = value.trim().trim('/')
+        smbBasePath.value = normalized
+        prefs.edit().putString(KEY_SMB_BASE_PATH, normalized).apply()
+        publishSmbAuth()
+    }
+
+    fun setSmbUsername(value: String) {
+        val normalized = value.trim()
+        smbUsername.value = normalized
+        prefs.edit().putString(KEY_SMB_USERNAME, normalized).apply()
+        publishSmbAuth()
+    }
+
+    /** Writes through to the encrypted store; pass "" to forget. */
+    fun setSmbPassword(value: String) {
+        smbPassword.value = value
+        authStore.smbPassword = value.ifEmpty { null }
+        publishSmbAuth()
+    }
+
+    fun clearSmb() {
+        setSmbHost("")
+        setSmbShare("")
+        setSmbBasePath("")
+        setSmbUsername("")
+        setSmbPassword("")
+    }
+
+    private fun publishSmbAuth() {
+        if (!this::prefs.isInitialized || !this::authStore.isInitialized) return
+        com.music.bitchord.data.smb.SmbAuth.update(
+            smbHost.value,
+            smbShare.value,
+            smbBasePath.value,
+            smbUsername.value,
+            smbPassword.value,
+        )
     }
 
     private fun publishWebDavAuth() {
@@ -1749,6 +1941,7 @@ object AppSettings {
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
+    private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_EQ_ENABLED = "equalizer_enabled"
@@ -1770,9 +1963,11 @@ object AppSettings {
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
+    private const val KEY_HIDE_SONG_STATUS = "hide_song_status"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_PREFER_MUSIC_ONLY = "prefer_music_only"
+    private const val KEY_SMART_VERSION_ALIGNMENT = "smart_version_alignment"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
@@ -1780,8 +1975,11 @@ object AppSettings {
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
     private const val KEY_CANVAS_OVER_CELLULAR = "canvas_over_cellular"
+    private const val KEY_SPOTIFY_CANVAS_AUTO_HIDE = "spotify_canvas_auto_hide"
+    private const val KEY_PRIORITIZE_SPOTIFY_CANVAS = "prioritize_spotify_canvas"
     private const val KEY_FULL_BLEED_ARTWORK = "full_bleed_artwork"
     private const val KEY_LEGACY_MESH_GRADIENT = "legacy_mesh_gradient"
+    private const val KEY_LAST_PLAYER_SCREEN = "last_player_screen"
     private const val KEY_SYNCED_LYRICS = "synced_lyrics"
     private const val KEY_LYRICS_SOURCES = "lyrics_sources"
     private const val KEY_LYRICS_SOURCES_SEEN = "lyrics_sources_seen"
@@ -1800,6 +1998,10 @@ object AppSettings {
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"
+    private const val KEY_SMB_HOST = "smb_host"
+    private const val KEY_SMB_SHARE = "smb_share"
+    private const val KEY_SMB_BASE_PATH = "smb_base_path"
+    private const val KEY_SMB_USERNAME = "smb_username"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
 
     private const val KEY_LASTFM_ENABLED = "lastfm_enabled"
@@ -1824,6 +2026,7 @@ object AppSettings {
     private const val KEY_DISCORD_AVATAR = "discord_avatar"
     private const val KEY_DISCORD_RPC_ENABLED = "discord_rpc_enabled"
     private const val KEY_DISCORD_USE_DETAILS = "discord_use_details"
+    private const val KEY_DISCORD_SHOW_AUDIO_QUALITY = "discord_show_audio_quality"
     private const val KEY_DISCORD_ADVANCED_MODE = "discord_advanced_mode"
     private const val KEY_DISCORD_STATUS = "discord_status"
     private const val KEY_DISCORD_ACTIVITY_TYPE = "discord_activity_type"

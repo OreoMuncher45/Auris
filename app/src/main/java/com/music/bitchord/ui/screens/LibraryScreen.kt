@@ -59,7 +59,9 @@ import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.librarySkeleton
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
+import com.music.bitchord.ui.replay.ReplayCardRow
 import com.music.bitchord.ui.replay.ReplayHeroCard
+import com.music.bitchord.ui.replay.ReplayStoryPage
 import java.util.Locale
 
 /**
@@ -92,19 +94,11 @@ fun LibraryScreen(
      * fit.
      */
     onShowAll: (HomeShelf) -> Unit,
-    /**
-     * The Replay's leading card — minutes listened — or null before anything has
-     * been played.
-     *
-     * Not drawn as a card here. This page is a list of places to go, and a card
-     * is an object to look at; one sitting at the top of it read as the Replay
-     * page's opening reprinted on a page about playlists and downloads. What the
-     * card is used for instead is its *numbers* and its *artwork*: the button
-     * below says what is behind it, and is painted in the colours of the record
-     * that year was mostly spent on.
-     */
-    replayCard: ReplayHeroCard?,
-    onOpenReplay: () -> Unit,
+    /** Replay's headline cards. Each opens the detailed page at its own chart. */
+    replayCards: List<ReplayHeroCard>,
+    replayHolder: String,
+    replayMemberSince: String?,
+    onOpenReplay: (ReplayStoryPage) -> Unit,
     onSignIn: () -> Unit,
     onRetry: () -> Unit,
     refreshing: Boolean,
@@ -152,9 +146,48 @@ fun LibraryScreen(
             // Drawn whether or not anything has been played: with nothing behind
             // it the page still has to say the feature exists, or the only way
             // to discover it is to have already used it.
-            item(key = "replay") { ReplayBanner(replayCard, onOpenReplay) }
+            item(key = "replay") {
+                if (replayCards.isEmpty()) {
+                    // Keep Replay discoverable before there is enough listening
+                    // data to deal the personalised cards.
+                    ReplayBanner(null) { onOpenReplay(ReplayStoryPage.INTRO) }
+                } else {
+                    ReplayCardRow(
+                        cards = replayCards,
+                        holder = replayHolder,
+                        memberSince = replayMemberSince,
+                        onCardClick = onOpenReplay,
+                        modifier = Modifier.padding(vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                    )
+                }
+            }
             item(key = "shelf:$onDevice") {
                 val webdavConfigured by AppSettings.webdavUrl.collectAsStateWithLifecycle()
+                val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
+                val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
+                // The remote libraries share one card shape; each entry is
+                // title, subtitle and the page it opens.
+                val remotes = listOf(
+                    Triple(
+                        stringResource(R.string.webdav),
+                        if (webdavConfigured.isBlank()) {
+                            stringResource(R.string.webdav_not_configured)
+                        } else {
+                            stringResource(R.string.webdav_subtitle)
+                        },
+                        com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
+                    ),
+                    Triple(
+                        stringResource(R.string.smb),
+                        if (smbHost.isBlank() || smbShare.isBlank()) {
+                            stringResource(R.string.smb_not_configured)
+                        } else {
+                            stringResource(R.string.smb_subtitle)
+                        },
+                        com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
+                    ),
+                )
                 val onDeviceShelf = HomeShelf(
                     title = onDevice,
                     items = listOf(
@@ -172,18 +205,15 @@ fun LibraryScreen(
                             videoId = null,
                             browseId = "local:all",
                         ),
+                    ) + remotes.map { (title, subtitle, browseId) ->
                         ShelfItem(
-                            title = stringResource(R.string.webdav),
-                            subtitle = if (webdavConfigured.isBlank()) {
-                                stringResource(R.string.webdav_not_configured)
-                            } else {
-                                stringResource(R.string.webdav_subtitle)
-                            },
+                            title = title,
+                            subtitle = subtitle,
                             thumbnailUrl = null,
                             videoId = null,
-                            browseId = com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
-                        ),
-                    ) + downloadedPlaylists.map { playlist ->
+                            browseId = browseId,
+                        )
+                    } + downloadedPlaylists.map { playlist ->
                         ShelfItem(
                             title = playlist.title,
                             // The credit the playlist was downloaded with,

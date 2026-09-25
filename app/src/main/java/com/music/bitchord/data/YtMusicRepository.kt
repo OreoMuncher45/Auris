@@ -41,6 +41,11 @@ object YtMusicRepository {
     // answer makes the eventual player switch use the exact rendition whose
     // bytes were warmed, without repeating a 10–30 second catalogue search.
     private val audioVersionCache = ConcurrentHashMap<String, Song>()
+    // Cache for video version lookups from audio tracks (null means no video found).
+    private val videoVersionCache = ConcurrentHashMap<String, Song?>()
+
+    fun cachedAudioVersion(videoId: String): Song? = audioVersionCache[videoId]
+    fun cachedVideoVersion(videoId: String): Song? = videoVersionCache[videoId]
 
     /**
      * The core personalised feed. It stays deliberately independent from the
@@ -167,7 +172,12 @@ object YtMusicRepository {
         }
         val qpSongs = qpShelf?.items?.mapNotNull { item ->
             item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
-                Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                Song(
+                    videoId = vid,
+                    title = item.title,
+                    artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                    thumbnailUrl = item.thumbnailUrl,
+                )
             }
         }.orEmpty()
         if (qpSongs.isNotEmpty()) return@call qpSongs
@@ -184,7 +194,12 @@ object YtMusicRepository {
         val homeShelfSongs = candidateShelves.flatMap { shelf ->
             shelf.items.mapNotNull { item ->
                 item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
-                    Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                    Song(
+                        videoId = vid,
+                        title = item.title,
+                        artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                        thumbnailUrl = item.thumbnailUrl,
+                    )
                 }
             }
         }.distinctBy { it.videoId }
@@ -195,7 +210,12 @@ object YtMusicRepository {
         val allHomeTrackSongs = shelves.flatMap { shelf ->
             shelf.items.mapNotNull { item ->
                 item.videoId?.let { vid ->
-                    Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                    Song(
+                        videoId = vid,
+                        title = item.title,
+                        artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                        thumbnailUrl = item.thumbnailUrl,
+                    )
                 }
             }
         }.distinctBy { it.videoId }
@@ -208,7 +228,12 @@ object YtMusicRepository {
         val exploreSongs = explore.flatMap { shelf ->
             shelf.items.mapNotNull { item ->
                 item.videoId?.takeUnless { it in excludeSongIds }?.let { vid ->
-                    Song(videoId = vid, title = item.title, artist = item.subtitle, thumbnailUrl = item.thumbnailUrl)
+                    Song(
+                        videoId = vid,
+                        title = item.title,
+                        artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                        thumbnailUrl = item.thumbnailUrl,
+                    )
                 }
             }
         }.distinctBy { it.videoId }
@@ -385,6 +410,35 @@ object YtMusicRepository {
         return song
     }
 
+    /**
+     * The inverse of [resolveAudio]: finds the video/music-video version of an
+     * audio-only track, used when switching back from audio to video.
+     * Resolves an audio-only track to its video version.
+     *
+     * This is the inverse of [resolveAudio] - it finds the music video
+     * for a catalogue track. Returns null when no video version is found.
+     */
+    suspend fun resolveVideo(song: Song): Song? {
+        if (song.isVideo) return null
+        videoVersionCache[song.videoId]?.let { return it }
+        val target = TrackMatcher.targetOf(song)
+        for (query in TrackMatcher.queries(target)) {
+            val candidates = search(query, SearchFilter.VIDEOS)
+                .getOrNull()
+                ?.filterIsInstance<SearchResult.Track>()
+                ?.map { it.song }
+                .orEmpty()
+            TrackMatcher.best(candidates, target)?.let { match ->
+                Log.d(TAG, "video switch: '${song.title}' -> '${match.title}' ($query)")
+                videoVersionCache[song.videoId] = match
+                return match
+            }
+        }
+        Log.w(TAG, "video switch: no video match for '${song.title}' by '${song.artist}'")
+        videoVersionCache[song.videoId] = null
+        return null
+    }
+
     /** Signed-in profile for the settings header. Null when signed out. */
     suspend fun account(): Result<Account> = call("account") {
         InnertubeParser.parseAccount(Innertube.accountMenu())
@@ -558,11 +612,34 @@ object YtMusicRepository {
      */
     suspend fun browseSongs(browseId: String): Result<SongPage> = call("browse:$browseId") {
         val response = Innertube.browse(browseId)
-        val page = pageOf(response)
+        val page = if (browseId.startsWith("MPREb")) {
+            albumPageOf(response)
+        } else {
+            pageOf(response)
+        }
         // Only a playlist has an owner in the sense that matters — see
         // parsePlaylistOwned — and only its own first response can be asked.
         if (!browseId.startsWith("VL")) page
         else page.copy(owned = InnertubeParser.parsePlaylistOwned(response))
+    }
+
+    /**
+     * Joins an album's metadata page to its authoritative track listing.
+     *
+     * Catalogue album pages sometimes carry only a handful of preview rows.
+     * Their header play action names a backing playlist containing every track,
+     * so read songs and pagination from there while retaining the richer album
+     * header and controls from the original response.
+     */
+    private suspend fun albumPageOf(albumResponse: JsonObject): SongPage {
+        val metadata = pageOf(albumResponse)
+        val playlistId = InnertubeParser.parseAlbumPlaylistId(albumResponse) ?: return metadata
+        val tracks = pageOf(Innertube.browse("VL${playlistId.removePrefix("VL")}"))
+        return tracks.copy(
+            library = metadata.library,
+            header = metadata.header,
+            description = metadata.description,
+        )
     }
 
     /** The page [SongPage.continuation] points at. */
@@ -636,6 +713,11 @@ object YtMusicRepository {
     private suspend fun songsPaged(browseId: String): List<Song> {
         val out = LinkedHashMap<String, Song>()
         var response = Innertube.browse(browseId)
+        if (browseId.startsWith("MPREb")) {
+            InnertubeParser.parseAlbumPlaylistId(response)?.let { playlistId ->
+                response = Innertube.browse("VL${playlistId.removePrefix("VL")}")
+            }
+        }
         var page = 1
         while (true) {
             // Same shelf-scoping as pageOf: a playlist (Liked Music and the

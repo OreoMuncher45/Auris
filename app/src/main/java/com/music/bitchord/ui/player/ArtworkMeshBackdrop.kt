@@ -6,7 +6,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -23,6 +25,9 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -78,6 +83,97 @@ import kotlin.random.Random
 class ArtworkMesh internal constructor(internal val image: ImageBitmap)
 
 /**
+ * One pre-blurred bitmap for the full-cover player backdrop.
+ *
+ * This deliberately does not use Compose's full-screen `Modifier.blur`: that is
+ * a live RenderEffect and the first frame which makes it visible can pay for a
+ * screen-sized blur while the player is already animating. Instead a 128px copy
+ * is decoded from Coil's existing artwork request, blurred once on a worker
+ * thread, and cached by URL. Drawing it thereafter is one bilinear image sample.
+ * The small decode and CPU pass are staggered by the caller after a song change,
+ * so they never land on the track hand-off itself.
+ */
+@Composable
+fun rememberFullArtworkBlurImage(
+    imageUrl: String?,
+    artPx: Int = CARD_ART_PX,
+    prepare: Boolean = true,
+): ImageBitmap? {
+    val context = LocalContext.current
+    var image by remember(imageUrl) { mutableStateOf(imageUrl?.let(fullBlurCache::get)) }
+
+    LaunchedEffect(imageUrl, artPx, prepare) {
+        if (!prepare || imageUrl == null || image != null) return@LaunchedEffect
+        val request = ImageRequest.Builder(context)
+            // Same URL as the player's 1200px sleeve, so this is a small decode
+            // from Coil's shared fetch/disk result rather than another download.
+            .data(imageUrl.artworkAt(artPx))
+            .size(FULL_BLUR_SOURCE_PX)
+            .allowHardware(false)
+            .build()
+        val result = SingletonImageLoader.get(context).execute(request)
+        val bitmap = (result as? SuccessResult)?.image?.toBitmap() ?: return@LaunchedEffect
+        val blurred = withContext(Dispatchers.Default) { bitmap.boxBlurred(FULL_BLUR_PASSES) }
+        val ready = blurred.asImageBitmap()
+        fullBlurCache[imageUrl] = ready
+        image = ready
+    }
+    return image
+}
+
+/**
+ * A full-surface, still-art backdrop for player views that do not have an
+ * artwork edge to continue from.
+ *
+ * The ordinary player's mesh is intentionally built as a continuation of the
+ * sleeve: it holds the sleeve's bottom row above the seam and turns the rest of
+ * the cover upside down below it. That works behind the main phone player,
+ * where the sleeve supplies the missing first half. Lyrics, queue, and a tablet
+ * player have no such visual seam, so the same construction reads as a stretched
+ * upper field followed by a reflection. These surfaces instead crop one copy of
+ * the cover across their complete bounds and blur that copy in place.
+ *
+ * The overscale keeps the clamped edge of the blur outside the viewport. When
+ * blur is unavailable, or explicitly reduced in settings, the complete cover
+ * remains in place under the same legibility scrim rather than falling back to
+ * the reflected mesh this composable exists to avoid.
+ */
+@Composable
+fun FullArtworkBlurBackdrop(
+    image: ImageBitmap?,
+    modifier: Modifier = Modifier,
+) {
+    val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (image != null) 1f else 0f,
+        animationSpec = tween(320, easing = FastOutSlowInEasing),
+        label = "preparedBackdropImage",
+    )
+    Box(modifier = modifier.fillMaxSize().background(FallbackBackdrop)) {
+        image?.let { bitmap ->
+            val painter = remember(bitmap) { BitmapPainter(bitmap) }
+            Image(
+                painter = painter,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = imageAlpha },
+            )
+        }
+
+        // Lyrics and queue are dense white foregrounds. Preserve the cover's
+        // colour and layout, but keep bright sleeves from lowering contrast.
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.34f),
+                    0.55f to Color.Black.copy(alpha = 0.48f),
+                    1f to Color.Black.copy(alpha = 0.64f),
+                ),
+            )
+        }
+    }
+}
+
+/**
  * The mesh for the artwork at [imageUrl], or null until one has been read.
  *
  * [canvasFrame] — a frame grabbed off a playing motion cover — takes over when
@@ -100,12 +196,30 @@ fun rememberArtworkMesh(
     artPx: Int = CARD_ART_PX,
 ): ArtworkMesh? {
     val context = LocalContext.current
+    // The last mesh that was on screen, whatever it was read from. A cover
+    // the cache has never seen decodes *over* this instead of blanking the
+    // backdrop to nothing for the beat the decode takes — which is the
+    // flicker a version switch showed every time its cut arrived carrying
+    // its own thumbnail. Wrong colour for one decode is the trade; absent
+    // colour was the flicker.
+    val heldMesh = remember { mutableStateOf<ArtworkMesh?>(null) }
     // Seeded from the cache so a cover that has been seen before is on colour
-    // in its first frame, with nothing to fade in from.
-    var mesh by remember(imageUrl) { mutableStateOf(imageUrl?.let(meshCache::get)) }
+    // in its first frame, with nothing to fade in from — and from
+    // [heldMesh] otherwise, carried over for the reason above.
+    var mesh by remember(imageUrl) {
+        mutableStateOf(imageUrl?.let(meshCache::get) ?: heldMesh.value)
+    }
+    // What the mesh on screen was actually read from: null while it is a
+    // carry-over from the previous cover. Without this the guard below would
+    // read the carried mesh as this cover's own answer and never decode the
+    // new one.
+    var meshUrl by remember(imageUrl) {
+        mutableStateOf(if (imageUrl != null && meshCache.get(imageUrl) != null) imageUrl else null)
+    }
+    LaunchedEffect(mesh) { heldMesh.value = mesh }
 
     LaunchedEffect(imageUrl, artPx) {
-        if (imageUrl == null || mesh != null) return@LaunchedEffect
+        if (imageUrl == null || meshUrl == imageUrl) return@LaunchedEffect
         val request = ImageRequest.Builder(context)
             .data(imageUrl.artworkAt(artPx))
             .size(MESH_PX)
@@ -129,6 +243,7 @@ fun rememberArtworkMesh(
                 }
                 // A cover that decoded but had no mesh in it — see [meshOf] —
                 // is an answer, not a failure. Asking again gets the same one.
+                meshUrl = imageUrl
                 return@LaunchedEffect
             }
         }
@@ -136,13 +251,13 @@ fun rememberArtworkMesh(
 
     LaunchedEffect(canvasFrame) {
         val frame = canvasFrame ?: return@LaunchedEffect
-        // Same seed as the still read above, keyed off the URL rather than the
-        // frame — a clip's frames are a moving target and aren't cached (the
-        // next one for this URL is a different picture), but the *arrangement*
-        // [shuffledBelowSeam] scrambles them into should hold still across a
-        // refresh, or the layout would visibly reshuffle under its own colours
-        // once a second.
+        // Reject frames that are too dark or uniform — they are almost always
+        // the first read after a surface recreation, before ExoPlayer has
+        // decoded real content.  A frame whose mean luminance is below this
+        // threshold is discarded; the last valid mesh is kept instead.
+        if (isLikelyBlackFrame(frame)) return@LaunchedEffect
         mesh = withContext(Dispatchers.Default) { meshOf(frame, imageUrl?.hashCode() ?: 0) } ?: mesh
+        meshUrl = imageUrl
     }
     return mesh
 }
@@ -316,6 +431,69 @@ private fun DrawScope.drawMesh(mesh: ArtworkMesh, seamY: Float, alpha: Float) {
 
 /** Drawn only until an artwork has been read — never a colour anyone chose. */
 private val FallbackBackdrop = Color(0xFF121212)
+
+/** A screen cannot recover detail discarded here; small is the performance feature. */
+private const val FULL_BLUR_SOURCE_PX = 128
+private const val FULL_BLUR_PASSES = 3
+
+/** A handful of recent covers; each entry is only 64 KiB at 128x128 ARGB. */
+private val fullBlurCache = object : LinkedHashMap<String, ImageBitmap>(0, 0.75f, true) {
+    override fun removeEldestEntry(eldest: Map.Entry<String, ImageBitmap>) = size > 8
+}
+
+/** Three small box passes approximate a broad Gaussian blur at thumbnail scale. */
+private fun Bitmap.boxBlurred(passes: Int): Bitmap {
+    val width = width
+    val height = height
+    if (width < 2 || height < 2) return this
+    var source = IntArray(width * height).also { getPixels(it, 0, width, 0, 0, width, height) }
+    var target = IntArray(source.size)
+    val radius = (minOf(width, height) / 12).coerceAtLeast(2)
+
+    repeat(passes) {
+        boxBlurPass(source, target, width, height, radius, horizontal = true)
+        boxBlurPass(target, source, width, height, radius, horizontal = false)
+    }
+    return Bitmap.createBitmap(source, width, height, Bitmap.Config.ARGB_8888)
+}
+
+private fun boxBlurPass(
+    source: IntArray,
+    target: IntArray,
+    width: Int,
+    height: Int,
+    radius: Int,
+    horizontal: Boolean,
+) {
+    val major = if (horizontal) width else height
+    val minor = if (horizontal) height else width
+    val window = radius * 2 + 1
+    repeat(minor) { fixed ->
+        var red = 0
+        var green = 0
+        var blue = 0
+        fun pixel(at: Int): Int {
+            val position = at.coerceIn(0, major - 1)
+            return if (horizontal) source[fixed * width + position]
+            else source[position * width + fixed]
+        }
+        for (offset in -radius..radius) {
+            val color = pixel(offset)
+            red += color shr 16 and 0xFF
+            green += color shr 8 and 0xFF
+            blue += color and 0xFF
+        }
+        repeat(major) { moving ->
+            val index = if (horizontal) fixed * width + moving else moving * width + fixed
+            target[index] = argb(red / window, green / window, blue / window)
+            val leaving = pixel(moving - radius)
+            val entering = pixel(moving + radius + 1)
+            red += (entering shr 16 and 0xFF) - (leaving shr 16 and 0xFF)
+            green += (entering shr 8 and 0xFF) - (leaving shr 8 and 0xFF)
+            blue += (entering and 0xFF) - (leaving and 0xFF)
+        }
+    }
+}
 
 /**
  * Meshes already read, keyed by artwork URL — the artwork at a URL cannot

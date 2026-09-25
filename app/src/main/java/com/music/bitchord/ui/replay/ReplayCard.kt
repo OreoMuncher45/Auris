@@ -52,8 +52,8 @@ import java.util.Locale
  * any of them leads anywhere. A card is a thing people already know how to read:
  * it holds one fact, it has a *front* you look at rather than a list you scan,
  * and a row of them says "there are four of these" without a heading saying so.
- * Tapping one opens the story it summarises, which is the other half of why it
- * is a card — a card is an object, and objects can be picked up.
+ * Tapping one opens Replay at the chart it summarises, which is the other half
+ * of why it is a card — a card is an object, and objects can be picked up.
  *
  * ## Why it is built like a real one
  *
