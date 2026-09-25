@@ -9,6 +9,12 @@
       landscape design to fall back on, so a phone turned sideways gets a worse
       version of every screen but one.
 
+      That one is the exception: while the player is up, MainActivity lets a
+      phone follow the user's rotation setting after all, into the same
+      two-column player a tablet gets in landscape (see
+      [landscapePlayerAvailable]), and pins it upright again when the player
+      closes.
+
       The sw600dp copy of this file overrides it to true — see
       values-sw600dp/bools.xml — and MainActivity reads it once at startup.
     -->

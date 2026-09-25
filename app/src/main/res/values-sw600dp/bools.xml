@@ -3,7 +3,7 @@
     <!--
       Tablets rotate. 600dp on the shortest side is the line Android itself
       draws for "this is not a phone", and past it the trade changes: there is
-      room for the two-column player (see [wideLyricsLayoutAvailable]), and a
+      room for the two-column player (see [landscapePlayerAvailable]), and a
       tablet held in landscape is the ordinary way to hold one rather than a
       phone being turned on its side for a moment.
     -->

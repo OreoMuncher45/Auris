@@ -1,7 +1,9 @@
 package com.music.bitchord
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
@@ -236,6 +238,7 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.dockedPlayerAvailable
 import com.music.bitchord.ui.player.dockedPlayerWidth
+import com.music.bitchord.ui.player.landscapePlayerFitsScreen
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.LocalMusicScreen
@@ -273,6 +276,12 @@ internal fun shouldSkipAfterDislike(
     targetVideoId: String,
     currentVideoId: String?,
 ): Boolean = previousStatus != LikeStatus.DISLIKE && targetVideoId == currentVideoId
+
+/** The activity under a Compose context, through any wrappers around it. */
+private fun Context.findActivity(): Activity? =
+    generateSequence(this) { (it as? ContextWrapper)?.baseContext }
+        .filterIsInstance<Activity>()
+        .firstOrNull()
 
 
 class MainActivity : AppCompatActivity() {
@@ -408,11 +417,10 @@ private fun BitChordApp(
     /**
      * The window's height, measured the same way and for the same reason as
      * [windowWidth] — and needed alongside it for exactly one thing: telling
-     * a wide *portrait* tablet apart from a landscape one. Width alone
-     * can't; a big tablet's portrait width comfortably clears the same
-     * threshold its landscape width does, so the wide-lyrics split (see
-     * [wideLyricsLayoutAvailable]) would fire in portrait too if it only
-     * ever asked about width.
+     * a portrait window apart from a landscape one. Width alone can't; a
+     * big tablet's portrait width comfortably clears a phone's landscape
+     * width, so the two-column player (see [landscapePlayerAvailable])
+     * would fire in portrait too if it only ever asked about width.
      */
     windowHeight: Dp,
     appBackdrop: LayerBackdrop,
@@ -3359,9 +3367,35 @@ private fun BitChordApp(
             }
         }
 
+        // A phone stays upright everywhere but in the player. The pages behind
+        // it are drawn for a tall single column (see R.bool.allow_rotation),
+        // but the player has a landscape shape of its own — the same one a
+        // tablet gets, see [landscapePlayerAvailable] — so while it is up the
+        // phone follows the user's own rotation setting, and puts itself back
+        // upright the moment the player goes. A screen too small for that
+        // shape stays pinned rather than squashing the portrait player.
+        val playerRaised = !playerDocked && showNowPlaying && playerSong != null
+        val phoneRotatesInPlayer = remember(context) {
+            val configuration = context.resources.configuration
+            !context.resources.getBoolean(R.bool.allow_rotation) &&
+                landscapePlayerFitsScreen(
+                    configuration.screenWidthDp.dp,
+                    configuration.screenHeightDp.dp,
+                )
+        }
+        if (phoneRotatesInPlayer) {
+            LaunchedEffect(playerRaised) {
+                context.findActivity()?.requestedOrientation = if (playerRaised) {
+                    ActivityInfo.SCREEN_ORIENTATION_USER
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                }
+            }
+        }
+
         // ---- Now Playing ----
         // Only raised where it isn't already open beside the page.
-        if (!playerDocked && showNowPlaying && playerSong != null) {
+        if (playerRaised) {
             val nowPlayingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
             ModalBottomSheet(
                 onDismissRequest = { showNowPlaying = false },

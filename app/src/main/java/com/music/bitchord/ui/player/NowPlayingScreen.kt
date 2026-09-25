@@ -63,6 +63,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -83,6 +84,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBars
@@ -430,48 +433,56 @@ private val DOCKED_PLAYER_MAX_WIDTH = 420.dp
 private val DOCKED_PAGE_MIN_WIDTH = 360.dp
 
 /**
- * The least a window has to offer, now that the player fills it directly
- * rather than sharing it with a page, before splitting the lyrics beside the
- * artwork is worth doing at all: enough that half of it still holds a square
- * sleeve and a line of credits, and the other half a lyric column wide enough
- * to read — not a caption strip squeezed in beside it.
+ * The least a landscape window has to offer before the player splits into its
+ * two columns: enough that each half still holds what it is given — the sleeve
+ * above the lyrics / output / queue row on the left, the credits and transport
+ * on the right — with the bottom row's three-up capsule still fitting across
+ * the narrower half.
  *
- * Set to the same figure [dockedPlayerAvailable] already treats as "tablet
- * sized" for this app, rather than a number of its own — a large phone turned
- * sideways and a small tablet can land on either side of it, and that line
- * already is where this app draws it.
+ * Low enough to take in a phone turned sideways, which is the point: a phone in
+ * landscape and a tablet in landscape are the same shape, and they get the same
+ * layout rather than the portrait player squashed into a window it was never
+ * drawn for.
  */
-private val WIDE_LYRICS_PLAYER_MIN_WIDTH = 700.dp
+private val LANDSCAPE_PLAYER_MIN_WIDTH = 560.dp
 
 /**
- * The widest the split layout's two columns are allowed to get between them,
- * centred in whatever is left over.
+ * The widest the two columns are allowed to get between them, centred in
+ * whatever is left over.
  *
- * Without a cap the lyric column simply takes every pixel past the artwork
- * lane, and on a wide window that is a column of text with its left edge near
- * the middle of the screen and a hand's width of empty backdrop trailing off
- * the right of every line. Lyrics are read down, not across: past a certain
- * measure the extra width is not more room for the words, it is further for
- * the eye to travel back at the end of each one.
- *
- * Split evenly, the figure gives each column a little under
- * [PLAYER_MAX_WIDTH] — so the player half is close to the width it has to
- * itself on a phone, and the lyric half is past the point where a long line
- * stops needing to wrap.
+ * Without a cap the lyric column simply takes every pixel past the artwork,
+ * and on a wide window that is a column of text with a hand's width of empty
+ * backdrop trailing off the right of every line. Lyrics are read down, not
+ * across: past a certain measure the extra width is further for the eye to
+ * travel back rather than more room for the words.
  */
-private val WIDE_LYRICS_MAX_WIDTH = 1000.dp
+private val LANDSCAPE_PLAYER_MAX_WIDTH = 1100.dp
 
 /**
- * How long the split takes to open or close.
- *
- * Matches the 420ms the sleeve already takes to collapse when the phone layout
- * opens its own lyrics, so the two surfaces answer the same gesture at the same
- * pace.
+ * Below this height the landscape player tightens its right column — smaller
+ * transport, shorter gaps — so a phone on its side fits the credits, the
+ * scrubber, the transport and the volume bar between its status and
+ * navigation bars without any of them falling off the bottom.
  */
-private const val WIDE_SPLIT_MS = 420
+private val LANDSCAPE_COMPACT_HEIGHT = 440.dp
 
 /**
- * The artwork's own play/pause/scrub pose in the two wide layouts. Three flat
+ * Side margin of the landscape player's sleeve column and credits on a
+ * phone-height window, in place of [PLAYER_GUTTER].
+ */
+private val LANDSCAPE_GUTTER_COMPACT = 20.dp
+
+/**
+ * How the right column hands over between the player, the lyrics and the
+ * queue. The left column never moves, so a crossfade is the whole transition —
+ * the same page being turned, not a panel being opened.
+ */
+private const val LANDSCAPE_PANE_FADE_IN_MS = 220
+private const val LANDSCAPE_PANE_FADE_IN_DELAY_MS = 90
+private const val LANDSCAPE_PANE_FADE_OUT_MS = 140
+
+/**
+ * The artwork's own play/pause/scrub pose in the landscape layout. Three flat
  * scales and one priority rule: paused always wins outright over a scrub in
  * progress, rather than the two combining — there is one artwork, in one of
  * three settled poses, never a blend of two.
@@ -587,31 +598,31 @@ fun dockedPlayerAvailable(windowWidth: Dp): Boolean =
     windowWidth >= DOCKED_PAGE_MIN_WIDTH + DOCKED_PLAYER_MIN_WIDTH
 
 /**
- * Whether the window itself has room to run the lyrics beside the artwork,
- * standing rather than behind the toggle a narrower one is stuck with — the
- * tablet-landscape layout: a square sleeve, the credits and the transport in
- * one column, the full lyric sheet in another.
+ * Whether the player takes its landscape shape: the sleeve and the lyrics /
+ * output / queue row in the left column, and the right column showing the
+ * credits and transport, the lyrics or the queue — one of the three at a time.
  *
- * The player fills the whole window at every size now (see `playerDocked` at
- * the call site in MainActivity) — there is no page beside it to leave room
- * for — so the width side of this is only [WIDE_LYRICS_PLAYER_MIN_WIDTH] on
- * its own, unlike [dockedPlayerAvailable]'s sum of two minimums.
+ * The same answer for a tablet and a phone on its side. Both are asked the
+ * same question, the window's own proportions, rather than what kind of
+ * device this is; a phone only gets to ask it at all because MainActivity lets
+ * it rotate while the player is up.
  *
- * Width alone isn't enough, though: a tablet held upright can be wider than
- * [WIDE_LYRICS_PLAYER_MIN_WIDTH] in portrait too — an 11" iPad's portrait
- * width alone clears it — and the two-column layout is a landscape shape, not
- * a "wide enough" one. [windowHeight] is what tells the two apart: requiring
- * the window to be wider than it is tall is what keeps this to landscape
- * specifically.
- *
- * Upright, a tablet gets the phone layout, deliberately and with nothing
- * tablet-shaped layered on top. A portrait-specific arrangement was tried and
- * removed: a tall window is the shape the phone player was drawn for, and a
- * second layout standing in for it there was a worse version of a screen that
- * already worked.
+ * Width alone isn't enough: a tablet held upright can be as wide as a phone
+ * held sideways, and the two-column layout is a landscape shape, not a "wide
+ * enough" one. Upright, every device gets the portrait player — a tall window
+ * is the shape it was drawn for.
  */
-fun wideLyricsLayoutAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
-    windowWidth > windowHeight && windowWidth >= WIDE_LYRICS_PLAYER_MIN_WIDTH
+fun landscapePlayerAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
+    windowWidth > windowHeight && windowWidth >= LANDSCAPE_PLAYER_MIN_WIDTH
+
+/**
+ * Whether a screen with these two sides would get [landscapePlayerAvailable]
+ * once turned sideways — MainActivity's question before letting a phone
+ * rotate at all. Where the answer is no, turning it would only give the
+ * portrait player a shorter window.
+ */
+fun landscapePlayerFitsScreen(sideA: Dp, sideB: Dp): Boolean =
+    landscapePlayerAvailable(maxOf(sideA, sideB), minOf(sideA, sideB))
 
 /** How wide that pane is. Only meaningful where [dockedPlayerAvailable] is true. */
 fun dockedPlayerWidth(windowWidth: Dp): Dp =
@@ -1125,9 +1136,9 @@ fun NowPlayingScreen(
     windowWidth: Dp,
     /**
      * The window's height, alongside [windowWidth] — needed for exactly one
-     * thing: telling a wide portrait tablet apart from a landscape one, in
-     * [wideLyricsLayoutAvailable]. Width alone can't; a big tablet's portrait
-     * width comfortably clears the same threshold its landscape width does.
+     * thing: telling a portrait window apart from a landscape one, in
+     * [landscapePlayerAvailable]. Width alone can't; a big tablet's portrait
+     * width comfortably clears a phone's landscape width.
      */
     windowHeight: Dp,
     /**
@@ -2188,299 +2199,147 @@ fun NowPlayingScreen(
     // position into the same space as the two edges above.
     var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-    // The whole lyrics stack — translation motion, the panel itself and the
-    // translate toggle floated over its foot — as one slot the wide layouts
-    // below can place wherever their own shape wants it.
-    //
-    // A slot rather than each wide layout building its own: everything this
-    // needs (the translated lines, the transition counter, the toggle's state
-    // machine) is declared up here, in the one place that owns it, and handing
-    // the layouts a second copy apiece is how a tablet ends up quietly a
-    // version behind on lyrics. Built here, they get whatever the phone gets.
-    //
-    // [controlsOpen] is passed as a constant `true`, not as
-    // [lyricsControlsOpen]: that flag exists because a phone hides the player
-    // behind the lyrics and needs a tap to bring it back. In these layouts the
-    // transport never went anywhere — it is standing beside or below the words
-    // the whole time — so there is nothing for a tap to reveal, and leaving the
-    // reveal gesture armed would only eat taps meant for the lines themselves.
-    val wideLyricsContent: @Composable (Modifier) -> Unit = { lyricsModifier ->
-        Box(modifier = lyricsModifier) {
-            if (displayedLyrics.isNotEmpty()) {
-                LyricsTranslationMotion(
-                    trigger = translationTransition,
-                    reduceMotion = reduceTranslationMotion,
-                    modifier = Modifier.fillMaxSize(),
-                ) { particleProgress ->
-                    LyricsPanel(
-                        lines = lyrics.orEmpty(),
-                        subLines = lyricsSubLines,
-                        trackKey = song.videoId,
-                        positionMs = lyricsPositionMs,
-                        looking = !lyricsUnavailable,
-                        isPlaying = isPlaying,
-                        onSeekToLine = seekToLyric,
-                        controlsOpen = true,
-                        onRevealControls = {},
-                        onHideControls = {},
-                        translationProgress = particleProgress,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
-                // Always up here, rather than riding the controls' fade as it
-                // does on a phone: the fade is the phone's answer to a control
-                // parked over the words when nobody asked for the controls,
-                // and these layouts never took the controls away to begin with.
-                Box(modifier = Modifier.align(Alignment.BottomEnd)) {
-                    TranslationToggleButton(
-                        state = translationState,
-                        showingTranslation = showingTranslation,
-                        enabled = !lyrics.isNullOrEmpty(),
-                        onClick = toggleTranslation,
-                    )
-                }
-                Box(modifier = Modifier.align(Alignment.BottomStart)) {
-                    RomanizationToggleButton(
-                        state = romanizationState,
-                        showingRomanization = showingRomanization,
-                        enabled = !lyrics.isNullOrEmpty(),
-                        onClick = toggleRomanization,
-                    )
-                }
-            } else {
-                // Held at a fixed line rather than through
-                // [LyricsUnavailableLine] or [LyricsLoadingLine]: those exist
-                // for a strip that reads over a scrubber for a few seconds and
-                // then gets out of the way, and fading either one out would
-                // leave a tablet's whole lyric column blank for as long as the
-                // track keeps playing.
-                Text(
-                    text = if (lyricsUnavailable) {
-                        stringResource(R.string.lyrics_not_available)
-                    } else {
-                        lyricsLoadingText
-                    },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            }
+    // The one line that sits above the scrubber while the lyrics are open: which
+    // of the providers the timings came from, or what the translation is doing.
+    // Worked out once for both layouts — the portrait player puts it over its
+    // half-player, the landscape one under its lyric column — so the two can
+    // never disagree about what it says.
+    val lyricsStatus = when {
+        translationState is LyricsTranslationUiState.Loading ->
+            stringResource(R.string.translating_lyrics_to, translationLanguageName)
+        romanizationState is LyricsTranslationUiState.Loading ->
+            stringResource(R.string.romanizing_lyrics)
+        showingTranslation ->
+            stringResource(R.string.lyrics_translated_to, translationLanguageName)
+        showingRomanization ->
+            stringResource(R.string.lyrics_romanized)
+        translationState is LyricsTranslationUiState.SameLanguage ->
+            stringResource(R.string.lyrics_already_in_language, translationLanguageName)
+        romanizationState is LyricsTranslationUiState.SameLanguage ->
+            stringResource(R.string.lyrics_already_romanized)
+        lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
+        lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
+        lyrics.isNullOrEmpty() -> lyricsLoadingText
+        else -> stringResource(R.string.lyrics_saved_with_download)
+    }
+
+    // Where the caption above the credits leads: the party for a track someone
+    // else queued, the queue itself for a queue-built session, and otherwise
+    // back to the album or playlist the session was started from.
+    val openPlaybackOrigin: () -> Unit = {
+        if (playedBy != null) {
+            onListenTogether()
+        } else if (song.playbackSourceType == PlaybackSourceType.QUEUE) {
+            queueOpen = true
+            closeLyrics()
+        } else {
+            onOpenPlaybackSource()
         }
     }
 
-    // A window wide enough to run the lyrics beside the artwork — see
-    // [wideLyricsLayoutAvailable] — takes on an entirely different shape the
-    // moment the lyrics are actually open: two columns instead of the single
-    // one everything below this draws, artwork and transport held to a
-    // phone-width lane on the left and the lyrics standing in the rest of the
-    // window on the right, rather than folded underneath a collapsed sleeve.
-    //
-    // Gated on [lyricsOpen] rather than on the width alone: with the lyrics
-    // shut there is nothing here a phone-width column doesn't already draw
-    // exactly as well, just centred in the extra room — which is what this
-    // screen already does on its own, being no wider on its content than
-    // [PLAYER_MAX_WIDTH]. Splitting it into two columns with nothing to put in
-    // the second would be a lane of empty backdrop where the rest of the
-    // window used to be.
-    //
-    // A separate branch rather than something woven into the layout below:
-    // reusing this function's collapsing sleeve, hero banner and vertical drag
-    // gesture for a shape they were never drawn for would risk all three for a
-    // shape none of them apply to.
-    val wideSplitAvailable = wideLyricsLayoutAvailable(windowWidth, windowHeight)
-    // Tablet-sized players use the full-cover blur in all three states. On a
-    // phone only the lyrics and queue replace the main player's seam-aware,
-    // reflected mesh; the main player deliberately keeps its existing look.
-    val tabletArtworkBackdrop = dockedPlayerAvailable(windowWidth)
-    // Owned by the song-level player composition, not by any one screen state.
-    // Opening lyrics/queue and mounting the tablet split therefore reuse the
-    // same tiny pre-blurred bitmap instead of running a screen-sized effect.
-    val fullArtworkBlurImage = rememberFullArtworkBlurImage(
-        imageUrl = remoteArt,
-        artPx = ART_PX,
-        prepare = tabletArtworkBackdrop || lyricsOpen || queueOpen || playerPrewarmStage >= 1,
-    )
-    // One movable Image node, not two backdrop call sites. Compose carries it
-    // from the normal player into the tablet split; only the cached bitmap
-    // changes when the artwork preparation above completes for another song.
-    val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
-    val fullArtworkBlurContent = remember {
-        movableContentOf<Modifier> { backdropModifier ->
-            FullArtworkBlurBackdrop(
-                image = currentFullArtworkBlurImage.value,
-                modifier = backdropModifier,
-            )
-        }
-    }
-    // One number for both directions, and it lives out here rather than inside
-    // the layout it drives — which is the whole reason closing is an animation
-    // at all. Held inside, it would be destroyed by the very unmount it was
-    // meant to animate, so the split could only ever open gracefully and then
-    // vanish. Out here it survives [lyricsOpen] going false, and the branch
-    // below stays mounted until it has finished running back down to zero.
-    //
-    // At zero the split's own geometry is the closed player's — content at
-    // [PLAYER_MAX_WIDTH], centred — so the hand-back to the layout underneath
-    // lands on matching frames instead of on a jump.
-    val wideSplitOpen = (lyricsOpen || queueOpen) && wideSplitAvailable
-    val wideSplit by animateFloatAsState(
-        targetValue = if (wideSplitOpen) 1f else 0f,
-        animationSpec = tween(WIDE_SPLIT_MS, easing = FastOutSlowInEasing),
-        label = "wideSplit",
-    )
-    // Which panel the right column is showing. Latched rather than derived, so
-    // that closing — where both flags go false together — leaves the panel that
-    // was up on screen to fade out as itself, instead of flipping to the other
-    // one for the length of the exit.
-    var widePanelIsQueue by remember { mutableStateOf(false) }
-    LaunchedEffect(lyricsOpen, queueOpen) {
-        if (queueOpen) widePanelIsQueue = true else if (lyricsOpen) widePanelIsQueue = false
-    }
-    if (wideSplitAvailable && (wideSplitOpen || wideSplit > 0.001f)) {
-        // Which of four databases the timings came from, or what the translation
-        // is currently doing — the one line the phone layout puts directly above
-        // its scrubber while the lyrics are open.
-        //
-        // Computed here, from the same state and with the same branches as the
-        // phone's own copy a few hundred lines below, and handed to the wide
-        // layouts as a finished string. The alternative was passing four pieces of
-        // translation state across and restating the branches at the other end,
-        // which is how the two would drift apart.
-        val wideLyricsStatus = when {
-            translationState is LyricsTranslationUiState.Loading ->
-                stringResource(R.string.translating_lyrics_to, translationLanguageName)
-            romanizationState is LyricsTranslationUiState.Loading ->
-                stringResource(R.string.romanizing_lyrics)
-            showingTranslation ->
-                stringResource(R.string.lyrics_translated_to, translationLanguageName)
-            showingRomanization ->
-                stringResource(R.string.lyrics_romanized)
-            translationState is LyricsTranslationUiState.SameLanguage ->
-                stringResource(R.string.lyrics_already_in_language, translationLanguageName)
-            romanizationState is LyricsTranslationUiState.SameLanguage ->
-                stringResource(R.string.lyrics_already_romanized)
-            lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
-            lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
-            lyrics.isNullOrEmpty() -> lyricsLoadingText
-            else -> stringResource(R.string.lyrics_saved_with_download)
-        }
-
-        // The line above the scrubber, whichever of the two the phone would be
-        // showing here: the lyrics' own source or translation state while the
-        // lyric sheet is up, and the current line otherwise — which is what the
-        // phone shows behind its queue too, and is far more use there than a
-        // caption about lyrics nobody is looking at.
-        val wideStatusContent: @Composable (Modifier) -> Unit = { statusModifier ->
-            if (lyricsOpen) {
-                LyricsStatusWithChange(
-                    status = wideLyricsStatus,
-                    onChange = { showLyricsProviders = true },
-                    modifier = statusModifier.padding(vertical = 4.dp),
-                )
-            } else if (syncedLyricsEnabled) {
-                Box(modifier = statusModifier) {
-                    if (displayedLyrics.isNotEmpty()) {
-                        CurrentLyricLine(
-                            lines = displayedLyrics,
-                            trackKey = song.videoId,
-                            positionMs = lyricsPositionMs,
-                            isPlaying = isPlaying,
-                            durationMs = durationMs,
-                            onClick = openLyrics,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else if (lyricsUnavailable) {
-                        LyricsUnavailableLine(
-                            trackKey = song.videoId,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        LyricsLoadingLine(
-                            text = lyricsLoadingText,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+    // Horizontal fling skips tracks. The portrait player hangs it on the whole
+    // screen, the landscape one on the sleeve alone — the right column there is
+    // full of horizontal sliders and a lyric list that should not be one stray
+    // sideways drag away from changing the song.
+    val skipSwipeGesture = Modifier.pointerInput(showAudioPipeline, panelScrolling, controlsLocked) {
+        if (showAudioPipeline || panelScrolling) return@pointerInput
+        var total = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { total = 0f },
+            onDragCancel = { swipeOffset = 0f },
+            onDragEnd = {
+                // The same two buzzes the transport glyphs give, so swiping the
+                // sleeve and tapping skip feel like one gesture with two
+                // spellings.
+                val crossed = total <= -swipeThreshold || total >= swipeThreshold
+                when {
+                    // Still tracks the finger and still springs back, so the
+                    // sleeve does not feel dead — it just says why it did not
+                    // move on.
+                    controlsLocked -> if (crossed) onBlockedControl()
+                    total <= -swipeThreshold -> {
+                        haptics.play(Haptic.SkipNext)
+                        onNext()
+                    }
+                    total >= swipeThreshold -> {
+                        haptics.play(Haptic.SkipPrevious)
+                        onPrevious()
                     }
                 }
-            }
-        }
+                swipeOffset = 0f
+            },
+            onHorizontalDrag = { _, delta ->
+                total += delta
+                // Damped: it's a hint, not a drag-to-position.
+                swipeOffset = total * 0.35f
+            },
+        )
+    }
 
-        // The queue, as a slot on the same terms as the lyrics one — built here
-        // where the queue callbacks already are, so the split lists exactly what
-        // the phone lists rather than a second arrangement of the same rows.
-        val wideQueueContent: @Composable (Modifier) -> Unit = { queueModifier ->
-            Column(modifier = queueModifier) {
-                InlineQueue(
-                    queue = queue,
-                    currentIndex = queueIndex,
-                    autoplayEnabled = autoplayEnabled,
-                    controlsLocked = controlsLocked,
-                    onJumpTo = onJumpTo,
-                    onRemove = onRemoveFromQueue,
-                    onMove = onMoveInQueue,
-                    onClear = onClearQueue,
-                    onDragActiveChange = onQueueDragActiveChange,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-        }
+    // The scrubber's two halves, shared by both layouts so a drop point is held
+    // the same way in each — see [pendingSeek].
+    val onScrub: (Float) -> Unit = {
+        scrubbing = true
+        scrubValue = it
+    }
+    val onScrubFinished: () -> Unit = {
+        // On release only. Ticking the whole way along the bar turns a scrub
+        // into a rattle, and the beat that matters is the one that says where
+        // the playhead landed.
+        haptics.play(Haptic.Select)
+        pendingSeek = scrubValue
+        onSeekFraction(scrubValue)
+        scrubbing = false
+    }
+    val onVolumeChange: (Float) -> Unit = {
+        volumeDragging = true
+        // Follow the finger exactly; only external changes tween.
+        scope.launch { volume.snapTo(it) }
+        audioManager?.setStreamVolume(
+            AudioManager.STREAM_MUSIC,
+            (it * maxVolume).roundToInt(),
+            0,
+        )
+    }
+    val onVolumeChangeFinished: () -> Unit = { volumeDragging = false }
 
-        Box(modifier = modifier.fillMaxSize()) {
-        WidePlayerControls(
-            song = song,
-            isPlaying = isPlaying,
-            isLoading = isLoading || audioVersionSwitching,
-            audioVersionSwitching = audioVersionSwitching,
-            positionMs = positionMs,
-            durationMs = durationMs,
-            hasPrevious = hasPrevious,
-            hasNext = hasNext,
-            repeatMode = repeatMode,
+    // Lyrics, output and queue, with the output name under them — the row both
+    // layouts end on, and the only thing in the landscape player's left column
+    // besides the sleeve.
+    val playerActions: @Composable () -> Unit = {
+        PlayerActionRow(
+            lyricsOpen = lyricsOpen,
+            queueOpen = queueOpen,
             shuffleEnabled = shuffleEnabled,
+            repeatMode = repeatMode,
             autoplayEnabled = autoplayEnabled,
-            signedIn = signedIn,
-            accountName = accountName,
-            likeStatus = likeStatus,
-            hideVolumeBar = hideVolumeBar,
-            volume = volume,
-            maxVolume = maxVolume,
-            audioManager = audioManager,
-            onVolumeDragging = { volumeDragging = it },
-            scrubbing = scrubbing,
-            onScrubbingChange = { scrubbing = it },
-            scrubValue = scrubValue,
-            onScrubValueChange = { scrubValue = it },
-            onToggleLike = onToggleLike,
-            onPlayPause = onPlayPause,
-            onNext = onNext,
-            onPrevious = onPrevious,
-            onSeekFraction = onSeekFraction,
+            onToggleLyrics = toggleLyrics,
+            onToggleQueue = toggleQueue,
             onToggleShuffle = onToggleShuffle,
             onCycleRepeat = onCycleRepeat,
             onToggleAutoplay = onToggleAutoplay,
-            onOpenMenu = onOpenMenu,
-            onOpenAlbum = onOpenAlbum,
-            onOpenArtist = onOpenArtist,
             onOpenOutput = openAudioOutput,
             onListenTogether = onListenTogether,
             onOpenListenTogetherMembers = openListenTogetherMembers,
-            controlsLocked = controlsLocked,
-            lyricsOpen = lyricsOpen,
-            queueOpen = queueOpen,
-            onToggleLyrics = toggleLyrics,
-            onToggleQueue = toggleQueue,
-            showQueue = widePanelIsQueue,
-            statusContent = wideStatusContent,
-            lyricsContent = wideLyricsContent,
-            queueContent = wideQueueContent,
-            background = fullArtworkBlurContent,
-            progress = wideSplit,
         )
-        // The output drawer and the pipeline dialog are drawn by the phone
-        // layout below, past the `return` this branch takes — so without
-        // mounting them here too the headphones segment and the quality
-        // readout set their flags on a tablet and nothing ever appears. They
-        // are overlays over whatever player is on screen, and this is the
-        // player that is on screen.
+        // Keep the current output caption visible in every state.
+        Spacer(Modifier.height(18.dp))
+        Box(
+            modifier = Modifier.fillMaxWidth().height(20.dp),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            OutputCaption(
+                accountName = accountName,
+                onOpenOutput = openAudioOutput,
+                onOpenMembers = openListenTogetherMembers,
+            )
+        }
+    }
+
+    // The drawers and dialogs the player raises over itself. Mounted by
+    // whichever layout is on screen — they are overlays over the player, not
+    // part of either shape of it.
+    val playerOverlays: @Composable () -> Unit = {
         if (showAudioOutput) {
             AudioOutputSheet(
                 hazeState = playerHaze,
@@ -2520,6 +2379,269 @@ fun NowPlayingScreen(
                 onDismiss = onDismissLyricsOffset,
             )
         }
+    }
+
+    // A landscape window — a tablet, or a phone on its side — takes an entirely
+    // different shape from the portrait player below: two columns rather than
+    // one, see [landscapePlayerAvailable] and [LandscapePlayerLayout].
+    //
+    // A separate branch rather than something woven into the layout below:
+    // the portrait player's collapsing sleeve, hero banner and vertical drag
+    // gesture exist to let one tall column be the player, the lyrics and the
+    // queue in turn, and in landscape none of them has anything to do — the
+    // sleeve never has to get out of anything's way.
+    val landscape = landscapePlayerAvailable(windowWidth, windowHeight)
+    // Tablet-sized players use the full-cover blur in all three states. On a
+    // phone only the lyrics and queue replace the main player's seam-aware,
+    // reflected mesh; the main player deliberately keeps its existing look.
+    val tabletArtworkBackdrop = dockedPlayerAvailable(windowWidth)
+    // Owned by the song-level player composition, not by any one screen state.
+    // Opening lyrics/queue, and rotating into or out of landscape, therefore
+    // reuse the same tiny pre-blurred bitmap instead of running a screen-sized
+    // effect.
+    val fullArtworkBlurImage = rememberFullArtworkBlurImage(
+        imageUrl = remoteArt,
+        artPx = ART_PX,
+        prepare = landscape || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
+            playerPrewarmStage >= 1,
+    )
+    // One movable Image node, not two backdrop call sites. Compose carries it
+    // between the portrait and landscape players; only the cached bitmap
+    // changes when the artwork preparation above completes for another song.
+    val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    val fullArtworkBlurContent = remember {
+        movableContentOf<Modifier> { backdropModifier ->
+            FullArtworkBlurBackdrop(
+                image = currentFullArtworkBlurImage.value,
+                modifier = backdropModifier,
+            )
+        }
+    }
+
+    if (landscape) {
+        // Paused always wins outright over a scrub in progress — see
+        // [ARTWORK_PAUSE_SHRINK_SCALE].
+        val landscapeArtScale by animateFloatAsState(
+            targetValue = when {
+                !isPlaying -> ARTWORK_PAUSE_SHRINK_SCALE
+                scrubbing -> ARTWORK_DRAG_SHRINK_SCALE
+                else -> ARTWORK_EXPANDED_SCALE
+            },
+            animationSpec = tween(durationMillis = ARTWORK_SCALE_DURATION_MS, easing = ArtworkScaleEasing),
+            label = "landscapeArtworkScale",
+        )
+        val versionAligning by AppSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
+        val transitionWindow by AppSettings.smartTransitionWindow.collectAsStateWithLifecycle()
+        val panelOpen = lyricsOpen || queueOpen
+
+        Box(modifier = modifier.fillMaxSize()) {
+            LandscapePlayerLayout(
+                pane = when {
+                    lyricsOpen -> PlayerPane.Lyrics
+                    queueOpen -> PlayerPane.Queue
+                    else -> PlayerPane.Main
+                },
+                showHandle = !docked,
+                background = { backgroundModifier ->
+                    // The whole screen is the sheets' frost source: there is
+                    // no full-bleed banner here to be it instead.
+                    fullArtworkBlurContent(backgroundModifier.hazeSource(playerHaze))
+                },
+                artwork = { artworkModifier ->
+                    LandscapeArtwork(
+                        artRequest = artRequest,
+                        artLoaded = artLoaded,
+                        onArtState = {
+                            artLoaded = it is AsyncImagePainter.State.Success
+                            // Only the failure is latched — see the portrait
+                            // sleeve's copy of this for why.
+                            if (it is AsyncImagePainter.State.Success) artFailed = false
+                            if (it is AsyncImagePainter.State.Error) artFailed = true
+                        },
+                        canvas = canvas,
+                        canvasRendered = canvasRendered,
+                        isPlaying = isPlaying,
+                        onCanvasRenderedChange = { canvasRendered = it },
+                        modifier = artworkModifier
+                            .then(skipSwipeGesture)
+                            .graphicsLayer {
+                                scaleX = landscapeArtScale
+                                scaleY = landscapeArtScale
+                                translationX = swipeSettle
+                            }
+                            // With a panel up the sleeve is the way back to
+                            // the player, as the portrait thumbnail is.
+                            .clickable(
+                                enabled = panelOpen,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) {
+                                queueOpen = false
+                                closeLyrics()
+                            },
+                    ) {
+                        // The stats belong to the player, not to the sleeve, so
+                        // they leave it along with the rest of the player.
+                        SleeveNerdStats(
+                            song = song,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                .graphicsLayer { alpha = if (panelOpen) 0f else 1f },
+                        )
+                    }
+                },
+                actions = playerActions,
+                mainPane = { compact ->
+                    LandscapeMainPane(
+                        compact = compact,
+                        caption = if (hideSongStatus) null else playbackOriginText(song, playedBy),
+                        onOpenCaption = openPlaybackOrigin,
+                        credits = {
+                            LandscapeCredits(
+                                song = song,
+                                signedIn = signedIn,
+                                likeStatus = likeStatus,
+                                showRevertCue = showRevertCue,
+                                onToggleLike = onToggleLike,
+                                onOpenMenu = onOpenMenu,
+                                onOpenAlbum = onOpenAlbum,
+                                onOpenArtist = onOpenArtist,
+                            )
+                        },
+                        lyricStrip = if (syncedLyricsEnabled) {
+                            {
+                                CurrentLyricStrip(
+                                    lines = displayedLyrics,
+                                    trackKey = song.videoId,
+                                    positionMs = lyricsPositionMs,
+                                    isPlaying = isPlaying,
+                                    durationMs = durationMs,
+                                    lyricsUnavailable = lyricsUnavailable,
+                                    loadingText = lyricsLoadingText,
+                                    onClick = openLyrics,
+                                )
+                            }
+                        } else {
+                            null
+                        },
+                        scrubber = {
+                            PlayerScrubber(
+                                shown = shown,
+                                durationMs = durationMs,
+                                loading = versionAligning || audioVersionSwitching,
+                                transitionWindow = transitionWindow
+                                    ?.takeIf { !scrubbing && it.end > it.start }
+                                    ?.let { it.start..it.end },
+                                onScrub = onScrub,
+                                onScrubFinished = onScrubFinished,
+                            ) {
+                                PlaybackQualityLabel(
+                                    song = song,
+                                    isLoading = isLoading,
+                                    modifier = Modifier
+                                        .align(Alignment.Center)
+                                        .padding(horizontal = 8.dp),
+                                )
+                            }
+                        },
+                        transport = {
+                            TransportRow(
+                                isPlaying = isPlaying,
+                                isLoading = isLoading || audioVersionSwitching,
+                                previousEnabled = !controlsLocked &&
+                                    (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
+                                nextEnabled = !controlsLocked && hasNext,
+                                onPrevious = onPrevious,
+                                onPlayPause = onPlayPause,
+                                onNext = onNext,
+                                compact = compact,
+                            )
+                        },
+                        volume = if (hideVolumeBar) {
+                            null
+                        } else {
+                            {
+                                VolumeRow(
+                                    value = volume.value,
+                                    onValueChange = onVolumeChange,
+                                    onValueChangeFinished = onVolumeChangeFinished,
+                                )
+                            }
+                        },
+                    )
+                },
+                lyricsPane = {
+                    LandscapeLyricsPane(
+                        hasLyrics = displayedLyrics.isNotEmpty(),
+                        placeholder = if (lyricsUnavailable) {
+                            stringResource(R.string.lyrics_not_available)
+                        } else {
+                            lyricsLoadingText
+                        },
+                        status = lyricsStatus,
+                        onChangeProvider = { showLyricsProviders = true },
+                        romanizationToggle = {
+                            RomanizationToggleButton(
+                                state = romanizationState,
+                                showingRomanization = showingRomanization,
+                                enabled = !lyrics.isNullOrEmpty(),
+                                onClick = toggleRomanization,
+                            )
+                        },
+                        translationToggle = {
+                            TranslationToggleButton(
+                                state = translationState,
+                                showingTranslation = showingTranslation,
+                                enabled = !lyrics.isNullOrEmpty(),
+                                onClick = toggleTranslation,
+                            )
+                        },
+                    ) { panelModifier ->
+                        LyricsTranslationMotion(
+                            trigger = translationTransition,
+                            reduceMotion = reduceTranslationMotion,
+                            modifier = panelModifier,
+                        ) { particleProgress ->
+                            // [controlsOpen] is a constant `true`: that flag
+                            // exists because the portrait player hides its
+                            // transport behind the lyrics and needs a tap to
+                            // bring it back. Here there is nothing hidden for
+                            // a tap to reveal, and leaving the reveal gesture
+                            // armed would only eat taps meant for the lines.
+                            LyricsPanel(
+                                lines = lyrics.orEmpty(),
+                                subLines = lyricsSubLines,
+                                trackKey = song.videoId,
+                                positionMs = lyricsPositionMs,
+                                looking = !lyricsUnavailable,
+                                isPlaying = isPlaying,
+                                onSeekToLine = seekToLyric,
+                                controlsOpen = true,
+                                onRevealControls = {},
+                                onHideControls = {},
+                                translationProgress = particleProgress,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                },
+                queuePane = {
+                    InlineQueue(
+                        queue = queue,
+                        currentIndex = queueIndex,
+                        autoplayEnabled = autoplayEnabled,
+                        controlsLocked = controlsLocked,
+                        onJumpTo = onJumpTo,
+                        onRemove = onRemoveFromQueue,
+                        onMove = onMoveInQueue,
+                        onClear = onClearQueue,
+                        onDragActiveChange = onQueueDragActiveChange,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                },
+            )
+            playerOverlays()
         }
         return
     }
@@ -2849,40 +2971,7 @@ fun NowPlayingScreen(
                     enabled = spotifyCanvasPresentation,
                     onToggle = { spotifyCanvasControlsOpen = !spotifyCanvasControlsOpen },
                 )
-                .pointerInput(showAudioPipeline, panelScrolling, controlsLocked) {
-                    if (showAudioPipeline || panelScrolling) return@pointerInput
-                    var total = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { total = 0f },
-                        onDragCancel = { swipeOffset = 0f },
-                        onDragEnd = {
-                            // The same two buzzes the transport glyphs give, so
-                            // swiping the sleeve and tapping skip feel like one
-                            // gesture with two spellings.
-                            val crossed = total <= -swipeThreshold || total >= swipeThreshold
-                            when {
-                                // Still tracks the finger and still springs
-                                // back, so the sleeve does not feel dead —
-                                // it just says why it did not move on.
-                                controlsLocked -> if (crossed) onBlockedControl()
-                                total <= -swipeThreshold -> {
-                                    haptics.play(Haptic.SkipNext)
-                                    onNext()
-                                }
-                                total >= swipeThreshold -> {
-                                    haptics.play(Haptic.SkipPrevious)
-                                    onPrevious()
-                                }
-                            }
-                            swipeOffset = 0f
-                        },
-                        onHorizontalDrag = { _, delta ->
-                            total += delta
-                            // Damped: it's a hint, not a drag-to-position.
-                            swipeOffset = total * 0.35f
-                        },
-                    )
-                },
+                .then(skipSwipeGesture),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // The only strip that passes drags through to the sheet, so the
@@ -2924,40 +3013,14 @@ fun NowPlayingScreen(
                 // fade on both entry and exit, but removes its click target
                 // entirely once lyrics or the queue owns the player.
                 if (!hideSongStatus && p < 0.999f) {
-                    Text(
-                        text = playedBy?.let {
-                            stringResource(R.string.played_by, it)
-                        } ?: song.radioName?.let {
-                            stringResource(R.string.playing_radio, it)
-                        } ?: stringResource(
-                            R.string.playing_from,
-                            song.playbackSource ?: song.albumName ?: stringResource(R.string.queue),
-                        ),
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            shadow = Shadow(
-                                color = Color.Black.copy(alpha = 0.55f),
-                                offset = Offset(0f, 1f),
-                                blurRadius = 4f,
-                            ),
-                        ),
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    PlaybackOriginCaption(
+                        text = playbackOriginText(song, playedBy),
+                        onClick = openPlaybackOrigin,
                         textAlign = TextAlign.Center,
+                        contentPadding = PaddingValues(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
                         modifier = Modifier
                             .align(if (docked) Alignment.Center else Alignment.BottomCenter)
-                            .graphicsLayer { alpha = (1f - p) * spotifyChromeAlpha }
-                            .clickable {
-                                if (playedBy != null) {
-                                    onListenTogether()
-                                } else if (song.playbackSourceType == PlaybackSourceType.QUEUE) {
-                                    queueOpen = true
-                                    closeLyrics()
-                                } else {
-                                    onOpenPlaybackSource()
-                                }
-                            }
-                            .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
+                            .graphicsLayer { alpha = (1f - p) * spotifyChromeAlpha },
                     )
                 }
             }
@@ -3061,16 +3124,6 @@ fun NowPlayingScreen(
             // ---- Top and centre: artwork, then the credits ----
             // Everything that changes between the artwork and the queue lives
             // in this one weighted box, so the controls below it never move.
-            // Read up here rather than down by the scrubber: the stats-for-nerds
-            // line now lives inside the sleeve itself, so the art Box below
-            // needs these before the seek bar does.
-            val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
-            val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
-            // Hoisted alongside the other two rather than read where it is drawn:
-            // the stats block is inside a condition that flips as the sleeve
-            // collapses, and re-subscribing to a flow on every frame of that
-            // collapse is a waste of a subscription.
-            val smartFadeOn by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
             // The loading state the scrubber wears for the length of a version
             // switch — see [ThinSlider.loading]. The flag is the alignment
             // half (fetch + measure); [audioVersionSwitching] is the resolve.
@@ -3078,19 +3131,6 @@ fun NowPlayingScreen(
             // on screen saying the player is still working.
             val versionAligning by AppSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
             val versionSwitching = versionAligning || audioVersionSwitching
-            val smartAnalysis by AppSettings.smartAnalysis.collectAsStateWithLifecycle()
-            // A party doesn't mix, and doesn't analyse for one either — see
-            // [com.music.bitchord.playback.CrossfadeController]. So the two
-            // flows above simply stop moving there, and the stats line has to
-            // say why rather than leave their last values on screen as if they
-            // still described something.
-            //
-            // Read off the party rather than published as a third flow: it is
-            // the same fact the controller and the analyzer each read for
-            // themselves, and a mirror of it could only ever disagree.
-            val inParty by remember {
-                ListenTogether.state.map { it.inParty }.distinctUntilChanged()
-            }.collectAsStateWithLifecycle(initialValue = ListenTogether.state.value.inParty)
             // Height the artwork block below turns out not to need, spent by the
             // controls at the foot of the screen. Filled in from inside the box,
             // where the sleeve's real size is known; see [lastControlSpread].
@@ -3440,74 +3480,16 @@ fun NowPlayingScreen(
                     // Measured stats stay on the sleeve's bottom centre. They
                     // fade away with Spotify's lower control deck rather than
                     // following the compact credits to the bottom edge.
-                    if (showNerdStats && p < 0.5f) {
-                        // A plain white line reads fine over the usual dark
-                        // tile, but a light stretch of an animated cover — sky,
-                        // snow, a pale sleeve — washes it out entirely. The
-                        // shadow costs nothing on a dark background and is what
-                        // keeps it legible on a bright one.
-                        val nerdStyle = MaterialTheme.typography.labelSmall.copy(
-                            shadow = Shadow(
-                                color = Color.Black.copy(alpha = 0.55f),
-                                offset = Offset(0f, 1f),
-                                blurRadius = 4f,
-                            ),
-                        )
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
+                    if (p < 0.5f) {
+                        SleeveNerdStats(
+                            song = song,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(horizontal = 10.dp, vertical = 8.dp)
                                 .graphicsLayer {
                                     alpha = (1f - p * 2f) * spotifyChromeAlpha
                                 },
-                        ) {
-                            nerdStats?.describe(context)?.let { stats ->
-                                Text(
-                                    text = stats,
-                                    style = nerdStyle,
-                                    color = Color.White.copy(alpha = 0.65f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                            // Only when Automix is actually switched on:
-                            // otherwise this would report on analysis nothing is
-                            // going to use, which is noise rather than a stat.
-                            if (smartFadeOn) {
-                                Text(
-                                    // Both sides always named, even when they
-                                    // agree, so the line reads the same way every
-                                    // time and the eye can find the half it wants
-                                    // without re-parsing the sentence.
-                                    text = when {
-                                        // Ahead of the video case because it is
-                                        // the broader one: in a party nothing is
-                                        // analysed for any song, video or not,
-                                        // so naming the video limitation there
-                                        // would describe a rule that is not the
-                                        // one in force.
-                                        inParty -> stringResource(R.string.automix_stopped_in_party)
-                                        song.isVideoOrigin ->
-                                            stringResource(R.string.automix_not_supported_video)
-                                        else -> stringResource(
-                                            R.string.automix_analysis_status,
-                                            smartAnalysis.current.localizedLabel(),
-                                            smartAnalysis.next.localizedLabel(),
-                                        )
-                                    },
-                                    style = nerdStyle,
-                                    // Dimmer than the measured line above it: that
-                                    // one describes the audio, this one describes
-                                    // the app, and the ranking should show.
-                                    color = Color.White.copy(alpha = 0.5f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                        }
+                        )
                     }
                 }
 
@@ -3850,41 +3832,20 @@ fun NowPlayingScreen(
             // one-line slot remains, invisibly, so opening lyrics cannot grow
             // the half-player merely to make room for the source label.
             if (!lyricsOpen && syncedLyricsEnabled) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        // The slider's touch target reaches ~13dp above the
-                        // drawn bar, so the strip reads as further off it than
-                        // it is. Nudged down into that dead space, the same way
-                        // the timestamps below are pulled back up into it.
-                        .offset(y = 6.dp),
-                ) {
-                    if (displayedLyrics.isNotEmpty()) {
-                        CurrentLyricLine(
-                            lines = displayedLyrics,
-                            trackKey = song.videoId,
-                            positionMs = lyricsPositionMs,
-                            isPlaying = isPlaying,
-                            durationMs = durationMs,
-                            // Still visible over the queue, so still a valid way
-                            // in: opens the same full lyrics panel it always has,
-                            // closing the queue behind it the same way the "Up
-                            // next" glyph closes lyrics behind the queue.
-                            onClick = openLyrics,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else if (lyricsUnavailable) {
-                        LyricsUnavailableLine(
-                            trackKey = song.videoId,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        LyricsLoadingLine(
-                            text = lyricsLoadingText,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                }
+                CurrentLyricStrip(
+                    lines = displayedLyrics,
+                    trackKey = song.videoId,
+                    positionMs = lyricsPositionMs,
+                    isPlaying = isPlaying,
+                    durationMs = durationMs,
+                    lyricsUnavailable = lyricsUnavailable,
+                    loadingText = lyricsLoadingText,
+                    // Still visible over the queue, so still a valid way in:
+                    // opens the same full lyrics panel it always has, closing
+                    // the queue behind it the same way the "Up next" glyph
+                    // closes lyrics behind the queue.
+                    onClick = openLyrics,
+                )
             }
             if (!lyricsOpen && !syncedLyricsEnabled) {
                 Text(
@@ -3899,24 +3860,7 @@ fun NowPlayingScreen(
             }
             if (lyricsOpen) {
                 LyricsStatusWithChange(
-                    status = when {
-                        translationState is LyricsTranslationUiState.Loading ->
-                            stringResource(R.string.translating_lyrics_to, translationLanguageName)
-                        romanizationState is LyricsTranslationUiState.Loading ->
-                            stringResource(R.string.romanizing_lyrics)
-                        showingTranslation ->
-                            stringResource(R.string.lyrics_translated_to, translationLanguageName)
-                        showingRomanization ->
-                            stringResource(R.string.lyrics_romanized)
-                        translationState is LyricsTranslationUiState.SameLanguage ->
-                            stringResource(R.string.lyrics_already_in_language, translationLanguageName)
-                        romanizationState is LyricsTranslationUiState.SameLanguage ->
-                            stringResource(R.string.lyrics_already_romanized)
-                        lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
-                        lyricsUnavailable -> stringResource(R.string.no_lyrics_found)
-                        lyrics.isNullOrEmpty() -> lyricsLoadingText
-                        else -> stringResource(R.string.lyrics_saved_with_download)
-                    },
+                    status = lyricsStatus,
                     onChange = { showLyricsProviders = true },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3925,25 +3869,9 @@ fun NowPlayingScreen(
                 )
             }
             val transitionWindow by AppSettings.smartTransitionWindow.collectAsStateWithLifecycle()
-            ThinSlider(
-                value = shown,
-                onValueChange = {
-                    scrubbing = true
-                    scrubValue = it
-                },
-                onValueChangeFinished = {
-                    // On release only. Ticking the whole way along the bar turns
-                    // a scrub into a rattle, and the beat that matters is the one
-                    // that says where the playhead landed.
-                    haptics.play(Haptic.Select)
-                    pendingSeek = scrubValue
-                    onSeekFraction(scrubValue)
-                    scrubbing = false
-                },
-                // The switch's own wait, drawn along the bar itself — see
-                // [ThinSlider.loading]. Kept up under the finger as well: it
-                // is the only thing on screen saying the player is working
-                // rather than stuck on a version that is about to change.
+            PlayerScrubber(
+                shown = shown,
+                durationMs = durationMs,
                 loading = versionSwitching,
                 // Hidden while scrubbing: the planner is still describing
                 // where the transition *would* be, and a marker sitting under
@@ -3952,64 +3880,17 @@ fun NowPlayingScreen(
                 transitionWindow = transitionWindow
                     ?.takeIf { !scrubbing && it.end > it.start }
                     ?.let { it.start..it.end },
-            )
-            val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
-            val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
-            val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
-            // Whether this playback session is even asking for a lossless
-            // stream — the same computation SourceResolver.requestForNow()
-            // makes, mirrored here so "Loading lossless" only appears when a
-            // lossless fetch is actually in flight, not on every buffering
-            // YouTube track.
-            val effectiveQuality = if (metered == true) cellularQuality else wifiQuality
-            val losslessRequested = effectiveQuality == AudioQuality.LOSSLESS
-            // Whether a module is still racing YouTube for this exact track —
-            // see [NerdStats.racingLossless]. YouTube can win that race and
-            // already be playing while the module lookup is still running
-            // detached in the background, and the badge should keep saying
-            // "loading" through that stretch rather than going blank only to
-            // possibly say "loading" again a moment later.
-            val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
-            val stillRacing = song.videoId in racingLossless
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // The slider's touch target extends well past the drawn
-                    // bar, so pull the labels back up under it.
-                    .offset(y = (-9).dp),
+                onScrub = onScrub,
+                onScrubFinished = onScrubFinished,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = formatTime((shown * durationMs).toLong()),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.55f),
-                    )
-                    Text(
-                        text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = Color.White.copy(alpha = 0.55f),
-                    )
-                }
-                // Pinned to the box's own center rather than squeezed into the
-                // gap between the two timestamps: that gap's width changes by
-                // a digit's worth every time a minute rolls over, which was
-                // dragging this along with it every tick. The screen's center
-                // doesn't move.
-                LosslessOrStats(
+                PlaybackQualityLabel(
+                    song = song,
                     isLoading = isLoading,
-                    stillRacing = stillRacing,
-                    losslessRequested = losslessRequested,
-                    effectiveQuality = effectiveQuality,
-                    nerdStats = nerdStats,
                     modifier = Modifier
                         .align(Alignment.Center)
                         .padding(horizontal = 8.dp),
                 )
             }
-
 
             // The transport rides midway between the two blocks it separates:
             // the scrubber above it, and the volume bar and toggle row below,
@@ -4018,58 +3899,16 @@ fun NowPlayingScreen(
             // centre rather than drifting up under the seek bar.
             Spacer(Modifier.height(14.dp + controlSpread / 2))
 
-            // ---- Transport ----
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TransportGlyph(
-                    icon = R.drawable.ic_player_previous,
-                    contentDescription = stringResource(R.string.widget_previous),
-                    size = PLAYER_SKIP_ICON_SIZE,
-                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
-                    onClick = onPrevious,
-                    // Lit whenever back has something to do — either a track to
-                    // step to, or enough elapsed for it to restart this one.
-                    // Faded and inert, not removed, while the host holds the
-                    // controls: the transport keeps its shape either way.
-                    enabled = !controlsLocked &&
-                        (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
-                    haptic = Haptic.SkipPrevious,
-                )
-                // While the stream URL resolves and buffers, the play glyph
-                // would be a lie — show progress instead.
-                if (isLoading || audioVersionSwitching) {
-                    // Same footprint as the play/pause target — a smaller box
-                    // here would shunt everything below it on every load.
-                    Box(Modifier.size(100.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 3.dp,
-                            modifier = Modifier.size(38.dp),
-                        )
-                    }
-                } else {
-                    TransportGlyph(
-                        icon = if (isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
-                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
-                        size = 72.dp,
-                        touchSize = 100.dp,
-                        onClick = onPlayPause,
-                        haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
-                    )
-                }
-                TransportGlyph(
-                    icon = R.drawable.ic_player_next,
-                    contentDescription = stringResource(R.string.widget_next),
-                    size = PLAYER_SKIP_ICON_SIZE,
-                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
-                    onClick = onNext,
-                    enabled = !controlsLocked && hasNext,
-                    haptic = Haptic.SkipNext,
-                )
-            }
+            TransportRow(
+                isPlaying = isPlaying,
+                isLoading = isLoading || audioVersionSwitching,
+                previousEnabled = !controlsLocked &&
+                    (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
+                nextEnabled = !controlsLocked && hasNext,
+                onPrevious = onPrevious,
+                onPlayPause = onPlayPause,
+                onNext = onNext,
+            )
 
             // Keep the volume slot's full footprint when its contents are
             // hidden. Removing the slot itself shortened the controls by 50dp
@@ -4077,215 +3916,28 @@ fun NowPlayingScreen(
             // change the half-player's geometry.
             Spacer(Modifier.height(18.dp + controlSpread / 2))
 
-            // ---- Volume ----
             if (!hideVolumeBar) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.VolumeDown,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    ThinSlider(
-                        value = volume.value,
-                        onValueChange = {
-                            volumeDragging = true
-                            // Follow the finger exactly; only external changes tween.
-                            scope.launch { volume.snapTo(it) }
-                            audioManager?.setStreamVolume(
-                                AudioManager.STREAM_MUSIC,
-                                (it * maxVolume).roundToInt(),
-                                0,
-                            )
-                        },
-                        onValueChangeFinished = { volumeDragging = false },
-                        idleHeight = 6.dp,
-                        activeHeight = 10.dp,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Icon(
-                        Icons.AutoMirrored.Rounded.VolumeUp,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+                VolumeRow(
+                    value = volume.value,
+                    onValueChange = onVolumeChange,
+                    onValueChangeFinished = onVolumeChangeFinished,
+                )
             } else {
-                // ThinSlider's fixed touch target: activeHeight (10dp) + 22dp.
-                Spacer(Modifier.height(32.dp))
+                Spacer(Modifier.height(VOLUME_ROW_HEIGHT))
             }
 
             // The volume slider already has 13dp below its drawn track.
             // Balance that invisible inset with the caption gap below the icons.
             Spacer(Modifier.height(6.dp))
 
-            // Lyrics and queue are the two things that are true of the player in
-            // both states, so they are simply always here. Only the capsule
-            // between them swaps: output and party while the artwork is showing,
-            // the three playback modes once the queue is.
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-            // Sized for the wider of the two capsules — the three-up one — in
-            // both states. Computed for whichever was on screen it would change
-            // as they swap, and the lyrics and queue glyphs would slide with it.
-            val widestRow = BOTTOM_ACTION_SIZE * 2 + pillWidth(3)
-            val edgeInset = ((maxWidth - widestRow) / 4).coerceAtLeast(0.dp)
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                BottomGlyph(
-                    icon = BitChordIcons.LyricsQuote,
-                    contentDescription = stringResource(if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics),
-                    // Lyrics and the queue are two things to put over the
-                    // sleeve and there is only one sleeve, so opening either
-                    // closes the other. Queue has always done this; lyrics did
-                    // not have to until it stopped being hidden while the queue
-                    // was up, at which point both could be lit at once.
-                    onClick = toggleLyrics,
-                    highlighted = lyricsOpen,
-                )
-                AnimatedContent(
-                    targetState = queueOpen,
-                    transitionSpec = {
-                        (fadeIn(tween(180, delayMillis = 140)) togetherWith fadeOut(tween(140)))
-                            // Unclipped: the capsule's own rounded ends are what
-                            // the eye follows through the width change, and the
-                            // default clip cuts them square while it happens.
-                            .using(SizeTransform(clip = false) { _, _ -> tween(220) })
-                    },
-                    label = "playerBottomPill",
-                ) { showQueueModes ->
-                    if (showQueueModes) {
-                        // Always three-up, unlike the output/party capsule —
-                        // so it always takes the narrower spacing. See
-                        // [PILL_SEGMENT_WIDTH_TRIPLE].
-                        Pill {
-                            PillSegment(
-                                icon = BitChordIcons.Shuffle,
-                                contentDescription = stringResource(
-                                    if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
-                                ),
-                                onClick = onToggleShuffle,
-                                highlighted = shuffleEnabled,
-                                haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                                tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
-                                width = PILL_SEGMENT_WIDTH_TRIPLE,
-                            )
-                            PillDivider()
-                            PillSegment(
-                                icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
-                                label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
-                                contentDescription = when (repeatMode) {
-                                    Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
-                                    Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
-                                    else -> stringResource(R.string.repeat_off)
-                                },
-                                onClick = onCycleRepeat,
-                                highlighted = repeatMode != Player.REPEAT_MODE_OFF,
-                                // Three states, so the buzz tracks the edges of
-                                // the cycle: leaving off rises, returning to off
-                                // falls, and the step between the two repeat
-                                // modes is just a selection.
-                                haptic = when (repeatMode) {
-                                    Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
-                                    Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
-                                    else -> Haptic.Select
-                                },
-                                width = PILL_SEGMENT_WIDTH_TRIPLE,
-                            )
-                            PillDivider()
-                            PillSegment(
-                                icon = BitChordIcons.Infinity,
-                                contentDescription = stringResource(
-                                    if (autoplayEnabled) R.string.autoplay_on else R.string.autoplay_off,
-                                ),
-                                onClick = onToggleAutoplay,
-                                highlighted = autoplayEnabled,
-                                haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                                tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
-                                width = PILL_SEGMENT_WIDTH_TRIPLE,
-                            )
-                        }
-                    } else {
-                        OutputPartyPill(
-                            onOutput = openAudioOutput,
-                            onParty = onListenTogether,
-                            onOpenMembers = openListenTogetherMembers,
-                        )
-                    }
-                }
-                BottomGlyph(
-                    icon = BitChordIcons.Queue,
-                    contentDescription = stringResource(R.string.up_next),
-                    onClick = toggleQueue,
-                    highlighted = queueOpen,
-                    haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
-                )
-            }
-            }
-            // Keep the current output caption visible in both player and queue modes.
-            Spacer(Modifier.height(18.dp))
-            Box(
-                modifier = Modifier.fillMaxWidth().height(20.dp),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                OutputCaption(
-                    accountName = accountName,
-                    onOpenOutput = openAudioOutput,
-                    onOpenMembers = openListenTogetherMembers,
-                )
-            }
+            playerActions()
             Spacer(Modifier.height(18.dp))
             }
             }
             }
             }
         }
-        if (showAudioOutput) {
-            AudioOutputSheet(
-                hazeState = playerHaze,
-                accountName = accountName,
-                onDismiss = { showAudioOutput = false },
-                onOpenPipeline = { showAudioPipeline = true },
-            )
-        }
-        if (showLyricsProviders) {
-            LyricsProviderSheet(
-                hazeState = playerHaze,
-                currentSource = lyricsSource,
-                states = lyricsProviderStates,
-                onSelect = onSelectLyricsProvider,
-                onDismiss = { showLyricsProviders = false },
-            )
-        }
-        if (showAudioPipeline) {
-            AudioPipelineDialog(
-                hazeState = playerHaze,
-                onDismiss = { showAudioPipeline = false },
-            )
-        }
-        if (showListenTogetherMembers) {
-            ListenTogetherMembersSheet(
-                hazeState = playerHaze,
-                onDismiss = { showListenTogetherMembers = false },
-                onManage = {
-                    showListenTogetherMembers = false
-                    onListenTogether()
-                },
-            )
-        }
-        if (lyricsOffsetOpen) {
-            LyricsOffsetSheet(
-                hazeState = playerHaze,
-                onDismiss = onDismissLyricsOffset,
-            )
-        }
+        playerOverlays()
     }
 }
 
@@ -4364,621 +4016,292 @@ private suspend fun AwaitPointerEventScope.dragQueueIn(
 }
 
 
+/** Which of its three things the player's content column is showing. */
+private enum class PlayerPane { Main, Lyrics, Queue }
+
+/** Room above the landscape columns for the sheet's drag handle. */
+private val LANDSCAPE_HANDLE_STRIP = 24.dp
+
 /**
- * The player's shape on a window too big for the phone layout to make sense
- * of, with the lyrics open — the tablet layout, in both of the two shapes it
- * takes.
+ * The player in a landscape window — a tablet, or a phone on its side. See
+ * [landscapePlayerAvailable].
  *
- * One composable for both rather than one apiece, because they are not two
- * designs: they are the same header, scrubber, transport, volume bar and
- * bottom row, arranged either side by side ([split], a landscape tablet) or
- * stacked ([split] false, a tablet held upright). Written as two functions the
- * way the original patch had it, every one of those pieces existed twice, and
- * the second copy is where a tablet quietly falls a version behind — one of
- * them gets the new control and the other doesn't.
+ * Two columns of equal width. The left one is the same in every state: the
+ * sleeve, and under it the lyrics / output / queue row with the output name —
+ * the controls for *which* of the three the right column shows. The right one
+ * is that one thing: the credits and transport, the lyric sheet or the queue.
+ * Nothing else is drawn twice and nothing moves between columns, so opening
+ * the lyrics or the queue is only ever the right column's page being turned.
  *
- * Deliberately a separate layout rather than a wide-window branch threaded
- * through [NowPlayingScreen]'s own: that function's collapsing sleeve, hero
- * banner and vertical drag gesture all exist to let a phone-shaped surface do
- * two jobs — the full player and the mini player it collapses into — and
- * neither of these shapes is ever doing either. This is drawn once, at the one
- * shape it takes.
+ * Purely the arrangement. Every slot is built by [NowPlayingScreen], which is
+ * where the state behind all of them lives — the same state the portrait
+ * player reads, so rotating mid-song carries the open panel, the scrub and the
+ * translation mode straight across.
  *
- * The scrub and volume state are passed in rather than kept here: they are the
- * same physical controls the phone layout drives, feeding the same
- * [AudioManager] and the same seek, and a private copy would be a second clock
- * to keep in step with the first. It also means the artwork's paused/scrubbing
- * pose answers a drag on the bar for free.
+ * Held to [LANDSCAPE_PLAYER_MAX_WIDTH] and centred, inside the safe-drawing
+ * insets: a phone on its side has its status bar, navigation bar and camera
+ * cutout down the short edges, and the player's content keeps clear of all
+ * three while its backdrop still runs underneath them.
  */
 @Composable
-private fun WidePlayerControls(
-    song: Song,
-    isPlaying: Boolean,
-    isLoading: Boolean,
-    audioVersionSwitching: Boolean = false,
-    positionMs: Long,
-    durationMs: Long,
-    hasPrevious: Boolean,
-    hasNext: Boolean,
-    repeatMode: Int,
-    shuffleEnabled: Boolean,
-    autoplayEnabled: Boolean,
-    signedIn: Boolean,
-    /** For the output caption's "<name>'s Phone" — see [OutputCaption]. */
-    accountName: String?,
-    likeStatus: LikeStatus,
-    hideVolumeBar: Boolean,
-    volume: Animatable<Float, AnimationVector1D>,
-    maxVolume: Int,
-    audioManager: AudioManager?,
-    onVolumeDragging: (Boolean) -> Unit,
-    scrubbing: Boolean,
-    onScrubbingChange: (Boolean) -> Unit,
-    scrubValue: Float,
-    onScrubValueChange: (Float) -> Unit,
-    onToggleLike: () -> Unit,
-    onPlayPause: () -> Unit,
-    onNext: () -> Unit,
-    onPrevious: () -> Unit,
-    onSeekFraction: (Float) -> Unit,
-    onToggleShuffle: () -> Unit,
-    onCycleRepeat: () -> Unit,
-    onToggleAutoplay: () -> Unit,
-    onOpenMenu: () -> Unit,
-    onOpenAlbum: (String) -> Unit,
-    onOpenArtist: (String) -> Unit,
-    onOpenOutput: () -> Unit,
-    onListenTogether: () -> Unit,
-    /** Opens [ListenTogetherMembersSheet] rather than settings directly — see [NowPlayingScreen]. */
-    onOpenListenTogetherMembers: () -> Unit,
-    /** @see ListenTogether.State.controlsLocked */
-    controlsLocked: Boolean,
-    lyricsOpen: Boolean,
-    queueOpen: Boolean,
-    onToggleLyrics: () -> Unit,
-    onToggleQueue: () -> Unit,
-    /**
-     * Which panel the right column draws. Latched by the caller rather than
-     * read off [queueOpen], so the exit keeps showing whichever panel was up.
-     */
-    showQueue: Boolean,
-    /**
-     * The line that sits above the scrubber — built by the caller so it reads
-     * exactly what the phone reads in the same state.
-     */
-    statusContent: @Composable (Modifier) -> Unit,
-    /** The whole lyrics stack, built by the caller — see [wideLyricsContent]. */
-    lyricsContent: @Composable (Modifier) -> Unit,
-    /** The queue list, likewise — see [wideQueueContent]. */
-    queueContent: @Composable (Modifier) -> Unit,
-    /** Song-scoped movable backdrop retained across the normal and split layouts. */
+private fun LandscapePlayerLayout(
+    pane: PlayerPane,
+    /** False for a docked pane, which has no sheet to pull away. */
+    showHandle: Boolean,
     background: @Composable (Modifier) -> Unit,
-    /**
-     * How far into the split this is, 0 (closed player: content at
-     * [PLAYER_MAX_WIDTH], centred) to 1 (two even columns). Driven by the
-     * caller so it survives the lyrics closing and can run back down — see
-     * `wideSplit` there.
-     */
-    progress: Float,
+    /** The sleeve; handed a modifier that already fixes its square size. */
+    artwork: @Composable (Modifier) -> Unit,
+    /** The row under the sleeve, emitted into its column. */
+    actions: @Composable () -> Unit,
+    /** Credits and transport. [compact] is a phone-height window. */
+    mainPane: @Composable (compact: Boolean) -> Unit,
+    lyricsPane: @Composable () -> Unit,
+    queuePane: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val haptics = rememberHaptics()
-    val scope = rememberCoroutineScope()
-
-    // The switch's loading state for the scrubber, read where the phone reads
-    // it for the same reason — see [ThinSlider.loading].
-    val versionAligning by AppSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
-    val versionSwitching = versionAligning || audioVersionSwitching
-
-    val liveFraction = if (durationMs > 0) {
-        (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
-    } else {
-        0f
-    }
-    val shown = if (scrubbing) scrubValue else liveFraction
-
-    // Paused always wins outright over a scrub in progress — see
-    // [ARTWORK_PAUSE_SHRINK_SCALE]. Nothing here reacts to a touch on the
-    // artwork itself: a detector on the sleeve never reliably agreed with the
-    // gestures already on that node, and tied to the scrubber instead the art
-    // has no touch handling of its own to conflict with anything.
-    val artworkScale by animateFloatAsState(
-        targetValue = when {
-            !isPlaying -> ARTWORK_PAUSE_SHRINK_SCALE
-            scrubbing -> ARTWORK_DRAG_SHRINK_SCALE
-            else -> ARTWORK_EXPANDED_SCALE
-        },
-        animationSpec = tween(durationMillis = ARTWORK_SCALE_DURATION_MS, easing = ArtworkScaleEasing),
-        label = "wideArtworkScale",
-    )
-
-    // The right column waits for the lane to finish moving before it composes
-    // anything, for the same reason the phone's panels wait for the sleeve —
-    // the lyric sheet and the queue list are the two heaviest compositions on
-    // this screen, and doing either one on top of a running animation is what
-    // the open stuttering was.
-    //
-    // Kept mounted while the fade still has something to show, so the exit
-    // fades the panel out rather than cutting it on the first frame of the
-    // close — [panelReady] goes false immediately there, and only this keeps
-    // the column alive long enough to leave gracefully.
-    val panelReady = progress >= 1f
-    val panelFade by animateFloatAsState(
-        targetValue = if (panelReady) 1f else 0f,
-        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
-        label = "widePanelFade",
-    )
-
     Box(modifier = modifier.fillMaxSize()) {
-        // Wide/tablet player, lyrics and queue all stand directly on the same
-        // complete-cover blur. There is no artwork seam here for the ordinary
-        // player's stretched-and-reflected continuation to belong to, and no
-        // animated-canvas frame is sampled into this still-art background.
-        background(Modifier)
-
-        val controls: @Composable ColumnScope.() -> Unit = {
-            // Directly above the scrubber, exactly where the phone puts it
-            // while the lyrics are open — same string, same style, same nudge
-            // down into the slider's dead touch space. This replaced a pill
-            // and a close button floated under the lyric column, which was a
-            // second way of saying something the player already has a place
-            // for.
-            statusContent(Modifier.fillMaxWidth().offset(y = 6.dp))
-            ThinSlider(
-                value = shown,
-                onValueChange = {
-                    onScrubbingChange(true)
-                    onScrubValueChange(it)
-                },
-                onValueChangeFinished = {
-                    haptics.play(Haptic.Select)
-                    onSeekFraction(scrubValue)
-                    onScrubbingChange(false)
-                },
-                // The switch's wait, on the bar itself — see
-                // [ThinSlider.loading] and the phone layout's use of it.
-                loading = versionSwitching,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth().offset(y = (-4).dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = formatTime((shown * durationMs).toLong()),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.55f),
-                )
-                Text(
-                    text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White.copy(alpha = 0.55f),
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TransportGlyph(
-                    icon = R.drawable.ic_player_previous,
-                    contentDescription = stringResource(R.string.widget_previous),
-                    size = PLAYER_SKIP_ICON_SIZE,
-                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
-                    onClick = onPrevious,
-                    enabled = !controlsLocked &&
-                        (hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS),
-                    haptic = Haptic.SkipPrevious,
-                )
-                if (isLoading) {
-                    Box(Modifier.size(100.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 3.dp,
-                            modifier = Modifier.size(30.dp),
-                        )
-                    }
-                } else {
-                    TransportGlyph(
-                        icon = if (isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
-                        contentDescription = stringResource(
-                            if (isPlaying) R.string.pause else R.string.play,
-                        ),
-                        size = 72.dp,
-                        touchSize = 100.dp,
-                        onClick = onPlayPause,
-                        haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
-                    )
-                }
-                TransportGlyph(
-                    icon = R.drawable.ic_player_next,
-                    contentDescription = stringResource(R.string.widget_next),
-                    size = PLAYER_SKIP_ICON_SIZE,
-                    touchSize = PLAYER_SKIP_TOUCH_SIZE,
-                    onClick = onNext,
-                    enabled = !controlsLocked && hasNext,
-                    haptic = Haptic.SkipNext,
-                )
-            }
-
-            // Preserve the same vertical rhythm whether the volume control is
-            // drawn or not, just as the phone layout does.
-            Spacer(Modifier.height(18.dp))
-            if (!hideVolumeBar) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.VolumeDown,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    ThinSlider(
-                        value = volume.value,
-                        onValueChange = { v ->
-                            onVolumeDragging(true)
-                            scope.launch { volume.snapTo(v) }
-                            audioManager?.setStreamVolume(
-                                AudioManager.STREAM_MUSIC,
-                                (v * maxVolume).roundToInt(),
-                                0,
-                            )
-                        },
-                        onValueChangeFinished = { onVolumeDragging(false) },
-                        idleHeight = 5.dp,
-                        activeHeight = 9.dp,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Icon(
-                        Icons.AutoMirrored.Rounded.VolumeUp,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(18.dp),
-                    )
-                }
-            } else {
-                // ThinSlider's fixed touch target: activeHeight (9dp) + 22dp.
-                Spacer(Modifier.height(31.dp))
-            }
-
-            Spacer(Modifier.height(18.dp))
-
-            // The phone's own bottom row, not a tablet variation on it: the
-            // lyrics glyph lit to say which panel you are in, the two-up
-            // output capsule, and the way through to the queue.
-            //
-            // The three playback modes that used to sit here are gone, because
-            // on the phone they are not part of this row at all — they are the
-            // *queue's* capsule, which the row swaps in only while the queue is
-            // up. A layout that shows lyrics can't be showing the queue, so
-            // they never belonged here; what belongs is the two-segment output
-            // capsule, which is exactly what the phone shows in this state.
-            //
-            // Sized off the wider, three-up capsule the queue would use, the
-            // same way the phone does, so the glyphs either side sit at the
-            // same inset on both and don't shift if this layout ever grows a
-            // queue state of its own.
-            BoxWithConstraints(Modifier.fillMaxWidth()) {
-                val widestRow = BOTTOM_ACTION_SIZE * 2 + pillWidth(3)
-                val edgeInset = ((maxWidth - widestRow) / 4).coerceAtLeast(0.dp)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // Lit to say which panel you are in, and the way out of
-                    // it: the same glyph that opened it closes it, which is the
-                    // affordance the phone has always used.
-                    BottomGlyph(
-                        icon = BitChordIcons.LyricsQuote,
-                        contentDescription = stringResource(
-                            if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics,
-                        ),
-                        onClick = onToggleLyrics,
-                        highlighted = lyricsOpen,
-                    )
-                    // The capsule the phone swaps in on exactly this condition:
-                    // the output pair normally, the three playback modes while
-                    // the queue is up, since that is when they are what you are
-                    // about to reach for.
-                    AnimatedContent(
-                        targetState = queueOpen,
-                        transitionSpec = {
-                            (fadeIn(tween(180, delayMillis = 140)) togetherWith fadeOut(tween(140)))
-                                // Unclipped: the capsule's own rounded ends are
-                                // what the eye follows through the width change.
-                                .using(SizeTransform(clip = false) { _, _ -> tween(220) })
-                        },
-                        label = "widePlayerBottomPill",
-                    ) { showQueueModes ->
-                        if (showQueueModes) {
-                            // Always three-up — see the portrait layout's twin
-                            // of this block and [PILL_SEGMENT_WIDTH_TRIPLE].
-                            Pill {
-                                PillSegment(
-                                    icon = BitChordIcons.Shuffle,
-                                    contentDescription = stringResource(
-                                        if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
-                                    ),
-                                    onClick = onToggleShuffle,
-                                    highlighted = shuffleEnabled,
-                                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
-                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
-                                )
-                                PillDivider()
-                                PillSegment(
-                                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
-                                    label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
-                                    contentDescription = when (repeatMode) {
-                                        Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
-                                        Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
-                                        else -> stringResource(R.string.repeat_off)
-                                    },
-                                    onClick = onCycleRepeat,
-                                    haptic = when (repeatMode) {
-                                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
-                                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
-                                        else -> Haptic.Select
-                                    },
-                                    highlighted = repeatMode != Player.REPEAT_MODE_OFF,
-                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
-                                )
-                                PillDivider()
-                                PillSegment(
-                                    icon = BitChordIcons.Infinity,
-                                    contentDescription = stringResource(
-                                        if (autoplayEnabled) R.string.autoplay_on else R.string.autoplay_off,
-                                    ),
-                                    onClick = onToggleAutoplay,
-                                    highlighted = autoplayEnabled,
-                                    haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                                    tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
-                                    width = PILL_SEGMENT_WIDTH_TRIPLE,
-                                )
-                            }
-                        } else {
-                            OutputPartyPill(
-                                onOutput = onOpenOutput,
-                                onParty = onListenTogether,
-                                onOpenMembers = onOpenListenTogetherMembers,
-                            )
-                        }
-                    }
-                    BottomGlyph(
-                        icon = BitChordIcons.Queue,
-                        contentDescription = stringResource(R.string.up_next),
-                        onClick = onToggleQueue,
-                        highlighted = queueOpen,
-                        haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
-                    )
-                }
-            }
-
-            // Where the sound is actually going, under the capsule that
-            // changes it — the phone keeps this line visible in player and
-            // queue modes alike, and a tablet showing lyrics is no more
-            // entitled to drop it than the queue is. Held at a fixed height
-            // for the same reason the phone does: the name arrives
-            // asynchronously, and letting the row size to it would shift every
-            // control above as it resolved.
-            Spacer(Modifier.height(16.dp))
-            Box(
-                modifier = Modifier.fillMaxWidth().height(20.dp),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                OutputCaption(
-                    accountName = accountName,
-                    onOpenOutput = onOpenOutput,
-                    onOpenMembers = onOpenListenTogetherMembers,
-                )
-            }
-        }
+        background(Modifier.fillMaxSize())
 
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            contentAlignment = Alignment.Center,
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            // Capped and centred rather than spread edge to edge — see
-            // [WIDE_LYRICS_MAX_WIDTH].
-            val contentWidth = maxWidth.coerceAtMost(WIDE_LYRICS_MAX_WIDTH)
-            val halfLane = contentWidth / 2
+            val compact = maxHeight < LANDSCAPE_COMPACT_HEIGHT
+            val gutter = if (compact) LANDSCAPE_GUTTER_COMPACT else PLAYER_GUTTER
 
-            // Both ends of the player lane, and the journey between them is the
-            // whole transition.
-            //
-            // At rest ([progress] 0) the lane is the closed player's: content no
-            // wider than [PLAYER_MAX_WIDTH], sitting on the window's centre
-            // line. Fully open it is half the content width, centred in that
-            // half. Interpolating *both* the width and the centre against the
-            // same progress is the fix for the entrance reading as two steps —
-            // the lane used to jump to its final width on the frame this layout
-            // mounted and only then travel, because the width was a layout
-            // decision taken once and the travel was the only thing animated.
-            val openLaneWidth = halfLane - PLAYER_GUTTER * 2
-            val restLaneWidth = PLAYER_MAX_WIDTH.coerceAtMost(contentWidth - PLAYER_GUTTER * 2)
-            val laneWidth = lerp(restLaneWidth, openLaneWidth, progress)
-            // How far left of the container's centre the lane's own centre sits:
-            // nothing at rest, a quarter of the content width once open (a
-            // half-width lane centred in its half is offset by half of what is
-            // left over, which is a quarter of the whole).
-            val laneShift = lerp(0.dp, -(contentWidth / 4), progress)
-
-            Box(
+            Row(
                 modifier = Modifier
-                    .width(contentWidth)
-                    .fillMaxHeight(),
+                    .widthIn(max = LANDSCAPE_PLAYER_MAX_WIDTH)
+                    .fillMaxSize()
+                    .padding(
+                        top = if (showHandle) LANDSCAPE_HANDLE_STRIP else DOCKED_TOP_PAD,
+                        bottom = if (compact) 8.dp else 20.dp,
+                    ),
             ) {
-                // ---- Left: the same header, scrubber and transport the
-                // closed state draws, on an even half of the width rather
-                // than a fixed lane. This half is the one being operated as
-                // well as read, and held to a third of the window its
-                // transport, volume bar and output capsule sat in a lane
-                // narrower than the phone gives the very same controls.
                 Column(
                     modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .offset(x = laneShift)
-                        .width(laneWidth)
+                        .weight(1f)
                         .fillMaxHeight()
-                        .padding(vertical = DOCKED_TOP_PAD),
-                    // Top-aligned to match the lyric column beside it, which
-                    // starts from the top of its own space too (a scrolling list
-                    // has nothing else to align it by). Centred instead, the
-                    // header and transport sat noticeably lower than where the
-                    // lyrics began, reading as a gap between the columns that
-                    // wasn't really a gap so much as two different vertical
-                    // origins.
-                    verticalArrangement = Arrangement.Top,
+                        .padding(horizontal = gutter),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Spacer(Modifier.height(12.dp))
-                    // The sleeve is square and bounded by whichever axis runs
-                    // out first — the column's width on a landscape tablet, the
-                    // height left over once the rows below have taken theirs on
-                    // anything shorter.
-                    //
-                    // Expressed as a weight rather than worked out against a
-                    // figure for how tall those rows come to. Two goes at that
-                    // figure were both wrong in a way nothing catches: sized off
-                    // the width alone, a phone turned sideways got a 360dp
-                    // square in a 400dp-tall window and the transport was pushed
-                    // clean off the bottom edge; sized off an estimate of the
-                    // rows, a 1280x720 tablet came up about fifty dp short and
-                    // dropped the output capsule off the bottom instead. The
-                    // artwork is the one thing here with no natural size of its
-                    // own, so it is the one thing that should be measured last:
-                    // `fill = false` lets [aspectRatio] fall back from the
-                    // column's width to whatever height is actually left, and
-                    // every fixed row below keeps its own height by
-                    // construction. There is no number left to get wrong.
-                    WideArtwork(
-                        song = song,
-                        scale = artworkScale,
+                    // The sleeve is square and takes whichever of the two axes
+                    // runs out first once the row below has had its height —
+                    // the column's width on a big tablet, the height on
+                    // anything shorter. Measured here rather than estimated,
+                    // so the row under it can never be pushed off the bottom.
+                    BoxWithConstraints(
                         modifier = Modifier
-                            .weight(1f, fill = false)
-                            .aspectRatio(1f)
-                            .align(Alignment.CenterHorizontally),
-                    )
-                    Spacer(Modifier.height(20.dp))
-                    WideCredits(
-                        song = song,
-                        signedIn = signedIn,
-                        likeStatus = likeStatus,
-                        onToggleLike = onToggleLike,
-                        onOpenMenu = onOpenMenu,
-                        onOpenAlbum = onOpenAlbum,
-                        onOpenArtist = onOpenArtist,
-                    )
-                    Spacer(Modifier.height(18.dp))
-                    controls()
+                            .weight(1f)
+                            .fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        artwork(Modifier.size(minOf(maxWidth, maxHeight)))
+                    }
+                    Spacer(Modifier.height(if (compact) 12.dp else 24.dp))
+                    actions()
                 }
 
-                // ---- Right: the lyrics, standing beside the artwork rather
-                // than folded in underneath it.
-                Column(
+                AnimatedContent(
+                    targetState = pane,
+                    transitionSpec = {
+                        fadeIn(
+                            tween(
+                                LANDSCAPE_PANE_FADE_IN_MS,
+                                delayMillis = LANDSCAPE_PANE_FADE_IN_DELAY_MS,
+                            ),
+                        ) togetherWith fadeOut(tween(LANDSCAPE_PANE_FADE_OUT_MS))
+                    },
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .width(halfLane)
-                        .fillMaxHeight()
-                        .graphicsLayer { alpha = panelFade }
-                        .padding(vertical = DOCKED_TOP_PAD),
-                ) {
-                    if (panelReady || panelFade > 0.01f) {
-                    // Lyrics and queue share this column, and swapping between
-                    // them is a change of contents rather than of shape — the
-                    // player beside it does not move, and neither does the
-                    // column. A plain crossfade is the whole transition, which
-                    // is what makes going lyrics → queue and back feel like
-                    // turning a page rather than reopening the panel.
-                    AnimatedContent(
-                        targetState = showQueue,
-                        transitionSpec = {
-                            fadeIn(tween(200, delayMillis = 90)) togetherWith fadeOut(tween(140))
-                        },
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        label = "widePanel",
-                    ) { queue ->
-                        if (queue) {
-                            queueContent(Modifier.fillMaxSize())
-                        } else {
-                            lyricsContent(Modifier.fillMaxSize())
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    label = "landscapePane",
+                ) { shown ->
+                    when (shown) {
+                        PlayerPane.Main -> Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = gutter),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            mainPane(compact)
+                        }
+                        // The lyric sheet and the queue both reach back across
+                        // [PLAYER_GUTTER] on their own (see
+                        // [bleedHorizontally]), so that is the padding they
+                        // get: their scroll areas then run exactly to the
+                        // column's edges.
+                        PlayerPane.Lyrics -> Box(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = PLAYER_GUTTER),
+                        ) {
+                            lyricsPane()
+                        }
+                        PlayerPane.Queue -> Box(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = PLAYER_GUTTER),
+                        ) {
+                            queuePane()
                         }
                     }
-                    }
                 }
+            }
+
+            if (showHandle) {
+                // The sheet closes from a downward drag anywhere nothing else
+                // claims, as it does in portrait; this is only the promise.
+                Box(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = 8.dp)
+                        .width(38.dp)
+                        .height(5.dp)
+                        .shadow(2.dp, RoundedCornerShape(3.dp), clip = false)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color.White.copy(alpha = 0.70f)),
+                )
             }
         }
     }
 }
 
 /**
- * The square sleeve the split draws.
+ * The landscape player's sleeve: the still cover, and over it the looping
+ * clip when there is one.
  *
- * The request is remembered against the URL it is built from. Built inline in
- * the `AsyncImage` call — which is what the original patch did — a new,
- * equal-but-not-identical request is constructed on every recomposition, and
- * this screen recomposes twice a second off the position tick alone: Coil sees
- * a changed model, cancels the load in flight and starts it again, so the
- * artwork on a tablet loads erratically or not at all.
+ * Draws from the screen's own [artRequest][NowPlayingScreen] rather than a
+ * request of its own, so it shares the portrait sleeve's bitmap, its retries
+ * and its [artLoaded] — rotating never reloads the cover.
+ *
+ * The clip keeps playing whichever pane is up. The portrait player stops it
+ * because its sleeve shrinks to a thumbnail behind a panel; this one never
+ * shrinks.
  */
 @Composable
-private fun WideArtwork(song: Song, scale: Float, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val artUrl = rememberRemoteArtworkUrl(song)?.artworkAt(ART_PX)
-    var artLoaded by remember(artUrl) { mutableStateOf(false) }
-    val request = remember(context, artUrl) {
-        ImageRequest.Builder(context)
-            .data(artUrl)
-            .size(ART_PX)
-            .build()
-    }
-    Box(
-        modifier = modifier
-            .scale(scale)
-            .shadow(if (artLoaded) 14.dp else 0.dp, RoundedCornerShape(10.dp))
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color.Black.copy(alpha = 0.18f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (!artLoaded) {
-            Icon(
-                imageVector = BitChordIcons.MusicNote,
+private fun LandscapeArtwork(
+    artRequest: ImageRequest,
+    artLoaded: Boolean,
+    onArtState: (AsyncImagePainter.State) -> Unit,
+    canvas: CanvasArtwork?,
+    canvasRendered: Boolean,
+    isPlaying: Boolean,
+    onCanvasRenderedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    overlay: @Composable BoxScope.() -> Unit = {},
+) {
+    Box(modifier = modifier) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // Only cast once there is a picture: on the flat placeholder
+                // tile a shadow reads as a second, darker square.
+                .shadow(if (artLoaded || canvasRendered) 14.dp else 0.dp, RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.Black.copy(alpha = 0.18f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!artLoaded && !canvasRendered) {
+                Icon(
+                    imageVector = BitChordIcons.MusicNote,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxSize(0.36f),
+                )
+            }
+            AsyncImage(
+                model = artRequest,
                 contentDescription = null,
-                tint = Color.White.copy(alpha = 0.35f),
-                modifier = Modifier.fillMaxSize(0.36f),
+                contentScale = ContentScale.Crop,
+                onState = onArtState,
+                // Not drawn under a clip that got there first — see the
+                // portrait sleeve's note on TextureView stacking order.
+                modifier = Modifier
+                    .fillMaxSize()
+                    .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
             )
+            canvas?.let { clip ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = isPlaying,
+                    onRenderedChanged = onCanvasRenderedChange,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
-        AsyncImage(
-            model = request,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            onState = { artLoaded = it is AsyncImagePainter.State.Success },
-            modifier = Modifier.fillMaxSize(),
-        )
+        overlay()
     }
 }
 
 /**
- * Title, artist, like and the three-dot menu — the split's credits block.
+ * The landscape player's right column in its main state: where the session
+ * came from, the credits, the current line, the scrubber, the transport and
+ * the volume bar — the portrait half-player, less the row the left column
+ * already has.
  *
- * Marquee rather than a plain ellipsis, matching the phone player: a tablet is
- * wider, not infinitely wide, and a long title truncated on the one surface
+ * Centred in the column rather than pinned to its foot: there is no artwork
+ * above it here to hand the spare height to.
+ */
+@Composable
+private fun LandscapeMainPane(
+    compact: Boolean,
+    /** "Playing from …", or null where Settings hides it. */
+    caption: String?,
+    onOpenCaption: () -> Unit,
+    credits: @Composable () -> Unit,
+    /** The one-line lyric over the scrubber; null where synced lyrics are off. */
+    lyricStrip: (@Composable () -> Unit)?,
+    scrubber: @Composable () -> Unit,
+    transport: @Composable () -> Unit,
+    /** Null where Settings hides the volume bar. */
+    volume: (@Composable () -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .widthIn(max = PLAYER_MAX_WIDTH)
+            .fillMaxWidth(),
+    ) {
+        if (caption != null) {
+            PlaybackOriginCaption(
+                text = caption,
+                onClick = onOpenCaption,
+                textAlign = TextAlign.Start,
+                contentPadding = PaddingValues(vertical = 2.dp),
+            )
+            Spacer(Modifier.height(if (compact) 4.dp else 8.dp))
+        }
+        credits()
+        Spacer(Modifier.height(if (compact) 2.dp else 10.dp))
+        lyricStrip?.invoke()
+        scrubber()
+        Spacer(Modifier.height(if (compact) 0.dp else 14.dp))
+        transport()
+        if (volume != null) {
+            Spacer(Modifier.height(if (compact) 0.dp else 18.dp))
+            volume()
+        }
+    }
+}
+
+/**
+ * Title, artist, like and the three-dot menu, for the landscape player.
+ *
+ * Marquee rather than a plain ellipsis, matching the portrait player: a tablet
+ * is wider, not infinitely wide, and a long title truncated on the one surface
  * with room to scroll it would be the odd one out.
  */
 @Composable
-private fun WideCredits(
+private fun LandscapeCredits(
     song: Song,
     signedIn: Boolean,
     likeStatus: LikeStatus,
+    /** The menu glyph is briefly the undo arrow after a quality upgrade. */
+    showRevertCue: Boolean,
     onToggleLike: () -> Unit,
     onOpenMenu: () -> Unit,
     onOpenAlbum: (String) -> Unit,
@@ -4986,33 +4309,40 @@ private fun WideCredits(
     modifier: Modifier = Modifier,
 ) {
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            var titleOverflowing by remember { mutableStateOf(false) }
-            MarqueeText(
-                text = song.title,
-                style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
-                onOverflowChange = { titleOverflowing = it },
-                leading = if (song.isExplicit == true) {
-                    { ExplicitBadge(Color.White) }
-                } else {
-                    null
-                },
-                modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
-            )
-            Spacer(Modifier.height(2.dp))
-            MarqueeText(
-                text = song.artist,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.W500),
-                color = Color.White.copy(alpha = 0.55f),
-                // A title that's also scrolling gets to go first — starting
-                // together reads as clutter, so the artist waits a beat.
-                startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
-                modifier = Modifier.opensPage(song.artistId, onOpenArtist),
-            )
+        Crossfade(
+            targetState = song.title to song.artist,
+            animationSpec = tween(durationMillis = 300),
+            modifier = Modifier.weight(1f),
+            label = "landscapeCredits",
+        ) {
+            Column {
+                var titleOverflowing by remember { mutableStateOf(false) }
+                MarqueeText(
+                    text = song.title,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                    onOverflowChange = { titleOverflowing = it },
+                    leading = if (song.isExplicit == true) {
+                        { ExplicitBadge(Color.White) }
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
+                )
+                Spacer(Modifier.height(2.dp))
+                MarqueeText(
+                    text = song.artist,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.W500),
+                    color = Color.White.copy(alpha = 0.55f),
+                    // A title that's also scrolling gets to go first — starting
+                    // together reads as clutter, so the artist waits a beat.
+                    startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
+                    modifier = Modifier.opensPage(song.artistId, onOpenArtist),
+                )
+            }
         }
         Spacer(Modifier.width(10.dp))
-        // Same gate as the phone player's: no account to like against for a
+        // Same gate as the portrait player's: no account to like against for a
         // guest, and no YouTube identity to rate a local file or a finished
         // download against either.
         if (signedIn && song.localUri == null) {
@@ -5029,10 +4359,577 @@ private fun WideCredits(
             Spacer(Modifier.width(8.dp))
         }
         CircleGlyph(
-            icon = Icons.Rounded.MoreHoriz,
+            icon = if (showRevertCue) Icons.AutoMirrored.Rounded.Undo else Icons.Rounded.MoreHoriz,
             contentDescription = stringResource(R.string.more),
             onClick = onOpenMenu,
         )
+    }
+}
+
+/**
+ * The landscape player's right column with the lyrics open: the sheet, and
+ * under it the romanize / source / translate bar.
+ *
+ * The bar is where the portrait player's status line and its two floating
+ * toggles went. There the line sits over the scrubber and the toggles float
+ * over the foot of the words; here there is no scrubber beside the lyrics, and
+ * the bar gives all three a place of their own that costs the sheet no lines.
+ */
+@Composable
+private fun LandscapeLyricsPane(
+    hasLyrics: Boolean,
+    /** Shown in place of the sheet while there are no lines to draw. */
+    placeholder: String,
+    status: String,
+    onChangeProvider: () -> Unit,
+    romanizationToggle: @Composable () -> Unit,
+    translationToggle: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    panel: @Composable (Modifier) -> Unit,
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            if (hasLyrics) {
+                panel(Modifier.fillMaxSize())
+            } else {
+                // Held at a fixed line rather than through
+                // [LyricsUnavailableLine] or [LyricsLoadingLine]: those fade
+                // out after a few seconds, which here would leave the whole
+                // column blank for as long as the track keeps playing.
+                Text(
+                    text = placeholder,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Fixed slots either side whether or not the toggles are drawn, so
+            // the status line stays centred as lyrics arrive.
+            Box(Modifier.size(34.dp)) { if (hasLyrics) romanizationToggle() }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                LyricsStatusWithChange(status = status, onChange = onChangeProvider)
+            }
+            Box(Modifier.size(34.dp)) { if (hasLyrics) translationToggle() }
+        }
+    }
+}
+
+/**
+ * "Playing from …", "Played by …" or the radio station — what the player is
+ * playing *out of*, in the words the caption uses.
+ */
+@Composable
+private fun playbackOriginText(song: Song, playedBy: String?): String =
+    playedBy?.let {
+        stringResource(R.string.played_by, it)
+    } ?: song.radioName?.let {
+        stringResource(R.string.playing_radio, it)
+    } ?: stringResource(
+        R.string.playing_from,
+        song.playbackSource ?: song.albumName ?: stringResource(R.string.queue),
+    )
+
+/**
+ * The small caption naming what the player is playing out of — see
+ * [playbackOriginText]. Tappable, back to that place.
+ */
+@Composable
+private fun PlaybackOriginCaption(
+    text: String,
+    onClick: () -> Unit,
+    textAlign: TextAlign,
+    /** Inside the touch target, so it widens what a finger can hit. */
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall.copy(
+            shadow = Shadow(
+                color = Color.Black.copy(alpha = 0.55f),
+                offset = Offset(0f, 1f),
+                blurRadius = 4f,
+            ),
+        ),
+        color = Color.White,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        textAlign = textAlign,
+        modifier = modifier
+            .clickable(onClick = onClick)
+            .padding(contentPadding),
+    )
+}
+
+/**
+ * The current lyric, one line, directly above the scrubber — or the line
+ * saying why there isn't one.
+ */
+@Composable
+private fun CurrentLyricStrip(
+    lines: List<LyricLine>,
+    trackKey: String,
+    positionMs: Long,
+    isPlaying: Boolean,
+    durationMs: Long,
+    lyricsUnavailable: Boolean,
+    loadingText: String,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            // The slider's touch target reaches ~13dp above the drawn bar, so
+            // the strip reads as further off it than it is. Nudged down into
+            // that dead space, the same way the timestamps below are pulled
+            // back up into it.
+            .offset(y = 6.dp),
+    ) {
+        if (lines.isNotEmpty()) {
+            CurrentLyricLine(
+                lines = lines,
+                trackKey = trackKey,
+                positionMs = positionMs,
+                isPlaying = isPlaying,
+                durationMs = durationMs,
+                onClick = onClick,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else if (lyricsUnavailable) {
+            LyricsUnavailableLine(
+                trackKey = trackKey,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            LyricsLoadingLine(
+                text = loadingText,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/**
+ * The seek bar, with elapsed and remaining either side under it and
+ * [centerLabel] — the quality badge — between them.
+ */
+@Composable
+private fun PlayerScrubber(
+    shown: Float,
+    durationMs: Long,
+    /** A version switch's wait, drawn along the bar — see [ThinSlider.loading]. */
+    loading: Boolean,
+    transitionWindow: ClosedFloatingPointRange<Float>?,
+    onScrub: (Float) -> Unit,
+    onScrubFinished: () -> Unit,
+    centerLabel: @Composable BoxScope.() -> Unit = {},
+) {
+    Column(Modifier.fillMaxWidth()) {
+        ThinSlider(
+            value = shown,
+            onValueChange = onScrub,
+            onValueChangeFinished = onScrubFinished,
+            loading = loading,
+            transitionWindow = transitionWindow,
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                // The slider's touch target extends well past the drawn bar,
+                // so pull the labels back up under it.
+                .offset(y = (-9).dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    text = formatTime((shown * durationMs).toLong()),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.55f),
+                )
+                Text(
+                    text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.55f),
+                )
+            }
+            // Pinned to the box's own centre rather than squeezed into the gap
+            // between the two timestamps: that gap's width changes by a digit's
+            // worth every time a minute rolls over.
+            centerLabel()
+        }
+    }
+}
+
+/**
+ * The quality badge between the timestamps — "Lossless", "Hi-Res", a loading
+ * shimmer while a lossless source is still being looked for.
+ */
+@Composable
+private fun PlaybackQualityLabel(
+    song: Song,
+    isLoading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
+    val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
+    val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
+    val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+    // Whether this playback session is even asking for a lossless stream — the
+    // same computation SourceResolver.requestForNow() makes, mirrored here so
+    // "Loading lossless" only appears when a lossless fetch is actually in
+    // flight, not on every buffering YouTube track.
+    val effectiveQuality = if (metered == true) cellularQuality else wifiQuality
+    // Whether a module is still racing YouTube for this exact track — see
+    // [NerdStats.racingLossless]. YouTube can win that race and already be
+    // playing while the module lookup is still running detached, and the badge
+    // should keep saying "loading" through that stretch rather than going
+    // blank only to possibly say "loading" again a moment later.
+    val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
+    LosslessOrStats(
+        isLoading = isLoading,
+        stillRacing = song.videoId in racingLossless,
+        losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
+        effectiveQuality = effectiveQuality,
+        nerdStats = nerdStats,
+        modifier = modifier,
+    )
+}
+
+/**
+ * Stats for nerds, on the foot of the sleeve: the measured stream, and under
+ * it what Automix's analysis is doing. Nothing at all while the setting is off.
+ */
+@Composable
+private fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
+    val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
+    if (!showNerdStats) return
+    val context = LocalContext.current
+    val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+    val smartFadeOn by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val smartAnalysis by AppSettings.smartAnalysis.collectAsStateWithLifecycle()
+    // A party doesn't mix, and doesn't analyse for one either — see
+    // [com.music.bitchord.playback.CrossfadeController]. So the two flows above
+    // simply stop moving there, and the stats line has to say why rather than
+    // leave their last values on screen as if they still described something.
+    //
+    // Read off the party rather than published as a third flow: it is the same
+    // fact the controller and the analyzer each read for themselves, and a
+    // mirror of it could only ever disagree.
+    val inParty by remember {
+        ListenTogether.state.map { it.inParty }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = ListenTogether.state.value.inParty)
+    // A plain white line reads fine over the usual dark tile, but a light
+    // stretch of an animated cover — sky, snow, a pale sleeve — washes it out
+    // entirely. The shadow costs nothing on a dark background and is what
+    // keeps it legible on a bright one.
+    val nerdStyle = MaterialTheme.typography.labelSmall.copy(
+        shadow = Shadow(
+            color = Color.Black.copy(alpha = 0.55f),
+            offset = Offset(0f, 1f),
+            blurRadius = 4f,
+        ),
+    )
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier,
+    ) {
+        nerdStats?.describe(context)?.let { stats ->
+            Text(
+                text = stats,
+                style = nerdStyle,
+                color = Color.White.copy(alpha = 0.65f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+        // Only when Automix is actually switched on: otherwise this would
+        // report on analysis nothing is going to use, which is noise rather
+        // than a stat.
+        if (smartFadeOn) {
+            Text(
+                // Both sides always named, even when they agree, so the line
+                // reads the same way every time and the eye can find the half
+                // it wants without re-parsing the sentence.
+                text = when {
+                    // Ahead of the video case because it is the broader one:
+                    // in a party nothing is analysed for any song, video or
+                    // not, so naming the video limitation there would describe
+                    // a rule that is not the one in force.
+                    inParty -> stringResource(R.string.automix_stopped_in_party)
+                    song.isVideoOrigin ->
+                        stringResource(R.string.automix_not_supported_video)
+                    else -> stringResource(
+                        R.string.automix_analysis_status,
+                        smartAnalysis.current.localizedLabel(),
+                        smartAnalysis.next.localizedLabel(),
+                    )
+                },
+                style = nerdStyle,
+                // Dimmer than the measured line above it: that one describes
+                // the audio, this one describes the app, and the ranking
+                // should show.
+                color = Color.White.copy(alpha = 0.5f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+/**
+ * Previous, play/pause, next.
+ *
+ * [compact] is the landscape player on a phone, where the portrait player's
+ * 100dp play target is a third of the window's height on its own.
+ */
+@Composable
+private fun TransportRow(
+    isPlaying: Boolean,
+    /** While the stream resolves and buffers, the play glyph would be a lie. */
+    isLoading: Boolean,
+    /**
+     * Lit whenever back has something to do — a track to step to, or enough
+     * elapsed to restart this one. Faded and inert, not removed, while a party
+     * host holds the controls: the transport keeps its shape either way.
+     */
+    previousEnabled: Boolean,
+    nextEnabled: Boolean,
+    onPrevious: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    compact: Boolean = false,
+) {
+    val playSize = if (compact) 58.dp else 72.dp
+    val playTouch = if (compact) 76.dp else 100.dp
+    val skipSize = if (compact) 44.dp else PLAYER_SKIP_ICON_SIZE
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TransportGlyph(
+            icon = R.drawable.ic_player_previous,
+            contentDescription = stringResource(R.string.widget_previous),
+            size = skipSize,
+            touchSize = PLAYER_SKIP_TOUCH_SIZE,
+            onClick = onPrevious,
+            enabled = previousEnabled,
+            haptic = Haptic.SkipPrevious,
+        )
+        if (isLoading) {
+            // Same footprint as the play/pause target — a smaller box here
+            // would shunt everything below it on every load.
+            Box(Modifier.size(playTouch), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(if (compact) 30.dp else 38.dp),
+                )
+            }
+        } else {
+            TransportGlyph(
+                icon = if (isPlaying) R.drawable.ic_player_pause else R.drawable.ic_player_play,
+                contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
+                size = playSize,
+                touchSize = playTouch,
+                onClick = onPlayPause,
+                haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
+            )
+        }
+        TransportGlyph(
+            icon = R.drawable.ic_player_next,
+            contentDescription = stringResource(R.string.widget_next),
+            size = skipSize,
+            touchSize = PLAYER_SKIP_TOUCH_SIZE,
+            onClick = onNext,
+            enabled = nextEnabled,
+            haptic = Haptic.SkipNext,
+        )
+    }
+}
+
+/** ThinSlider's fixed touch target at the volume bar's size: 10dp + 22dp. */
+private val VOLUME_ROW_HEIGHT = 32.dp
+
+/** The volume bar between its two speaker glyphs. */
+@Composable
+private fun VolumeRow(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    onValueChangeFinished: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Rounded.VolumeDown,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.5f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(10.dp))
+        ThinSlider(
+            value = value,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
+            idleHeight = 6.dp,
+            activeHeight = 10.dp,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(10.dp))
+        Icon(
+            Icons.AutoMirrored.Rounded.VolumeUp,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.5f),
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+/**
+ * Lyrics, the capsule, and the queue — the row both layouts end on.
+ *
+ * Lyrics and queue are the two things that are true of the player in every
+ * state, so they are simply always here. Only the capsule between them swaps:
+ * output and party normally, the three playback modes while the queue is up,
+ * since that is when they are what you are about to reach for.
+ */
+@Composable
+private fun PlayerActionRow(
+    lyricsOpen: Boolean,
+    queueOpen: Boolean,
+    shuffleEnabled: Boolean,
+    repeatMode: Int,
+    autoplayEnabled: Boolean,
+    onToggleLyrics: () -> Unit,
+    onToggleQueue: () -> Unit,
+    onToggleShuffle: () -> Unit,
+    onCycleRepeat: () -> Unit,
+    onToggleAutoplay: () -> Unit,
+    onOpenOutput: () -> Unit,
+    onListenTogether: () -> Unit,
+    /** Opens [ListenTogetherMembersSheet] rather than settings directly. */
+    onOpenListenTogetherMembers: () -> Unit,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // Sized for the wider of the two capsules — the three-up one — in both
+        // states. Computed for whichever was on screen it would change as they
+        // swap, and the lyrics and queue glyphs would slide with it.
+        val widestRow = BOTTOM_ACTION_SIZE * 2 + pillWidth(3)
+        val edgeInset = ((maxWidth - widestRow) / 4).coerceAtLeast(0.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = edgeInset),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BottomGlyph(
+                icon = BitChordIcons.LyricsQuote,
+                contentDescription = stringResource(if (lyricsOpen) R.string.close_lyrics else R.string.open_lyrics),
+                // Lyrics and the queue are two things to show in one place, so
+                // opening either closes the other; lit to say which is up.
+                onClick = onToggleLyrics,
+                highlighted = lyricsOpen,
+            )
+            AnimatedContent(
+                targetState = queueOpen,
+                transitionSpec = {
+                    (fadeIn(tween(180, delayMillis = 140)) togetherWith fadeOut(tween(140)))
+                        // Unclipped: the capsule's own rounded ends are what
+                        // the eye follows through the width change, and the
+                        // default clip cuts them square while it happens.
+                        .using(SizeTransform(clip = false) { _, _ -> tween(220) })
+                },
+                label = "playerBottomPill",
+            ) { showQueueModes ->
+                if (showQueueModes) {
+                    // Always three-up, unlike the output/party capsule — so it
+                    // always takes the narrower spacing. See
+                    // [PILL_SEGMENT_WIDTH_TRIPLE].
+                    Pill {
+                        PillSegment(
+                            icon = BitChordIcons.Shuffle,
+                            contentDescription = stringResource(
+                                if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
+                            ),
+                            onClick = onToggleShuffle,
+                            highlighted = shuffleEnabled,
+                            haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                            tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                            width = PILL_SEGMENT_WIDTH_TRIPLE,
+                        )
+                        PillDivider()
+                        PillSegment(
+                            icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
+                            label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
+                            contentDescription = when (repeatMode) {
+                                Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
+                                Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
+                                else -> stringResource(R.string.repeat_off)
+                            },
+                            onClick = onCycleRepeat,
+                            highlighted = repeatMode != Player.REPEAT_MODE_OFF,
+                            // Three states, so the buzz tracks the edges of the
+                            // cycle: leaving off rises, returning to off falls,
+                            // and the step between the two repeat modes is just
+                            // a selection.
+                            haptic = when (repeatMode) {
+                                Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
+                                Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
+                                else -> Haptic.Select
+                            },
+                            width = PILL_SEGMENT_WIDTH_TRIPLE,
+                        )
+                        PillDivider()
+                        PillSegment(
+                            icon = BitChordIcons.Infinity,
+                            contentDescription = stringResource(
+                                if (autoplayEnabled) R.string.autoplay_on else R.string.autoplay_off,
+                            ),
+                            onClick = onToggleAutoplay,
+                            highlighted = autoplayEnabled,
+                            haptic = if (autoplayEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                            tapWindowMs = AUTOPLAY_TAP_WINDOW_MS,
+                            width = PILL_SEGMENT_WIDTH_TRIPLE,
+                        )
+                    }
+                } else {
+                    OutputPartyPill(
+                        onOutput = onOpenOutput,
+                        onParty = onListenTogether,
+                        onOpenMembers = onOpenListenTogetherMembers,
+                    )
+                }
+            }
+            BottomGlyph(
+                icon = BitChordIcons.Queue,
+                contentDescription = stringResource(R.string.up_next),
+                onClick = onToggleQueue,
+                highlighted = queueOpen,
+                haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
+            )
+        }
     }
 }
 
