@@ -1,6 +1,13 @@
 package com.music.bitchord.ui.components
 
 import android.media.AudioFormat
+import android.provider.Settings
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -29,13 +36,28 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -52,7 +74,11 @@ import com.music.bitchord.playback.AudioOutputStatus
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import kotlinx.coroutines.isActive
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
 
 private val PIPELINE_CARD_SHAPE = RoundedCornerShape(ALERT_CORNER)
 private val PIPELINE_SCRIM_COLOR = Color.Black.copy(alpha = 0.4f)
@@ -119,6 +145,7 @@ fun AudioPipelineDialog(
     hazeState: HazeState,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    isPlaying: Boolean = false,
 ) {
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
@@ -128,6 +155,67 @@ fun AudioPipelineDialog(
     val eqPreset by AppSettings.equalizerPreset.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
+
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val isReducedMotion = remember(context) {
+        try {
+            val resolver = context.contentResolver
+            val animScale = Settings.Global.getFloat(
+                resolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f,
+            )
+            animScale == 0f
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    val isSignalActive = isPlaying && !isReducedMotion
+
+    val flowAlpha by animateFloatAsState(
+        targetValue = if (isSignalActive) 1f else 0f,
+        animationSpec = tween(
+            durationMillis = if (isSignalActive) 450 else 320,
+            easing = if (isSignalActive) LinearOutSlowInEasing else FastOutLinearInEasing,
+        ),
+        label = "pipelineFlowAlpha",
+    )
+
+    var pulseProgress by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(isSignalActive) {
+        if (!isSignalActive) {
+            pulseProgress = 0f
+            return@LaunchedEffect
+        }
+        pulseProgress = 0f
+        val anim = Animatable(0f)
+        while (isActive) {
+            anim.snapTo(0f)
+            anim.animateTo(
+                targetValue = 1f,
+                animationSpec = tween(
+                    durationMillis = 2400,
+                    easing = LinearEasing,
+                ),
+            ) {
+                pulseProgress = value
+            }
+        }
+    }
+
+    var columnCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val stageCenters = remember { mutableStateMapOf<Int, Offset>() }
+    val interactionRadiusPx = with(density) { 24.dp.toPx() }
+
+    val stageActivation: (Int) -> Float = { idx ->
+        calculateStageActivation(idx, pulseProgress, flowAlpha, stageCenters, interactionRadiusPx)
+    }
+    val onStageIconPositioned: (Int, Offset) -> Unit = { idx, center ->
+        stageCenters[idx] = center
+    }
 
     Box(
         modifier = modifier
@@ -196,7 +284,167 @@ fun AudioPipelineDialog(
                     .heightIn(max = PIPELINE_CONTENT_MAX_HEIGHT)
                     .verticalScroll(rememberScrollState()),
             ) {
-                Column {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { columnCoordinates = it }
+                        .drawBehind {
+                            if (stageCenters.size < 5) return@drawBehind
+
+                            val p0 = stageCenters[0] ?: return@drawBehind
+                            val p1 = stageCenters[1] ?: return@drawBehind
+                            val p2 = stageCenters[2] ?: return@drawBehind
+                            val p3 = stageCenters[3] ?: return@drawBehind
+                            val p4 = stageCenters[4] ?: return@drawBehind
+
+                            val xCenter = p0.x
+                            val y0 = p0.y
+                            val y4 = p4.y
+                            val totalHeight = y4 - y0
+                            if (totalHeight <= 0f) return@drawBehind
+
+                            val currentFlowAlpha = flowAlpha
+                            val currentProgress = pulseProgress
+
+                            // 1. Static Signal Path (Calm, Precision Hardware Schematic)
+                            val busAlpha = if (currentFlowAlpha > 0f) 0.20f + 0.05f * currentFlowAlpha else 0.14f
+                            drawLine(
+                                color = Color.White.copy(alpha = busAlpha),
+                                start = Offset(xCenter, y0),
+                                end = Offset(xCenter, y4),
+                                strokeWidth = 1.dp.toPx(),
+                                cap = StrokeCap.Round,
+                            )
+
+                            // Subtle ambient under-glow along the bus when powered
+                            if (currentFlowAlpha > 0f) {
+                                drawLine(
+                                    color = Color.White.copy(alpha = 0.04f * currentFlowAlpha),
+                                    start = Offset(xCenter, y0),
+                                    end = Offset(xCenter, y4),
+                                    strokeWidth = 4.dp.toPx(),
+                                    cap = StrokeCap.Round,
+                                )
+                            }
+
+                            // 2. Precision Node Anchors at each Stage (Behind the 15dp Icons)
+                            val stagePoints = listOf(p0, p1, p2, p3, p4)
+                            val ringRadius = 10.5.dp.toPx()
+
+                            for (i in stagePoints.indices) {
+                                val stageCenter = Offset(xCenter, stagePoints[i].y)
+                                val act = calculateStageActivation(i, currentProgress, currentFlowAlpha, stageCenters, interactionRadiusPx)
+
+                                // Soft aura behind active component
+                                if (currentFlowAlpha > 0f && act > 0.01f) {
+                                    val auraAlpha = 0.22f * act * currentFlowAlpha
+                                    drawCircle(
+                                        brush = Brush.radialGradient(
+                                            colors = listOf(
+                                                Color.White.copy(alpha = auraAlpha),
+                                                Color.White.copy(alpha = auraAlpha * 0.35f),
+                                                Color.Transparent,
+                                            ),
+                                            center = stageCenter,
+                                            radius = 16.dp.toPx(),
+                                        ),
+                                        radius = 16.dp.toPx(),
+                                        center = stageCenter,
+                                    )
+                                }
+
+                                // Precision micro-ring framing the icon
+                                val ringAlpha = (0.08f + 0.36f * act * currentFlowAlpha).coerceIn(0f, 1f)
+                                drawCircle(
+                                    color = Color.White.copy(alpha = ringAlpha),
+                                    radius = ringRadius,
+                                    center = stageCenter,
+                                    style = Stroke(width = 0.75.dp.toPx()),
+                                )
+                            }
+
+                            // 3. Dynamic Travelling Signal Pulse (When Playing)
+                            if (currentFlowAlpha > 0f && currentProgress <= 0.95f) {
+                                val pulseVisibility = if (currentProgress <= 0.85f) {
+                                    1f
+                                } else {
+                                    (1f - (currentProgress - 0.85f) / 0.10f).coerceIn(0f, 1f)
+                                } * currentFlowAlpha
+
+                                if (pulseVisibility > 0.01f) {
+                                    val s = (currentProgress / 0.85f).coerceIn(0f, 1f)
+                                    val yPulse = y0 + s * totalHeight
+
+                                    val tailLength = 44.dp.toPx()
+                                    val leadLength = 10.dp.toPx()
+                                    val segmentStart = max(y0, yPulse - tailLength)
+                                    val segmentEnd = min(y4, yPulse + leadLength)
+
+                                    if (segmentEnd > segmentStart) {
+                                        // A. Soft Halo Line
+                                        val haloBrush = Brush.verticalGradient(
+                                            colorStops = arrayOf(
+                                                0.0f to Color.Transparent,
+                                                0.60f to Color.White.copy(alpha = 0.12f * pulseVisibility),
+                                                0.88f to Color.White.copy(alpha = 0.25f * pulseVisibility),
+                                                1.0f to Color.Transparent,
+                                            ),
+                                            startY = yPulse - tailLength,
+                                            endY = yPulse + leadLength,
+                                        )
+                                        drawLine(
+                                            brush = haloBrush,
+                                            start = Offset(xCenter, segmentStart),
+                                            end = Offset(xCenter, segmentEnd),
+                                            strokeWidth = 5.5.dp.toPx(),
+                                            cap = StrokeCap.Round,
+                                        )
+
+                                        // B. Brilliant Core Energy Line
+                                        val coreBrush = Brush.verticalGradient(
+                                            colorStops = arrayOf(
+                                                0.0f to Color.Transparent,
+                                                0.50f to Color.White.copy(alpha = 0.40f * pulseVisibility),
+                                                0.86f to Color.White.copy(alpha = 0.95f * pulseVisibility),
+                                                1.0f to Color.Transparent,
+                                            ),
+                                            startY = yPulse - tailLength,
+                                            endY = yPulse + leadLength,
+                                        )
+                                        drawLine(
+                                            brush = coreBrush,
+                                            start = Offset(xCenter, segmentStart),
+                                            end = Offset(xCenter, segmentEnd),
+                                            strokeWidth = 1.75.dp.toPx(),
+                                            cap = StrokeCap.Round,
+                                        )
+
+                                        // C. Leading Micro-Photon / Energy Pip at pulse head
+                                        if (yPulse in y0..y4) {
+                                            val headCenter = Offset(xCenter, yPulse)
+                                            drawCircle(
+                                                brush = Brush.radialGradient(
+                                                    colors = listOf(
+                                                        Color.White.copy(alpha = 0.35f * pulseVisibility),
+                                                        Color.Transparent,
+                                                    ),
+                                                    center = headCenter,
+                                                    radius = 8.dp.toPx(),
+                                                ),
+                                                radius = 8.dp.toPx(),
+                                                center = headCenter,
+                                            )
+                                            drawCircle(
+                                                color = Color.White.copy(alpha = 0.95f * pulseVisibility),
+                                                radius = 1.75.dp.toPx(),
+                                                center = headCenter,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                ) {
                     // 1. Track Info Stage
                     val sourceName = nerdStats?.sourceName ?: "—"
                     val format = NerdStats.codecLabel(nerdStats?.mimeType) ?: nerdStats?.mimeType ?: "—"
@@ -216,8 +464,12 @@ fun AudioPipelineDialog(
 
                     PipelineRule()
                     PipelineSection(
+                        stageIndex = 0,
                         icon = Icons.AutoMirrored.Rounded.InsertDriveFile,
                         title = stringResource(R.string.pipeline_track_info),
+                        columnCoordinates = columnCoordinates,
+                        stageActivationProvider = stageActivation,
+                        onStageIconPositioned = onStageIconPositioned,
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_source), sourceName)
                         PipelineRow(stringResource(R.string.pipeline_format), format)
@@ -230,10 +482,14 @@ fun AudioPipelineDialog(
                     // 2. Decoder Stage
                     val decoderName = outputStatus.decoderName ?: "—"
 
-                    PipelineRule()
+                    PipelineRule(Modifier.padding(start = 36.dp))
                     PipelineSection(
+                        stageIndex = 1,
                         icon = Icons.Rounded.Memory,
                         title = stringResource(R.string.pipeline_decoder),
+                        columnCoordinates = columnCoordinates,
+                        stageActivationProvider = stageActivation,
+                        onStageIconPositioned = onStageIconPositioned,
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_decoder_name), decoderName)
                         outputStatus.decoderOutputEncoding?.let {
@@ -265,10 +521,14 @@ fun AudioPipelineDialog(
                         else -> "Resampled"
                     }
 
-                    PipelineRule()
+                    PipelineRule(Modifier.padding(start = 36.dp))
                     PipelineSection(
+                        stageIndex = 2,
                         icon = Icons.Rounded.Tune,
                         title = stringResource(R.string.pipeline_resampler),
+                        columnCoordinates = columnCoordinates,
+                        stageActivationProvider = stageActivation,
+                        onStageIconPositioned = onStageIconPositioned,
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_io_rate), ioRateText)
                         PipelineRow(stringResource(R.string.pipeline_type), resamplerType)
@@ -319,10 +579,14 @@ fun AudioPipelineDialog(
                         stringResource(R.string.loudness_lufs, "%+.1f".format(Locale.ROOT, it))
                     } ?: "—"
 
-                    PipelineRule()
+                    PipelineRule(Modifier.padding(start = 36.dp))
                     PipelineSection(
+                        stageIndex = 3,
                         icon = Icons.Rounded.GraphicEq,
                         title = stringResource(R.string.pipeline_dsp),
+                        columnCoordinates = columnCoordinates,
+                        stageActivationProvider = stageActivation,
+                        onStageIconPositioned = onStageIconPositioned,
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_pcm_format), pcmFormat)
                         PipelineRow(stringResource(R.string.pipeline_sample_rate), dspRateText)
@@ -361,10 +625,14 @@ fun AudioPipelineDialog(
                     val audioTrackRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz ?: 48000
                     val audioTrackText = "$audioTrackEncoding / $audioTrackRate Hz"
 
-                    PipelineRule()
+                    PipelineRule(Modifier.padding(start = 36.dp))
                     PipelineSection(
+                        stageIndex = 4,
                         icon = Icons.AutoMirrored.Rounded.VolumeUp,
                         title = stringResource(R.string.pipeline_output_device),
+                        columnCoordinates = columnCoordinates,
+                        stageActivationProvider = stageActivation,
+                        onStageIconPositioned = onStageIconPositioned,
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_device_name), deviceName)
                         PipelineRow("Route", outputStatus.routeKind.name)
@@ -437,13 +705,66 @@ fun AudioPipelineDialog(
     }
 }
 
+private fun calculateStageActivation(
+    stageIndex: Int,
+    progress: Float,
+    flowAlpha: Float,
+    stageCenters: Map<Int, Offset>,
+    interactionRadiusPx: Float,
+): Float {
+    if (flowAlpha <= 0.001f || stageCenters.size < 5) return 0f
+    val p0 = stageCenters[0] ?: return 0f
+    val p4 = stageCenters[4] ?: return 0f
+    val totalHeight = p4.y - p0.y
+    if (totalHeight <= 0f) return 0f
+
+    val targetY = stageCenters[stageIndex]?.y ?: return 0f
+
+    val yPulse = if (progress <= 0.85f) {
+        val s = (progress / 0.85f).coerceIn(0f, 1f)
+        p0.y + s * totalHeight
+    } else {
+        p4.y
+    }
+
+    val dy = abs(yPulse - targetY)
+    if (dy > interactionRadiusPx) return 0f
+
+    val p = 1f - (dy / interactionRadiusPx)
+    val raw = (0.5f - 0.5f * kotlin.math.cos(p * Math.PI.toFloat())).coerceIn(0f, 1f)
+
+    val absorption = if (stageIndex == 4 && progress > 0.85f) {
+        if (progress >= 0.95f) 0f else 1f - ((progress - 0.85f) / 0.10f)
+    } else 1f
+
+    return (raw * absorption * flowAlpha).coerceIn(0f, 1f)
+}
+
 /** One pipeline stage: an icon, its title, and the label/value rows under it. */
 @Composable
 private fun PipelineSection(
+    stageIndex: Int,
     icon: ImageVector,
     title: String,
+    columnCoordinates: LayoutCoordinates?,
+    stageActivationProvider: (Int) -> Float,
+    onStageIconPositioned: (Int, Offset) -> Unit,
     content: @Composable () -> Unit,
 ) {
+    var iconCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
+
+    LaunchedEffect(iconCoordinates, columnCoordinates) {
+        val child = iconCoordinates ?: return@LaunchedEffect
+        val parent = columnCoordinates ?: return@LaunchedEffect
+        if (child.isAttached && parent.isAttached) {
+            val center = parent.localPositionOf(
+                child,
+                Offset(child.size.width / 2f, child.size.height / 2f),
+            )
+            onStageIconPositioned(stageIndex, center)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -453,8 +774,16 @@ private fun PipelineSection(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = PIPELINE_ICON_TINT,
-                modifier = Modifier.size(15.dp),
+                tint = Color.White,
+                modifier = Modifier
+                    .size(15.dp)
+                    .onGloballyPositioned { coords ->
+                        iconCoordinates = coords
+                    }
+                    .graphicsLayer {
+                        val act = stageActivationProvider(stageIndex)
+                        alpha = (0.60f + 0.38f * act).coerceIn(0f, 1f)
+                    },
             )
             Spacer(Modifier.width(7.dp))
             Text(
@@ -464,7 +793,11 @@ private fun PipelineSection(
                     fontWeight = FontWeight.W600,
                     letterSpacing = 0.4.sp,
                 ),
-                color = Color.White.copy(alpha = 0.55f),
+                color = Color.White,
+                modifier = Modifier.graphicsLayer {
+                    val act = stageActivationProvider(stageIndex)
+                    alpha = (0.55f + 0.35f * act).coerceIn(0f, 1f)
+                },
             )
         }
         Spacer(Modifier.height(8.dp))
@@ -499,9 +832,9 @@ private fun PipelineRow(label: String, value: String) {
 
 /** Hairline separator between the header and each stage, matching [AlertRule]'s weight. */
 @Composable
-private fun PipelineRule() {
+private fun PipelineRule(modifier: Modifier = Modifier) {
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(0.5.dp)
             .background(Color.White.copy(alpha = 0.14f)),
