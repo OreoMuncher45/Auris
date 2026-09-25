@@ -2161,18 +2161,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         else -> null
     }
 
-    /**
-     * A failed listing names its cause: a share that answers with an error is
-     * not an empty share, and "no audio files" would send the user hunting
-     * through folder paths for a login or network problem.
-     */
     private suspend fun remoteSongsState(remote: RemoteLibrary): UiState<List<Song>> =
-        runCatching { remote.songs() }.fold(
-            onSuccess = { songs ->
-                if (songs.isEmpty()) UiState.Error(text(remote.emptyRes)) else UiState.Success(songs)
-            },
-            onFailure = { UiState.Error(it.message?.takeIf(String::isNotBlank) ?: it.javaClass.simpleName) },
-        )
+        com.music.bitchord.data.remote.RemoteListing.state(runCatching { remote.songs() }, text(remote.emptyRes))
 
     /**
      * Re-reads an open remote-library page after its server settings change.

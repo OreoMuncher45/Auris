@@ -3,6 +3,7 @@ package com.music.bitchord
 import com.music.bitchord.data.remote.RemoteArtwork
 import com.music.bitchord.data.smb.SmbAuth
 import com.music.bitchord.data.smb.SmbConfig
+import com.music.bitchord.data.smb.SmbConnection
 import com.music.bitchord.playback.SmbDataSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -60,6 +61,24 @@ class SmbTest {
         assertEquals("Album", song.albumName)
         assertTrue(SmbConfig.isSmbId(song.videoId))
         assertFalse(SmbConfig.isSmbId("abc123"))
+    }
+
+    @Test
+    fun blankCredentialsLogInAsGuestNotAnonymous() {
+        val guest = SmbConnection.authFor("", "")
+        assertTrue(guest.isGuest)
+        assertFalse(guest.isAnonymous)
+        assertTrue(SmbConnection.authFor("  ", "").isGuest)
+    }
+
+    @Test
+    fun credentialsLogInAsThemselves() {
+        val user = SmbConnection.authFor("rairulyle", "secret")
+        assertEquals("rairulyle", user.username)
+        assertEquals("secret", String(user.password))
+        assertEquals("", user.domain)
+        assertFalse(user.isGuest)
+        assertFalse(user.isAnonymous)
     }
 
     @Test
