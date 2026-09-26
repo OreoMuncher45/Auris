@@ -446,18 +446,21 @@ private fun BitChordApp(
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
     // has to reveal what it was opened from.
-    var showReplay by remember { mutableStateOf(false) }
+    var showReplay by rememberSaveable { mutableStateOf(false) }
     // Library cards use the same Replay page as every other entry point, but
     // category cards ask it to start at their matching ranked section.
-    var replayLandingPage by remember { mutableStateOf(ReplayStoryPage.INTRO) }
-    var replayStory by remember { mutableStateOf<ReplayStoryPage?>(null) }
-    var showReplayShare by remember { mutableStateOf(false) }
+    var replayLandingPage by rememberSaveable { mutableStateOf(ReplayStoryPage.INTRO) }
+    var replayStory by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
+    var showReplayShare by rememberSaveable { mutableStateOf(false) }
     /** Which story card the share sheet is for, or null for the whole Replay. */
-    var replaySharePage by remember { mutableStateOf<ReplayStoryPage?>(null) }
-    var showAccountScrobbling by remember { mutableStateOf(false) }
-    var showSources by remember { mutableStateOf(false) }
-    var showListenTogether by remember { mutableStateOf(false) }
-    var showEqualizer by remember { mutableStateOf(false) }
+    var replaySharePage by rememberSaveable { mutableStateOf<ReplayStoryPage?>(null) }
+    // Track whether Replay was opened from Settings so back navigation can
+    // return to the Settings sheet instead of jumping to Home.
+    var replayOpenedFromSettings by rememberSaveable { mutableStateOf(false) }
+    var showAccountScrobbling by rememberSaveable { mutableStateOf(false) }
+    var showSources by rememberSaveable { mutableStateOf(false) }
+    var showListenTogether by rememberSaveable { mutableStateOf(false) }
+    var showEqualizer by rememberSaveable { mutableStateOf(false) }
     var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
 
     // Hosted here rather than inside SourcesScreen so its frosted card has
@@ -2154,6 +2157,7 @@ private fun BitChordApp(
                 showListenTogether = false
                 showEqualizer = false
                 showReplay = false
+                replayOpenedFromSettings = false
                 showHistory = false
                 showDiscord = false
                 libraryShowAll = null
@@ -2226,9 +2230,14 @@ private fun BitChordApp(
         BackHandler(enabled = showReplayShare) { showReplayShare = false }
         BackHandler(enabled = replayStory != null && !showReplayShare) { replayStory = null }
         BackHandler(
-            enabled = showReplay && !showSettings && replayStory == null && !showReplayShare,
+            enabled = showReplay && replayStory == null && !showReplayShare,
         ) {
-            showReplay = false
+            if (replayOpenedFromSettings) {
+                showReplay = false
+                replayOpenedFromSettings = false
+            } else {
+                showReplay = false
+            }
         }
         BackHandler(
             enabled = detail != null && !showSettings && !showAccountScrobbling && !showSources && !showListenTogether &&
@@ -2308,7 +2317,7 @@ private fun BitChordApp(
                         // button sets `showSettings` from every page including
                         // this one, so with Replay winning the tie the button
                         // was live, hit, and changed nothing on screen.
-                        showSettings -> "settings"
+                        showSettings && !replayOpenedFromSettings -> "settings"
                         showReplay -> "replay"
                         detail != null -> detail.browseId
                         else -> "$TAB_KEY$selectedTab"
@@ -2515,7 +2524,7 @@ private fun BitChordApp(
                             onAccountScrobbling = { showAccountScrobbling = true },
                             onEqualizer = { showEqualizer = true },
                             onOpenReplay = {
-                                showSettings = false
+                                replayOpenedFromSettings = true
                                 replayLandingPage = ReplayStoryPage.INTRO
                                 showReplay = true
                             },
@@ -3019,7 +3028,7 @@ private fun BitChordApp(
                         showSources -> ({ showSources = false })
                         showListenTogether -> ({ showListenTogether = false })
                         showEqualizer -> ({ showEqualizer = false })
-                        showSettings -> ({ showSettings = false })
+                        showSettings && !replayOpenedFromSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
                         detailActiveShelf != null -> ({ detailActiveShelf = null })
                         detail != null -> ({ viewModel.closeDetail(); Unit })
@@ -3217,6 +3226,7 @@ private fun BitChordApp(
                     showListenTogether = false
                     showEqualizer = false
                     showReplay = false
+                    replayOpenedFromSettings = false
                     showHistory = false
                     libraryShowAll = null
                     selectedTab = index
@@ -3332,6 +3342,38 @@ private fun BitChordApp(
                     nowPlaying(playerSong)
                 }
             }
+        }
+
+        // ---- Replay overlay (when opened from Settings) ----
+        // Rendered outside the AnimatedContent so it sits on top of the
+        // Settings sheet while preserving its scroll position and state.
+        if (replayOpenedFromSettings && showReplay && !showReplayShare) {
+            ReplayScreen(
+                state = replay,
+                holder = account?.name.orEmpty(),
+                onPeriodChange = setReplayPeriod,
+                onOpenStory = { replayStory = it },
+                onPlaySong = { song ->
+                    playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
+                },
+                onOpenArtist = { id, name ->
+                    showReplay = false
+                    replayOpenedFromSettings = false
+                    openByName(id, name, null, BrowseType.ARTIST)
+                },
+                onOpenAlbum = { id, title, artist, art ->
+                    showReplay = false
+                    replayOpenedFromSettings = false
+                    openByName(id, title, artist, BrowseType.ALBUM, art)
+                },
+                onShare = {
+                    replaySharePage = null
+                    showReplayShare = true
+                },
+                contentPadding = listPadding,
+                listState = replayListState,
+                landingPage = replayLandingPage,
+            )
         }
 
         // ---- Replay stories ----
