@@ -42,14 +42,14 @@ object PlayerBack {
 
     private val entries = ArrayList<Entry>()
 
-    fun push(entry: Entry) {
+    internal fun push(entry: Entry) {
         synchronized(entries) {
             entries.remove(entry)
             entries.add(entry)
         }
     }
 
-    fun remove(entry: Entry) {
+    internal fun remove(entry: Entry) {
         synchronized(entries) { entries.remove(entry) }
     }
 
