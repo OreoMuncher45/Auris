@@ -728,7 +728,7 @@
     <string name="replay_minutes_end"> with music.</string>
     <string name="replay_minutes_start">You spent </string>
     <string name="replay_minutes_value">%1$s</string>
-    <string name="replay_mostly_around">, mostly around %1$s.</string>
+    <string name="replay_mostly_around">%1$s</string>
     <string name="replay_private_counting">Built privately from your listening history on this device</string>
     <string name="replay_share_card_description">A polished card with your main listening highlights.</string>
     <string name="replay_share_summary_description">A full picture with songs, artists, albums, genres, and habits.</string>
@@ -752,8 +752,8 @@
         <item quantity="other">%1$s artists</item>
     </plurals>
     <plurals name="replay_play_count">
-        <item quantity="one">%1$s play</item>
-        <item quantity="other">%1$s plays</item>
+        <item quantity="one">%1$s track</item>
+        <item quantity="other">%1$s tracks</item>
     </plurals>
     <plurals name="replay_song_count">
         <item quantity="one">%1$s song</item>

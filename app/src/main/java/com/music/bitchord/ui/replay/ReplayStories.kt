@@ -395,7 +395,7 @@ private fun StoryChrome(
                 // by. A month or "All time" has no two-digit form and is spelt
                 // out rather than truncated into nonsense.
                 text = if (label.length == 4 && label.all { it.isDigit() }) {
-                    "Replay'${label.takeLast(2)}"
+                    "Replay ${label.takeLast(2)}"
                 } else {
                     "Replay · $label"
                 },
@@ -558,15 +558,22 @@ private fun ColumnScope.Minutes(summary: ReplaySummary, headline: List<HeadlineR
             } else {
                 append(context.getString(R.string.replay_across))
             }
+            // Add a space between the hours and the track count
+            if (summary.hours >= 1) {
+                append(" ")
+            }
             append(context.resources.getQuantityString(
                 R.plurals.replay_play_count,
                 summary.totalPlays,
                 grouped(summary.totalPlays.toLong()),
             ))
-            append(".")
-            summary.peakHour?.let {
-                append(" ")
-                append(context.getString(R.string.replay_mostly_around, formatHour(context, it)))
+            // Replace period+comma with just a comma
+            if (summary.peakHour != null) {
+                append(", mostly around ")
+                append(formatHour(context, summary.peakHour!!))
+                append(".")
+            } else {
+                append(".")
             }
         },
         style = MaterialTheme.typography.bodyLarge,

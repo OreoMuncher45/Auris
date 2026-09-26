@@ -387,7 +387,7 @@ private fun drawHeader(
 ): Float {
     val label = summary.localizedLabel(context)
     val title = if (label.length == 4 && label.all { it.isDigit() }) {
-        "Replay'${label.takeLast(2)}"
+        "Replay ${label.takeLast(2)}"
     } else {
         "Replay · $label"
     }
