@@ -29,7 +29,6 @@ internal class DesktopOverlays {
     var playlistDialog by mutableStateOf(false)
     var rename by mutableStateOf(false)
     var delete by mutableStateOf(false)
-    var queue by mutableStateOf(false)
     var nowPlaying by mutableStateOf(false)
     var settings by mutableStateOf(false)
     var spotifyCanvasSetup by mutableStateOf(false)

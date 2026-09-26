@@ -12,8 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -24,10 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerIcon
@@ -54,7 +53,7 @@ internal fun DesktopTitleBar() {
             .desktopChromeGlass(),
     ) {
         Box(Modifier.fillMaxSize()) {
-            DesktopWindowButtons(Modifier.align(Alignment.CenterEnd))
+            DesktopWindowButtons(Modifier.align(Alignment.CenterStart))
         }
     }
 }
@@ -113,81 +112,68 @@ internal fun DesktopWindowButtons(modifier: Modifier = Modifier) {
     if (!DesktopPlatform.drawsOwnWindowFrame) return
     val actions = LocalDesktopWindowActions.current ?: return
     val maximized by DesktopWindowMode.maximized.collectAsState()
-    Row(modifier.height(CAPTION_HEIGHT)) {
-        CaptionButton("Minimize", onClick = actions.minimize) { stroke ->
-            drawLine(
-                color = stroke,
-                start = Offset(center.x - GLYPH_HALF.toPx(), center.y),
-                end = Offset(center.x + GLYPH_HALF.toPx(), center.y),
-                strokeWidth = HAIRLINE.toPx(),
-                cap = StrokeCap.Square,
-            )
-        }
-        CaptionButton(
-            if (maximized) "Restore" else "Maximize",
-            onClick = actions.toggleMaximize,
-        ) { stroke ->
-            val side = GLYPH_HALF.toPx() * 2f
-            val line = HAIRLINE.toPx()
-            if (maximized) {
-                // Two overlapping panes, which is how every platform says "there is a smaller
-                // window underneath this one".
-                val inset = line * 2f
-                drawRect(
-                    color = stroke,
-                    topLeft = Offset(center.x - side / 2f + inset, center.y - side / 2f - inset),
-                    size = Size(side - inset, side - inset),
-                    style = Stroke(width = line),
-                )
-                drawRect(
-                    color = stroke,
-                    topLeft = Offset(center.x - side / 2f - inset, center.y - side / 2f + inset),
-                    size = Size(side - inset, side - inset),
-                    style = Stroke(width = line),
-                )
-            } else {
-                drawRect(
-                    color = stroke,
-                    topLeft = Offset(center.x - side / 2f, center.y - side / 2f),
-                    size = Size(side, side),
-                    style = Stroke(width = line),
-                )
-            }
-        }
-        CaptionButton("Close", onClick = actions.close, hover = CLOSE_HOVER) { stroke ->
+    Row(
+        modifier = modifier.height(CAPTION_HEIGHT).padding(start = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        MacCaptionButton("Close", MAC_CLOSE, onClick = actions.close) { glyph ->
             val reach = GLYPH_HALF.toPx()
             val line = HAIRLINE.toPx()
             drawLine(
-                color = stroke,
+                color = glyph,
                 start = Offset(center.x - reach, center.y - reach),
                 end = Offset(center.x + reach, center.y + reach),
                 strokeWidth = line,
-                cap = StrokeCap.Square,
+                cap = StrokeCap.Round,
             )
             drawLine(
-                color = stroke,
+                color = glyph,
                 start = Offset(center.x + reach, center.y - reach),
                 end = Offset(center.x - reach, center.y + reach),
                 strokeWidth = line,
-                cap = StrokeCap.Square,
+                cap = StrokeCap.Round,
             )
+        }
+        MacCaptionButton("Minimize", MAC_MINIMIZE, onClick = actions.minimize) { glyph ->
+            drawLine(
+                color = glyph,
+                start = Offset(center.x - GLYPH_HALF.toPx(), center.y),
+                end = Offset(center.x + GLYPH_HALF.toPx(), center.y),
+                strokeWidth = HAIRLINE.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+        MacCaptionButton(
+            if (maximized) "Restore" else "Maximize",
+            MAC_MAXIMIZE,
+            onClick = actions.toggleMaximize,
+        ) { glyph ->
+            val reach = GLYPH_HALF.toPx()
+            val line = HAIRLINE.toPx()
+            // The opposing corner marks used by macOS' green zoom control. They remain legible at
+            // 100% Windows scaling, unlike a tiny outlined square.
+            drawLine(glyph, Offset(center.x - reach, center.y + reach), Offset(center.x + reach, center.y - reach), line, StrokeCap.Round)
+            drawLine(glyph, Offset(center.x + reach, center.y - reach), Offset(center.x + 1.dp.toPx(), center.y - reach), line, StrokeCap.Round)
+            drawLine(glyph, Offset(center.x + reach, center.y - reach), Offset(center.x + reach, center.y - 1.dp.toPx()), line, StrokeCap.Round)
+            drawLine(glyph, Offset(center.x - reach, center.y + reach), Offset(center.x - 1.dp.toPx(), center.y + reach), line, StrokeCap.Round)
+            drawLine(glyph, Offset(center.x - reach, center.y + reach), Offset(center.x - reach, center.y + 1.dp.toPx()), line, StrokeCap.Round)
         }
     }
 }
 
 @Composable
-private fun CaptionButton(
+private fun MacCaptionButton(
     label: String,
+    fill: Color,
     onClick: () -> Unit,
-    hover: Color = DesktopRowHover,
     glyph: androidx.compose.ui.graphics.drawscope.DrawScope.(Color) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     Box(
         Modifier
-            .size(CAPTION_WIDTH, CAPTION_HEIGHT)
-            .background(if (hovered) hover else Color.Transparent)
+            .size(CAPTION_TOUCH_SIZE)
             .hoverable(interaction)
             // The arrow, not the hand: this is window furniture, and the pointer says so before the
             // click does.
@@ -198,7 +184,10 @@ private fun CaptionButton(
                 onClick = onClick,
             )
             .semantics { contentDescription = label }
-            .drawBehind { glyph(if (hovered) Color.White else DesktopSecondary) },
+            .drawBehind {
+                drawCircle(fill, radius = MAC_DOT_RADIUS.toPx())
+                if (hovered) glyph(MAC_GLYPH)
+            },
         contentAlignment = Alignment.Center,
     ) {}
 }
@@ -207,15 +196,18 @@ private fun CaptionButton(
  * The platform's own caption metrics, which is what makes these read as the window's controls
  * rather than the application's.
  */
-private val CAPTION_WIDTH = 46.dp
-private val CAPTION_HEIGHT = 32.dp
+private val CAPTION_TOUCH_SIZE = 22.dp
+private val CAPTION_HEIGHT = 24.dp
+private val MAC_DOT_RADIUS = 6.dp
 
 /** Half the width of a glyph, and the weight every one of them is drawn at. */
-private val GLYPH_HALF = 5.dp
-private val HAIRLINE = 1.dp
+private val GLYPH_HALF = 2.5.dp
+private val HAIRLINE = 0.75.dp
 
-/** Windows' own close-button red, which is the one everybody now reads as close. */
-private val CLOSE_HOVER = Color(0xFFC42B1C)
+private val MAC_CLOSE = Color(0xFFFF5F57)
+private val MAC_MINIMIZE = Color(0xFFFFBD2E)
+private val MAC_MAXIMIZE = Color(0xFF28C840)
+private val MAC_GLYPH = Color(0xB3000000)
 
 /** Answers a double click the way the system caption always has. */
 private fun Modifier.doubleClickToMaximize(actions: DesktopWindowActions?): Modifier =
