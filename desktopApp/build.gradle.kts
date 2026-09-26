@@ -56,6 +56,13 @@ dependencies {
 
     implementation(project(":shared"))
     implementation(project(":sharedUi"))
+    // BotGuard, for the PoTokens YouTube's web clients need: the phone runs it in an Android
+    // WebView, the desktop in JavaFX's (WebKit). Per-platform jars carry the natives.
+    val javafxClassifier = if (targetOs == "windows") "win" else "linux"
+    listOf("base", "graphics", "controls", "media", "web").forEach { module ->
+        implementation("org.openjfx:javafx-$module:21.0.10:$javafxClassifier")
+    }
+
     // The shared player loads artwork through Coil, as the phone does.
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
 

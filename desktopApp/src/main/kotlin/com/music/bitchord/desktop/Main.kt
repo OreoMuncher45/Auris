@@ -6,6 +6,7 @@ import com.music.bitchord.data.DebugLog
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnerTubeXResolver
 import com.music.bitchord.data.innertube.StreamResolver
+import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,8 +31,8 @@ fun main() {
         DesktopTrackLog.log("$tag/$level: $message" + (error?.let { " (${it.message})" } ?: ""))
     }
     LyricsTranslation.cacheDir = DesktopMediaCache.directory.toFile()
-    // YouTube playback is the phone's StreamResolver over InnerTubeX. The desktop has no
-    // BotGuard minter, so the clients that need a PoToken are left out of the catalog.
+    // YouTube playback is the phone's StreamResolver over InnerTubeX, with BotGuard PoTokens
+    // minted in JavaFX's WebView where the phone uses Android's.
     TrackLog.echo = { level, tag, message, error ->
         DesktopTrackLog.log("$tag/$level: $message" + (error?.let { " (${it.message})" } ?: ""))
     }
@@ -41,7 +42,10 @@ fun main() {
     InnerTubeXResolver.init(
         filesDir = DesktopMediaCache.directory.toFile(),
         store = DesktopInnerTubeXStore,
-        poTokenProvider = null,
+        poTokenProvider = PoTokenGenerator(
+            createMinter = { DesktopPoTokenWebView.getNewPoTokenGenerator() },
+            available = { DesktopPoTokenWebView.available },
+        ).asTokenProvider(),
     )
     desktopMain()
 }

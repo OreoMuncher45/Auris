@@ -4,14 +4,12 @@ import android.content.Context
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
-import com.metrolist.innertubex.extraction.PoTokenResult
-import com.metrolist.innertubex.extraction.TokenProvider
-import com.metrolist.innertubex.extraction.TokenProviderCapabilities
-import com.metrolist.innertubex.extraction.strategy.PoTokenProviderKind
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.TrackLog
+import android.webkit.CookieManager
 import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
+import com.music.bitchord.data.innertube.potoken.PoTokenWebView
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceResolver
 
@@ -53,7 +51,12 @@ object AndroidStreamHooks {
     fun initInnerTubeX(context: Context) {
         val app = context.applicationContext
         val prefs = app.getSharedPreferences("innertubex_player_config", Context.MODE_PRIVATE)
-        val poTokens = PoTokenGenerator(app)
+        // BotGuard PoTokens minted in a hidden WebView; what WEB_REMIX needs for age-restricted tracks.
+        val webViewSupported by lazy { runCatching { CookieManager.getInstance() }.isSuccess }
+        val poTokens = PoTokenGenerator(
+            createMinter = { PoTokenWebView.getNewPoTokenGenerator(app) },
+            available = { webViewSupported },
+        )
         InnerTubeXResolver.init(
             filesDir = app.filesDir,
             store = object : InnerTubeXResolver.ConfigStore {
@@ -62,26 +65,7 @@ object AndroidStreamHooks {
                 override fun putString(key: String, value: String) = prefs.edit().putString(key, value).apply()
                 override fun putLong(key: String, value: Long) = prefs.edit().putLong(key, value).apply()
             },
-            // BotGuard PoTokens minted in a hidden WebView; what WEB_REMIX needs for age-restricted tracks.
-            poTokenProvider = object : TokenProvider {
-                override val capabilities = TokenProviderCapabilities(
-                    providers = setOf(PoTokenProviderKind.WEB_BOTGUARD),
-                    usesWebView = true,
-                )
-
-                override suspend fun getPoToken(videoId: String, visitorData: String, cookie: String?): PoTokenResult? =
-                    poTokens.getWebClientPoToken(videoId, visitorData)?.let { token ->
-                        PoTokenResult(
-                            playerRequestToken = token.playerRequestPoToken,
-                            streamingDataToken = token.streamingDataPoToken,
-                            visitorData = visitorData,
-                        )
-                    }
-
-                override suspend fun close() {
-                    poTokens.close()
-                }
-            },
+            poTokenProvider = poTokens.asTokenProvider(),
         )
     }
 }

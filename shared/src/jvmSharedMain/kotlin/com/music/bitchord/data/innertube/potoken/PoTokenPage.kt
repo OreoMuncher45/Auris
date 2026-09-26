@@ -1,4 +1,11 @@
-<!DOCTYPE html>
+package com.music.bitchord.data.innertube.potoken
+
+/**
+ * The page a PoToken browser loads: the BgUtils-style BotGuard client whose
+ * `runBotGuard`, `createPoTokenMinter` and `obtainPoToken` the minter drives.
+ * One copy for the phone's WebView and the desktop's JavaFX WebView alike.
+ */
+const val PO_TOKEN_HTML = """<!DOCTYPE html>
 <html lang="en"><head><title></title><script>
     /**
      * BotGuard client for generating poTokens.
@@ -212,3 +219,4 @@
       return result;
     }
 </script></head><body></body></html>
+"""
