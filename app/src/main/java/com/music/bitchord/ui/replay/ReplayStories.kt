@@ -566,9 +566,9 @@ private fun ColumnScope.Minutes(summary: ReplaySummary, headline: List<HeadlineR
             } else {
                 append(context.getString(R.string.replay_across))
             }
-            // Add a space between the hours and the track count
+            // Add a comma+space separator between the hours and the track count
             if (summary.hours >= 1) {
-                append(" ")
+                append(", ")
             }
             append(context.resources.getQuantityString(
                 R.plurals.replay_play_count,
