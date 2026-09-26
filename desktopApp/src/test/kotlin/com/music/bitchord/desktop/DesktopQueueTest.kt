@@ -15,13 +15,13 @@ class DesktopQueueTest {
 
     @Test
     fun aQueueStartsWhereTheListenerStartedIt() {
-        // Rows above the picked one have not played in this session, so putting them behind the
-        // current item would present them as history.
+        // The whole list stays, as on the phone: the rows above the picked one are what
+        // previous steps back through.
         val queue = DesktopQueue.startingAt(songs("a", "b", "c", "d"), startIndex = 2)
 
-        assertEquals(listOf("c", "d"), queue.songs.map { it.videoId })
+        assertEquals(listOf("a", "b", "c", "d"), queue.songs.map { it.videoId })
         assertEquals("c", queue.current?.videoId)
-        assertFalse(queue.hasPrevious)
+        assertTrue(queue.hasPrevious)
     }
 
     @Test

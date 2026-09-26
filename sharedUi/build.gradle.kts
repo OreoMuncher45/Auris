@@ -63,6 +63,10 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
         }
+        jvmTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("junit:junit:4.13.2")
+        }
         androidMain.dependencies {
             // The phone's own versions, so nothing here moves them.
             implementation("androidx.activity:activity-compose:1.9.3")

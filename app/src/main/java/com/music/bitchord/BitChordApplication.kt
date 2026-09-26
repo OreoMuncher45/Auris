@@ -11,7 +11,6 @@ import coil3.disk.directory
 import coil3.memory.MemoryCache
 import coil3.request.crossfade
 import com.music.bitchord.auth.AuthStore
-import com.music.bitchord.data.NerdStats
 import com.music.bitchord.ui.player.AndroidPlayerHost
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.data.canvas.CanvasCache
@@ -44,7 +43,6 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // The player is drawn by the shared UI module; this is what it reads
         // underneath — settings, the Canvas decoder, outputs, the party.
         PlayerPlatform.install(AndroidPlayerHost(this))
-        NerdStats.trackKeyId = { key -> SourceRegistry.parseTrackKey(key)?.second }
         // PlaybackService shares this process, so seeding the cookie here means
         // stream resolution is authenticated from the first play onwards.
         authStore = AuthStore(this)
