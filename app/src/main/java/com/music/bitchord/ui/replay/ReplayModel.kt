@@ -174,8 +174,7 @@ fun ReplaySummary.storyHeadline(context: Context, page: ReplayStoryPage): List<H
         context.getString(R.string.replay_summary_start) to false,
         " " to false,
         label to true,
-        " " to false,
-        "." to false,
+        " in music." to false,
     )
 }
 
