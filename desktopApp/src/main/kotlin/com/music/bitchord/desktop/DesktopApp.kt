@@ -1,5 +1,12 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.NerdStats
+import com.music.bitchord.playback.PlaybackPosition
+import com.music.bitchord.ui.LyricsProviderState
+import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.PlayerBack
+import com.music.bitchord.ui.player.RepeatModes
+import androidx.compose.runtime.SideEffect
 import com.music.bitchord.data.model.QueueTier
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -352,7 +359,7 @@ private const val SCROBBLE_THRESHOLD_MS = 180_000L
 private const val BACK_RESTARTS_AFTER_MS = 10_000L
 
 @Composable
-private fun desktopTypography(): Typography {
+internal fun desktopTypography(): Typography {
     val sfProDisplay = FontFamily(
         composeFont(Res.font.sf_pro_display_regular, FontWeight.W400),
         composeFont(Res.font.sf_pro_display_medium, FontWeight.W500),
@@ -1203,12 +1210,21 @@ fun BitChordDesktopApp() {
     }
     val playback by playbackEngine.state.collectAsState()
 
+    // The shared player reads the playhead off this one object, and only where it
+    // draws it — see PlaybackPosition — so a tick never recomposes the player.
+    val playerPosition = remember { PlaybackPosition() }
+    LaunchedEffect(playbackEngine) {
+        playbackEngine.state.collect { playerPosition.positionMs = it.positionMs }
+    }
+
     // Lyrics and motion artwork follow whatever is *playing*, not whatever page happens to be open.
     // This is where Android keeps it — `MainActivity`, keyed on the player's own track — so the
     // lookup starts the moment a track does and the panel is already populated by the time anyone
     // opens the player. Run from the player page instead, nothing was fetched until it was opened,
     // and a track half a minute in then showed a skeleton and arrived mid-song.
     var lyrics by remember { mutableStateOf<DesktopLyrics?>(null) }
+    // The provider picked for this track in the player's lyrics drawer, if any.
+    var lyricsOnly by remember(selectedSong?.videoId) { mutableStateOf<String?>(null) }
     var lyricsLoading by remember { mutableStateOf(false) }
     var lyricsError by remember { mutableStateOf<String?>(null) }
     var canvas by remember { mutableStateOf<DesktopCanvasArtwork?>(null) }
@@ -1222,6 +1238,7 @@ fun BitChordDesktopApp() {
         prioritizeSyllables,
         lyricsOn,
         lyricsOrder,
+        lyricsOnly,
     ) {
         val current = selectedSong
         lyrics = null
@@ -1244,7 +1261,7 @@ fun BitChordDesktopApp() {
             return@LaunchedEffect
         }
         lyricsLoading = true
-        DesktopLyricsClient.lookup(current, length).fold(
+        DesktopLyricsClient.lookup(current, length, only = lyricsOnly).fold(
             onSuccess = { lyrics = it },
             onFailure = { lyricsError = it.message ?: "Lyrics unavailable" },
         )
@@ -1954,6 +1971,94 @@ fun BitChordDesktopApp() {
         )
     }
 
+    // The menu the shared player's "…" opens.
+    var playerMenuOpen by remember(selectedSong?.videoId) { mutableStateOf(false) }
+
+    /** The song menu's verbs for [song], as the player sheet offers them. */
+    fun playerSongActions(song: Song) = DesktopSongActions(
+        signedIn = youtubeSignedIn,
+        disliked = song.videoId in dislikedIds,
+        downloaded = downloads.any { it.videoId == song.videoId },
+        downloadInProgress = song.videoId in downloadInProgress,
+        sleepTimerMinutes = sleepTimerMinutes,
+        sleepAfterTrack = sleepAfterTrack,
+        onToggleDislike = ::toggleDislike,
+        onAddToPlaylist = { playlistTarget = it },
+        onDownload = ::downloadSong,
+        onRemoveDownload = ::removeDownload,
+        onStartRadio = ::startRadio,
+        onPlayNext = ::playNext,
+        onAddToQueue = ::addToQueue,
+        // Both leave the player, the way opening a page from Android's sheet collapses it.
+        onOpenAlbum = { id ->
+            overlays.nowPlaying = false
+            openAlbum(id)
+        },
+        onOpenArtist = { id ->
+            overlays.nowPlaying = false
+            openArtist(id, song.artist)
+        },
+        onSleepTimer = { minutes ->
+            if (minutes == null) DesktopSleepTimer.cancel() else DesktopSleepTimer.start(minutes)
+        },
+        onSleepAfterTrack = { DesktopSleepTimer.startAfterTrack() },
+        onShare = ::shareSong,
+    )
+
+    // What the shared player reads as settings, kept in step with the window's own.
+    SideEffect {
+        DesktopPlayerSettings.animatedCanvas.value = animatedCanvas
+        DesktopPlayerSettings.fullBleedArtwork.value = fullBleedArtwork
+        DesktopPlayerSettings.legacyMeshGradient.value = legacyMeshGradient
+        DesktopPlayerSettings.lyricsBlur.value = lyricsBlur
+        DesktopPlayerSettings.syncedLyrics.value = syncedLyrics
+        DesktopPlayerSettings.showNerdStats.value = showNerdStats
+        DesktopPlayerSettings.smartFadeEnabled.value = automix
+        DesktopPlayerSettings.smartAnalysis.value = playback.smartAnalysis
+        DesktopPlayerSettings.smartTransitionWindow.value = playback.transitionWindow
+        DesktopPlayerSettings.lyricsSourceOrder.value =
+            DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn).mapNotNull(::lyricsSourceNamed)
+        DesktopPlayerHost.volumeLevel.value = volume
+        DesktopPlayerHost.onVolumeChange = {
+            volume = it
+            persistence.saveString("volume", it.toString())
+        }
+    }
+
+    // The engine's measured stream, as the player's quality badge and stats line read it.
+    LaunchedEffect(playback.streamFormat, playback.streamSourceId) {
+        NerdStats.current.value = playback.streamFormat?.let { format ->
+            val codec = format.codec?.substringAfterLast('/')?.substringBefore(';')?.trim()?.lowercase()
+            NerdStats.Snapshot(
+                mimeType = codec?.let { "audio/$it" },
+                bitrateKbps = format.kbps,
+                sampleRateHz = format.sampleRateHz,
+                channels = format.channels,
+                bitDepth = format.bitDepth,
+                sourceName = playback.streamSourceId,
+            )
+        }
+    }
+    LaunchedEffect(playback.searchingBetter, selectedSong?.videoId) {
+        NerdStats.racingLossless.value = selectedSong?.videoId
+            ?.takeIf { playback.searchingBetter }
+            ?.let(::setOf)
+            .orEmpty()
+    }
+    LaunchedEffect(playback.streamFormat, playback.isPlaying) {
+        DesktopPlayerHost.pipeline.value = playbackEngine.pipeline()
+    }
+    DesktopPlayerHost.pipelineDialog = { onDismiss ->
+        DesktopAudioPipelineDialog(
+            format = playback.streamFormat,
+            sourceName = playback.streamSourceId?.let { id ->
+                sourceConfigs.firstOrNull { it.id == id }?.displayName
+            },
+            pipeline = playbackEngine.pipeline(),
+            onDismiss = onDismiss,
+        )
+    }
+
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = DesktopAccent,
@@ -2008,10 +2113,9 @@ fun BitChordDesktopApp() {
                                 overlays.queue = false
                                 true
                             }
-                            overlays.nowPlaying && playerPanel != DesktopPlayerPanel.NONE -> {
-                                playerPanel = DesktopPlayerPanel.NONE
-                                true
-                            }
+                            // The player's own layers first — the lyrics, the queue, a
+                            // drawer — in the order Android's back reaches them.
+                            overlays.nowPlaying && PlayerBack.dispatch() -> true
                             overlays.nowPlaying -> {
                                 overlays.nowPlaying = false
                                 true
@@ -2074,148 +2178,201 @@ fun BitChordDesktopApp() {
                     )
                 },
                 overlay = {
-                    if (overlays.nowPlaying && selectedSong != null) {
-                        val playerSong = selectedSong!!.let { current ->
-                            val extra = trackLinks?.takeIf { it.videoId == current.videoId }
-                                ?: return@let current
-                            current.copy(
-                                artistId = current.artistId ?: extra.artistId,
-                                albumId = current.albumId ?: extra.albumId,
-                                albumName = current.albumName ?: extra.albumName,
-                            )
+                    DesktopPlayerSheet(
+                        visible = overlays.nowPlaying && selectedSong != null,
+                        onDismiss = {
+                            DesktopWindowMode.exit()
+                            overlays.nowPlaying = false
+                        },
+                    ) { windowWidth, windowHeight ->
+                        val current = selectedSong ?: return@DesktopPlayerSheet
+                        val playerSong = trackLinks?.takeIf { it.videoId == current.videoId }
+                            ?.let { extra ->
+                                current.copy(
+                                    artistId = current.artistId ?: extra.artistId,
+                                    albumId = current.albumId ?: extra.albumId,
+                                    albumName = current.albumName ?: extra.albumName,
+                                )
+                            }
+                            ?: current
+                        val sharedLyrics = remember(lyrics) { lyrics?.lines?.map { it.toShared() } }
+                        val sharedLyricsSource = remember(lyrics) { lyrics?.source?.let(::lyricsSourceNamed) }
+                        val providerStates = remember(lyricsOrder, lyricsOn, sharedLyricsSource, lyricsLoading) {
+                            DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn)
+                                .mapNotNull(::lyricsSourceNamed)
+                                .associateWith { source ->
+                                    when {
+                                        source == sharedLyricsSource -> LyricsProviderState.FOUND
+                                        lyricsLoading -> LyricsProviderState.FETCHING
+                                        else -> LyricsProviderState.NOT_FETCHED
+                                    }
+                                }
                         }
-                        DesktopNowPlayingPage(
-                            onOpenPipeline = { overlays.pipeline = true },
+                        NowPlayingScreen(
                             song = playerSong,
-                            // Opening a page means leaving the player, the same way tapping a
-                            // credit collapses Android's sheet.
-                            onOpenArtist = { song ->
-                                song.artistId?.let {
-                                    overlays.nowPlaying = false
-                                    openArtist(it, song.artist)
+                            isPlaying = playback.isPlaying,
+                            isLoading = playback.isLoading,
+                            position = playerPosition,
+                            durationMs = playback.durationMs,
+                            audioVersionSwitching = false,
+                            qualityUpgraded = false,
+                            queue = liveQueue.songs,
+                            queueIndex = liveQueue.index,
+                            hasPrevious = liveQueue.hasPrevious,
+                            hasNext = liveQueue.hasNext,
+                            repeatMode = when (repeatMode) {
+                                DesktopRepeatMode.OFF -> RepeatModes.OFF
+                                DesktopRepeatMode.ONE -> RepeatModes.ONE
+                                DesktopRepeatMode.ALL -> RepeatModes.ALL
+                            },
+                            shuffleEnabled = shuffle,
+                            autoplayEnabled = autoplay,
+                            signedIn = youtubeSignedIn,
+                            accountName = activeAccount?.name?.takeIf(String::isNotBlank),
+                            likeStatus = when (current.videoId) {
+                                in likedIds -> LikeStatus.LIKE
+                                in dislikedIds -> LikeStatus.DISLIKE
+                                else -> LikeStatus.INDIFFERENT
+                            },
+                            onToggleLike = { toggleLike(current) },
+                            onPlayPause = { playbackEngine.togglePlayPause() },
+                            onNext = ::playNext,
+                            onPrevious = ::playPrevious,
+                            onBlockedControl = {},
+                            onSeek = { target ->
+                                val duration = playback.durationMs
+                                playbackEngine.seekTo(
+                                    if (duration > 0) target.coerceIn(0L, duration) else target.coerceAtLeast(0L),
+                                )
+                            },
+                            onSeekFraction = { fraction ->
+                                val duration = playbackEngine.state.value.durationMs
+                                if (duration > 0) playbackEngine.seekTo((fraction * duration).toLong())
+                            },
+                            onToggleShuffle = { setShuffle(!shuffle) },
+                            // The phone's order: off, all, one.
+                            onCycleRepeat = {
+                                repeatMode = when (repeatMode) {
+                                    DesktopRepeatMode.OFF -> DesktopRepeatMode.ALL
+                                    DesktopRepeatMode.ALL -> DesktopRepeatMode.ONE
+                                    DesktopRepeatMode.ONE -> DesktopRepeatMode.OFF
+                                }
+                                persistence.saveString("repeat_mode", repeatMode.name)
+                            },
+                            onToggleAutoplay = { setAutoplay(!autoplay) },
+                            onJumpTo = ::playQueueIndex,
+                            onRemoveFromQueue = { at ->
+                                if (at in liveQueue.songs.indices && at != liveQueue.index) {
+                                    liveQueue = liveQueue.copy(
+                                        songs = liveQueue.songs.filterIndexed { index, _ -> index != at },
+                                        index = if (at < liveQueue.index) liveQueue.index - 1 else liveQueue.index,
+                                    )
+                                    saveQueue()
                                 }
                             },
-                            syncedLyrics = syncedLyrics,
-                            lyricsBlur = lyricsBlur,
-                            prioritizeSyllables = prioritizeSyllables,
-                            lyricsSources = DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn),
-                            actions = DesktopSongActions(
-                                signedIn = youtubeSignedIn,
-                                disliked = selectedSong!!.videoId in dislikedIds,
-                                downloaded = downloads.any { it.videoId == selectedSong!!.videoId },
-                                downloadInProgress = selectedSong!!.videoId in downloadInProgress,
-                                sleepTimerMinutes = sleepTimerMinutes,
-                                sleepAfterTrack = sleepAfterTrack,
-                                onToggleDislike = ::toggleDislike,
-                                onAddToPlaylist = { playlistTarget = it },
-                                onDownload = ::downloadSong,
-                                onRemoveDownload = ::removeDownload,
-                                onStartRadio = ::startRadio,
-                                onPlayNext = ::playNext,
-                                onAddToQueue = ::addToQueue,
-                                // Both leave the player, the way opening a page from Android's
-                                // sheet collapses it.
-                                onOpenAlbum = { id ->
-                                    overlays.nowPlaying = false
-                                    openAlbum(id)
-                                },
-                                onOpenArtist = { id ->
-                                    overlays.nowPlaying = false
-                                    openArtist(id, selectedSong!!.artist)
-                                },
-                                onSleepTimer = { minutes ->
-                                    if (minutes == null) DesktopSleepTimer.cancel() else DesktopSleepTimer.start(minutes)
-                                },
-                                onSleepAfterTrack = { DesktopSleepTimer.startAfterTrack() },
-                                onShare = ::shareSong,
-                            ),
-                            panel = playerPanel,
-                            onPanelChange = { playerPanel = it },
-                            isPlaying = playback.isPlaying,
-                            progressMs = playback.positionMs,
-                            durationMs = playback.durationMs,
-                            hasPrevious = liveQueue.hasPrevious,
-                            error = playback.error,
-                            streamFormat = playback.streamFormat,
-                            isResolving = playback.isLoading,
-                            searchingBetter = playback.searchingBetter,
-                            automix = automix,
-                            smartAnalysis = playback.smartAnalysis,
-                            transitionWindow = playback.transitionWindow,
-                            mixing = playback.mixing,
-                            // A stream from anything but YouTube is a substitute, and is what a
-                            // revert undoes.
-                            substituted = playback.streamSourceId != null &&
-                                playback.streamSourceId != "youtube" &&
-                                DesktopMusicSources.hasYouTubeOriginal(selectedSong!!),
-                            pinnedToOriginal = DesktopOriginalVersion.isPinned(selectedSong!!.videoId),
-                            liked = selectedSong!!.videoId in likedIds,
-                            shuffle = shuffle,
-                            autoplay = autoplay,
-                            repeatMode = repeatMode,
-                            playbackSpeed = playbackSpeed,
-                            animatedCanvas = animatedCanvas,
-                            showNerdStats = showNerdStats,
-                            fullBleedArtwork = fullBleedArtwork,
-                            legacyMeshGradient = legacyMeshGradient,
-                            volume = volume,
-                            upcoming = liveQueue.upcoming,
-                            // Where the mix begins, expressed within the upcoming rows the panel is
-                            // drawing.
-                            autoplayStart = (liveQueue.autoplaySectionStart - liveQueue.index - 1)
-                                .coerceIn(0, liveQueue.upcoming.size),
-                            crossfadeSeconds = crossfadeSeconds,
-                            onClose = {
-                                DesktopWindowMode.exit()
-                                overlays.nowPlaying = false
+                            onMoveInQueue = { from, to ->
+                                val songs = liveQueue.songs
+                                if (from in songs.indices && to in songs.indices && from != to) {
+                                    val moved = songs.toMutableList().apply { add(to, removeAt(from)) }
+                                    val playing = liveQueue.index
+                                    val newIndex = when (playing) {
+                                        from -> to
+                                        in (from + 1)..to -> playing - 1
+                                        in to until from -> playing + 1
+                                        else -> playing
+                                    }
+                                    liveQueue = liveQueue.copy(songs = moved, index = newIndex)
+                                    saveQueue()
+                                }
                             },
-                            onPlayPause = { playbackEngine.togglePlayPause() },
-                            onRevertToOriginal = {
-                                DesktopOriginalVersion.pin(selectedSong!!.videoId)
-                                playbackEngine.reloadCurrent()
-                            },
-                            onUpgradeQuality = {
-                                DesktopOriginalVersion.clear(selectedSong!!.videoId)
-                                playbackEngine.reloadCurrent()
-                            },
-                            onToggleLike = {
-                                toggleLike(selectedSong!!)
-                            },
-                            onSeek = { playbackEngine.seekTo(it) },
-                            onPrevious = ::playPrevious,
-                            onNext = ::playNext,
-                            onShuffleChange = ::setShuffle,
-                            onAutoplayChange = ::setAutoplay,
-                            onRepeatModeChange = {
-                                repeatMode = it
-                                persistence.saveString("repeat_mode", it.name)
-                            },
-                            onPlaybackSpeedChange = {
-                                playbackSpeed = it
-                                persistence.saveString("playback_speed", it.toString())
-                            },
-                            onVolumeChange = {
-                                volume = it
-                                persistence.saveString("volume", it.toString())
-                            },
-                            // A click in Up Next is a move within the queue, not a new one-song
-                            // queue.
-                            onQueueSongClick = { at -> playQueueIndex(liveQueue.index + 1 + at) },
                             onClearQueue = {
                                 // Clears what is still to come; the track playing and its history
                                 // stay where they are.
                                 liveQueue = liveQueue.copy(songs = liveQueue.songs.take(liveQueue.index + 1))
                                 saveQueue()
                             },
-                            lyrics = lyrics,
-                            lyricsLoading = lyricsLoading,
-                            lyricsError = lyricsError,
-                            canvas = canvas,
-                            onCrossfadeSecondsChange = {
-                                crossfadeSeconds = it
-                                persistence.saveString("crossfade_seconds", it.toString())
+                            onOpenMenu = { playerMenuOpen = true },
+                            onOpenAlbum = { id ->
+                                overlays.nowPlaying = false
+                                openAlbum(id)
                             },
+                            onOpenArtist = { id ->
+                                overlays.nowPlaying = false
+                                openArtist(id, current.artist)
+                            },
+                            onOpenPlaybackSource = {
+                                val id = playerSong.playbackSourceId
+                                overlays.nowPlaying = false
+                                if (playerSong.playbackSourceType == PlaybackSourceType.BROWSE && id != null) {
+                                    openAlbum(id)
+                                }
+                            },
+                            onListenTogether = {
+                                overlays.nowPlaying = false
+                                overlays.listenTogether = true
+                            },
+                            lyrics = sharedLyrics,
+                            lyricsSource = sharedLyricsSource,
+                            lyricsProviderStates = providerStates,
+                            onSelectLyricsProvider = { source -> lyricsOnly = source.label },
+                            lyricsUnavailable = !lyricsLoading && sharedLyrics.isNullOrEmpty(),
+                            lyricsOffsetOpen = false,
+                            onDismissLyricsOffset = {},
+                            windowWidth = windowWidth,
+                            windowHeight = windowHeight,
                         )
+                        if (playerMenuOpen) {
+                            // Where the player's "…" sits: the right column's credits row, at
+                            // the right edge of the centred two-column layout.
+                            val columnEdge = minOf(windowWidth, 1100.dp) / 2 - 47.dp
+                            Box(
+                                Modifier
+                                    .align(Alignment.Center)
+                                    .offset(x = columnEdge)
+                                    .size(34.dp),
+                            ) {
+                                DesktopSongMenuFor(
+                                    song = playerSong,
+                                    liked = current.videoId in likedIds,
+                                    actions = playerSongActions(current),
+                                    onToggleLike = { toggleLike(current) },
+                                    onRevertToOriginal = {
+                                        DesktopOriginalVersion.pin(current.videoId)
+                                        playbackEngine.reloadCurrent()
+                                    }.takeIf {
+                                        playback.streamSourceId != null &&
+                                            playback.streamSourceId != "youtube" &&
+                                            DesktopMusicSources.hasYouTubeOriginal(current) &&
+                                            !DesktopOriginalVersion.isPinned(current.videoId)
+                                    },
+                                    onUpgradeQuality = {
+                                        DesktopOriginalVersion.clear(current.videoId)
+                                        playbackEngine.reloadCurrent()
+                                    }.takeIf { DesktopOriginalVersion.isPinned(current.videoId) },
+                                    onDismiss = { playerMenuOpen = false },
+                                )
+                            }
+                        }
+                        val message by DesktopPlayerHost.messages.collectAsState()
+                        LaunchedEffect(message) {
+                            if (message != null) {
+                                delay(2_500)
+                                DesktopPlayerHost.messages.value = null
+                            }
+                        }
+                        message?.let { text ->
+                            Text(
+                                text = text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = 36.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color.Black.copy(alpha = 0.72f))
+                                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                            )
+                        }
                     }
                     if (overlays.settings) {
                         DesktopSettingsDialog(

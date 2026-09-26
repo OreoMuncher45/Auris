@@ -305,10 +305,7 @@ object Genius {
     /**
      * Checks if a line is a section header like "[Verse 1]", "[Chorus]", "[Bridge]".
      */
-    fun isSectionHeader(text: String): Boolean {
-        val trimmed = text.trim()
-        return trimmed.startsWith("[") && trimmed.endsWith("]") && trimmed.length in 3..60
-    }
+    fun isSectionHeader(text: String): Boolean = isGeniusSectionHeader(text)
 
     private fun cleanQuery(text: String): String {
         var cleaned = text

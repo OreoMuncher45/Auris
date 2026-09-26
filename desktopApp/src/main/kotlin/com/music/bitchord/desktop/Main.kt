@@ -1,6 +1,7 @@
 package com.music.bitchord.desktop
 
 import androidx.compose.runtime.CompositionLocalProvider
+import com.music.bitchord.ui.player.PlayerPlatform
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -15,7 +16,13 @@ import bitchord.desktopapp.generated.resources.Res
 import bitchord.desktopapp.generated.resources.logo
 import org.jetbrains.compose.resources.painterResource
 
-fun main() = application {
+fun main() {
+    // The player is the phone's, from the shared UI module; this is what it reads underneath.
+    PlayerPlatform.install(DesktopPlayerHost)
+    desktopMain()
+}
+
+private fun desktopMain() = application {
     // Closing puts the window away rather than ending the process, while there is a tray icon to
     // bring it back from — see [DesktopWindowVisibility].
     val visible by DesktopWindowVisibility.visible.collectAsState()

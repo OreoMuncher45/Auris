@@ -432,7 +432,15 @@ object DesktopLyricsClient {
     private val appleToken = AtomicReference<String?>(null)
     private val cache = ConcurrentHashMap<String, CachedLyrics>()
 
-    suspend fun lookup(song: Song, durationMs: Long = song.durationMillis()): Result<DesktopLyrics> {
+    /**
+     * The track's lyrics from the configured chain — or, with [only], from that one provider,
+     * which is how the player's provider picker asks for a specific source's answer.
+     */
+    suspend fun lookup(
+        song: Song,
+        durationMs: Long = song.durationMillis(),
+        only: String? = null,
+    ): Result<DesktopLyrics> {
         // Off in Settings means no lookup at all rather than a lookup nobody sees.
         if (!DesktopPersistence().boolean(KEY_SYNCED_LYRICS, true)) {
             return Result.failure(IllegalStateException("Synced lyrics are switched off"))
@@ -442,12 +450,12 @@ object DesktopLyricsClient {
         if (configuredProviders().isEmpty()) {
             return Result.failure(IllegalStateException("No lyrics sources are enabled"))
         }
-        val cacheKey = "${song.videoId}|$durationMs"
+        val cacheKey = "${song.videoId}|$durationMs|${only.orEmpty()}"
         cache[cacheKey]?.takeIf { System.currentTimeMillis() - it.createdAt < CACHE_TTL_MS }?.result?.let { return it }
 
         // A downloaded or local file carries its own words. Asking four servers for a string
         // already on disk is a round trip, and it is why a download showed nothing offline.
-        embedded(song)?.let { lines ->
+        if (only == null) embedded(song)?.let { lines ->
             val result = Result.success(DesktopLyrics("Downloaded", lines.withBackgroundVocals().withGaps()))
             cache[cacheKey] = CachedLyrics(System.currentTimeMillis(), result)
             return result
@@ -460,7 +468,11 @@ object DesktopLyricsClient {
 
         // Settled before anyone is asked for words, so every source that can name the recording
         // does rather than describing it.
-        val chain = configuredProviders()
+        val chain = if (only == null) {
+            configuredProviders()
+        } else {
+            providers.filter { it.name.equals(only, ignoreCase = true) }
+        }
         val known = isrcs[song.videoId]
         val hit = if (known == null) {
             identify(song.videoId, searchTitle, searchArtist, song.albumName, durationMs, chain)

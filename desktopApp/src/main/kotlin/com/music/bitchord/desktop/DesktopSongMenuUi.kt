@@ -102,40 +102,62 @@ internal fun DesktopSongMenuAnchor(
     Box(modifier) {
         DesktopMoreButton(onClick = { open = true })
         if (open) {
-            val close = { open = false }
-            DesktopSongMenu(
+            DesktopSongMenuFor(
                 song = song,
-                signedIn = actions.signedIn,
-                likeStatus = when {
-                    liked -> LikeStatus.LIKE
-                    actions.disliked -> LikeStatus.DISLIKE
-                    else -> LikeStatus.INDIFFERENT
-                },
-                downloaded = actions.downloaded,
-                downloadInProgress = actions.downloadInProgress,
-                sleepTimerMinutes = actions.sleepTimerMinutes,
-                sleepAfterTrack = actions.sleepAfterTrack,
-                onRevertToOriginal = onRevertToOriginal?.let { { it(); close() } },
-                onUpgradeQuality = onUpgradeQuality?.let { { it(); close() } },
-                // Rating stays open: the menu says what the rating now is, and closing it is the
-                // one way to not see that it worked.
+                liked = liked,
+                actions = actions,
                 onToggleLike = onToggleLike,
-                onToggleDislike = { actions.onToggleDislike(song) },
-                onAddToPlaylist = { actions.onAddToPlaylist(song); close() },
-                onDownload = { actions.onDownload(song); close() },
-                onRemoveDownload = { actions.onRemoveDownload(song); close() },
-                onStartRadio = { actions.onStartRadio(song); close() },
-                onPlayNext = { actions.onPlayNext(song); close() },
-                onAddToQueue = { actions.onAddToQueue(song); close() },
-                onOpenAlbum = { id -> actions.onOpenAlbum(id); close() },
-                onOpenArtist = { id -> actions.onOpenArtist(id); close() },
-                onSleepTimer = { actions.onSleepTimer(it); close() },
-                onSleepAfterTrack = { actions.onSleepAfterTrack(); close() },
-                onShare = { actions.onShare(song); close() },
-                onDismiss = close,
+                onRevertToOriginal = onRevertToOriginal,
+                onUpgradeQuality = onUpgradeQuality,
+                onDismiss = { open = false },
             )
         }
     }
+}
+
+/** The menu [DesktopSongMenuAnchor] opens, for a caller that has its own button. */
+@Composable
+internal fun DesktopSongMenuFor(
+    song: Song,
+    liked: Boolean,
+    actions: DesktopSongActions,
+    onToggleLike: () -> Unit,
+    onRevertToOriginal: (() -> Unit)?,
+    onUpgradeQuality: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val close = onDismiss
+    DesktopSongMenu(
+        song = song,
+        signedIn = actions.signedIn,
+        likeStatus = when {
+            liked -> LikeStatus.LIKE
+            actions.disliked -> LikeStatus.DISLIKE
+            else -> LikeStatus.INDIFFERENT
+        },
+        downloaded = actions.downloaded,
+        downloadInProgress = actions.downloadInProgress,
+        sleepTimerMinutes = actions.sleepTimerMinutes,
+        sleepAfterTrack = actions.sleepAfterTrack,
+        onRevertToOriginal = onRevertToOriginal?.let { { it(); close() } },
+        onUpgradeQuality = onUpgradeQuality?.let { { it(); close() } },
+        // Rating stays open: the menu says what the rating now is, and closing it is the
+        // one way to not see that it worked.
+        onToggleLike = onToggleLike,
+        onToggleDislike = { actions.onToggleDislike(song) },
+        onAddToPlaylist = { actions.onAddToPlaylist(song); close() },
+        onDownload = { actions.onDownload(song); close() },
+        onRemoveDownload = { actions.onRemoveDownload(song); close() },
+        onStartRadio = { actions.onStartRadio(song); close() },
+        onPlayNext = { actions.onPlayNext(song); close() },
+        onAddToQueue = { actions.onAddToQueue(song); close() },
+        onOpenAlbum = { id -> actions.onOpenAlbum(id); close() },
+        onOpenArtist = { id -> actions.onOpenArtist(id); close() },
+        onSleepTimer = { actions.onSleepTimer(it); close() },
+        onSleepAfterTrack = { actions.onSleepAfterTrack(); close() },
+        onShare = { actions.onShare(song); close() },
+        onDismiss = close,
+    )
 }
 
 /** Everything the player can do to the track it is playing, in one menu. */

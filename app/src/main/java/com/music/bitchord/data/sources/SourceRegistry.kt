@@ -7,6 +7,7 @@ import android.util.Log
 import com.music.bitchord.auth.EncryptedPrefs
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.permits
 import com.music.bitchord.data.sources.addon.AddonClient
 import com.music.bitchord.data.sources.addon.AddonException
 import com.music.bitchord.data.sources.addon.DetectedFormat

@@ -14,59 +14,33 @@ import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import kotlinx.coroutines.flow.MutableStateFlow
 
-/**
- * Stream bitrate ceiling on the YouTube fallback path — MEDIUM, HIGH and
- * LOSSLESS all mean "whatever the best available Opus format is" there; what
- * actually tells them apart is which other sources are allowed to answer
- * *before* YouTube gets asked. That part is [permits], and the rungs read:
- *
- * - [LOSSLESS] — the user's own addons and JioSaavn both asked.
- * - [HIGH] — the addons skipped, JioSaavn asked.
- * - [MEDIUM] and [LOW] — both skipped; YouTube's own Opus ladder is all there
- *   is, capped at [maxKbps].
- *
- * [hourly] is what the ceiling costs in data over an hour of listening, which
- * is the only part of this a user actually cares about on a metered plan.
- */
-enum class AudioQuality(
-    val maxKbps: Int,
-    val label: String,
-    val detail: String,
-    val hourly: String,
-) {
-    LOW(64, "Low", "~64 kbps · smallest download", "29 MB/hr"),
-    MEDIUM(Int.MAX_VALUE, "Medium", "Best available · ~171 kbps Opus", "77 MB/hr"),
-    HIGH(Int.MAX_VALUE, "High", "JioSaavn up to 320kbps, YouTube fallback", "144 MB/hr"),
-    LOSSLESS(Int.MAX_VALUE, "Lossless", "Your addons + JioSaavn, bit-exact where available", "300+ MB/hr"),
-    ;
 
-    /**
-     * Whether a stream started under this ceiling may be served by [kind].
-     *
-     * Asked per stream rather than written into
-     * [SourceConfig.enabled][com.music.bitchord.data.sources.SourceConfig.enabled],
-     * which is what this used to do — an `applyQualityPreset` call flipped the
-     * module and JioSaavn switches the moment a rung was picked. Two things
-     * were wrong with that and both were reported together: picking a rung for
-     * *mobile data* turned the sources off while sitting on Wi-Fi, and nothing
-     * turned them back on when the connection changed, so a Wi-Fi ceiling of
-     * Lossless still had no lossless source to reach. A ceiling is a property
-     * of the connection in force; the switches on the Sources screen are the
-     * user's standing choice. Storing the first in the second lost the second.
-     *
-     * [SourceKind.YOUTUBE] is permitted on every rung: it is what [maxKbps]
-     * caps, and it is the only source that can answer at all when the ones
-     * above it are skipped.
-     */
-    fun permits(kind: SourceKind): Boolean = when (this) {
-        LOSSLESS -> true
-        // No lossless answer is wanted here, and a source that can serve one is
-        // the slow half of the list: an addon fronting several catalogues walks
-        // all of them before it answers, which is seconds spent to land on a
-        // transcode JioSaavn already has at 320.
-        HIGH -> !kind.canServeLossless
-        MEDIUM, LOW -> kind == SourceKind.YOUTUBE
-    }
+/**
+ * Whether a stream started under this ceiling may be served by [kind].
+ *
+ * Asked per stream rather than written into
+ * [SourceConfig.enabled][com.music.bitchord.data.sources.SourceConfig.enabled],
+ * which is what this used to do — an `applyQualityPreset` call flipped the
+ * module and JioSaavn switches the moment a rung was picked. Two things
+ * were wrong with that and both were reported together: picking a rung for
+ * *mobile data* turned the sources off while sitting on Wi-Fi, and nothing
+ * turned them back on when the connection changed, so a Wi-Fi ceiling of
+ * Lossless still had no lossless source to reach. A ceiling is a property
+ * of the connection in force; the switches on the Sources screen are the
+ * user's standing choice. Storing the first in the second lost the second.
+ *
+ * [SourceKind.YOUTUBE] is permitted on every rung: it is what [maxKbps]
+ * caps, and it is the only source that can answer at all when the ones
+ * above it are skipped.
+ */
+fun AudioQuality.permits(kind: SourceKind): Boolean = when (this) {
+    AudioQuality.LOSSLESS -> true
+    // No lossless answer is wanted here, and a source that can serve one is
+    // the slow half of the list: an addon fronting several catalogues walks
+    // all of them before it answers, which is seconds spent to land on a
+    // transcode JioSaavn already has at 320.
+    AudioQuality.HIGH -> !kind.canServeLossless
+    AudioQuality.MEDIUM, AudioQuality.LOW -> kind == SourceKind.YOUTUBE
 }
 
 /**
@@ -179,13 +153,6 @@ enum class SongSort {
 enum class LibraryViewType {
     LIST,
     GRID,
-}
-
-/** The surface that was last open inside the expanded player. */
-enum class LastPlayerScreen {
-    MAIN,
-    LYRICS,
-    QUEUE,
 }
 
 /**

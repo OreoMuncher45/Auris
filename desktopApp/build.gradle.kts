@@ -55,6 +55,9 @@ dependencies {
     implementation("org.jsoup:jsoup:1.22.2")
 
     implementation(project(":shared"))
+    implementation(project(":sharedUi"))
+    // The shared player loads artwork through Coil, as the phone does.
+    implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
 
     // Automix runs the same two models the Android build does.
     implementation("com.microsoft.onnxruntime:onnxruntime:1.29.0")
@@ -110,7 +113,6 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_21)
     }
-    sourceSets["main"].kotlin.srcDir(rootProject.file("app/src/main/java/com/music/bitchord/ui/icons"))
 }
 
 java {
