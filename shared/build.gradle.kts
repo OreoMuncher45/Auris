@@ -29,13 +29,17 @@ kotlin {
             dependencies {
                 // Compile-only: the two applications supply the runtime artifact themselves.
                 compileOnly("com.microsoft.onnxruntime:onnxruntime:1.20.0")
-                // Discord Rich Presence talks over the gateway WebSocket. The
-                // engine is each application's own — okhttp on Android, CIO on
-                // the desktop — so only the API is needed here.
-                compileOnly("io.ktor:ktor-client-core:3.0.3")
-                compileOnly("io.ktor:ktor-client-websockets:3.0.3")
-                compileOnly("io.ktor:ktor-client-content-negotiation:3.0.3")
-                compileOnly("io.ktor:ktor-serialization-kotlinx-json:3.0.3")
+                // The network stack the lyrics providers and the YouTube Music
+                // client run on, at the phone's versions — both applications
+                // now call the same code, so they resolve the same libraries.
+                api("io.ktor:ktor-client-core:3.5.2")
+                api("io.ktor:ktor-client-okhttp:3.5.2")
+                api("io.ktor:ktor-client-websockets:3.5.2")
+                api("io.ktor:ktor-client-content-negotiation:3.5.2")
+                api("io.ktor:ktor-serialization-kotlinx-json:3.5.2")
+                api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+                api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+                api("org.jsoup:jsoup:1.22.2")
             }
         }
         androidMain.get().dependsOn(jvmSharedMain)

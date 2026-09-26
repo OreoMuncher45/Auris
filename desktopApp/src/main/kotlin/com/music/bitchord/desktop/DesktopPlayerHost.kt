@@ -6,10 +6,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.music.bitchord.data.canvas.CanvasArtwork
-import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
-import com.music.bitchord.data.lyrics.LyricWord
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.LyricsTranslation
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.LastPlayerScreen
@@ -129,19 +128,22 @@ internal object DesktopPlayerHost : PlayerHost {
         lines: List<LyricLine>,
         targetLanguageTag: String,
     ): LyricsTranslationResult =
-        when (val result = DesktopLyricsTranslation.translate(trackId, lines.map { it.toDesktop() }, targetLanguageTag)) {
-            is DesktopLyricsTranslation.Result.Translated ->
-                LyricsTranslationResult.Translated(result.lines.map { it.toShared() })
-            is DesktopLyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
-            DesktopLyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
+        when (val result = LyricsTranslation.translate(trackId, lines, targetLanguageTag)) {
+            is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(result.lines)
+            is LyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
+            LyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
         }
 
-    // The desktop's translation client has no romanization endpoint yet.
     override suspend fun romanizeLyrics(
         trackId: String,
         lines: List<LyricLine>,
         targetLanguageTag: String,
-    ): LyricsRomanizationResult = LyricsRomanizationResult.Unavailable
+    ): LyricsRomanizationResult =
+        when (val result = LyricsTranslation.romanize(trackId, lines, targetLanguageTag)) {
+            is LyricsTranslation.RomanizationResult.Romanized -> LyricsRomanizationResult.Romanized(result.lines)
+            LyricsTranslation.RomanizationResult.AlreadyRomanized -> LyricsRomanizationResult.AlreadyRomanized
+            LyricsTranslation.RomanizationResult.Unavailable -> LyricsRomanizationResult.Unavailable
+        }
 
     /** The newest notice, for the window to show and clear. */
     val messages = MutableStateFlow<String?>(null)
@@ -241,25 +243,6 @@ private fun DesktopAudioPipeline.toOutputFormat(): OutputFormatUi {
             (outputSampleRateHz ?: 0) > 48_000,
     )
 }
-
-/** A desktop lyric line in the shared player's terms — the two are field for field. */
-internal fun DesktopLyricLine.toShared(): LyricLine = LyricLine(
-    timeMs = timeMs,
-    text = text,
-    words = words.map { LyricWord(it.startMs, it.endMs, it.text) },
-    sungUntilMs = sungUntilMs,
-    background = background?.toShared(),
-    alignment = if (alignment == DesktopLyricAlignment.End) LyricAlignment.End else LyricAlignment.Start,
-)
-
-internal fun LyricLine.toDesktop(): DesktopLyricLine = DesktopLyricLine(
-    timeMs = timeMs,
-    text = text,
-    words = words.map { DesktopLyricWord(it.startMs, it.endMs, it.text) },
-    sungUntilMs = sungUntilMs,
-    background = background?.toDesktop(),
-    alignment = if (alignment == LyricAlignment.End) DesktopLyricAlignment.End else DesktopLyricAlignment.Start,
-)
 
 /** The shared provider a desktop source name refers to, matched on its label. */
 internal fun lyricsSourceNamed(name: String): LyricsSource? =

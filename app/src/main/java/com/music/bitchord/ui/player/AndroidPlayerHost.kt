@@ -115,7 +115,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         lines: List<LyricLine>,
         targetLanguageTag: String,
     ): LyricsTranslationResult =
-        when (val result = LyricsTranslation.translate(app, trackId, lines, targetLanguageTag)) {
+        when (val result = LyricsTranslation.translate(trackId, lines, targetLanguageTag)) {
             is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(result.lines)
             is LyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
             LyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
@@ -126,7 +126,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         lines: List<LyricLine>,
         targetLanguageTag: String,
     ): LyricsRomanizationResult =
-        when (val result = LyricsTranslation.romanize(app, trackId, lines, targetLanguageTag)) {
+        when (val result = LyricsTranslation.romanize(trackId, lines, targetLanguageTag)) {
             is LyricsTranslation.RomanizationResult.Romanized -> LyricsRomanizationResult.Romanized(result.lines)
             LyricsTranslation.RomanizationResult.AlreadyRomanized -> LyricsRomanizationResult.AlreadyRomanized
             LyricsTranslation.RomanizationResult.Unavailable -> LyricsRomanizationResult.Unavailable

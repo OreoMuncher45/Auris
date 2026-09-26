@@ -2,6 +2,8 @@ package com.music.bitchord.desktop
 
 import androidx.compose.runtime.CompositionLocalProvider
 import com.music.bitchord.ui.player.PlayerPlatform
+import com.music.bitchord.data.DebugLog
+import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -19,6 +21,12 @@ import org.jetbrains.compose.resources.painterResource
 fun main() {
     // The player is the phone's, from the shared UI module; this is what it reads underneath.
     PlayerPlatform.install(DesktopPlayerHost)
+    // The data layer both apps share logs through here, and keeps translated
+    // lyrics beside the rest of the desktop's cache.
+    DebugLog.sink = DebugLog.Sink { level, tag, message, error ->
+        DesktopTrackLog.log("$tag/$level: $message" + (error?.let { " (${it.message})" } ?: ""))
+    }
+    LyricsTranslation.cacheDir = DesktopMediaCache.directory.toFile()
     desktopMain()
 }
 

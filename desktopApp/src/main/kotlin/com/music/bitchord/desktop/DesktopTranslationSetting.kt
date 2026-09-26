@@ -1,5 +1,8 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.lyrics.TRANSLATION_LANGUAGES
+import com.music.bitchord.data.lyrics.translationLanguageName
+
 import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -33,7 +36,7 @@ internal object DesktopTranslationSetting {
     /** What the Settings row says under its title. */
     fun describe(tag: String): String {
         val locale = Locale.forLanguageTag(DesktopStrings.resolvedTag().ifBlank { "en" })
-        val name = desktopTranslationLanguageName(resolvedFor(tag), locale)
+        val name = translationLanguageName(resolvedFor(tag), locale)
         return if (tag.isBlank()) "$name · follows the app" else name
     }
 

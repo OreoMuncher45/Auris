@@ -1,5 +1,8 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.lyrics.TRANSLATION_LANGUAGES
+import com.music.bitchord.data.lyrics.translationLanguageName
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,8 +52,8 @@ internal fun DesktopTranslationLanguageDialog(onDismiss: () -> Unit) {
     // Named in the reader's own language, and sorted that way too — the table's own order is
     // alphabetical by English name, which is not alphabetical once localised.
     val named = remember(locale) {
-        DESKTOP_TRANSLATION_LANGUAGES
-            .map { it.code to desktopTranslationLanguageName(it.code, locale) }
+        TRANSLATION_LANGUAGES
+            .map { it.code to translationLanguageName(it.code, locale) }
             .sortedBy { it.second.lowercase(locale) }
     }
     val shown = remember(named, filter) {
@@ -88,7 +91,7 @@ internal fun DesktopTranslationLanguageDialog(onDismiss: () -> Unit) {
             item {
                 LanguageRow(
                     name = DesktopStrings["d_follow_the_app_language", "Follow the app language"],
-                    detail = desktopTranslationLanguageName(DesktopStrings.resolvedTag(), locale),
+                    detail = translationLanguageName(DesktopStrings.resolvedTag(), locale),
                     selected = stored.isBlank(),
                     onClick = { DesktopTranslationSetting.set("") },
                 )

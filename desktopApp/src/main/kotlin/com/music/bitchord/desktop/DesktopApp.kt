@@ -2188,7 +2188,7 @@ fun BitChordDesktopApp() {
                                 )
                             }
                             ?: current
-                        val sharedLyrics = remember(lyrics) { lyrics?.lines?.map { it.toShared() } }
+                        val sharedLyrics = lyrics?.lines
                         val sharedLyricsSource = remember(lyrics) { lyrics?.source?.let(::lyricsSourceNamed) }
                         val providerStates = remember(lyricsOrder, lyricsOn, sharedLyricsSource, lyricsLoading) {
                             DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn)
