@@ -731,7 +731,7 @@ private fun ColumnScope.Habits(summary: ReplaySummary, headline: List<HeadlineRu
         )
     }
     summary.peakHour?.let {
-        BigStat(formatHour(context, it), stringResource(R.string.when_you_listen_most))
+        BigStat(formatHour(context, it), stringResource(R.string.when_you_listen_the_most))
     }
     Spacer(Modifier.height(8.dp))
 }

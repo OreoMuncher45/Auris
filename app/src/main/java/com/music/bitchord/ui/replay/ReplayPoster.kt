@@ -235,7 +235,7 @@ private fun drawHabits(canvas: Canvas, context: Context, type: Fonts, summary: R
         )
     }
     summary.peakHour?.let {
-        stat(formatHour(context, it), context.getString(R.string.when_you_listen_most))
+        stat(formatHour(context, it), context.getString(R.string.when_you_listen_the_most))
     }
 }
 
