@@ -2988,23 +2988,40 @@ private fun DesktopTopBar(
                     .padding(horizontal = 10.dp),
             ) {
                 if (inlineCaption) {
-                    DesktopWindowButtons(
-                        Modifier.align(Alignment.TopStart).padding(top = 4.dp),
-                    )
-                }
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        // Centre the branding in the open band between the caption controls and
-                        // the divider, instead of letting it sit against the divider.
-                        .padding(start = 2.dp, bottom = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Image(
-                        painter = painterResource(Res.drawable.logo_mark),
-                        contentDescription = "BitChord",
-                        modifier = Modifier.size(width = 28.dp, height = 18.dp),
-                    )
+                    Column(Modifier.fillMaxSize()) {
+                        // Keep the traffic lights in their own top band.
+                        Box(Modifier.fillMaxWidth().height(28.dp)) {
+                            DesktopWindowButtons(
+                                Modifier.align(Alignment.TopStart).padding(top = 4.dp),
+                            )
+                        }
+                        // Center the mark in the remaining band, between the controls and the
+                        // divider at the bottom of the title bar.
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(start = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Image(
+                                painter = painterResource(Res.drawable.logo_mark),
+                                contentDescription = "BitChord",
+                                modifier = Modifier.size(width = 28.dp, height = 18.dp),
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.align(Alignment.CenterStart).padding(start = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Image(
+                            painter = painterResource(Res.drawable.logo_mark),
+                            contentDescription = "BitChord",
+                            modifier = Modifier.size(width = 28.dp, height = 18.dp),
+                        )
+                    }
                 }
             }
 

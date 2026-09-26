@@ -76,8 +76,11 @@ dependencies {
     implementation("org.bytedeco:ffmpeg:$ffmpegVersion:$nativeClassifier")
 
     // The same backdrop blur the Android build uses for its floating bars.
-    implementation("dev.chrisbanes.haze:haze:1.7.3")
-    implementation("dev.chrisbanes.haze:haze-materials:1.7.3")
+    // On Windows, 1.7.2 keeps this Compose Desktop 1.10.3 app on the matching UI/text/animation
+    // runtime. Preserve Linux's existing dependency graph exactly as it was.
+    val desktopHazeVersion = if (targetOs == "windows") "1.7.2" else "1.7.3"
+    implementation("dev.chrisbanes.haze:haze:$desktopHazeVersion")
+    implementation("dev.chrisbanes.haze:haze-materials:$desktopHazeVersion")
 
     implementation(compose.runtime)
     implementation(compose.foundation)
@@ -132,6 +135,9 @@ java {
 // Per target, because both write the library under the same name and a Windows cross-build
 // otherwise left a `.dll` where the next Linux run looked for its `.so`.
 val analysisNativeDir = layout.buildDirectory.dir("native/$targetOs")
+
+/** The tiny Windows frame bridge is independent of the optional analyser and SMTC libraries. */
+val windowNativeDir = layout.buildDirectory.dir("native-window/$targetOs")
 
 /**
  * Whether this build is producing the analyser for a platform that is not the one running the
@@ -236,10 +242,72 @@ val buildAnalysisNative by tasks.registering {
     }
 }
 
+/**
+ * Builds the Win32/DWM frame bridge even when the much larger analyser build is skipped during a
+ * desktop UI run. It is intentionally absent from Linux builds, whose window manager remains the
+ * sole owner of decoration and behaviour.
+ */
+val buildWindowNative by tasks.registering {
+    val cmakeSource = project.file("native/window")
+    val outputDir = windowNativeDir.get().asFile
+    val crossing = crossBuildingForWindows
+    val toolchain = project.file("native/mingw-w64.cmake")
+    inputs.dir(cmakeSource)
+    inputs.property("target", targetOs)
+    outputs.dir(outputDir)
+    onlyIf {
+        if (targetOs != "windows") return@onlyIf false
+        val cmake = findOnPath("cmake")
+        val compiler = findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
+        val ninja = findOnPath("ninja")
+        if (cmake == null || compiler == null || ninja == null) {
+            logger.lifecycle(
+                "cmake, Ninja, or a MinGW C++ compiler is unavailable — the Windows build will " +
+                    "fall back to Compose's frameless window behaviour.",
+            )
+        }
+        cmake != null && compiler != null && ninja != null
+    }
+    doLast {
+        val javaHome = System.getProperty("java.home")
+        val compiler = findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
+            ?: error("MinGW C++ compiler disappeared while building the Windows frame")
+        val ninja = findOnPath("ninja")
+            ?: error("Ninja disappeared while building the Windows frame")
+        providers.exec {
+            commandLine(
+                buildList {
+                    addAll(
+                        listOf(
+                            cmakeBinary(),
+                            "-S", cmakeSource.absolutePath,
+                            "-B", outputDir.absolutePath,
+                            "-G", "Ninja",
+                            "-DCMAKE_MAKE_PROGRAM=${ninja.absolutePath}",
+                            "-DCMAKE_CXX_COMPILER=${compiler.absolutePath}",
+                            "-DCMAKE_BUILD_TYPE=Release",
+                        ),
+                    )
+                    if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
+                },
+            )
+            environment("JAVA_HOME", javaHome)
+        }.result.get().assertNormalExitValue()
+        providers.exec {
+            commandLine(cmakeBinary(), "--build", outputDir.absolutePath, "-j", "4")
+            environment("JAVA_HOME", javaHome)
+        }.result.get().assertNormalExitValue()
+    }
+}
+
 tasks.named<ProcessResources>("processResources") {
-    dependsOn(buildAnalysisNative)
+    dependsOn(buildAnalysisNative, buildWindowNative)
     from(analysisNativeDir) {
         include("*.so", "*.dll", "*.dylib")
+        into("native")
+    }
+    from(windowNativeDir) {
+        include("*.dll")
         into("native")
     }
     // The Automix models, taken from the Android module rather than copied into this one.

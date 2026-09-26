@@ -15,7 +15,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import bitchord.desktopapp.generated.resources.Res
@@ -23,7 +22,6 @@ import bitchord.desktopapp.generated.resources.logo
 import java.awt.Dimension
 import java.awt.Rectangle
 import java.awt.Toolkit
-import java.awt.geom.RoundRectangle2D
 import kotlin.math.roundToInt
 import org.jetbrains.compose.resources.painterResource
 
@@ -99,62 +97,37 @@ private fun desktopMain() = application {
                 (openingSize.width.value * transform.scaleX).roundToInt(),
                 (openingSize.height.value * transform.scaleY).roundToInt(),
             )
+            if (DesktopPlatform.isWindows) DesktopWindowsFrame.install("BitChord")
         }
         val actions = remember {
             DesktopWindowActions(
-                minimize = { state.isMinimized = true },
+                minimize = {
+                    if (!DesktopWindowsFrame.minimize()) state.isMinimized = true
+                },
                 toggleMaximize = {
-                    // An undecorated AWT window otherwise maximizes to the monitor bounds on
-                    // Windows, covering the taskbar. Give AWT the monitor's usable work area
-                    // before Compose switches the placement; restoring still remains native.
-                    if (DesktopPlatform.isWindows && !DesktopWindowMode.maximized.value) {
-                        val screen = composeWindow.graphicsConfiguration.bounds
-                        val insets = Toolkit.getDefaultToolkit().getScreenInsets(
-                            composeWindow.graphicsConfiguration,
-                        )
-                        composeWindow.maximizedBounds = Rectangle(
-                            screen.x + insets.left,
-                            screen.y + insets.top,
-                            screen.width - insets.left - insets.right,
-                            screen.height - insets.top - insets.bottom,
-                        )
+                    if (!DesktopWindowsFrame.toggleMaximize()) {
+                        // An undecorated AWT window otherwise maximizes to the monitor bounds on
+                        // Windows when the native frame bridge is unavailable. Give AWT the
+                        // monitor's usable work area before Compose switches the placement.
+                        if (DesktopPlatform.isWindows && !DesktopWindowMode.maximized.value) {
+                            val screen = composeWindow.graphicsConfiguration.bounds
+                            val insets = Toolkit.getDefaultToolkit().getScreenInsets(
+                                composeWindow.graphicsConfiguration,
+                            )
+                            composeWindow.maximizedBounds = Rectangle(
+                                screen.x + insets.left,
+                                screen.y + insets.top,
+                                screen.width - insets.left - insets.right,
+                                screen.height - insets.top - insets.bottom,
+                            )
+                        }
+                        DesktopWindowMode.toggleMaximized()
                     }
-                    DesktopWindowMode.toggleMaximized()
                 },
                 // The same door the system's close button went through, so the tray keeps the
                 // process alive exactly as it did before.
                 close = { if (DesktopWindowVisibility.onCloseRequest()) exitApplication() },
             )
-        }
-        // Shape the actual AWT window rather than depending on the optional native media DLL. The
-        // shape must follow every resize and is removed while maximized so the screen corners stay
-        // completely filled.
-        LaunchedEffect(state) {
-            snapshotFlow { Triple(visible, state.size, state.placement) }.collect { (shown, _, where) ->
-                if (shown && DesktopPlatform.isWindows) {
-                    runCatching {
-                        composeWindow.shape = if (
-                            where == WindowPlacement.Floating &&
-                            composeWindow.width > 0 && composeWindow.height > 0
-                        ) {
-                            val scale = composeWindow.graphicsConfiguration.defaultTransform.scaleX
-                            val diameter = WINDOW_CORNER_DIAMETER_DP * scale
-                            RoundRectangle2D.Double(
-                                0.0,
-                                0.0,
-                                composeWindow.width.toDouble(),
-                                composeWindow.height.toDouble(),
-                                diameter,
-                                diameter,
-                            )
-                        } else {
-                            null
-                        }
-                    }.onFailure {
-                        DesktopTrackLog.log("rounded corners unavailable: ${it.message}")
-                    }
-                }
-            }
         }
         CompositionLocalProvider(
             LocalDesktopWindowActions provides actions,
@@ -167,4 +140,3 @@ private fun desktopMain() = application {
 
 private const val MIN_WINDOW_WIDTH_DP = 900.0
 private const val MIN_WINDOW_HEIGHT_DP = 600.0
-private const val WINDOW_CORNER_DIAMETER_DP = 16.0

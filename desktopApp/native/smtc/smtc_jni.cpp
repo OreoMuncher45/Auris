@@ -251,64 +251,6 @@ Java_com_music_bitchord_desktop_DesktopWindowsMedia_nativeUpdate(
     }
 }
 
-/**
- * Rounds the window's corners, by clipping it to a rounded-rectangle region.
- *
- * The handle is found rather than passed: reaching an AWT window's HWND from Java means JAWT and a
- * second library to link, while this process has exactly one visible top-level window and it is
- * titled by [title].
- */
-
-/** The corner radius Windows 11 uses, as the ellipse size CreateRoundRectRgn wants. */
-constexpr int CORNER_DIAMETER = 16;
-
-struct FindContext {
-    const wchar_t* title;
-    HWND found;
-};
-
-static BOOL CALLBACK FindOwnWindow(HWND window, LPARAM param) {
-    auto* context = reinterpret_cast<FindContext*>(param);
-    DWORD pid = 0;
-    GetWindowThreadProcessId(window, &pid);
-    if (pid != GetCurrentProcessId() || !IsWindowVisible(window)) return TRUE;
-    wchar_t buffer[256] = {};
-    GetWindowTextW(window, buffer, 255);
-    if (wcscmp(buffer, context->title) != 0) return TRUE;
-    context->found = window;
-    return FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowCorners_nativeSetCorners(
-    JNIEnv* env, jclass, jstring title, jboolean rounded) {
-    const jchar* chars = env->GetStringChars(title, nullptr);
-    const jsize length = env->GetStringLength(title);
-    std::wstring wanted(reinterpret_cast<const wchar_t*>(chars), length);
-    env->ReleaseStringChars(title, chars);
-
-    FindContext context{wanted.c_str(), nullptr};
-    EnumWindows(FindOwnWindow, reinterpret_cast<LPARAM>(&context));
-    if (context.found == nullptr) return JNI_FALSE;
-
-    // A region, not DWMWA_WINDOW_CORNER_PREFERENCE: that attribute rounds the frame DWM draws, and
-    // this window is WS_POPUP with no frame at all, so it returns S_OK and changes nothing.
-    if (!rounded) return SetWindowRgn(context.found, nullptr, TRUE) != 0 ? JNI_TRUE : JNI_FALSE;
-
-    RECT bounds = {};
-    if (!GetWindowRect(context.found, &bounds)) return JNI_FALSE;
-    // The region is in window coordinates, and its right and bottom edges are exclusive.
-    const int width = bounds.right - bounds.left + 1;
-    const int height = bounds.bottom - bounds.top + 1;
-    HRGN region = CreateRoundRectRgn(0, 0, width, height, CORNER_DIAMETER, CORNER_DIAMETER);
-    if (region == nullptr) return JNI_FALSE;
-    if (SetWindowRgn(context.found, region, TRUE) == 0) {
-        DeleteObject(region);  // Only ours to free while the window has not taken it.
-        return JNI_FALSE;
-    }
-    return JNI_TRUE;
-}
-
 JNIEXPORT void JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsMedia_nativeStop(JNIEnv*, jobject) {
     if (g_window != nullptr) PostMessageW(g_window, WM_BITCHORD_QUIT, 0, 0);
