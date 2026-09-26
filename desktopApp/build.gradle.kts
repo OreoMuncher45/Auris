@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val appVersion: String = providers.gradleProperty("bitchord.version").orNull
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "1.5.2"
+    ?: "1.7"
 
 /** Which platform this build is *for*, which is the host unless told otherwise. */
 val hostIsWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
@@ -17,6 +17,10 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
     hostIsLinux -> "linux"
     else -> error("BitChord desktop supports Linux and Windows only")
 }).lowercase()
+
+// Windows installer metadata requires MAJOR.MINOR.BUILD even though the app's public version is
+// intentionally displayed as 1.7.
+val nativePackageVersion = if (appVersion.count { it == '.' } == 1) "$appVersion.0" else appVersion
 
 // FFmpeg decodes audio; see DesktopAudioDecoder.
 val javacppVersion = "1.5.12"
@@ -454,7 +458,7 @@ compose.desktop {
                 TargetFormat.Rpm,
             )
             packageName = "BitChord"
-            packageVersion = appVersion
+            packageVersion = nativePackageVersion
             description = if (targetOs == "windows") "BitChord" else "Aesthetic YouTube Music client"
             vendor = "BitChord contributors"
             copyright = "Copyright © 2026 BitChord contributors"
