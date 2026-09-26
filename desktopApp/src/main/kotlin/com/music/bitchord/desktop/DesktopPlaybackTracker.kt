@@ -6,6 +6,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import com.music.bitchord.data.innertube.Innertube
+import com.music.bitchord.data.innertube.StreamResolver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -148,7 +149,7 @@ internal object DesktopPlaybackTracker {
     private suspend fun open(videoId: String): Boolean = lock.withLock {
         // The one thing the tracking request cannot be answered without.
         val signatureTimestamp = withContext(Dispatchers.IO) {
-            DesktopYouTubeUnlocker.signatureTimestamp(videoId)
+            StreamResolver.signatureTimestamp(videoId)
         }
         if (signatureTimestamp == null) {
             DesktopTrackLog.log("history: no signature timestamp yet for '$videoId'; will retry")

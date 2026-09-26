@@ -3,6 +3,9 @@ package com.music.bitchord.desktop
 import androidx.compose.runtime.CompositionLocalProvider
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.data.DebugLog
+import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.innertube.InnerTubeXResolver
+import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -27,6 +30,19 @@ fun main() {
         DesktopTrackLog.log("$tag/$level: $message" + (error?.let { " (${it.message})" } ?: ""))
     }
     LyricsTranslation.cacheDir = DesktopMediaCache.directory.toFile()
+    // YouTube playback is the phone's StreamResolver over InnerTubeX. The desktop has no
+    // BotGuard minter, so the clients that need a PoToken are left out of the catalog.
+    TrackLog.echo = { level, tag, message, error ->
+        DesktopTrackLog.log("$tag/$level: $message" + (error?.let { " (${it.message})" } ?: ""))
+    }
+    StreamResolver.maxKbps = {
+        DesktopStreamClient.ceiling.get() ?: DesktopSourceRegistry.ceiling(null).maxKbps
+    }
+    InnerTubeXResolver.init(
+        filesDir = DesktopMediaCache.directory.toFile(),
+        store = DesktopInnerTubeXStore,
+        poTokenProvider = null,
+    )
     desktopMain()
 }
 

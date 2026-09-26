@@ -1,6 +1,8 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.NerdStats
+import com.music.bitchord.data.innertube.StreamResolver
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
@@ -141,422 +143,55 @@ data class DesktopStreamFormat(
     }
 }
 
-/** Resolves a playable AAC stream without bringing Android's Media3 into JVM. */
+/**
+ * A YouTube track's stream, resolved the way the phone resolves it.
+ *
+ * The phone's own [StreamResolver], shared from `:shared`: InnerTubeX's
+ * live-benchmarked client catalog and cipher tiers first, each minted URL
+ * probed before it is trusted, NewPipe as the one fallback, and a track that
+ * cannot play remembered as such. The media fetch wears the headers of
+ * whichever client minted the URL.
+ */
 internal object DesktopStreamClient {
-    private data class Client(
-        val name: String,
-        val version: String,
-        val id: String,
-        val userAgent: String,
-        val osName: String? = null,
-        val osVersion: String? = null,
-        val deviceMake: String? = null,
-        val deviceModel: String? = null,
-        val androidSdkVersion: Int? = null,
-        val origin: String? = null,
-        val needsSignatureTimestamp: Boolean = false,
-        /**
-         * Whether this identity is only worth asking with a signed-in session behind it, and should
-         * carry one.
-         */
-        val authenticated: Boolean = false,
-    ) {
-        /**
-         * Browser-shaped clients are served from music.youtube.com; app clients from YouTube
-         * proper.
-         */
-        val apiBase: String
-            get() = (origin ?: "https://www.youtube.com") + "/youtubei/v1/player"
-    }
-
-    private fun Client.mediaHeaders(): Map<String, String> = buildMap {
-        put("User-Agent", userAgent)
-        origin?.let {
-            put("Origin", it)
-            put("Referer", "$it/")
-        }
-    }
-
-    private val clients = listOf(
-        // Keep the same starting order as Android's StreamResolver.
-        Client(
-            name = "ANDROID_MUSIC",
-            version = "8.39.42",
-            id = "21",
-            userAgent = "com.google.android.apps.youtube.music/8.39.42 " +
-                "(Linux; U; Android 15; en_US; Pixel 9 Pro; Build/AP4A.250205.002) gzip",
-            osName = "Android",
-            osVersion = "15",
-            deviceMake = "Google",
-            deviceModel = "Pixel 9 Pro",
-            androidSdkVersion = 35,
-        ),
-        // Cobalt's TV identity is the next fallback on IPs that YouTube challenges as a bot.
-        Client(
-            name = "TVHTML5",
-            version = "7.20260707.07.00",
-            id = "7",
-            userAgent = "Mozilla/5.0(SMART-TV; Linux; Tizen 4.0.0.2) " +
-                "AppleWebkit/605.1.15 (KHTML, like Gecko) SamsungBrowser/9.2 " +
-                "TV Safari/605.1.15",
-            origin = "https://www.youtube.com",
-        ),
-        // This older VR identity currently returns ordinary HTTPS audio URLs without a PO token or
-        // signature-cipher step.
-        Client(
-            name = "ANDROID_VR",
-            version = "1.65.10",
-            id = "28",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.65.10 " +
-                "(Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip",
-            osName = "Android",
-            osVersion = "12L",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
-            androidSdkVersion = 32,
-        ),
-        Client(
-            name = "ANDROID_VR_LEGACY",
-            version = "1.43.32",
-            id = "28",
-            userAgent = "com.google.android.apps.youtube.vr.oculus/1.43.32 " +
-                "(Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1; " +
-                "Cronet/107.0.5284.2)",
-            osName = "Android",
-            osVersion = "12",
-            deviceMake = "Oculus",
-            deviceModel = "Quest 3",
-            androidSdkVersion = 32,
-        ),
-        Client(
-            name = "IOS",
-            version = "21.26.4",
-            id = "5",
-            userAgent = "com.google.ios.youtube/21.26.4 " +
-                "(iPhone16,2; U; CPU iOS 18_3_2 like Mac OS X;)",
-            osName = "iPhone",
-            osVersion = "18.3.2.22D82",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-        ),
-        Client(
-            name = "IOS_RECENT",
-            version = "21.29.1",
-            id = "5",
-            userAgent = "com.google.ios.youtube/21.29.1 " +
-                "(iPhone16,2; U; CPU iOS 18_5 like Mac OS X;)",
-            osName = "iPhone",
-            osVersion = "18.5.22F70",
-            deviceMake = "Apple",
-            deviceModel = "iPhone16,2",
-        ),
-        Client(
-            name = "ANDROID",
-            version = "21.26.364",
-            id = "3",
-            userAgent = "com.google.android.youtube/21.26.364 " +
-                "(Linux; U; Android 15; en_US; Pixel 9 Pro; Build/AP4A.250205.002; " +
-                "Cronet/132.0.6834.79) gzip",
-            osName = "Android",
-            osVersion = "15",
-            deviceMake = "Google",
-            deviceModel = "Pixel 9 Pro",
-            androidSdkVersion = 35,
-            needsSignatureTimestamp = true,
-        ),
-        // Last, and only with a session to send.
-        Client(
-            name = "WEB_REMIX",
-            version = "1.20260707.12.00",
-            id = "67",
-            userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/132.0.0.0 Safari/537.36",
-            origin = "https://music.youtube.com",
-            needsSignatureTimestamp = true,
-            authenticated = true,
-        ),
-    )
-
-    private val client = DesktopYouTubeHttpClient.client
-
     suspend fun resolve(song: Song, maxKbps: Int = Int.MAX_VALUE): Result<DesktopStream> = runCatching {
-        var lastFailure: Throwable? = null
-        var refreshedVisitor = false
-        var signatureTimestampLoaded = false
-        var signatureTimestamp: Int? = null
-        for (identity in clients) {
-            if (identity.needsSignatureTimestamp && !signatureTimestampLoaded) {
-                signatureTimestampLoaded = true
-                signatureTimestamp = DesktopYouTubeUnlocker.signatureTimestamp(song.videoId)
-            }
-            if (identity.authenticated && !DesktopYouTubeAuth.isSignedIn) continue
-            if (identity.needsSignatureTimestamp && signatureTimestamp == null) continue
-            for (attempt in 0..1) {
-                if (attempt == 1) {
-                    if (refreshedVisitor) break
-                    DesktopYouTubeSession.ensureVisitorData(refresh = true)
-                }
-                try {
-                    val visitorData = DesktopYouTubeSession.ensureVisitorData()
-                    val requestBody = buildJsonObject {
-                        putJsonObject("context") {
-                            putJsonObject("client") {
-                                put("clientName", identity.name)
-                                put("clientVersion", identity.version)
-                                identity.osName?.let { put("osName", it) }
-                                identity.osVersion?.let { put("osVersion", it) }
-                                identity.deviceMake?.let { put("deviceMake", it) }
-                                identity.deviceModel?.let { put("deviceModel", it) }
-                                identity.androidSdkVersion?.let { put("androidSdkVersion", it) }
-                                put("hl", "en")
-                                put("gl", "US")
-                                visitorData?.let { put("visitorData", it) }
-                            }
-                        }
-                        put("videoId", song.videoId)
-                        put("contentCheckOk", true)
-                        put("racyCheckOk", true)
-                        if (identity.needsSignatureTimestamp) {
-                            putJsonObject("playbackContext") {
-                                putJsonObject("contentPlaybackContext") {
-                                    put("signatureTimestamp", signatureTimestamp!!)
-                                }
-                            }
-                        }
-                    }.toString()
-                    val response = client.send(
-                        HttpRequest.newBuilder(URI.create("${identity.apiBase}?prettyPrint=false"))
-                            .timeout(Duration.ofSeconds(30))
-                            .header("Content-Type", "application/json")
-                            .header("User-Agent", identity.userAgent)
-                            .header("X-YouTube-Client-Name", identity.id)
-                            .header("X-YouTube-Client-Version", identity.version)
-                            .apply {
-                                visitorData?.let { header("X-Goog-Visitor-Id", it) }
-                                identity.origin?.let { header("Origin", it) }
-                                identity.origin?.let { header("Referer", "$it/") }
-                                // Signed and addressed to one account, and only on the identity
-                                // that is meant to carry a session — see [Client.authenticated].
-                                if (identity.authenticated) {
-                                    DesktopYouTubeAuth
-                                        .headers(identity.origin ?: DesktopYouTubeAuth.YOUTUBE_ORIGIN)
-                                        .forEach { (name, value) -> header(name, value) }
-                                }
-                            }
-                            .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                            .build(),
-                        HttpResponse.BodyHandlers.ofString(),
-                    )
-                    check(response.statusCode() in 200..299) {
-                        "YouTube player returned HTTP ${response.statusCode()}"
-                    }
-                    val responseRoot = Json.parseToJsonElement(response.body()).jsonObject
-                    DesktopYouTubeSession.capture(responseRoot)
-                    val audioFormats = collectAudioFormats(responseRoot)
-                    val eligible = rankByQuality(audioFormats, maxKbps)
-                    for (format in eligible) {
-                        val url = DesktopYouTubeUnlocker.urlFor(
-                            videoId = song.videoId,
-                            directUrl = format["url"]?.jsonPrimitive?.contentOrNull,
-                            cipher = format["signatureCipher"]?.jsonPrimitive?.contentOrNull
-                                ?: format["cipher"]?.jsonPrimitive?.contentOrNull,
-                        ) ?: continue
-                        val patchedUrl = patchClientVersion(url, identity.version)
-                        val headers = identity.mediaHeaders()
-                        val probeFailure = probe(patchedUrl, headers)
-                        if (probeFailure == null) {
-                            DesktopTrackLog.log("  youtube: ${identity.name} answered for '${song.title}'")
-                            return Result.success(
-                                DesktopStream(
-                                    url = patchedUrl,
-                                    format = DesktopStreamFormat(
-                                        codec = format["mimeType"]?.jsonPrimitive?.contentOrNull
-                                            ?.substringAfterLast('/')
-                                            ?.substringBefore(';')
-                                            ?.lowercase(),
-                                        kbps = format["bitrate"]?.jsonPrimitive?.intOrNull
-                                            ?.let { if (it > 2_000) it / 1_000 else it },
-                                    ),
-                                    headers = headers,
-                                    sourceId = "youtube",
-                                    // Google's media servers answer 403 to a request for a whole
-                                    // file and 206 to one for a megabyte of it, and FFmpeg's own
-                                    // HTTP client asks for the whole thing.
-                                    windowedReads = true,
-                                ),
-                            )
-                        }
-                        DesktopTrackLog.log("  youtube: ${identity.name} minted a URL that would not serve — $probeFailure")
-                        lastFailure = IllegalStateException("${identity.name} media probe failed: $probeFailure")
-                    }
-                    val responseFailure = responseRoot.failure(identity.name)
-                    DesktopTrackLog.log("  youtube: ${identity.name} declined — ${responseFailure.message}")
-                    if (lastFailure == null) lastFailure = responseFailure
-                    if (!responseFailure.message.orEmpty().looksLikeBotCheck()) break
-                    if (attempt == 0 && !refreshedVisitor) refreshedVisitor = true
-                } catch (failure: CancellationException) {
-                    throw failure
-                } catch (failure: Throwable) {
-                    DesktopTrackLog.log("  youtube: ${identity.name} failed — ${failure.message ?: failure::class.simpleName}")
-                    lastFailure = failure
-                    if (attempt == 0 && failure.message.orEmpty().looksLikeBotCheck()) {
-                        refreshedVisitor = true
-                    } else {
-                        break
-                    }
-                }
-            }
-        }
-        // Every identity refused.
-        extracted(song, maxKbps)?.let { return@runCatching it }
-
-        // Every identity refused and the watch page had nothing either, which is as far as this
-        // goes.
-        error("YouTube has no playable stream for this track")
-    }
-
-    /** Probes a bounded request before handing the stream to JavaFX. */
-    /** Whether this URL will actually serve the track, or null when it will. */
-    /** The best rendition the watch page will give up, probed like any other. */
-    private suspend fun extracted(song: Song, maxKbps: Int): DesktopStream? {
-        val found = withContext(Dispatchers.IO) { DesktopYouTubeUnlocker.extractAudio(song.videoId) }
-        if (found.isEmpty()) return null
-        DesktopTrackLog.log("  youtube: the watch page offered ${found.size} rendition(s)")
-        val ordered: List<DesktopYouTubeUnlocker.ExtractedAudio> = found.sortedWith(
-            compareByDescending<DesktopYouTubeUnlocker.ExtractedAudio> { (it.kbps ?: 0) <= maxKbps }
-                .thenByDescending { it.kbps ?: 0 },
-        )
-        for (candidate in ordered) {
-            val headers = mapOf("User-Agent" to WATCH_PAGE_USER_AGENT)
-            val failure = probe(candidate.url, headers)
-            if (failure != null) {
-                DesktopTrackLog.log("  youtube: a scraped rendition would not serve — $failure")
-                continue
-            }
-            DesktopTrackLog.log(
-                "  youtube: playing '${song.title}' from the watch page at " +
-                    (candidate.kbps?.let { "$it kbps" } ?: "an unstated rate"),
-            )
-            return DesktopStream(
-                url = candidate.url,
-                format = DesktopStreamFormat(codec = candidate.mimeType, kbps = candidate.kbps),
-                headers = headers,
-                sourceId = "youtube",
-                windowedReads = true,
-            )
-        }
-        return null
-    }
-
-    /** What the scrape presented itself as, so the media request agrees with it. */
-    private const val WATCH_PAGE_USER_AGENT =
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36"
-
-    private fun probe(url: String, headers: Map<String, String>): String? {
-        val head = fetch(url, headers, 0, PROBE_BYTES - 1L)
-        val failure = head.failure
-        if (failure != null) return failure
-        val total = head.total ?: return null
-        if (total <= PROBE_BYTES) return null
-        val tail = fetch(url, headers, (total - PROBE_TAIL_BYTES).coerceAtLeast(0), total - 1)
-        return tail.failure?.let { "the end of this stream is $it" }
-    }
-
-    private class Probe(val failure: String?, val total: Long?)
-
-    private fun fetch(url: String, headers: Map<String, String>, from: Long, to: Long): Probe {
-        val builder = HttpRequest.newBuilder(URI.create(url))
-            .timeout(Duration.ofSeconds(20))
-            .header("Range", "bytes=$from-$to")
-            .header("Accept", "*/*")
-            .header("Accept-Encoding", "identity")
-        headers.forEach { (name, value) -> runCatching { builder.header(name, value) } }
-        return runCatching {
-            val response = client.send(
-                builder.GET().build(),
-                HttpResponse.BodyHandlers.ofInputStream(),
-            )
-            val input = response.body()
+        val url = withContext(Dispatchers.IO) {
+            ceiling.set(maxKbps)
             try {
-                if (response.statusCode() !in 200..299) {
-                    Probe("upstream HTTP ${response.statusCode()}", null)
-                } else {
-                    val buffer = ByteArray(PROBE_READ_BYTES)
-                    if (input.read(buffer) <= 0) {
-                        Probe("upstream returned no media bytes", null)
-                    } else {
-                        val stated = response.headers().firstValue("content-range").orElse(null)
-                        Probe(null, stated?.substringAfterLast('/')?.trim()?.toLongOrNull())
-                    }
-                }
+                StreamResolver.resolve(song.videoId)
             } finally {
-                input.close()
+                ceiling.remove()
             }
-        }.getOrElse { failure ->
-            Probe(failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName.orEmpty(), null)
         }
+        DesktopTrackLog.log("  youtube: resolved '${song.title}' through InnerTubeX")
+        DesktopStream(
+            url = url,
+            format = DesktopStreamFormat(
+                codec = mimeOf(url),
+                kbps = NerdStats.pickedBitrateKbps(song.videoId),
+            ),
+            headers = StreamResolver.mediaHeadersFor(url),
+            sourceId = "youtube",
+            // Google's media servers answer 403 to a request for a whole file and 206 to one for
+            // a window of it, and FFmpeg's own HTTP client asks for the whole thing.
+            windowedReads = true,
+        )
     }
-
-    private const val PROBE_BYTES = 64 * 1024
-
-    /** How much of the far end is asked for; see [probe]. */
-    private const val PROBE_TAIL_BYTES = 64 * 1024
-    private const val PROBE_READ_BYTES = 16 * 1024
 
     suspend fun resolveUrl(song: Song): Result<String> = resolve(song).map(DesktopStream::url)
 
-    private fun collectAudioFormats(root: JsonElement): List<JsonObject> = buildList {
-        fun walk(node: JsonElement) {
-            when (node) {
-                is JsonObject -> {
-                    val mime = node["mimeType"]?.jsonPrimitive?.contentOrNull.orEmpty()
-                    if (mime.startsWith("audio/") &&
-                        (node["url"] != null || node["signatureCipher"] != null || node["cipher"] != null)
-                    ) add(node)
-                    node.values.forEach(::walk)
-                }
-                is JsonArray -> node.forEach(::walk)
-                else -> Unit
-            }
-        }
-        walk(root)
-    }
+    /**
+     * The ceiling a resolve on this thread was asked for, read by
+     * [StreamResolver.maxKbps] — the phone reads its own setting there instead.
+     */
+    internal val ceiling = ThreadLocal<Int>()
 
-    private fun patchClientVersion(url: String, clientVersion: String): String =
-        if ("cver=" in url) url.replace(Regex("cver=[^&]+"), "cver=$clientVersion") else url
-
-    /** The formats in the order they are worth attempting, as Android ranks them. */
-    internal fun rankByQuality(candidates: List<JsonObject>, maxKbps: Int): List<JsonObject> {
-        val unciphered = compareByDescending<JsonObject> { it["url"] != null }
-        val (withinBudget, overBudget) = candidates.partition { it.kbps() <= maxKbps }
-        return withinBudget.sortedWith(compareByDescending<JsonObject> { it.kbps() }.then(unciphered)) +
-            overBudget.sortedWith(compareBy<JsonObject> { it.kbps() }.then(unciphered))
-    }
-
-    private fun JsonObject.kbps(): Int = (this["bitrate"]?.jsonPrimitive?.intOrNull ?: 0) / 1000
-
-    private val JsonPrimitive.intOrNull: Int?
-        get() = contentOrNull?.toIntOrNull()
-
-    private fun JsonObject.failure(clientName: String): IllegalStateException {
-        val playability = this["playabilityStatus"]?.jsonObject
-        val status = playability?.get("status")?.jsonPrimitive?.contentOrNull
-        val reason = playability?.get("reason")?.jsonPrimitive?.contentOrNull
-        val serverAbr = this["streamingData"]?.jsonObject
-            ?.get("serverAbrStreamingUrl")?.jsonPrimitive?.contentOrNull
-        val detail = when {
-            status != null && status != "OK" ->
-                "$status${reason?.let { ": $it" }.orEmpty()}"
-            serverAbr != null -> "SABR-only streaming (no direct audio URL)"
-            else -> "no direct audio URL"
-        }
-        return IllegalStateException("$clientName returned $detail")
-    }
-
-    private fun String.looksLikeBotCheck(): Boolean =
-        contains("bot", ignoreCase = true) ||
-            contains("unusual traffic", ignoreCase = true) ||
-            contains("sign in", ignoreCase = true) ||
-            contains("login_required", ignoreCase = true)
+    /** `mime=audio/webm` off a googlevideo URL: the container, which is what FFmpeg is told. */
+    private fun mimeOf(url: String): String? =
+        runCatching { java.net.URI(url).rawQuery }.getOrNull()
+            ?.split('&')
+            ?.firstOrNull { it.startsWith("mime=") }
+            ?.substringAfter('=')
+            ?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+            ?.substringAfterLast('/')
+            ?.lowercase()
 }
-

@@ -1,10 +1,6 @@
 package com.music.bitchord.data
 
-import android.os.Build
-import android.util.Log
-import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.model.Song
-import com.music.bitchord.data.sources.SourceResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.asContextElement
 import kotlinx.coroutines.withContext
@@ -60,6 +56,21 @@ import kotlin.coroutines.CoroutineContext
  * to logcat as well, so `adb logcat -s BitChord` is unchanged.
  */
 object TrackLog {
+    /**
+     * Where each line is echoed as it is logged — logcat on the phone's debug
+     * builds, the desktop's own log. The held lines are recorded regardless.
+     */
+    @Volatile
+    var echo: ((level: Char, tag: String, message: String, error: Throwable?) -> Unit)? = null
+
+    /** The exported header's line on which sources may stand in for YouTube, where there is one. */
+    @Volatile
+    var sourcesLine: () -> String? = { null }
+
+    /** The platform's own closing lines for an exported log's header — the build, the device. */
+    @Volatile
+    var headerLines: () -> List<String> = { emptyList() }
+
 
     // ── Writing ─────────────────────────────────────────────────────────────
 
@@ -68,32 +79,32 @@ object TrackLog {
     // record(), which is what Copy Log actually depends on.
 
     fun d(tag: String, message: String, about: String? = working.get()) {
-        if (BuildConfig.DEBUG) Log.d(tag, message)
+        echo?.invoke('D', tag, message, null)
         record('D', message, about)
     }
 
     fun i(tag: String, message: String, about: String? = working.get()) {
-        if (BuildConfig.DEBUG) Log.i(tag, message)
+        echo?.invoke('I', tag, message, null)
         record('I', message, about)
     }
 
     fun w(tag: String, message: String, about: String? = working.get()) {
-        if (BuildConfig.DEBUG) Log.w(tag, message)
+        echo?.invoke('W', tag, message, null)
         record('W', message, about)
     }
 
     fun w(tag: String, message: String, error: Throwable, about: String? = working.get()) {
-        if (BuildConfig.DEBUG) Log.w(tag, message, error)
+        echo?.invoke('W', tag, message, error)
         record('W', "$message\n${error.stackTraceToString()}", about)
     }
 
     fun e(tag: String, message: String, about: String? = working.get()) {
-        if (BuildConfig.DEBUG) Log.e(tag, message)
+        echo?.invoke('E', tag, message, null)
         record('E', message, about)
     }
 
     fun e(tag: String, message: String, error: Throwable, about: String? = working.get()) {
-        if (BuildConfig.DEBUG) Log.e(tag, message, error)
+        echo?.invoke('E', tag, message, error)
         record('E', "$message\n${error.stackTraceToString()}", about)
     }
 
@@ -221,17 +232,13 @@ object TrackLog {
         appendLine("BitChord log — ${song.title} — ${song.artist}")
         appendLine("id=${song.videoId} duration=${song.durationText ?: "?"} album=${song.albumName ?: "?"}")
         appendLine("playing: ${stats.describe()}")
-        appendLine(
-            "sources: substitution=${SourceResolver.canSubstituteForYouTube()} " +
-                "request=${SourceResolver.requestForNow()}",
-        )
+        sourcesLine()?.let(::appendLine)
         appendLine(
             "window: ${from?.let { CLOCK.format(Date(it)) } ?: "everything held"} → " +
                 "${CLOCK.format(Date())} ($count lines" +
                 (if (elsewhere > 0) ", $elsewhere for other tracks left out)" else ")"),
         )
-        appendLine("build: ${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_TYPE})")
-        appendLine("device: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}")
+        headerLines().forEach(::appendLine)
     }
 
     private fun NerdStats.Snapshot?.describe(): String {

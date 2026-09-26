@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.innertube.StreamResolver
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -66,7 +67,12 @@ internal class DesktopRangeStream(
         val response = runCatching {
             client.send(request.GET().build(), HttpResponse.BodyHandlers.ofByteArray())
         }.getOrNull() ?: return false
-        if (response.statusCode() !in 200..299) return false
+        if (response.statusCode() !in 200..299) {
+            // A URL cleared before playback has been refused mid-track: tell the resolver, as the
+            // phone's ChunkedDataSource does, so it forgets it and benches the client that minted it.
+            StreamResolver.onPlaybackRefused(url, response.statusCode())
+            return false
+        }
 
         val body = response.body()
         // A server that honoured the range says where the bytes came from and how many there are in

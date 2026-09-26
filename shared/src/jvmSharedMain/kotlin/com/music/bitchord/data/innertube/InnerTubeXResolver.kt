@@ -1,8 +1,6 @@
 package com.music.bitchord.data.innertube
 
-import android.content.Context
-import android.content.SharedPreferences
-import android.os.SystemClock
+import com.music.bitchord.data.MonotonicClock
 import com.metrolist.innertubex.InnerTube
 import com.metrolist.innertubex.InnerTubeLogLevel
 import com.metrolist.innertubex.InnerTubeLogger
@@ -15,14 +13,13 @@ import com.metrolist.innertubex.extraction.InnerTubeExtractor
 import com.metrolist.innertubex.extraction.PoTokenResult
 import com.metrolist.innertubex.extraction.TokenProvider
 import com.metrolist.innertubex.extraction.TokenProviderCapabilities
+
 import com.metrolist.innertubex.extraction.strategy.PoTokenProviderKind
 import com.metrolist.innertubex.extraction.YtConfigParserImpl
 import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
 import com.metrolist.innertubex.models.YouTubeLocale
-import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.TrackLog
-import com.music.bitchord.data.innertube.potoken.PoTokenGenerator
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -57,16 +54,36 @@ object InnerTubeXResolver {
         val headers: Map<String, String>,
     )
 
-    private var prefs: SharedPreferences? = null
-    private var poTokens: PoTokenGenerator? = null
+    /**
+     * Where the remote player config is remembered between runs — the phone's
+     * SharedPreferences, a properties file on the desktop.
+     */
+    interface ConfigStore {
+        fun getString(key: String): String?
+        fun getLong(key: String): Long?
+        fun putString(key: String, value: String)
+        fun putLong(key: String, value: Long)
+    }
+
+    /** Whether InnerTubeX's DEBUG lines reach the track log — the phone's debug builds. */
+    @Volatile
+    var debugLogging: Boolean = false
+
+    private var prefs: ConfigStore? = null
+    private var poTokens: TokenProvider? = null
     private var playerDir: File? = null
     private var warmup: Job? = null
 
-    fun init(context: Context) {
-        val app = context.applicationContext
-        prefs = app.getSharedPreferences("innertubex_player_config", Context.MODE_PRIVATE)
-        poTokens = PoTokenGenerator(app)
-        playerDir = File(app.filesDir, "innertubex_players").apply { mkdirs() }
+    /**
+     * @param filesDir where the preprocessed EJS players are kept.
+     * @param poTokenProvider the platform's BotGuard minter — the phone's
+     *   WebView one. Null where there is none, which leaves the clients that
+     *   need a PoToken out of the catalog.
+     */
+    fun init(filesDir: File, store: ConfigStore, poTokenProvider: TokenProvider?) {
+        prefs = store
+        poTokens = poTokenProvider
+        playerDir = File(filesDir, "innertubex_players").apply { mkdirs() }
         scope.launch {
             cipherService.setPreprocessedPlayerCache(::readPlayer, ::writePlayer)
             warm(WARM_DELAY_MS)
@@ -83,7 +100,7 @@ object InnerTubeXResolver {
         warmup?.cancel()
         warmup = scope.launch {
             delay(delayMs)
-            val start = SystemClock.elapsedRealtime()
+            val start = MonotonicClock.nowMs()
             runCatching {
                 innerTube.cookie = Innertube.cookie
                 innerTube.visitorData = Innertube.ensureVisitorData()
@@ -91,7 +108,7 @@ object InnerTubeXResolver {
                 extractor.prewarm()
             }.onFailure { if (it is CancellationException) throw it }
                 .onFailure { TrackLog.w(TAG, "InnerTubeX warm-up failed: ${it.message}") }
-                .onSuccess { TrackLog.d(TAG, "InnerTubeX warmed in ${SystemClock.elapsedRealtime() - start}ms") }
+                .onSuccess { TrackLog.d(TAG, "InnerTubeX warmed in ${MonotonicClock.nowMs() - start}ms") }
         }
     }
 
@@ -118,21 +135,13 @@ object InnerTubeXResolver {
             ?.drop(KEPT_PLAYERS)?.forEach { it.delete() }
     }
 
-    /** BotGuard PoTokens minted in a hidden WebView; what WEB_REMIX needs for age-restricted tracks. */
+    /** The installed PoToken provider, or one that can mint nothing when there is not one. */
     private val tokenProvider = object : TokenProvider {
-        override val capabilities = TokenProviderCapabilities(
-            providers = setOf(PoTokenProviderKind.WEB_BOTGUARD),
-            usesWebView = true,
-        )
+        override val capabilities: TokenProviderCapabilities
+            get() = poTokens?.capabilities ?: TokenProviderCapabilities(providers = emptySet(), usesWebView = false)
 
         override suspend fun getPoToken(videoId: String, visitorData: String, cookie: String?): PoTokenResult? =
-            poTokens?.getWebClientPoToken(videoId, visitorData)?.let { token ->
-                PoTokenResult(
-                    playerRequestToken = token.playerRequestPoToken,
-                    streamingDataToken = token.streamingDataPoToken,
-                    visitorData = visitorData,
-                )
-            }
+            poTokens?.getPoToken(videoId, visitorData, cookie)
 
         override suspend fun close() {
             poTokens?.close()
@@ -153,7 +162,7 @@ object InnerTubeXResolver {
     }
 
     private val logger = InnerTubeLogger { event ->
-        if (event.level == InnerTubeLogLevel.DEBUG && !BuildConfig.DEBUG) return@InnerTubeLogger
+        if (event.level == InnerTubeLogLevel.DEBUG && !debugLogging) return@InnerTubeLogger
         val details = if (event.details.isEmpty()) "" else event.details.entries.joinToString(prefix = " [", postfix = "]") { "${it.key}=${it.value}" }
         val line = "ITX ${event.tag}: ${event.message}$details"
         if (event.level == InnerTubeLogLevel.INFO || event.level == InnerTubeLogLevel.DEBUG) TrackLog.d(TAG, line) else TrackLog.w(TAG, line)
@@ -164,17 +173,17 @@ object InnerTubeXResolver {
         override val sourceUrl: String = PLAYER_CONFIG_URL
         override val defaultSourceUrl: String = PLAYER_CONFIG_URL
         override var cachedJson: String
-            get() = prefs?.getString("json", "").orEmpty()
-            set(value) { prefs?.edit()?.putString("json", value)?.apply() }
+            get() = prefs?.getString("json").orEmpty()
+            set(value) { prefs?.putString("json", value) }
         override var cachedAtMs: Long
-            get() = prefs?.getLong("cached_at_ms", 0L) ?: 0L
-            set(value) { prefs?.edit()?.putLong("cached_at_ms", value)?.apply() }
+            get() = prefs?.getLong("cached_at_ms") ?: 0L
+            set(value) { prefs?.putLong("cached_at_ms", value) }
         override var cachedSourceUrl: String
-            get() = prefs?.getString("source_url", "").orEmpty()
-            set(value) { prefs?.edit()?.putString("source_url", value)?.apply() }
+            get() = prefs?.getString("source_url").orEmpty()
+            set(value) { prefs?.putString("source_url", value) }
         override var cachedEtag: String
-            get() = prefs?.getString("etag", "").orEmpty()
-            set(value) { prefs?.edit()?.putString("etag", value)?.apply() }
+            get() = prefs?.getString("etag").orEmpty()
+            set(value) { prefs?.putString("etag", value) }
     }
 
     private val innerTube = InnerTube(http, logger = logger)
@@ -261,7 +270,7 @@ object InnerTubeXResolver {
 
     fun exclude(videoId: String, profileId: String) {
         TrackLog.w(TAG, "InnerTubeX: $profileId refused $videoId; skipping it for this track", about = videoId)
-        excluded.getOrPut(videoId) { ConcurrentHashMap() }[profileId] = SystemClock.elapsedRealtime() + EXCLUDE_MS
+        excluded.getOrPut(videoId) { ConcurrentHashMap() }[profileId] = MonotonicClock.nowMs() + EXCLUDE_MS
     }
 
     fun onSessionChanged() {
@@ -273,7 +282,7 @@ object InnerTubeXResolver {
 
     private fun excludedFor(videoId: String): Set<String> {
         val entries = excluded[videoId] ?: return emptySet()
-        val now = SystemClock.elapsedRealtime()
+        val now = MonotonicClock.nowMs()
         entries.entries.removeAll { it.value <= now }
         return entries.keys.toSet()
     }

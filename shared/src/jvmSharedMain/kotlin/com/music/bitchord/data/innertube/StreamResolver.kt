@@ -1,10 +1,9 @@
 package com.music.bitchord.data.innertube
 
-import android.os.SystemClock
+import com.music.bitchord.data.MonotonicClock
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.NerdStats
-import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -58,6 +57,10 @@ import java.util.concurrent.TimeUnit
  *     until bytes have been fetched from it. See [probe].
  */
 object StreamResolver {
+    /** The bitrate ceiling in force — the phone's quality setting for the connection it is on. */
+    @Volatile
+    var maxKbps: () -> Int = { Int.MAX_VALUE }
+
 
     private const val TAG = "BitChord"
 
@@ -136,7 +139,7 @@ object StreamResolver {
             // was one shaped watch page, a player POST, or the player
             // JavaScript. Naming the request and its size is what makes the
             // difference between measuring the step and guessing at it.
-            val requestStart = SystemClock.elapsedRealtime()
+            val requestStart = MonotonicClock.nowMs()
             val response = try {
                 extractorClient.newCall(builder.build()).execute()
             } catch (e: Exception) {
@@ -147,12 +150,12 @@ object StreamResolver {
                 // no reason. Named here, then rethrown unchanged.
                 TrackLog.w(
                     TAG,
-                    "extractor fetch FAILED after ${SystemClock.elapsedRealtime() - requestStart}ms " +
+                    "extractor fetch FAILED after ${MonotonicClock.nowMs() - requestStart}ms " +
                         "${request.httpMethod()} ${request.url()}: ${e.javaClass.simpleName}: ${e.message}",
                 )
                 throw e
             }
-            val took = SystemClock.elapsedRealtime() - requestStart
+            val took = MonotonicClock.nowMs() - requestStart
             if (took > SLOW_FETCH_MS) {
                 TrackLog.w(TAG, "extractor fetch ${took}ms ${request.httpMethod()} ${request.url()}")
             } else {
@@ -259,7 +262,7 @@ object StreamResolver {
         init
 
         recent[videoId]
-            ?.takeIf { SystemClock.elapsedRealtime() - it.at < URL_TTL_MS }
+            ?.takeIf { MonotonicClock.nowMs() - it.at < URL_TTL_MS }
             ?.let { return it.url }
 
         // A verdict, not a failure: asking again cannot change the answer, so
@@ -334,14 +337,14 @@ object StreamResolver {
 
     private fun unplayableReason(videoId: String): String? {
         val entry = unplayable[videoId] ?: return null
-        if (SystemClock.elapsedRealtime() - entry.at < UNPLAYABLE_TTL_MS) return entry.reason
+        if (MonotonicClock.nowMs() - entry.at < UNPLAYABLE_TTL_MS) return entry.reason
         unplayable.remove(videoId)
         return null
     }
 
     private fun rememberUnplayable(videoId: String, reason: String) {
         if (unplayable.size > MAX_REMEMBERED) unplayable.clear()
-        unplayable[videoId] = Verdict(reason, SystemClock.elapsedRealtime())
+        unplayable[videoId] = Verdict(reason, MonotonicClock.nowMs())
     }
 
     /**
@@ -420,7 +423,7 @@ object StreamResolver {
     private val resolverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private suspend fun resolveUncached(videoId: String): Stream {
-        val resolveStart = SystemClock.elapsedRealtime()
+        val resolveStart = MonotonicClock.nowMs()
         val stream = try {
             timed("$videoId InnerTubeX") { innerTubeXStream(videoId) }
                 ?: run {
@@ -442,7 +445,7 @@ object StreamResolver {
             TrackLog.w(
                 TAG,
                 "resolve hit a linkage failure for $videoId after " +
-                    "${SystemClock.elapsedRealtime() - resolveStart}ms: ${e.javaClass.name}: ${e.message}",
+                    "${MonotonicClock.nowMs() - resolveStart}ms: ${e.javaClass.name}: ${e.message}",
                 e,
             )
             throw IOException("Stream resolution cannot run on this device: $e", e)
@@ -457,7 +460,7 @@ object StreamResolver {
             // nothing.
             TrackLog.w(
                 TAG,
-                "resolve failed for $videoId after ${SystemClock.elapsedRealtime() - resolveStart}ms: " +
+                "resolve failed for $videoId after ${MonotonicClock.nowMs() - resolveStart}ms: " +
                     "${e.javaClass.name}: ${e.message}",
                 e,
             )
@@ -472,7 +475,7 @@ object StreamResolver {
             }
             throw e
         }
-        TrackLog.d(TAG, "TIMING $videoId total resolve: ${SystemClock.elapsedRealtime() - resolveStart}ms")
+        TrackLog.d(TAG, "TIMING $videoId total resolve: ${MonotonicClock.nowMs() - resolveStart}ms")
         return stream
     }
 
@@ -484,7 +487,7 @@ object StreamResolver {
      */
     private suspend fun innerTubeXStream(
         videoId: String,
-        maxKbps: Int = AppSettings.effectiveAudioQuality.maxKbps,
+        maxKbps: Int = maxKbps(),
         requireM4a: Boolean = false,
     ): Stream? {
         val skip = mutableSetOf<String>()
@@ -516,8 +519,8 @@ object StreamResolver {
 
     /** Logs how long [block] took, whatever it returns — a timing probe, not a control flow change. */
     private suspend inline fun <T> timed(label: String, block: suspend () -> T): T {
-        val start = SystemClock.elapsedRealtime()
-        return block().also { TrackLog.d(TAG, "TIMING $label: ${SystemClock.elapsedRealtime() - start}ms") }
+        val start = MonotonicClock.nowMs()
+        return block().also { TrackLog.d(TAG, "TIMING $label: ${MonotonicClock.nowMs() - start}ms") }
     }
 
     /**
@@ -671,7 +674,7 @@ object StreamResolver {
      * the cheapest available rather than failing.
      */
     private fun <T> pickForQuality(candidates: List<Pair<Int, T>>): T? =
-        underCeiling(candidates, AppSettings.effectiveAudioQuality.maxKbps)
+        underCeiling(candidates, maxKbps())
 
     /**
      * Highest of [candidates] at or under [maxKbps]; if everything is above it
@@ -995,7 +998,7 @@ object StreamResolver {
         select: (List<Pair<Int, AudioStream>>) -> AudioStream?,
     ): Stream = extractionGate.withLock {
         withContext(Dispatchers.IO) {
-            val waited = SystemClock.elapsedRealtime()
+            val waited = MonotonicClock.nowMs()
             val extractor = ServiceList.YouTube.getStreamExtractor(
                 "https://www.youtube.com/watch?v=$videoId",
             )
@@ -1011,7 +1014,7 @@ object StreamResolver {
             TrackLog.d(
                 TAG,
                 "NewPipe picked ${stream.format?.name} @ ${stream.averageBitrate}kbps " +
-                    "(extraction held the gate ${SystemClock.elapsedRealtime() - waited}ms)",
+                    "(extraction held the gate ${MonotonicClock.nowMs() - waited}ms)",
             )
             // stream.content is already playable, not raw: YoutubeStreamExtractor
             // resolves the signature cipher and the `n` parameter itself while
@@ -1088,10 +1091,10 @@ object StreamResolver {
 
     private fun remember(videoId: String, url: String) {
         if (recent.size >= MAX_REMEMBERED) {
-            val cutoff = SystemClock.elapsedRealtime() - URL_TTL_MS
+            val cutoff = MonotonicClock.nowMs() - URL_TTL_MS
             recent.entries.removeAll { it.value.at < cutoff }
             if (recent.size >= MAX_REMEMBERED) recent.clear()
         }
-        recent[videoId] = Resolved(url, SystemClock.elapsedRealtime())
+        recent[videoId] = Resolved(url, MonotonicClock.nowMs())
     }
 }

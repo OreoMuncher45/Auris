@@ -40,6 +40,11 @@ kotlin {
                 api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
                 api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
                 api("org.jsoup:jsoup:1.22.2")
+                // YouTube stream resolution, as the phone does it: InnerTubeX's
+                // client catalog and cipher tiers, NewPipe as the fallback. NewPipe
+                // is compile-only because the phone ships a trimmed jar of it.
+                api("com.github.MetrolistGroup.innertubex:innertubex:v0.7.0")
+                compileOnly("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
             }
         }
         androidMain.get().dependsOn(jvmSharedMain)
