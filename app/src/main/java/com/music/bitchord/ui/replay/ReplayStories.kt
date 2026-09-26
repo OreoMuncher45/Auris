@@ -173,15 +173,23 @@ fun ReplayStories(
         }
     }
 
-    fun step(forward: Boolean) =
-        goTo(pagerState.settledPage + if (forward) 1 else -1, animate = false)
+    fun step(forward: Boolean) {
+        val currentPage = pagerState.settledPage
+        // On the last slide, forward tap closes the replay instead of staying put.
+        if (forward && currentPage == pages.lastIndex) {
+            scope.launch { onClose() }
+            return
+        }
+        goTo(currentPage + if (forward) 1 else -1, animate = false)
+    }
 
     LaunchedEffect(current) { progress.snapTo(0f) }
     LaunchedEffect(current, held, paused) {
         if (held || paused) return@LaunchedEffect
-        // On the final slide: animate progress to 1f and hold — do NOT auto-advance.
+        // On the final slide: animate progress to 1f then close the replay.
         if (current == pages.lastIndex) {
             progress.animateTo(1f, tween(PAGE_MILLIS.toInt(), easing = LinearEasing))
+            scope.launch { onClose() }
             return@LaunchedEffect
         }
         // Resumed from where the hold left it rather than restarted, so letting
