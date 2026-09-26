@@ -900,9 +900,10 @@ object YtMusicRepository {
             }
             val shelvesDeferred = page.sections.map { shelf ->
                 async {
-                    if (shelf.moreBrowseId != null) {
+                    val moreBrowseId = shelf.moreBrowseId
+                    if (moreBrowseId != null) {
                         val fullItems = runCatching {
-                            itemsPaged(shelf.moreBrowseId, shelf.moreParams)
+                            itemsPaged(moreBrowseId, shelf.moreParams)
                         }.getOrNull()
                         if (!fullItems.isNullOrEmpty()) {
                             shelf.copy(items = fullItems)
