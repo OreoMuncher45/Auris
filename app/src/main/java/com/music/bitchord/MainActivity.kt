@@ -2317,7 +2317,8 @@ private fun BitChordApp(
                         // button sets `showSettings` from every page including
                         // this one, so with Replay winning the tie the button
                         // was live, hit, and changed nothing on screen.
-                        showSettings && !replayOpenedFromSettings -> "settings"
+                        replayOpenedFromSettings && showReplay -> "settings"
+                        showSettings -> "settings"
                         showReplay -> "replay"
                         detail != null -> detail.browseId
                         else -> "$TAB_KEY$selectedTab"
@@ -3344,9 +3345,9 @@ private fun BitChordApp(
             }
         }
 
-        // ---- Replay overlay (when opened from Settings) ----
-        // Rendered outside the AnimatedContent so it sits on top of the
-        // Settings sheet while preserving its scroll position and state.
+        // ---- Replay overlay (opened from Settings) ----
+        // SettingsSheet stays mounted inside AnimatedContent (target = "settings"),
+        // so its scrollState survives. Render Replay on top, outside the pane.
         if (replayOpenedFromSettings && showReplay && !showReplayShare) {
             ReplayScreen(
                 state = replay,
