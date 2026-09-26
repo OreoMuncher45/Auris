@@ -2233,9 +2233,12 @@ private fun BitChordApp(
         BackHandler(
             enabled = showReplay && replayStory == null && !showReplayShare,
         ) {
+            // When Replay was opened from Settings (sub-screen overlay), one
+            // back swipe must dismiss both Replay and Settings in a single step.
             if (settingsSubScreen == "replay") {
                 showReplay = false
                 settingsSubScreen = null
+                showSettings = false
             } else {
                 showReplay = false
             }
@@ -2252,19 +2255,31 @@ private fun BitChordApp(
         }
         BackHandler(enabled = showAccountScrobbling && !showDiscord) {
             showAccountScrobbling = false
-            if (settingsSubScreen == "account_scrobbling") settingsSubScreen = null
+            if (settingsSubScreen == "account_scrobbling") {
+                settingsSubScreen = null
+                showSettings = false
+            }
         }
         BackHandler(enabled = showSources) {
             showSources = false
-            if (settingsSubScreen == "sources") settingsSubScreen = null
+            if (settingsSubScreen == "sources") {
+                settingsSubScreen = null
+                showSettings = false
+            }
         }
         BackHandler(enabled = showListenTogether) {
             showListenTogether = false
-            if (settingsSubScreen == "listen_together") settingsSubScreen = null
+            if (settingsSubScreen == "listen_together") {
+                settingsSubScreen = null
+                showSettings = false
+            }
         }
         BackHandler(enabled = showEqualizer) {
             showEqualizer = false
-            if (settingsSubScreen == "equalizer") settingsSubScreen = null
+            if (settingsSubScreen == "equalizer") {
+                settingsSubScreen = null
+                showSettings = false
+            }
         }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
@@ -3369,87 +3384,114 @@ private fun BitChordApp(
         // ---- Settings sub-screen overlays ----
         // When a sub-screen is opened from Settings, AnimatedContent keeps
         // "settings" as target so SettingsSheet stays mounted with its scroll.
-        // Each overlay renders on top of the preserved SettingsSheet.
+        // Each overlay is wrapped in an opaque Surface so it fully obscures
+        // the preserved SettingsSheet beneath — without it, both screens bleed
+        // through each other and text becomes unreadable.
         when (settingsSubScreen) {
             "account_scrobbling" -> {
-                AccountAndScrobblingScreen(
-                    signedIn = signedIn,
-                    account = account,
-                    channelName = selectedChannelName,
-                    onSignIn = {
-                        settingsSubScreen = null
-                        showSettings = false
-                        webSession = WebSessionMode.SIGN_IN
-                    },
-                    onSwitchChannel = {
-                        viewModel.loadChannels()
-                        showAccountSelector = true
-                    },
-                    onSignOut = { viewModel.signOut() },
-                    onOpenListenBrainzLogin = { showListenBrainzLogin = true },
-                    onOpenLastfmLogin = { showLastfmLogin = true },
-                    onOpenDiscord = { showDiscord = true },
-                    contentPadding = listPadding,
-                )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    AccountAndScrobblingScreen(
+                        signedIn = signedIn,
+                        account = account,
+                        channelName = selectedChannelName,
+                        onSignIn = {
+                            settingsSubScreen = null
+                            showSettings = false
+                            webSession = WebSessionMode.SIGN_IN
+                        },
+                        onSwitchChannel = {
+                            viewModel.loadChannels()
+                            showAccountSelector = true
+                        },
+                        onSignOut = { viewModel.signOut() },
+                        onOpenListenBrainzLogin = { showListenBrainzLogin = true },
+                        onOpenLastfmLogin = { showLastfmLogin = true },
+                        onOpenDiscord = { showDiscord = true },
+                        contentPadding = listPadding,
+                    )
+                }
             }
             "sources" -> {
-                SourcesScreen(
-                    contentPadding = listPadding,
-                    onEditSource = { editingSource = it },
-                    onEditWebDav = { showWebDavEditor = true },
-                    onEditSmb = { showSmbEditor = true },
-                    onConfirmJioSaavn = { confirmJioSaavn = true },
-                )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    SourcesScreen(
+                        contentPadding = listPadding,
+                        onEditSource = { editingSource = it },
+                        onEditWebDav = { showWebDavEditor = true },
+                        onEditSmb = { showSmbEditor = true },
+                        onConfirmJioSaavn = { confirmJioSaavn = true },
+                    )
+                }
             }
             "listen_together" -> {
-                ListenTogetherScreen(
-                    signedIn = signedIn,
-                    inviteCode = activeJamInviteCode,
-                    inviteServer = activeJamInviteServer,
-                    onInviteHandled = {
-                        activeJamInviteCode = null
-                        activeJamInviteServer = null
-                    },
-                    onSignIn = {
-                        settingsSubScreen = null
-                        showSettings = false
-                        webSession = WebSessionMode.SIGN_IN
-                    },
-                    contentPadding = listPadding,
-                    onEditServer = { editingPartyServer = true },
-                )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    ListenTogetherScreen(
+                        signedIn = signedIn,
+                        inviteCode = activeJamInviteCode,
+                        inviteServer = activeJamInviteServer,
+                        onInviteHandled = {
+                            activeJamInviteCode = null
+                            activeJamInviteServer = null
+                        },
+                        onSignIn = {
+                            settingsSubScreen = null
+                            showSettings = false
+                            webSession = WebSessionMode.SIGN_IN
+                        },
+                        contentPadding = listPadding,
+                        onEditServer = { editingPartyServer = true },
+                    )
+                }
             }
             "equalizer" -> {
-                EqualizerScreen(contentPadding = listPadding)
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background,
+                ) {
+                    EqualizerScreen(contentPadding = listPadding)
+                }
             }
             "replay" -> {
                 if (showReplay && !showReplayShare) {
-                    ReplayScreen(
-                        state = replay,
-                        holder = account?.name.orEmpty(),
-                        onPeriodChange = setReplayPeriod,
-                        onOpenStory = { replayStory = it },
-                        onPlaySong = { song ->
-                            playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
-                        },
-                        onOpenArtist = { id, name ->
-                            settingsSubScreen = null
-                            showReplay = false
-                            openByName(id, name, null, BrowseType.ARTIST)
-                        },
-                        onOpenAlbum = { id, title, artist, art ->
-                            settingsSubScreen = null
-                            showReplay = false
-                            openByName(id, title, artist, BrowseType.ALBUM, art)
-                        },
-                        onShare = {
-                            replaySharePage = null
-                            showReplayShare = true
-                        },
-                        contentPadding = listPadding,
-                        listState = replayListState,
-                        landingPage = replayLandingPage,
-                    )
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background,
+                    ) {
+                        ReplayScreen(
+                            state = replay,
+                            holder = account?.name.orEmpty(),
+                            onPeriodChange = setReplayPeriod,
+                            onOpenStory = { replayStory = it },
+                            onPlaySong = { song ->
+                                playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
+                            },
+                            onOpenArtist = { id, name ->
+                                settingsSubScreen = null
+                                showReplay = false
+                                openByName(id, name, null, BrowseType.ARTIST)
+                            },
+                            onOpenAlbum = { id, title, artist, art ->
+                                settingsSubScreen = null
+                                showReplay = false
+                                openByName(id, title, artist, BrowseType.ALBUM, art)
+                            },
+                            onShare = {
+                                replaySharePage = null
+                                showReplayShare = true
+                            },
+                            contentPadding = listPadding,
+                            listState = replayListState,
+                            landingPage = replayLandingPage,
+                        )
+                    }
                 }
             }
         }
