@@ -2233,12 +2233,10 @@ private fun BitChordApp(
         BackHandler(
             enabled = showReplay && replayStory == null && !showReplayShare,
         ) {
-            // When Replay was opened from Settings (sub-screen overlay), one
-            // back swipe must dismiss both Replay and Settings in a single step.
             if (settingsSubScreen == "replay") {
+                // Dismiss Replay overlay and return to SettingsSheet beneath.
                 showReplay = false
                 settingsSubScreen = null
-                showSettings = false
             } else {
                 showReplay = false
             }
@@ -2255,31 +2253,19 @@ private fun BitChordApp(
         }
         BackHandler(enabled = showAccountScrobbling && !showDiscord) {
             showAccountScrobbling = false
-            if (settingsSubScreen == "account_scrobbling") {
-                settingsSubScreen = null
-                showSettings = false
-            }
+            if (settingsSubScreen == "account_scrobbling") settingsSubScreen = null
         }
         BackHandler(enabled = showSources) {
             showSources = false
-            if (settingsSubScreen == "sources") {
-                settingsSubScreen = null
-                showSettings = false
-            }
+            if (settingsSubScreen == "sources") settingsSubScreen = null
         }
         BackHandler(enabled = showListenTogether) {
             showListenTogether = false
-            if (settingsSubScreen == "listen_together") {
-                settingsSubScreen = null
-                showSettings = false
-            }
+            if (settingsSubScreen == "listen_together") settingsSubScreen = null
         }
         BackHandler(enabled = showEqualizer) {
             showEqualizer = false
-            if (settingsSubScreen == "equalizer") {
-                settingsSubScreen = null
-                showSettings = false
-            }
+            if (settingsSubScreen == "equalizer") settingsSubScreen = null
         }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
