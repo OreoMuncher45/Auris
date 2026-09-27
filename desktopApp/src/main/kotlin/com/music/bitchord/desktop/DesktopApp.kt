@@ -12,6 +12,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateListOf
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.replay.ReplayCreditCard
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -21,6 +22,7 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.HomeScreen
+import com.music.bitchord.ui.screens.CompactTrackRow
 import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
@@ -372,6 +374,7 @@ private const val INITIAL_RADIO_TRACKS = 24
 
 /** An artist's top songs, capped so the release shelves are not buried. */
 private const val MAX_ARTIST_SONGS = 20
+private const val ARTIST_SONGS_PER_COLUMN = 4
 
 /** The artist photograph's height. */
 private val ARTIST_BANNER_HEIGHT = 340.dp
@@ -3133,9 +3136,6 @@ fun BitChordDesktopApp() {
                         openedArtist != null -> DesktopArtistPage(
                             state = artistState,
                             fallbackName = openedArtist!!.name,
-                            likedIds = likedIds,
-                            downloadedIds = downloads.map(Song::videoId).toSet(),
-                            downloadInProgress = downloadInProgress,
                             onRetry = {
                                 artistState = UiState.Loading
                                 artistReloads++
@@ -3146,9 +3146,7 @@ fun BitChordDesktopApp() {
                             onShuffle = { songs ->
                                 playSongs(songs, 0, openedArtist?.let { artistSource(it) })
                             },
-                            onToggleLike = { song -> toggleLike(song) },
-                            onDownload = ::downloadSong,
-                            onAddToPlaylist = { playlistTarget = it },
+                            onOpenMenu = { song -> openMenu(song) },
                             onShelfItemClick = ::openShelfItem,
                             // A channel subscription is the account's, so a guest is never shown
                             // the button.
@@ -4198,15 +4196,11 @@ private const val LOCAL_PLAYLIST_PREFIX = "desktop-playlist:"
 private fun DesktopArtistPage(
     state: UiState<ArtistPage>,
     fallbackName: String,
-    likedIds: Set<String>,
-    downloadedIds: Set<String>,
-    downloadInProgress: Set<String>,
     onRetry: () -> Unit,
     onPlaySongs: (List<Song>, Int) -> Unit,
     onShuffle: (List<Song>) -> Unit,
-    onToggleLike: (Song) -> Unit,
-    onDownload: (Song) -> Unit,
-    onAddToPlaylist: (Song) -> Unit,
+    /** The ⋮ on a top song, or a right-click on it. */
+    onOpenMenu: (Song) -> Unit,
     onShelfItemClick: (ShelfItem, String?) -> Unit,
     /** Null for a guest: a channel subscription is the account's. */
     onToggleSubscription: ((SubscriptionState) -> Unit)?,
@@ -4295,33 +4289,32 @@ private fun DesktopArtistPage(
                             }
                         }
                         if (top.isNotEmpty()) {
-                            // Listed, the way an album or a playlist lists its tracks here.
+                            // Paged sideways four to a column, the way Home lists Recents.
                             item(key = "artist-top-songs") {
                                 Column(Modifier.padding(top = 20.dp, bottom = 6.dp)) {
                                     SectionTitle(DesktopStrings["top_songs", "Top songs"])
                                     Spacer(Modifier.height(8.dp))
-                                }
-                            }
-                            item(key = "artist-top-songs-header") {
-                                Box(Modifier.padding(horizontal = DesktopPageGutter)) {
-                                    DesktopCollectionTableHeader(hasRemove = false)
-                                }
-                            }
-                            itemsIndexed(top, key = { _, song -> "artist-song-${song.videoId}" }) { index, song ->
-                                Box(Modifier.padding(horizontal = DesktopPageGutter)) {
-                                    DesktopCollectionSongRow(
-                                        song = song,
-                                        collectionType = BrowseType.ARTIST,
-                                        collectionTitle = name,
-                                        liked = song.videoId in likedIds,
-                                        onClick = { onPlaySongs(top, index) },
-                                        onToggleLike = onToggleLike,
-                                        onDownload = onDownload,
-                                        onAddToPlaylist = onAddToPlaylist,
-                                        downloaded = song.videoId in downloadedIds,
-                                        downloadInProgress = song.videoId in downloadInProgress,
-                                        number = index + 1,
-                                    )
+                                    BoxWithConstraints {
+                                        val columnWidth = trackColumnWidth(maxWidth)
+                                        ShelfRow(
+                                            contentPadding = PaddingValues(horizontal = DesktopPageGutter),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            items(top.withIndex().chunked(ARTIST_SONGS_PER_COLUMN)) { column ->
+                                                Column(Modifier.width(columnWidth)) {
+                                                    column.forEach { (index, song) ->
+                                                        CompactTrackRow(
+                                                            title = song.title,
+                                                            subtitle = song.artist,
+                                                            thumbnailUrl = song.thumbnailUrl,
+                                                            onClick = { onPlaySongs(top, index) },
+                                                            onLongPress = { onOpenMenu(song) },
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -5995,7 +5988,6 @@ private fun DesktopCollectionTableHeader(hasRemove: Boolean) {
         Text(DesktopStrings["d_time", "TIME"], Modifier.width(58.dp), color = DesktopSecondary, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End)
         Spacer(Modifier.width(collectionActionsWidth(hasRemove)))
     }
-    HorizontalDivider(color = DesktopDivider)
 }
 
 @Composable

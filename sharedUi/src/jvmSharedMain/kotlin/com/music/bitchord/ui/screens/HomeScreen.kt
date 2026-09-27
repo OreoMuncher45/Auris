@@ -359,10 +359,31 @@ private fun RecentSectionHeader(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecentTrackRow(
     item: ShelfItem,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)?,
+) {
+    CompactTrackRow(
+        title = item.title,
+        subtitle = item.subtitle,
+        thumbnailUrl = item.thumbnailUrl,
+        onClick = onClick,
+        onLongPress = onLongPress,
+    )
+}
+
+/**
+ * One row of Recents' four-to-a-column pager. Public so the desktop artist page
+ * can list its top songs the same way.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun CompactTrackRow(
+    title: String,
+    subtitle: String,
+    thumbnailUrl: String?,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)?,
 ) {
@@ -375,7 +396,7 @@ private fun RecentTrackRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
-            model = item.thumbnailUrl.artworkAt(ROW_ART_PX),
+            model = thumbnailUrl.artworkAt(ROW_ART_PX),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -387,14 +408,14 @@ private fun RecentTrackRow(
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                text = item.title,
+                text = title,
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = item.subtitle,
+                text = subtitle,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
