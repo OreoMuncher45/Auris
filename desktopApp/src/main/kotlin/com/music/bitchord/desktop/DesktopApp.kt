@@ -3268,7 +3268,7 @@ private fun DesktopTopBar(
             HorizontalDivider(
                 modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
                 thickness = 1.dp,
-                color = DesktopDivider,
+                color = desktopChromeDivider(),
             )
         }
     }
@@ -3353,7 +3353,7 @@ private fun DesktopSidebar(
                 onDestinationSelected(DesktopDestination.SEARCH)
             }
             Spacer(Modifier.height(6.dp))
-            HorizontalDivider(color = DesktopDivider)
+            HorizontalDivider(color = desktopChromeDivider())
             Spacer(Modifier.height(12.dp))
             DesktopSidebarItem(BitChordIcons.Clock, "History", destination == DesktopDestination.HISTORY) {
                 onDestinationSelected(DesktopDestination.HISTORY)
@@ -3370,7 +3370,7 @@ private fun DesktopSidebar(
                 onDestinationSelected(DesktopDestination.LOCAL_MUSIC)
             }
             Spacer(Modifier.weight(1f))
-            HorizontalDivider(color = DesktopDivider)
+            HorizontalDivider(color = desktopChromeDivider())
             Spacer(Modifier.height(8.dp))
             DesktopSidebarItem(Icons.Rounded.Settings, "Settings", settingsOpen) {
                 onOpenSettings()
@@ -3381,7 +3381,7 @@ private fun DesktopSidebar(
                 .align(Alignment.CenterEnd)
                 .width(1.dp)
                 .fillMaxHeight()
-                .background(DesktopDivider),
+                .background(desktopChromeDivider()),
         )
     }
 }
@@ -6344,6 +6344,17 @@ internal fun Modifier.desktopWindowGlass(
 
 /** Enough to keep white text readable over a bright wallpaper, little enough to let it through. */
 private const val WINDOW_GLASS_TINT = 0.28f
+
+/**
+ * The separators in the window's chrome. Acrylic lets the wallpaper through bright, and the solid
+ * dark divider cut across it as a black line; a faint white one reads as an edge in the glass
+ * instead. Mica is dark enough for the usual one.
+ */
+@Composable
+internal fun desktopChromeDivider(): Color {
+    val backdrop by DesktopWindowBackdrop.active.collectAsState()
+    return if (backdrop == DesktopBackdrop.ACRYLIC) Color.White.copy(alpha = 0.14f) else DesktopDivider
+}
 
 @Composable
 private fun Modifier.desktopFrosted(
