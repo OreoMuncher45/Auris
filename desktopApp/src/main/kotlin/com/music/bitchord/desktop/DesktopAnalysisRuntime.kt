@@ -73,8 +73,11 @@ internal object DesktopAnalysisRuntime {
     fun modelPath(asset: String): String = unpack("/models/$asset", asset).toString()
 
     /**
-     * Copies a classpath resource to [name] under [home], skipping the copy when a file of the same
-     * size is already there.
+     * Copies a classpath resource to [name] under [home], skipping the copy when the file already
+     * there is the same size and no older than the resource.
+     *
+     * Size alone is not enough: a rebuilt library can come out byte-for-byte the same length as the
+     * one it replaces, and the stale copy was then loaded forever — a native fix that never ran.
      */
     private fun unpack(resource: String, name: String): Path {
         Files.createDirectories(home)
@@ -82,8 +85,14 @@ internal object DesktopAnalysisRuntime {
         val stream = javaClass.getResourceAsStream(resource)
             ?: error("$resource is missing from this build")
         stream.use { input ->
-            val expected = javaClass.getResource(resource)?.openConnection()?.contentLengthLong ?: -1L
-            if (Files.exists(target) && expected > 0 && Files.size(target) == expected) return target
+            val connection = javaClass.getResource(resource)?.openConnection()
+            val expected = connection?.contentLengthLong ?: -1L
+            val builtAt = connection?.lastModified ?: 0L
+            if (Files.exists(target) && expected > 0 && Files.size(target) == expected &&
+                Files.getLastModifiedTime(target).toMillis() >= builtAt
+            ) {
+                return target
+            }
             val partial = home.resolve("$name.partial")
             Files.copy(input, partial, StandardCopyOption.REPLACE_EXISTING)
             Files.move(partial, target, StandardCopyOption.REPLACE_EXISTING)

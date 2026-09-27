@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.window.WindowDraggableArea
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,7 +26,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -36,6 +37,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowScope
+import java.awt.MouseInfo
 
 // The window's own frame, drawn by the application rather than by the system.
 
@@ -98,11 +100,13 @@ internal fun DesktopTitleBarDragArea(
         Box(modifier) { content() }
         return
     }
-    with(scope) {
-        WindowDraggableArea(
-            modifier = modifier.doubleClickToMaximize(actions),
-            content = content,
-        )
+    // Behind the content rather than around it. Wrapped around it, the drag area saw every press
+    // in the toolbar too — dragging the volume slider moved the window with it. As a sibling
+    // underneath, anything with its own pointer input (buttons, sliders) is hit first and the
+    // press never reaches here; only empty toolbar falls through to move the window.
+    Box(modifier) {
+        Box(Modifier.matchParentSize().captionPress(scope, actions))
+        content()
     }
 }
 
@@ -209,8 +213,42 @@ private val MAC_MINIMIZE = Color(0xFFFFBD2E)
 private val MAC_MAXIMIZE = Color(0xFF28C840)
 private val MAC_GLYPH = Color(0xB3000000)
 
-/** Answers a double click the way the system caption always has. */
-private fun Modifier.doubleClickToMaximize(actions: DesktopWindowActions?): Modifier =
-    if (actions == null) this else pointerInput(actions) {
-        detectTapGestures(onDoubleTap = { actions.toggleMaximize() })
+/**
+ * A press on empty caption: moves the window, and a second one in quick succession maximizes it,
+ * the way the system caption always has.
+ *
+ * On Windows the move is handed to the system ([DesktopWindowsFrame.startDrag]), which runs its own
+ * move loop — DWM slides the window, Aero Snap works, and no edge is left exposed to paint white.
+ * The double click is counted here rather than left to Windows: the area is client area as far as
+ * Windows knows, so it never sends the caption's own double click. Without the native frame the
+ * window is moved from the pointer, as WindowDraggableArea did.
+ */
+private fun Modifier.captionPress(scope: WindowScope, actions: DesktopWindowActions?): Modifier =
+    pointerInput(scope, actions) {
+        var lastPressAt = 0L
+        var lastPressPosition = Offset.Zero
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            val double = down.uptimeMillis - lastPressAt <= viewConfiguration.doubleTapTimeoutMillis &&
+                (down.position - lastPressPosition).getDistance() <= viewConfiguration.touchSlop
+            if (double) {
+                lastPressAt = 0L
+                down.consume()
+                actions?.toggleMaximize()
+                return@awaitEachGesture
+            }
+            lastPressAt = down.uptimeMillis
+            lastPressPosition = down.position
+            if (DesktopWindowsFrame.startDrag()) return@awaitEachGesture
+            val window = scope.window
+            val windowAtStart = window.location
+            val pointerAtStart = MouseInfo.getPointerInfo()?.location ?: return@awaitEachGesture
+            drag(down.id) {
+                val pointer = MouseInfo.getPointerInfo()?.location ?: return@drag
+                window.setLocation(
+                    windowAtStart.x + pointer.x - pointerAtStart.x,
+                    windowAtStart.y + pointer.y - pointerAtStart.y,
+                )
+            }
+        }
     }

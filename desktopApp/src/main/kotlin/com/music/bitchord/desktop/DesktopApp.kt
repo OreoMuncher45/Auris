@@ -3,7 +3,9 @@ package com.music.bitchord.desktop
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.ui.LyricsProviderState
+import com.music.bitchord.ui.player.LyricsSidePanel
 import com.music.bitchord.ui.player.NowPlayingScreen
+import com.music.bitchord.ui.player.QueueSidePanel
 import com.music.bitchord.ui.player.PlayerBack
 import com.music.bitchord.ui.player.RepeatModes
 import androidx.compose.runtime.SideEffect
@@ -2054,6 +2056,62 @@ fun BitChordDesktopApp() {
         )
     }
 
+    // What the player and the lyrics column beside the page both read, worked out once for the two.
+    val sharedLyrics = lyrics?.lines
+    val sharedLyricsSource = remember(lyrics) { lyrics?.source?.let(::lyricsSourceNamed) }
+    val sharedLyricsUnavailable = !lyricsLoading && sharedLyrics.isNullOrEmpty()
+    val providerStates = remember(lyricsOrder, lyricsOn, sharedLyricsSource, lyricsLoading) {
+        DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn)
+            .mapNotNull(::lyricsSourceNamed)
+            .associateWith { source ->
+                when {
+                    source == sharedLyricsSource -> LyricsProviderState.FOUND
+                    lyricsLoading -> LyricsProviderState.FETCHING
+                    else -> LyricsProviderState.NOT_FETCHED
+                }
+            }
+    }
+
+    // The queue's edits, for the player's queue and the queue column alike.
+    fun removeFromQueue(at: Int) {
+        if (at in liveQueue.songs.indices && at != liveQueue.index) {
+            liveQueue = liveQueue.copy(
+                songs = liveQueue.songs.filterIndexed { index, _ -> index != at },
+                index = if (at < liveQueue.index) liveQueue.index - 1 else liveQueue.index,
+            )
+            saveQueue()
+        }
+    }
+
+    fun moveInQueue(from: Int, to: Int) {
+        val songs = liveQueue.songs
+        if (from in songs.indices && to in songs.indices && from != to) {
+            val moved = songs.toMutableList().apply { add(to, removeAt(from)) }
+            val playing = liveQueue.index
+            val newIndex = when (playing) {
+                from -> to
+                in (from + 1)..to -> playing - 1
+                in to until from -> playing + 1
+                else -> playing
+            }
+            liveQueue = liveQueue.copy(songs = moved, index = newIndex)
+            saveQueue()
+        }
+    }
+
+    // Clears what is still to come; the track playing and its history stay where they are.
+    fun clearQueue() {
+        liveQueue = liveQueue.copy(songs = liveQueue.songs.take(liveQueue.index + 1))
+        saveQueue()
+    }
+
+    fun seekPlayer(target: Long) {
+        val duration = playback.durationMs
+        playbackEngine.seekTo(
+            if (duration > 0) target.coerceIn(0L, duration) else target.coerceAtLeast(0L),
+        )
+    }
+
     MaterialTheme(
         colorScheme = darkColorScheme(
             primary = DesktopAccent,
@@ -2111,6 +2169,10 @@ fun BitChordDesktopApp() {
                                 overlays.nowPlaying = false
                                 true
                             }
+                            overlays.sidePanel != null -> {
+                                overlays.sidePanel = null
+                                true
+                            }
                             else -> false
                         }
                         else -> false
@@ -2146,14 +2208,10 @@ fun BitChordDesktopApp() {
                             persistence.saveString("volume", it.toString())
                         },
                         onOpenAudioOutput = { overlays.audioOutput = true },
-                        onOpenLyrics = {
-                            DesktopPlayerSettings.setLastPlayerScreen(LastPlayerScreen.LYRICS)
-                            overlays.nowPlaying = true
-                        },
-                        onOpenQueue = {
-                            DesktopPlayerSettings.setLastPlayerScreen(LastPlayerScreen.QUEUE)
-                            overlays.nowPlaying = true
-                        },
+                        // A second click on the same button puts the column away, as in Apple Music.
+                        onOpenLyrics = { overlays.toggleSidePanel(DesktopSidePanel.LYRICS) },
+                        onOpenQueue = { overlays.toggleSidePanel(DesktopSidePanel.QUEUE) },
+                        sidePanel = overlays.sidePanel,
                         accountAvatar = activeAccount?.avatar
                             ?: activeAccount?.profiles?.firstOrNull()?.avatar,
                         onOpenAccounts = { DesktopTrackLog.log("accounts: opening the switcher"); overlays.accounts = true },
@@ -2182,6 +2240,39 @@ fun BitChordDesktopApp() {
                         onNext = ::playNext,
                     )
                 },
+                trailing = {
+                    val current = selectedSong
+                    DesktopSidePanelColumn(
+                        panel = overlays.sidePanel.takeIf { current != null },
+                        onClose = { overlays.sidePanel = null },
+                    ) { which ->
+                        if (current == null) return@DesktopSidePanelColumn
+                        when (which) {
+                            DesktopSidePanel.LYRICS -> LyricsSidePanel(
+                                song = current,
+                                isPlaying = playback.isPlaying,
+                                position = playerPosition,
+                                lyrics = sharedLyrics,
+                                lyricsSource = sharedLyricsSource,
+                                lyricsProviderStates = providerStates,
+                                onSelectLyricsProvider = { source -> lyricsOnly = source.label },
+                                lyricsUnavailable = sharedLyricsUnavailable,
+                                onSeek = ::seekPlayer,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                            DesktopSidePanel.QUEUE -> QueueSidePanel(
+                                queue = liveQueue.songs,
+                                queueIndex = liveQueue.index,
+                                autoplayEnabled = autoplay,
+                                onJumpTo = ::playQueueIndex,
+                                onRemove = ::removeFromQueue,
+                                onMove = ::moveInQueue,
+                                onClear = ::clearQueue,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                },
                 overlay = {
                     DesktopPlayerSheet(
                         visible = overlays.nowPlaying && selectedSong != null,
@@ -2200,19 +2291,6 @@ fun BitChordDesktopApp() {
                                 )
                             }
                             ?: current
-                        val sharedLyrics = lyrics?.lines
-                        val sharedLyricsSource = remember(lyrics) { lyrics?.source?.let(::lyricsSourceNamed) }
-                        val providerStates = remember(lyricsOrder, lyricsOn, sharedLyricsSource, lyricsLoading) {
-                            DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn)
-                                .mapNotNull(::lyricsSourceNamed)
-                                .associateWith { source ->
-                                    when {
-                                        source == sharedLyricsSource -> LyricsProviderState.FOUND
-                                        lyricsLoading -> LyricsProviderState.FETCHING
-                                        else -> LyricsProviderState.NOT_FETCHED
-                                    }
-                                }
-                        }
                         NowPlayingScreen(
                             song = playerSong,
                             isPlaying = playback.isPlaying,
@@ -2244,12 +2322,7 @@ fun BitChordDesktopApp() {
                             onNext = ::playNext,
                             onPrevious = ::playPrevious,
                             onBlockedControl = {},
-                            onSeek = { target ->
-                                val duration = playback.durationMs
-                                playbackEngine.seekTo(
-                                    if (duration > 0) target.coerceIn(0L, duration) else target.coerceAtLeast(0L),
-                                )
-                            },
+                            onSeek = ::seekPlayer,
                             onSeekFraction = { fraction ->
                                 val duration = playbackEngine.state.value.durationMs
                                 if (duration > 0) playbackEngine.seekTo((fraction * duration).toLong())
@@ -2266,36 +2339,9 @@ fun BitChordDesktopApp() {
                             },
                             onToggleAutoplay = { setAutoplay(!autoplay) },
                             onJumpTo = ::playQueueIndex,
-                            onRemoveFromQueue = { at ->
-                                if (at in liveQueue.songs.indices && at != liveQueue.index) {
-                                    liveQueue = liveQueue.copy(
-                                        songs = liveQueue.songs.filterIndexed { index, _ -> index != at },
-                                        index = if (at < liveQueue.index) liveQueue.index - 1 else liveQueue.index,
-                                    )
-                                    saveQueue()
-                                }
-                            },
-                            onMoveInQueue = { from, to ->
-                                val songs = liveQueue.songs
-                                if (from in songs.indices && to in songs.indices && from != to) {
-                                    val moved = songs.toMutableList().apply { add(to, removeAt(from)) }
-                                    val playing = liveQueue.index
-                                    val newIndex = when (playing) {
-                                        from -> to
-                                        in (from + 1)..to -> playing - 1
-                                        in to until from -> playing + 1
-                                        else -> playing
-                                    }
-                                    liveQueue = liveQueue.copy(songs = moved, index = newIndex)
-                                    saveQueue()
-                                }
-                            },
-                            onClearQueue = {
-                                // Clears what is still to come; the track playing and its history
-                                // stay where they are.
-                                liveQueue = liveQueue.copy(songs = liveQueue.songs.take(liveQueue.index + 1))
-                                saveQueue()
-                            },
+                            onRemoveFromQueue = ::removeFromQueue,
+                            onMoveInQueue = ::moveInQueue,
+                            onClearQueue = ::clearQueue,
                             onOpenMenu = { playerMenuOpen = true },
                             onOpenAlbum = { id ->
                                 overlays.nowPlaying = false
@@ -2320,7 +2366,7 @@ fun BitChordDesktopApp() {
                             lyricsSource = sharedLyricsSource,
                             lyricsProviderStates = providerStates,
                             onSelectLyricsProvider = { source -> lyricsOnly = source.label },
-                            lyricsUnavailable = !lyricsLoading && sharedLyrics.isNullOrEmpty(),
+                            lyricsUnavailable = sharedLyricsUnavailable,
                             lyricsOffsetOpen = false,
                             onDismissLyricsOffset = {},
                             windowWidth = windowWidth,
@@ -2968,6 +3014,8 @@ private fun DesktopTopBar(
     onOpenAudioOutput: () -> Unit,
     onOpenLyrics: () -> Unit,
     onOpenQueue: () -> Unit,
+    /** Which of the two the column beside the page is showing, lit on its button. */
+    sidePanel: DesktopSidePanel?,
     accountAvatar: String?,
     onOpenAccounts: () -> Unit,
 ) {
@@ -3180,6 +3228,7 @@ private fun DesktopTopBar(
                         tint = DesktopSecondary,
                         modifier = Modifier.size(17.dp),
                     )
+                    Spacer(Modifier.width(8.dp))
                     DesktopThinSlider(
                         value = volume,
                         onValueChange = onVolumeChange,
@@ -3200,7 +3249,7 @@ private fun DesktopTopBar(
                         Icon(
                             BitChordIcons.LyricsQuote,
                             DesktopStrings["lyrics", "Lyrics"],
-                            tint = DesktopSecondary,
+                            tint = if (sidePanel == DesktopSidePanel.LYRICS) Color.White else DesktopSecondary,
                             modifier = Modifier.size(19.dp),
                         )
                     }
@@ -3208,7 +3257,7 @@ private fun DesktopTopBar(
                         Icon(
                             BitChordIcons.Queue,
                             DesktopStrings["queue", "Queue"],
-                            tint = DesktopSecondary,
+                            tint = if (sidePanel == DesktopSidePanel.QUEUE) Color.White else DesktopSecondary,
                             modifier = Modifier.size(19.dp),
                         )
                     }
@@ -3226,7 +3275,7 @@ private fun DesktopTopBar(
 }
 
 @Composable
-private fun DesktopToolbarButton(
+internal fun DesktopToolbarButton(
     onClick: () -> Unit,
     enabled: Boolean = true,
     size: Dp = 36.dp,
@@ -3554,6 +3603,8 @@ private fun DesktopFrame(
     topBar: @Composable (Boolean) -> Unit,
     sidebar: @Composable () -> Unit,
     bottomBar: @Composable (Boolean) -> Unit,
+    /** The column on the far side of the page — the lyrics or the queue, when one is open. */
+    trailing: @Composable () -> Unit = {},
     overlay: @Composable () -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
@@ -3591,6 +3642,7 @@ private fun DesktopFrame(
                                         Box(Modifier.align(Alignment.BottomCenter)) { bottomBar(true) }
                                     }
                                 }
+                                trailing()
                             }
                         }
                     }

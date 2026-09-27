@@ -940,13 +940,14 @@ private fun ContentDrawScope.growEach(
         val dx = growth.shift * em
         val dy = -growth.rise * peak * fall
         val overhang = (to - from) * (growth.scale - 1f) / 2f
-        clipRect(
+        clipShiftedDown(
             left = from - overhang + dx,
             top = ceiling,
             right = to + overhang + dx,
             bottom = bottom,
+            dy = dy,
         ) {
-            translate(left = dx, top = dy) {
+            translate(left = dx) {
                 scale(growth.scale, growth.scale, Offset((from + to) / 2f, middle)) {
                     this@growEach.drawContent()
                 }
@@ -992,8 +993,8 @@ private fun ContentDrawScope.sliceRisen(
     dy: Float,
 ) {
     if (to <= from) return
-    clipRect(left = from, top = top, right = to, bottom = bottom) {
-        translate(top = dy) { this@sliceRisen.drawContent() }
+    clipShiftedDown(left = from, top = top, right = to, bottom = bottom, dy = dy) {
+        this@sliceRisen.drawContent()
     }
 }
 

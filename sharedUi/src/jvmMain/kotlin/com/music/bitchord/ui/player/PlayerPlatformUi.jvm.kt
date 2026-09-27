@@ -4,7 +4,20 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.nativeCanvas
 import java.util.Locale
+import kotlin.math.floor
+import kotlin.math.round
+import org.jetbrains.skia.FilterMipmap
+import org.jetbrains.skia.FilterMode
+import org.jetbrains.skia.ImageFilter
+import org.jetbrains.skia.Matrix33
+import org.jetbrains.skia.MipmapMode
+import org.jetbrains.skia.Paint
+import org.jetbrains.skia.Rect as SkRect
 
 private val startNanos = System.nanoTime()
 
@@ -59,4 +72,48 @@ object PlayerBack {
         top.onBack()
         return true
     }
+}
+
+/** Linear, so a layer moved by a fraction of a pixel lands between two. */
+private val subPixelSampling = FilterMipmap(FilterMode.LINEAR, MipmapMode.NONE)
+
+/**
+ * The whole pixels go through the canvas as usual; the fraction left over goes
+ * through a layer resampled on its way back, which is the one move Skia will
+ * make by less than a pixel vertically. A layer only while there is a fraction
+ * worth moving: a word at rest, or exactly on a pixel, costs what it did.
+ */
+internal actual fun DrawScope.clipShiftedDown(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    dy: Float,
+    block: DrawScope.() -> Unit,
+) {
+    val whole = floor(dy)
+    val fraction = dy - whole
+    if (fraction < 0.02f || fraction > 0.98f) {
+        clipRect(left = left, top = top, right = right, bottom = bottom) {
+            translate(top = round(dy)) { block() }
+        }
+        return
+    }
+    val canvas = drawContext.canvas.nativeCanvas
+    val paint = Paint().apply {
+        imageFilter = ImageFilter.makeMatrixTransform(
+            Matrix33.makeTranslate(0f, fraction),
+            subPixelSampling,
+            null,
+        )
+    }
+    // Room for the pixel the fraction reaches into below the clip.
+    canvas.saveLayer(SkRect.makeLTRB(left, top - 1f, right, bottom + 1f), paint)
+    // Clipped where it will be *before* the layer moves it, so it lands
+    // exactly on the rectangle asked for.
+    clipRect(left = left, top = top - fraction, right = right, bottom = bottom - fraction) {
+        translate(top = whole) { block() }
+    }
+    canvas.restore()
+    paint.close()
 }

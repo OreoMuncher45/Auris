@@ -43,6 +43,15 @@ internal object DesktopWindowsFrame {
     fun toggleMaximize(): Boolean =
         installed && runCatching { nativeToggleMaximize() }.getOrDefault(false)
 
+    /**
+     * Hands the press in progress to Windows as a caption drag. False when there is no native
+     * frame, and the caller moves the window itself.
+     */
+    fun startDrag(): Boolean = installed && runCatching { nativeStartDrag() }.getOrDefault(false)
+
+    @JvmStatic
+    private external fun nativeStartDrag(): Boolean
+
     @JvmStatic
     private external fun nativeInstall(title: String): Boolean
 

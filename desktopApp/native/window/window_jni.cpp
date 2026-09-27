@@ -14,6 +14,11 @@ namespace {
 HWND g_window = nullptr;
 WNDPROC g_original_proc = nullptr;
 
+// Posted from Java to start a caption drag on the thread that owns the window; see frame_proc.
+constexpr UINT WM_BITCHORD_DRAG = WM_APP + 0x42;
+// SC_MOVE through the caption: the same move loop a real title bar starts.
+constexpr WPARAM SC_DRAGMOVE = SC_MOVE | HTCAPTION;
+
 struct FindContext {
     const wchar_t* title;
     HWND found;
@@ -88,6 +93,51 @@ LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         if (bottom) return HTBOTTOM;
     }
 
+    if (message == WM_NCHITTEST) {
+        // Everything that is not a resize border is Compose's. The window keeps WS_CAPTION and the
+        // min/max boxes for DWM's sake (snap, animations, taskbar behaviour), so the default hit
+        // test still finds the system's caption buttons where they would have been drawn — at the
+        // top right, right over the toolbar — and Windows 11 answers the hover with a "Maximize"
+        // tooltip and its snap-layout flyout for a button nobody can see. The traffic lights are
+        // the caption buttons here.
+        const LRESULT hit = g_original_proc != nullptr
+            ? CallWindowProcW(g_original_proc, window, message, wparam, lparam)
+            : DefWindowProcW(window, message, wparam, lparam);
+        switch (hit) {
+            case HTCAPTION:
+            case HTSYSMENU:
+            case HTMINBUTTON:
+            case HTMAXBUTTON:
+            case HTCLOSE:
+            case HTHELP:
+                return HTCLIENT;
+            default:
+                return hit;
+        }
+    }
+
+    if (message == WM_BITCHORD_DRAG) {
+        // Windows moves the window itself from here, as it does for a system caption: DWM slides
+        // the composed surface, so nothing is exposed to be filled with the class brush (the white
+        // band an AWT setLocation per mouse event left along the edges), and Aero Snap and
+        // drag-to-restore come with it. The press that asked for this may already be over; a move
+        // loop started without the button down would follow the cursor until the next click.
+        const int primary = GetSystemMetrics(SM_SWAPBUTTON) ? VK_RBUTTON : VK_LBUTTON;
+        if ((GetAsyncKeyState(primary) & 0x8000) == 0) return 0;
+        // AWT captured the mouse on the press; the move loop needs it back.
+        ReleaseCapture();
+        DefWindowProcW(window, WM_SYSCOMMAND, SC_DRAGMOVE, 0);
+        // The loop ate the release. AWT, and Compose behind it, still hold the press that started
+        // the drag and would take the next one for part of it: a double click on the caption
+        // never became one, and the first click anywhere after a drag went missing. Hand the
+        // release back where the pointer now is.
+        POINT cursor{};
+        if (GetCursorPos(&cursor) != FALSE && ScreenToClient(window, &cursor) != FALSE) {
+            PostMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(cursor.x, cursor.y));
+        }
+        return 0;
+    }
+
     WNDPROC original = g_original_proc;
     if (message == WM_NCDESTROY) {
         g_window = nullptr;
@@ -156,6 +206,14 @@ Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeInstall(
 JNIEXPORT jboolean JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeMinimize(JNIEnv*, jclass) {
     return send_system_command(SC_MINIMIZE) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeStartDrag(JNIEnv*, jclass) {
+    HWND window = g_window;
+    return window != nullptr && IsWindow(window) &&
+        PostMessageW(window, WM_BITCHORD_DRAG, 0, 0) != 0
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL

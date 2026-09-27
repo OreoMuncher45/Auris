@@ -81,6 +81,10 @@ private fun desktopMain() = application {
         val composeWindow = window
         val openingSize = remember { state.size }
         LaunchedEffect(composeWindow) {
+            // AWT's default is white, and it is what shows for the frame or two a moved or resized
+            // window takes to repaint: a white band along its edges.
+            composeWindow.background = java.awt.Color.BLACK
+            composeWindow.contentPane.background = java.awt.Color.BLACK
             // AWT measures this in device pixels while Compose's window state is in dp. Keeping
             // the scale in the conversion makes the usable minimum consistent on every display.
             val transform = composeWindow.graphicsConfiguration.defaultTransform

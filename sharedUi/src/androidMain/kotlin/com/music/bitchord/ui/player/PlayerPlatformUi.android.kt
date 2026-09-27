@@ -8,6 +8,9 @@ import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.appcompat.app.AppCompatDelegate
@@ -95,5 +98,18 @@ private object OverlayBack {
     fun unregister(view: View, callback: Any?) {
         if (callback !is OnBackInvokedCallback) return
         view.findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(callback)
+    }
+}
+
+internal actual fun DrawScope.clipShiftedDown(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    dy: Float,
+    block: DrawScope.() -> Unit,
+) {
+    clipRect(left = left, top = top, right = right, bottom = bottom) {
+        translate(top = dy) { block() }
     }
 }

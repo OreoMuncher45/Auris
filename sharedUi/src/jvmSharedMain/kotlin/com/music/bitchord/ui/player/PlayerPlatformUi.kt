@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.player
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.drawscope.DrawScope
 
 /** Milliseconds on the clock `SystemClock.uptimeMillis` reads on the phone. */
 internal expect fun uptimeMillis(): Long
@@ -26,3 +27,21 @@ internal expect fun appLanguageTag(): String
  */
 @Composable
 internal expect fun PlayerBackHandler(enabled: Boolean, onBack: () -> Unit)
+
+/**
+ * Draws [block] clipped to the rectangle given, moved down by [dy] pixels.
+ *
+ * On the phone this is a plain clip and translate. Skia on the desktop places
+ * glyphs at sub-pixel precision across a line but snaps them to whole pixels
+ * down it, so a lyric lifted by a fraction of a pixel stays put and then jumps
+ * a whole one — a two-pixel rise becomes three steps. The desktop's version
+ * moves the fractional part through a filtered layer instead.
+ */
+internal expect fun DrawScope.clipShiftedDown(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    dy: Float,
+    block: DrawScope.() -> Unit,
+)
