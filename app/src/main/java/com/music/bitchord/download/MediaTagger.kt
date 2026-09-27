@@ -132,10 +132,10 @@ object MediaTagger {
      * album and playlist records an image that remains available offline.
      */
     internal fun persistArtwork(context: Context, sourceUrl: String?, artwork: Artwork?): String? {
-        if (sourceUrl.isNullOrBlank() || artwork == null || artwork.bytes.isEmpty()) return null
+        if (artwork == null || artwork.bytes.isEmpty()) return null
         return runCatching {
             val folder = File(context.filesDir, "download-artwork")
-            val target = artworkFile(context, sourceUrl)
+            val target = artworkFile(context, sourceUrl, artwork)
             val name = target.name
             synchronized(artworkFileLock) {
                 if (!target.exists()) {
@@ -172,10 +172,17 @@ object MediaTagger {
             ?.let { Artwork(it, "image/jpeg") }
     }.getOrNull()
 
-    private fun artworkFile(context: Context, sourceUrl: String): File {
-        val name = MessageDigest.getInstance("SHA-256")
-            .digest(sourceUrl.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it.toInt() and 0xFF) } + ".jpg"
+    private fun artworkFile(context: Context, sourceUrl: String?, artwork: Artwork? = null): File {
+        val name: String
+        if (sourceUrl.isNullOrBlank()) {
+            name = MessageDigest.getInstance("SHA-256")
+                .digest(artwork?.bytes ?: byteArrayOf())
+                .joinToString("") { "%02x".format(it.toInt() and 0xFF) } + ".jpg"
+        } else {
+            name = MessageDigest.getInstance("SHA-256")
+                .digest(sourceUrl.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it.toInt() and 0xFF) } + ".jpg"
+        }
         return File(File(context.filesDir, "download-artwork"), name)
     }
 
