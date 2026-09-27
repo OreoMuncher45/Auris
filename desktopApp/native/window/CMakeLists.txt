@@ -26,5 +26,9 @@ endif()
 target_link_libraries(bitchord_window PRIVATE user32 dwmapi)
 
 if(MINGW)
-    target_link_options(bitchord_window PRIVATE -static-libgcc -static-libstdc++)
+    # The desktop app loads this DLL from its private runtime directory. Gradle daemons and
+    # installed builds do not inherit the developer toolchain's bin directory, so leaving MinGW's
+    # libwinpthread dynamic makes the bridge silently unavailable even though the DLL itself was
+    # packaged correctly.
+    target_link_options(bitchord_window PRIVATE -static -static-libgcc -static-libstdc++)
 endif()

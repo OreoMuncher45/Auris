@@ -81,16 +81,6 @@ class DesktopPersistence {
 
     fun saveDownloads(songs: List<Song>) = writeSongs(KEY_DOWNLOADS, songs)
 
-    /** What has been searched for lately, on this computer only. */
-    fun searchHistory(): List<String> = readLines(KEY_SEARCH_HISTORY).map(::decode).filter(String::isNotBlank)
-
-    /** Stores [queries], capped, and answers what was actually kept. */
-    fun saveSearchHistory(queries: List<String>): List<String> {
-        val kept = queries.take(MAX_SEARCH_HISTORY)
-        writeLines(KEY_SEARCH_HISTORY, kept.map(::encode))
-        return kept
-    }
-
     fun playlists(): List<DesktopPlaylist> = readLines(KEY_PLAYLISTS).mapNotNull(::decodePlaylist)
 
     fun savePlaylists(playlists: List<DesktopPlaylist>) = writeLines(KEY_PLAYLISTS, playlists.map(DesktopPlaylist::toPreferenceLine))
@@ -277,10 +267,6 @@ class DesktopPersistence {
         const val KEY_QUEUE = "queue"
         const val KEY_DOWNLOADS = "downloads"
         const val KEY_PLAYLISTS = "playlists"
-        const val KEY_SEARCH_HISTORY = "search_history"
-
-        /** Deep enough to be useful, shallow enough that the list stays scannable. */
-        const val MAX_SEARCH_HISTORY = 20
         const val KEY_MODULE_INDEX_URL = "module_index_url"
         private const val KEY_ORIGINAL_VERSIONS = "original_versions"
         private const val KEY_AUDIO_QUALITY = "audio_quality"

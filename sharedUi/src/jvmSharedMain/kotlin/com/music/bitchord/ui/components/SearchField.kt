@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -27,14 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import com.music.bitchord.R
 
 /**
  * The pill-shaped search field used at the top of the search page — a
@@ -50,7 +50,7 @@ fun SearchField(
     onSubmit: () -> Unit,
     focusRequester: FocusRequester = remember { FocusRequester() },
     /** What the empty field says it is for — the one part that changes per screen. */
-    placeholder: String = stringResource(R.string.search_hint),
+    placeholder: String = stringResource(Res.string.search_hint),
     modifier: Modifier = Modifier,
 ) {
     val focusManager = LocalFocusManager.current
@@ -79,7 +79,7 @@ fun SearchField(
         // decorative would mean the keyboard's own key was the single way in.
         Icon(
             Icons.Rounded.Search,
-            contentDescription = stringResource(R.string.search),
+            contentDescription = stringResource(Res.string.search),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier
                 .size(32.dp)
@@ -129,7 +129,7 @@ fun SearchField(
             ) {
                 Icon(
                     Icons.Rounded.Close,
-                    contentDescription = stringResource(R.string.clear_search),
+                    contentDescription = stringResource(Res.string.clear_search),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )

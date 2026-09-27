@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.ui.replay.ReplayCreditCard
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -67,65 +68,6 @@ import kotlinx.coroutines.withContext
 
 // ── The banner on the Library page ──────────────────────────────────────────
 
-/**
- * The one wide strip that opens Replay.
- *
- * A single strip rather than a shelf of cards: there is exactly one of it, and a carousel with one
- * item in it always reads as a carousel that failed to load the rest.
- */
-@Composable
-internal fun DesktopReplayBanner(card: DesktopReplayHeroCard?, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .padding(horizontal = 28.dp, vertical = 6.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
-    ) {
-        Box(Modifier.matchParentSize()) { DesktopMesh(card?.artworkUrl) }
-        // The mesh carries its own scrim, pitched for a full screen. Over a strip this short that
-        // lands as a flat darkening, so this one runs the other way and stays light.
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            Color.Black.copy(alpha = 0.34f),
-                            Color.Black.copy(alpha = 0.12f),
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
-        )
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(DesktopStrings["your_replay", "Your Replay"], style = MaterialTheme.typography.titleLarge, color = Color.White)
-                Text(
-                    // The numbers when there are any: "5,231 minutes" is a reason to tap and a
-                    // description of the feature is not.
-                    card?.let { "${it.value} ${it.label.lowercase(Locale.ROOT)} · ${it.detail}" }
-                        ?: "See what you have been listening to",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.82f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Icon(
-                BitChordIcons.ChevronRight,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(16.dp),
-            )
-        }
-    }
-}
-
 // ── The page ────────────────────────────────────────────────────────────────
 
 @Composable
@@ -134,7 +76,6 @@ internal fun DesktopReplayPage(
     period: DesktopReplayPeriod,
     holder: String,
     onPeriodChange: (DesktopReplayPeriod) -> Unit,
-    onBack: () -> Unit,
     onPlaySong: (Song) -> Unit,
     onOpenArtist: (String) -> Unit,
     contentPadding: PaddingValues,
@@ -143,19 +84,10 @@ internal fun DesktopReplayPage(
     Box(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.fillMaxSize(), contentPadding = contentPadding) {
             item("heading") {
-                // Android has no arrow here — the gesture is the way back — so the heading is its
-                // own block at the gutter. Desktop needs the arrow, and it goes on a row of its
-                // own above rather than beside a title this size, where it would float against
-                // nothing.
+                // No arrow of its own: the top bar's back is the way out, as the gesture is on
+                // Android.
+                Spacer(Modifier.height(8.dp))
                 Column {
-                    Row(
-                        Modifier.fillMaxWidth().padding(start = GUTTER - 12.dp, top = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, DesktopStrings["back", "Back"], tint = Color.White)
-                        }
-                    }
                     Column(Modifier.padding(horizontal = GUTTER)) {
                         Spacer(Modifier.height(20.dp))
                         Text(
@@ -184,13 +116,14 @@ internal fun DesktopReplayPage(
             item("cards") {
                 DesktopScrollableRow(gutter = GUTTER, spacing = 12.dp) {
                     items(summary.heroCards(), key = { it.label }) { card ->
-                        DesktopReplayCreditCard(
+                        ReplayCreditCard(
                             label = card.label,
                             value = card.value,
                             detail = card.detail,
                             artworkUrl = card.artworkUrl,
                             holder = holder,
                             memberSince = summary.memberSince(),
+                            onClick = {},
                             modifier = Modifier.width(300.dp),
                         )
                     }
@@ -255,133 +188,6 @@ private fun PeriodPicker(selected: DesktopReplayPeriod, onSelect: (DesktopReplay
 }
 
 // ── The credit card ─────────────────────────────────────────────────────────
-
-/**
- * One headline number, as a card you could keep in a wallet.
- *
- * The proportions are a real card's — 85.6 × 54mm — which is most of the recognition; the holder
- * line and date are what make it *yours*; and the embossing is a monospaced face over a dark offset
- * shadow, which is how raised type catches the light.
- */
-@Composable
-internal fun DesktopReplayCreditCard(
-    label: String,
-    value: String,
-    detail: String?,
-    artworkUrl: String?,
-    holder: String,
-    memberSince: String?,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier
-            .aspectRatio(CARD_RATIO)
-            .shadow(16.dp, CardShape, clip = false)
-            .clip(CardShape),
-    ) {
-        DesktopMesh(artworkUrl)
-        // Deepened towards the foot, where the embossed lines are.
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0.0f to Color.Black.copy(alpha = 0.18f),
-                    0.55f to Color.Black.copy(alpha = 0.30f),
-                    1.0f to Color.Black.copy(alpha = 0.55f),
-                ),
-            ),
-        )
-        Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 16.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Text(
-                    DesktopStrings["your_listening_experience", "YOUR LISTENING EXPERIENCE"].uppercase(),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.W700,
-                    letterSpacing = 1.4.sp,
-                    lineHeight = 13.sp,
-                    color = Color.White.copy(alpha = 0.72f),
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(10.dp))
-                Icon(
-                    Icons.Rounded.AutoAwesome,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            Text(
-                value,
-                style = MaterialTheme.typography.headlineMedium.copy(
-                    fontSize = 27.sp,
-                    lineHeight = 30.sp,
-                    fontWeight = FontWeight.W800,
-                    brush = PolishedInk,
-                    shadow = EmbossShadow,
-                ),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                label.uppercase(Locale.ROOT),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.W700,
-                letterSpacing = 1.8.sp,
-                color = Color.White.copy(alpha = 0.65f),
-            )
-            // Weighted either side rather than pinned to the foot, so the figure sits where a
-            // card's number sits — across the middle.
-            Spacer(Modifier.weight(0.85f))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Column(Modifier.weight(1f)) {
-                    Embossed(holder.ifBlank { "BITCHORD LISTENER" }.uppercase(Locale.ROOT), 13.sp)
-                    if (detail != null) {
-                        Text(
-                            detail,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.6f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                if (memberSince != null) {
-                    Spacer(Modifier.width(10.dp))
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            DesktopStrings["member_since", "MEMBER SINCE"].uppercase(),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontSize = 7.sp,
-                            lineHeight = 8.sp,
-                            letterSpacing = 0.8.sp,
-                            color = Color.White.copy(alpha = 0.55f),
-                            textAlign = TextAlign.End,
-                        )
-                        Embossed(memberSince, 12.sp)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** A line pressed into the card rather than printed on it. */
-@Composable
-private fun Embossed(text: String, size: TextUnit) {
-    Text(
-        text,
-        style = TextStyle(
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.W600,
-            fontSize = size,
-            letterSpacing = 1.6.sp,
-            brush = PolishedInk,
-            shadow = EmbossShadow,
-        ),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-    )
-}
 
 // ── Charts ──────────────────────────────────────────────────────────────────
 
@@ -737,19 +543,3 @@ private const val ROW_ART_PX = 120
 private const val MESH_SOURCE_PX = 120
 /** The page margin, shared with every other page — see [DesktopPageGutter]. */
 private val GUTTER = DesktopPageGutter
-private val CardShape = RoundedCornerShape(20.dp)
-
-/** 85.6mm × 54mm, which is what makes the shape read as a card. */
-private const val CARD_RATIO = 1.586f
-
-/** The fill on every raised line: bright along the top edge, cooler below. */
-private val PolishedInk = Brush.verticalGradient(
-    listOf(Color(0xFFFFFFFF), Color(0xFFF3F4F8), Color(0xFFC9CCD6)),
-)
-
-/** What makes the fill above read as raised rather than merely pale. */
-private val EmbossShadow = Shadow(
-    color = Color(0x99000000),
-    offset = Offset(0f, 2.5f),
-    blurRadius = 4f,
-)

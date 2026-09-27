@@ -12,40 +12,6 @@ import kotlin.test.assertTrue
 /** The small Settings toggles ported from Android, each judged on what it actually changes. */
 class DesktopSmallSettingsTest {
 
-    // ── Library shelf sort ────────────────────────────────────────────────
-
-    private fun shelf(vararg titles: String) = HomeShelf(
-        title = "Playlists",
-        items = titles.map { ShelfItem(it, "", null, null, "browse-$it") },
-    )
-
-    @Test
-    fun `the default order is whatever the shelf arrived in`() {
-        val original = shelf("Zeta", "alpha", "Mango")
-        assertEquals(original.items, original.sortedForLibrary(DesktopShelfSort.DEFAULT).items)
-    }
-
-    @Test
-    fun `alphabetical order ignores case, both ways round`() {
-        val original = shelf("Zeta", "alpha", "Mango")
-        assertEquals(
-            listOf("alpha", "Mango", "Zeta"),
-            original.sortedForLibrary(DesktopShelfSort.TITLE_ASC).items.map { it.title },
-        )
-        assertEquals(
-            listOf("Zeta", "Mango", "alpha"),
-            original.sortedForLibrary(DesktopShelfSort.TITLE_DESC).items.map { it.title },
-        )
-    }
-
-    @Test
-    fun `sorting a shelf leaves everything but the order alone`() {
-        val original = shelf("b", "a")
-        val sorted = original.sortedForLibrary(DesktopShelfSort.TITLE_ASC)
-        assertEquals(original.title, sorted.title)
-        assertEquals(original.items.size, sorted.items.size)
-    }
-
     // ── Filter non-music audio ────────────────────────────────────────────
 
     private val scratch = Files.createTempDirectory("bitchord-filter")

@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.contextClick
+import androidx.compose.ui.unit.Dp
+import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -48,7 +52,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
@@ -62,11 +65,9 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import com.music.bitchord.R
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
-import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.SongRow
@@ -113,6 +114,16 @@ fun SearchScreen(
     onTypeaheadLongPress: ((Song) -> Unit)? = null,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
+    /**
+     * Room above the search field. The phone's frosted bar floats over the top
+     * of the tab, so the field has to clear it; the desktop has no such bar.
+     */
+    topPadding: Dp,
+    /**
+     * Whether the page draws its own search field. The desktop's sidebar has
+     * the one search box the window needs, so the page there is results only.
+     */
+    showField: Boolean = true,
 ) {
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -120,7 +131,7 @@ fun SearchScreen(
     // Tapping the search tab from the nav bar sets focusRequested;
     // respond by focusing the field and opening the keyboard.
     LaunchedEffect(focusRequested) {
-        if (focusRequested) {
+        if (focusRequested && showField) {
             focusRequester.requestFocus()
             keyboardController?.show()
             onFocusHandled()
@@ -158,14 +169,16 @@ fun SearchScreen(
         // The FrostedTopBar is visible on this tab (showing "Search"), so we
         // clear it fully — status bar inset + bar height + breathing gap — so
         // the search field sits cleanly below the bar instead of overlapping it.
-        Column(modifier = Modifier.padding(top = topBarContentPadding())) {
-            SearchField(
-                query = query,
-                onQueryChange = onQueryChange,
-                onSubmit = onSubmit,
-                focusRequester = focusRequester,
-                modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp),
-            )
+        Column(modifier = Modifier.padding(top = topPadding)) {
+            if (showField) {
+                SearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    onSubmit = onSubmit,
+                    focusRequester = focusRequester,
+                    modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp),
+                )
+            }
             // The filters only mean something once there is a result set to narrow;
             // they stay up for an empty or failed search too, or picking a filter
             // that finds nothing would take away the control needed to leave it.
@@ -203,7 +216,7 @@ fun SearchScreen(
                     }
                 }
                 results == null -> if (history.isEmpty()) {
-                    item { MessageState(stringResource(R.string.search_empty)) }
+                    item { MessageState(stringResource(Res.string.search_empty)) }
                 } else {
                     recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
                 }
@@ -319,7 +332,8 @@ private fun TopResultCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 18.dp, bottom = 8.dp)
-            .combinedClickable(onClick = onPlay, onLongClick = onLongPress),
+            .combinedClickable(onClick = onPlay, onLongClick = onLongPress)
+            .contextClick(onLongPress),
     ) {
         Text(
             text = "Top result",
@@ -354,7 +368,7 @@ private fun TopResultCard(
             IconButton(onClick = onLongPress, modifier = Modifier.size(48.dp)) {
                 Icon(
                     Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
+                    contentDescription = stringResource(Res.string.more),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -367,7 +381,7 @@ private fun TopResultCard(
             ) {
                 Icon(Icons.Rounded.PlayArrow, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.play))
+                Text(stringResource(Res.string.play))
             }
             OutlinedButton(
                 onClick = onPlaylist,
@@ -375,7 +389,7 @@ private fun TopResultCard(
             ) {
                 Icon(Icons.AutoMirrored.Rounded.PlaylistAdd, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.playlist_action))
+                Text(stringResource(Res.string.playlist_action))
             }
         }
     }
@@ -448,7 +462,7 @@ private fun SuggestionRow(
             // The first row is the deliberate action to search the exact text
             // in the field, not a server-provided completion. Naming it makes
             // the otherwise duplicated wording read as intentional.
-            text = if (isQueryAction) """${stringResource(R.string.search)} "$term"""" else term,
+            text = if (isQueryAction) """${stringResource(Res.string.search)} "$term"""" else term,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
@@ -465,7 +479,7 @@ private fun SuggestionRow(
             ) {
                 Icon(
                     Icons.Rounded.NorthWest,
-                    contentDescription = stringResource(R.string.recent_search_edit, term),
+                    contentDescription = stringResource(Res.string.recent_search_edit, term),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(18.dp),
                 )
@@ -538,6 +552,7 @@ private fun TypeaheadSongRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .contextClick(onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -590,13 +605,13 @@ private fun LazyListScope.recentSearches(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = stringResource(R.string.recent_searches),
+                text = stringResource(Res.string.recent_searches),
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = stringResource(R.string.clear),
+                text = stringResource(Res.string.clear),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
@@ -668,7 +683,7 @@ private fun RecentSearchEntityRow(
         ) {
             Icon(
                 Icons.Rounded.Close,
-                contentDescription = stringResource(R.string.recent_search_remove, entity.title),
+                contentDescription = stringResource(Res.string.recent_search_remove, entity.title),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(18.dp),
             )
@@ -683,6 +698,7 @@ private fun BrowseRow(item: BrowseItem, onClick: () -> Unit, onLongPress: (() ->
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .contextClick(onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

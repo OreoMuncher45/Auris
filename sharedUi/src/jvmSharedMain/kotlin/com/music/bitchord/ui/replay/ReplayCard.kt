@@ -19,7 +19,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -27,7 +26,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -37,7 +35,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
-import com.music.bitchord.R
+import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.painterResource
+import org.jetbrains.compose.resources.stringResource
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 import java.util.Locale
@@ -136,7 +136,7 @@ fun ReplayCreditCard(
             // a card and an advert.
             Row(verticalAlignment = Alignment.Top) {
                 Text(
-                    text = stringResource(R.string.your_listening_experience).uppercase(Locale.getDefault()),
+                    text = stringResource(Res.string.your_listening_experience).uppercase(Locale.getDefault()),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.W700,
                     letterSpacing = 1.4.sp,
@@ -146,7 +146,7 @@ fun ReplayCreditCard(
                 )
                 Spacer(Modifier.width(10.dp))
                 Icon(
-                    painter = painterResource(R.drawable.ic_logo),
+                    painter = painterResource(Res.drawable.ic_logo),
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(width = 34.dp, height = 22.dp),
@@ -182,7 +182,7 @@ fun ReplayCreditCard(
             Row(verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
                     Embossed(
-                        text = holder.ifBlank { stringResource(R.string.default_replay_holder) }
+                        text = holder.ifBlank { stringResource(Res.string.default_replay_holder) }
                             .uppercase(Locale.getDefault()),
                         size = 13.sp,
                     )
@@ -200,7 +200,7 @@ fun ReplayCreditCard(
                     Spacer(Modifier.width(10.dp))
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = stringResource(R.string.member_since).uppercase(Locale.getDefault()),
+                            text = stringResource(Res.string.member_since).uppercase(Locale.getDefault()),
                             style = MaterialTheme.typography.labelSmall,
                             fontSize = 7.sp,
                             lineHeight = 8.sp,

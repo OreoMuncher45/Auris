@@ -21,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,6 +56,19 @@ class DesktopPlaybackEngine(
     private val analyzer = DesktopTrackAnalyzer(performance = { automixPerformance })
     private val commands = ConcurrentLinkedQueue<Command>()
     private val running = AtomicBoolean(true)
+
+    // The output sheet changes the persisted mixer directly. Observe that single source of truth
+    // here so both the shared main-player sheet and the desktop settings dialog move the live
+    // stream, on Windows and Linux alike.
+    private var observedOutputDevice = DesktopAudioDevices.selected.value
+    private val outputDeviceJob = scope.launch {
+        DesktopAudioDevices.selected.collect { selected ->
+            if (selected != observedOutputDevice) {
+                observedOutputDevice = selected
+                commands += Command.Reconfigure
+            }
+        }
+    }
 
     private var resolveJob: Job? = null
     private var upgradeJob: Job? = null
@@ -625,7 +639,12 @@ class DesktopPlaybackEngine(
 
         val decoded = track.decoder.outputFormat
         // Only renegotiate when the device would actually have to change.
-        if (!sink.isOpen || sink.format.sampleRate != decoded.sampleRate || sink.format.channels != decoded.channels) {
+        if (
+            !sink.isOpen ||
+            !sink.isUsingSelection(DesktopAudioDevices.selected.value) ||
+            sink.format.sampleRate != decoded.sampleRate ||
+            sink.format.channels != decoded.channels
+        ) {
             sink.open(decoded.copy(bytesPerSample = precisionBytes(), isFloat = preferFloat))
                 .onFailure { failure ->
                     _state.update { it.copy(error = "No audio output: ${failure.message}") }
@@ -650,17 +669,19 @@ class DesktopPlaybackEngine(
     private fun reconfigureSink() {
         val track = current ?: return
         val decoded = track.decoder.outputFormat
-        sink.close()
+        val positionUs = _state.value.positionMs * 1_000
         sink.open(decoded.copy(bytesPerSample = precisionBytes(), isFloat = preferFloat))
+            .onSuccess {
+                sink.gain = volume
+                buildChain()
+                // A reopened line counts frames from zero again, so the clock has to be rebased
+                // onto wherever the track had got to.
+                baseFrames = sink.framesPlayed()
+                seekOffsetUs = positionUs
+            }
             .onFailure { failure ->
                 _state.update { it.copy(error = "No audio output: ${failure.message}") }
             }
-        sink.gain = volume
-        buildChain()
-        // A reopened line counts frames from zero again, so the clock has to be rebased onto
-        // wherever the track had got to.
-        baseFrames = sink.framesPlayed()
-        seekOffsetUs = _state.value.positionMs * 1_000
     }
 
     private fun buildChain() {

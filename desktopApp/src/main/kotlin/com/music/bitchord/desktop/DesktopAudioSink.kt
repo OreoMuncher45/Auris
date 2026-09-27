@@ -10,6 +10,9 @@ internal class DesktopAudioSink {
 
     private var line: SourceDataLine? = null
 
+    /** The selection for which [line] was opened, including the blank system-default choice. */
+    private var openedForSelection: String? = null
+
     /** Reused conversion buffer; only the playback thread touches it. */
     private var staging = ByteArray(0)
 
@@ -23,9 +26,12 @@ internal class DesktopAudioSink {
 
     val isOpen: Boolean get() = line != null
 
+    /** Whether the live line already belongs to the choice currently shown in the player. */
+    fun isUsingSelection(id: String): Boolean = line != null && openedForSelection == id
+
     /** Opens the best line the mixer will give for [requested]. */
     fun open(requested: DesktopPcmFormat): Result<DesktopPcmFormat> = runCatching {
-        close()
+        val selectedDevice = DesktopAudioDevices.selected.value
         val ladder = buildList {
             add(requested)
             if (requested.isFloat) add(requested.copy(bytesPerSample = 2, isFloat = false))
@@ -42,7 +48,7 @@ internal class DesktopAudioSink {
 
         // The chosen device, when there is one and it is still plugged in; otherwise whatever the
         // system calls the default.
-        val mixer = DesktopAudioDevices.mixerFor(DesktopAudioDevices.selected.value)
+        val mixer = DesktopAudioDevices.mixerFor(selectedDevice)
         val supports: (DesktopPcmFormat) -> Boolean = { candidate ->
             if (mixer == null) {
                 AudioSystem.isLineSupported(infoFor(candidate))
@@ -58,12 +64,24 @@ internal class DesktopAudioSink {
         } else {
             mixer.getLine(infoFor(accepted)) as SourceDataLine
         }
-        openedOn = mixer?.mixerInfo?.name
-        // Roughly a fifth of a second in the device's hands.
-        opened.open(accepted.toAudioFormat(), accepted.byteRate / 5)
-        opened.start()
+        try {
+            // Roughly a fifth of a second in the device's hands.
+            opened.open(accepted.toAudioFormat(), accepted.byteRate / 5)
+            opened.start()
+        } catch (failure: Throwable) {
+            runCatching { opened.close() }
+            throw failure
+        }
+
+        // Do not tear down the working route until its replacement is known to have opened. A
+        // Bluetooth device can disappear between enumeration and this call; that must not turn a
+        // failed switch into silent playback on every other device too.
+        val previous = line
         line = opened
+        openedOn = mixer?.mixerInfo?.name
+        openedForSelection = selectedDevice
         format = accepted
+        closeLine(previous)
         accepted
     }
 
@@ -151,6 +169,13 @@ internal class DesktopAudioSink {
     fun close() {
         val target = line ?: return
         line = null
+        openedOn = null
+        openedForSelection = null
+        closeLine(target)
+    }
+
+    private fun closeLine(target: SourceDataLine?) {
+        if (target == null) return
         runCatching {
             target.stop()
             target.flush()

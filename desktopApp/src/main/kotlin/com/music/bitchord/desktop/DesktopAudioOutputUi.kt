@@ -44,7 +44,7 @@ internal fun DesktopAudioOutputDialog(onDismiss: () -> Unit) {
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                DesktopStrings["d_audio_output_subtitle", "A change takes effect on the next track."],
+                DesktopStrings["d_audio_output_subtitle", "Changes take effect immediately."],
                 color = DesktopSecondary,
                 style = MaterialTheme.typography.bodySmall,
             )

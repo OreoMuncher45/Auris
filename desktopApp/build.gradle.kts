@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val appVersion: String = providers.gradleProperty("bitchord.version").orNull
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "1.7"
+    ?: "1.7.1"
 
 /** Which platform this build is *for*, which is the host unless told otherwise. */
 val hostIsWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
@@ -19,7 +19,7 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
 }).lowercase()
 
 // Windows installer metadata requires MAJOR.MINOR.BUILD even though the app's public version is
-// intentionally displayed as 1.7.
+// intentionally displayed without a patch number (1.7 rather than 1.7.0).
 val nativePackageVersion = if (appVersion.count { it == '.' } == 1) "$appVersion.0" else appVersion
 
 // FFmpeg decodes audio; see DesktopAudioDecoder.

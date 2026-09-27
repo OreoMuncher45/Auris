@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.LocalPullToRefreshEnabled
+import com.music.bitchord.ui.AppUiHost
+import com.music.bitchord.ui.AppUi
+import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,8 +34,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.music.bitchord.data.settings.AppSettings
-import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import kotlin.math.abs
@@ -62,7 +65,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,7 +75,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
@@ -382,7 +383,7 @@ fun SongRow(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QueueSwipeBackground(swipeState: SwipeToDismissBoxState) {
-    val playNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
+    val playNext by AppUi.host.swipeToPlayNext.collectAsStateWithLifecycle()
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -419,7 +420,7 @@ private fun QueueSwipeLabel(playNext: Boolean) {
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = stringResource(if (playNext) R.string.play_next else R.string.queue),
+            text = stringResource(if (playNext) Res.string.play_next else Res.string.queue),
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -455,6 +456,7 @@ private fun SongRowContent(
             .fillMaxWidth()
             .background(activeBackground)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .contextClick(onMore ?: onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -465,7 +467,7 @@ private fun SongRowContent(
                 if (isCurrent) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
-                        contentDescription = stringResource(R.string.now_playing),
+                        contentDescription = stringResource(Res.string.now_playing),
                         tint = activeTint,
                         modifier = Modifier.size(22.dp),
                     )
@@ -479,7 +481,7 @@ private fun SongRowContent(
             }
         } else {
             AsyncImage(
-                model = rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
+                model = com.music.bitchord.ui.player.rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
                     .size(52.dp)
@@ -514,7 +516,7 @@ private fun SongRowContent(
             Spacer(Modifier.width(8.dp))
             Icon(
                 Icons.Rounded.CheckCircle,
-                contentDescription = stringResource(R.string.selected),
+                contentDescription = stringResource(Res.string.selected),
                 tint = activeTint,
                 modifier = Modifier.size(20.dp),
             )
@@ -523,7 +525,7 @@ private fun SongRowContent(
             Spacer(Modifier.width(8.dp))
             Icon(
                 imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
-                contentDescription = stringResource(R.string.now_playing),
+                contentDescription = stringResource(Res.string.now_playing),
                 tint = activeTint,
                 modifier = Modifier.size(20.dp),
             )
@@ -547,7 +549,7 @@ private fun SongRowContent(
             ) {
                 Icon(
                     Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
+                    contentDescription = stringResource(Res.string.more),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
@@ -563,7 +565,7 @@ private fun SongRowContent(
  * track, not something to press, and a status mark that matches an affordance
  * in weight invites a tap that does nothing.
  *
- * Reads [Downloads.saved] rather than touching the filesystem — a list cannot
+ * Reads the downloads the app keeps in memory ([AppUiHost.downloadedIds]) rather than touching the filesystem — a list cannot
  * afford a file check per row, and the map is kept honest by the disk check
  * every real read of a download goes through. The cost of that trade is a row
  * that can claim a file a file manager has since deleted, until something asks
@@ -571,12 +573,11 @@ private fun SongRowContent(
  */
 @Composable
 fun DownloadedBadge(videoId: String, tint: Color, modifier: Modifier = Modifier) {
-    val saved by Downloads.saved.collectAsStateWithLifecycle()
-    if (videoId !in saved) return
+    if (videoId !in AppUi.host.downloadedIds()) return
     Spacer(Modifier.width(8.dp))
     Icon(
         Icons.Rounded.DownloadDone,
-        contentDescription = stringResource(R.string.downloaded),
+        contentDescription = stringResource(Res.string.downloaded),
         tint = tint,
         modifier = modifier.size(16.dp),
     )
@@ -600,6 +601,10 @@ fun PullToRefresh(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
+    if (!LocalPullToRefreshEnabled.current) {
+        Box(modifier.fillMaxSize()) { content() }
+        return
+    }
     PullToRefreshBox(
         isRefreshing = refreshing,
         onRefresh = onRefresh,
@@ -626,12 +631,12 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = stringResource(R.string.sign_in_youtube_music),
+                text = stringResource(Res.string.sign_in_youtube_music),
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             Text(
-                text = stringResource(R.string.personalized_recommendations),
+                text = stringResource(Res.string.personalized_recommendations),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -639,7 +644,7 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
             )
         }
         Spacer(Modifier.width(12.dp))
-        Button(onClick = onSignIn) { Text(stringResource(R.string.sign_in)) }
+        Button(onClick = onSignIn) { Text(stringResource(Res.string.sign_in)) }
     }
 }
 

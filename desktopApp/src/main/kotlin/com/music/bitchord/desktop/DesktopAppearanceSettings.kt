@@ -27,21 +27,6 @@ internal object DesktopAppearanceSettings {
     /** Removes the volume slider from the main player. */
     val hideVolumeBar: StateFlow<Boolean> = _hideVolumeBar
 
-    private val _recentsView = MutableStateFlow(
-        runCatching { DesktopLibraryView.valueOf(DesktopPersistence().string(KEY_RECENTS_VIEW, "GRID")) }
-            .getOrDefault(DesktopLibraryView.GRID),
-    )
-
-    /** Whether the Recents shelf is a row of cards or a list of tracks. */
-    val recentsView: StateFlow<DesktopLibraryView> = _recentsView
-
-    fun setRecentsView(value: DesktopLibraryView) {
-        DesktopPersistence().saveString(KEY_RECENTS_VIEW, value.name)
-        _recentsView.value = value
-    }
-
-    private const val KEY_RECENTS_VIEW = "home_recents_view_type"
-
     /** Whether the lyrics pane carries its own log console. */
 
     fun setReduceAnimation(value: Boolean) = write(KEY_REDUCE_ANIMATION, value, _reduceAnimation)

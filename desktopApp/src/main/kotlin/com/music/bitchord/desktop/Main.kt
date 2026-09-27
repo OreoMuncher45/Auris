@@ -28,6 +28,7 @@ import org.jetbrains.compose.resources.painterResource
 fun main() {
     // The player is the phone's, from the shared UI module; this is what it reads underneath.
     PlayerPlatform.install(DesktopPlayerHost)
+    com.music.bitchord.ui.AppUi.install(DesktopAppUiHost)
     // The data layer both apps share logs through here, and keeps translated
     // lyrics beside the rest of the desktop's cache.
     DebugLog.sink = DebugLog.Sink { level, tag, message, error ->

@@ -122,18 +122,6 @@ enum class LocalMusicSort {
 }
 
 /**
- * Stable persisted ordering for a Library "Show all" grid — playlists or
- * albums. A card there only ever carries a title, so unlike [LocalMusicSort]
- * there is nothing date-based to offer.
- */
-enum class LibrarySort {
-    /** Whatever order the shelf itself arrived in — YouTube Music's own. */
-    DEFAULT,
-    TITLE_ASC,
-    TITLE_DESC,
-}
-
-/**
  * Ordering for the track list on an album or playlist page — the same idea as
  * the Downloads folder's sort, with a date option for the one thing a
  * catalogue row can still be dated by: the position it sits at. A playlist's
@@ -148,12 +136,6 @@ enum class SongSort {
     TITLE_DESC,
     DATE_ADDED_ASC,
     DATE_ADDED_DESC,
-}
-
-/** Display mode for music lists: compact rows or grid cards. */
-enum class LibraryViewType {
-    LIST,
-    GRID,
 }
 
 /**
