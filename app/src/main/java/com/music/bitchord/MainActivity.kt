@@ -145,6 +145,8 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
+import com.music.bitchord.ui.screens.LibraryReplayEntry
+import com.music.bitchord.ui.screens.libraryDeviceItems
 import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SettingsScreen
@@ -2716,13 +2718,17 @@ private fun BitChordApp(
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onItemClick = { item, shelfTitle ->
                                 val song = shelfSong(item)
+                                // Hoisted because ShelfItem lives in :shared, and
+                                // Kotlin will not smart-cast a public nullable
+                                // property declared in another module.
+                                val browseId = item.browseId
                                 when {
                                     song != null -> playRadio(
                                         song,
                                         QueueSource(shelfTitle, PlaybackSourceType.HOME),
                                     )
-                                    item.browseId != null -> viewModel.openDetail(
-                                        browseId = item.browseId,
+                                    browseId != null -> viewModel.openDetail(
+                                        browseId = browseId,
                                         title = item.title,
                                         subtitle = item.subtitle,
                                         thumbnailUrl = item.thumbnailUrl,
@@ -2745,10 +2751,10 @@ private fun BitChordApp(
                                 state = moodGenreShelves,
                                 listState = moodGenreListState,
                                 onItemClick = { item ->
-                                    when {
-                                        item.videoId != null -> playRadio(
+                                    item.videoId?.let { videoId ->
+                                        playRadio(
                                             Song(
-                                                videoId = item.videoId,
+                                                videoId = videoId,
                                                 title = item.title,
                                                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                                                 thumbnailUrl = item.thumbnailUrl,
@@ -2759,8 +2765,9 @@ private fun BitChordApp(
                                                 category.browseId,
                                             ),
                                         )
-                                        item.browseId != null -> viewModel.openDetail(
-                                            browseId = item.browseId,
+                                    } ?: item.browseId?.let { browseId ->
+                                        viewModel.openDetail(
+                                            browseId = browseId,
                                             title = item.title,
                                             subtitle = item.subtitle,
                                             thumbnailUrl = item.thumbnailUrl,
@@ -2902,6 +2909,7 @@ private fun BitChordApp(
                             onHistoryClear = viewModel::clearSearchHistory,
                             onTypeaheadLongPress = openSongMenu,
                             contentPadding = listPadding,
+                            topPadding = topBarContentPadding(),
                         )
                         else -> LibraryScreen(
                             signedIn = signedIn,
@@ -2915,12 +2923,16 @@ private fun BitChordApp(
                             onShelfItemLongPress = onBrowseLongPress,
                             onNewPlaylist = { creatingPlaylist = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
-                            replayCards = replayCards,
-                            replayHolder = account?.name.orEmpty(),
-                            replayMemberSince = replay.memberSince,
-                            onOpenReplay = { page ->
-                                replayLandingPage = page
-                                showReplay = true
+                            replay = {
+                                LibraryReplayEntry(
+                                    cards = replayCards,
+                                    holder = account?.name.orEmpty(),
+                                    memberSince = replay.memberSince,
+                                    onOpenReplay = { page ->
+                                        replayLandingPage = page
+                                        showReplay = true
+                                    },
+                                )
                             },
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onRetry = viewModel::loadLibrary,
@@ -2928,7 +2940,7 @@ private fun BitChordApp(
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.LIBRARY) },
                             pullState = libraryPull,
                             contentPadding = listPadding,
-                            downloadedPlaylists = downloadedPlaylists,
+                            deviceItems = libraryDeviceItems(downloadedPlaylists),
                         )
                     }
                 }
