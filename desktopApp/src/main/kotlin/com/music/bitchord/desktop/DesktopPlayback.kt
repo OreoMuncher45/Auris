@@ -36,7 +36,7 @@ data class DesktopPlaybackState(
     val streamSourceId: String? = null,
     /** Whether a source is still looking for a better copy of this track while it plays. */
     val searchingBetter: Boolean = false,
-    /** True while two tracks are actually being mixed, which the scrubber shows. */
+    /** True while an analysed Automix handoff is audibly mixing, which the scrubber animates. */
     val mixing: Boolean = false,
     /** Where the next transition will sit, as fractions of this track — drawn on the scrubber. */
     val transitionWindow: com.music.bitchord.data.settings.TransitionWindow? = null,

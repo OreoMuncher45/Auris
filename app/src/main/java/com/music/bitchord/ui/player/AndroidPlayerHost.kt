@@ -65,6 +65,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val showNerdStats get() = AppSettings.showNerdStats
         override val smartAnalysis get() = AppSettings.smartAnalysis
         override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
+        override val smartMixInProgress get() = AppSettings.smartMixInProgress
         override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
         override val spotifyCanvasAutoHide get() = AppSettings.spotifyCanvasAutoHide
         override val syncedLyrics get() = AppSettings.syncedLyrics

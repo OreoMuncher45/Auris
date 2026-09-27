@@ -108,6 +108,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.AccountCircle
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
@@ -304,10 +305,10 @@ import org.jetbrains.compose.resources.painterResource
 /**
  * The margin every page keeps from the window's edge.
  *
- * One value, named, because the pages were carrying their own: most used 28 and Replay used 38, so
- * opening Replay after anything else stepped the whole page inward by ten points.
+ * Desktop-only pages share Library's edge inset so switching destinations does not move the page
+ * content sideways.
  */
-internal val DesktopPageGutter = 28.dp
+internal val DesktopPageGutter = PAGE_GUTTER
 
 internal val DesktopBackground = Color.Black
 internal val DesktopSurface = Color(0xFF0D0D0F)
@@ -622,6 +623,8 @@ fun BitChordDesktopApp() {
     var activeProfileId by remember { mutableStateOf(DesktopAccounts.activeProfileId()) }
     var signInBusy by remember { mutableStateOf<String?>(null) }
     var signInError by remember { mutableStateOf<String?>(null) }
+    var browserSignInJob by remember { mutableStateOf<Job?>(null) }
+    val interactiveSignInBrowser = remember { DesktopBrowserSignIn.preferred() }
     val activeAccount = accounts.firstOrNull { it.accountId == activeAccountId } ?: accounts.firstOrNull()
     // The account's own library, fetched once a session is in force.
     var libraryState by remember { mutableStateOf<UiState<LibraryPage>>(UiState.Loading) }
@@ -640,6 +643,16 @@ fun BitChordDesktopApp() {
             ?.firstOrNull { it.title == PLAYLISTS_SHELF }
             ?.items
             ?.let(DesktopSearchClient::userPlaylists)
+            .orEmpty()
+    }
+    // The add-to-playlist dialog intentionally keeps only playlists owned by the account. The
+    // sidebar is a library browser instead, so it shows the complete paged shelf: owned, saved,
+    // and YouTube's built-in playlists such as Liked Music.
+    val sidebarAccountPlaylists = remember(libraryState) {
+        (libraryState as? UiState.Success)?.data?.shelves
+            ?.firstOrNull { it.title == PLAYLISTS_SHELF }
+            ?.items
+            ?.filter { it.browseId != null }
             .orEmpty()
     }
 
@@ -2279,6 +2292,7 @@ fun BitChordDesktopApp() {
         DesktopPlayerSettings.showNerdStats.value = showNerdStats
         DesktopPlayerSettings.smartFadeEnabled.value = automix
         DesktopPlayerSettings.smartAnalysis.value = playback.smartAnalysis
+        DesktopPlayerSettings.smartMixInProgress.value = playback.mixing
         DesktopPlayerSettings.smartTransitionWindow.value = playback.transitionWindow
         DesktopPlayerSettings.lyricsSourceOrder.value =
             DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn).mapNotNull(::lyricsSourceNamed)
@@ -2482,6 +2496,9 @@ fun BitChordDesktopApp() {
                     DesktopSidebar(
                         destination = destination,
                         settingsOpen = overlays.settings,
+                        accountPlaylists = sidebarAccountPlaylists,
+                        localPlaylists = playlists,
+                        openedCollectionId = openedCollection?.browseId,
                         query = query,
                         onQueryChange = { text ->
                             editQuery(text)
@@ -2489,6 +2506,8 @@ fun BitChordDesktopApp() {
                         },
                         onSearch = ::search,
                         onDestinationSelected = ::selectDestination,
+                        onOpenAccountPlaylist = { openShelfItem(it, PLAYLISTS_SHELF) },
+                        onOpenLocalPlaylist = ::openPlaylist,
                         onOpenSettings = { overlays.settings = true },
                         focusSearch = searchFocusRequested,
                         onSearchFocused = { searchFocusRequested = false },
@@ -2908,6 +2927,25 @@ fun BitChordDesktopApp() {
                         DesktopSignInDialog(
                             busy = signInBusy,
                             error = signInError,
+                            interactiveBrowser = interactiveSignInBrowser,
+                            onBrowserSignIn = { browser ->
+                                browserSignInJob?.cancel()
+                                browserSignInJob = scope.launch {
+                                    signInError = null
+                                    signInBusy = browser.label
+                                    try {
+                                        val cookie = DesktopBrowserSignIn.capture(browser)
+                                        signIn(cookie, browser.label)
+                                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                        throw cancelled
+                                    } catch (failure: Exception) {
+                                        signInError = failure.message ?: "Could not complete browser sign-in."
+                                    } finally {
+                                        signInBusy = null
+                                        browserSignInJob = null
+                                    }
+                                }
+                            },
                             onImport = { profile ->
                                 scope.launch {
                                     when (val found = withContext(Dispatchers.IO) { DesktopBrowserCookies.read(profile) }) {
@@ -2929,7 +2967,11 @@ fun BitChordDesktopApp() {
                                     }
                                 }
                             },
-                            onDismiss = { overlays.signIn = false; signInError = null },
+                            onDismiss = {
+                                browserSignInJob?.cancel()
+                                overlays.signIn = false
+                                signInError = null
+                            },
                         )
                     }
                     if (overlays.playlistDialog || playlistTarget != null) {
@@ -3045,9 +3087,9 @@ fun BitChordDesktopApp() {
                     }
                 },
             ) { contentPadding ->
-                // The phone's pages, with room at the top where the phone's frosted bar sits and at
-                // the foot for the floating bar in a compact window.
-                val sharedPagePadding = PaddingValues(top = 12.dp, bottom = contentPadding.calculateBottomPadding())
+                // Desktop pages start at the same top edge as Library. Only preserve space for the
+                // floating player/navigation bar at the bottom in compact windows.
+                val sharedPagePadding = PaddingValues(bottom = contentPadding.calculateBottomPadding())
                 CompositionLocalProvider(
                     LocalPullToRefreshEnabled provides false,
                     LocalShelfRowChrome provides DesktopShelfRowChrome,
@@ -3267,7 +3309,7 @@ fun BitChordDesktopApp() {
                             onHistoryClear = DesktopSearchHistory::clear,
                             onTypeaheadLongPress = ::openMenu,
                             contentPadding = sharedPagePadding,
-                            topPadding = 4.dp,
+                            topPadding = 0.dp,
                             showField = false,
                         )
                         destination == DesktopDestination.LIBRARY && libraryShowAll != null -> Column(Modifier.fillMaxSize()) {
@@ -3674,10 +3716,15 @@ internal fun DesktopToolbarButton(
 private fun DesktopSidebar(
     destination: DesktopDestination,
     settingsOpen: Boolean,
+    accountPlaylists: List<ShelfItem>,
+    localPlaylists: List<DesktopPlaylist>,
+    openedCollectionId: String?,
     query: String,
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
     onDestinationSelected: (DesktopDestination) -> Unit,
+    onOpenAccountPlaylist: (ShelfItem) -> Unit,
+    onOpenLocalPlaylist: (DesktopPlaylist) -> Unit,
     onOpenSettings: () -> Unit,
     /** Search was picked: the sidebar's box is the page's field, so it takes the focus. */
     focusSearch: Boolean,
@@ -3764,7 +3811,38 @@ private fun DesktopSidebar(
             DesktopSidebarItem(BitChordIcons.Library, "Local Music", destination == DesktopDestination.LOCAL_MUSIC) {
                 onDestinationSelected(DesktopDestination.LOCAL_MUSIC)
             }
-            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(6.dp))
+            HorizontalDivider(color = desktopChromeDivider())
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentPadding = PaddingValues(bottom = 8.dp),
+            ) {
+                items(accountPlaylists, key = { "account:${it.browseId}" }) { playlist ->
+                    DesktopSidebarItem(
+                        Icons.AutoMirrored.Rounded.PlaylistPlay,
+                        playlist.title,
+                        openedCollectionId == playlist.browseId,
+                    ) { onOpenAccountPlaylist(playlist) }
+                }
+                items(localPlaylists, key = { "local:${it.id}" }) { playlist ->
+                    DesktopSidebarItem(
+                        Icons.AutoMirrored.Rounded.PlaylistPlay,
+                        playlist.title,
+                        openedCollectionId == playlist.id,
+                    ) { onOpenLocalPlaylist(playlist) }
+                }
+                if (accountPlaylists.isEmpty() && localPlaylists.isEmpty()) {
+                    item {
+                        Text(
+                            "Your playlists will appear here",
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 8.dp),
+                            color = DesktopSecondary.copy(alpha = 0.68f),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
             HorizontalDivider(color = desktopChromeDivider())
             Spacer(Modifier.height(8.dp))
             DesktopSidebarItem(Icons.Rounded.Settings, "Settings", settingsOpen) {
@@ -4160,7 +4238,7 @@ private fun DesktopArtistPage(
                         if (artist.subscriberCountText != null || artist.monthlyListenerCount != null) {
                             item(key = "artist-stats") {
                                 Row(
-                                    Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 12.dp),
+                                    Modifier.fillMaxWidth().padding(horizontal = DesktopPageGutter, vertical = 12.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     // YouTube's own text already reads "1.2M subscribers" in full,
@@ -4179,7 +4257,7 @@ private fun DesktopArtistPage(
                             // The phone's artist controls: subscribing first, where saving sits on a
                             // release, then the labelled Play pill and Shuffle.
                             Row(
-                                Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 6.dp),
+                                Modifier.fillMaxWidth().padding(horizontal = DesktopPageGutter, vertical = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -4211,7 +4289,7 @@ private fun DesktopArtistPage(
                                         blurb,
                                         color = DesktopSecondary,
                                         style = MaterialTheme.typography.bodyMedium,
-                                        modifier = Modifier.padding(horizontal = 28.dp),
+                                        modifier = Modifier.padding(horizontal = DesktopPageGutter),
                                     )
                                 }
                             }
@@ -4225,12 +4303,12 @@ private fun DesktopArtistPage(
                                 }
                             }
                             item(key = "artist-top-songs-header") {
-                                Box(Modifier.padding(horizontal = 28.dp)) {
+                                Box(Modifier.padding(horizontal = DesktopPageGutter)) {
                                     DesktopCollectionTableHeader(hasRemove = false)
                                 }
                             }
                             itemsIndexed(top, key = { _, song -> "artist-song-${song.videoId}" }) { index, song ->
-                                Box(Modifier.padding(horizontal = 28.dp)) {
+                                Box(Modifier.padding(horizontal = DesktopPageGutter)) {
                                     DesktopCollectionSongRow(
                                         song = song,
                                         collectionType = BrowseType.ARTIST,
@@ -4303,7 +4381,7 @@ private fun DesktopArtistBanner(url: String?, name: String, palette: DesktopArtw
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = 28.dp, end = 28.dp, bottom = 18.dp),
+                .padding(start = DesktopPageGutter, end = DesktopPageGutter, bottom = 18.dp),
         )
     }
 }
@@ -4389,7 +4467,6 @@ private fun DesktopHistoryPage(
             contentPadding = pagePadding(start = DesktopPageGutter, end = DesktopPageGutter, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            item { Spacer(Modifier.height(12.dp)) }
             if (history.isEmpty()) item { DesktopEmptyPage(BitChordIcons.Clock, "Nothing played yet", "Songs you play will show up here.") }
             else items(history, key = Song::videoId) {
                 DesktopSongRow(
@@ -4480,7 +4557,6 @@ private fun DesktopLocalMusicPage(
         Column(
             Modifier.fillMaxSize().padding(horizontal = DesktopPageGutter),
         ) {
-            Spacer(Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 DesktopSearchField(
                     query = searchQuery,
@@ -5706,10 +5782,14 @@ private fun DesktopCollectionPage(
     }.joinToString(" • ").uppercase()
     DesktopPageScaffold(contentPadding) {
         LazyColumn(
-            contentPadding = pagePadding(start = DesktopPageGutter, end = DesktopPageGutter, bottom = 32.dp),
+            contentPadding = pagePadding(
+                start = DesktopPageGutter,
+                top = DesktopPageGutter,
+                end = DesktopPageGutter,
+                bottom = 32.dp,
+            ),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            item { Spacer(Modifier.height(24.dp)) }
             item {
                 Row(
                     Modifier.fillMaxWidth().padding(bottom = 36.dp),

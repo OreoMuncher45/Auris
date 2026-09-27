@@ -9,6 +9,7 @@ import com.music.bitchord.playback.EqCurve
 import com.music.bitchord.playback.TransitionFilter
 import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.TransitionPlan
+import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
 import com.music.bitchord.playback.smart.planTransition
 import java.util.concurrent.ConcurrentHashMap
@@ -780,11 +781,25 @@ class DesktopPlaybackEngine(
                 positionMs = positionMs,
                 isPlaying = !paused,
                 smartAnalysis = status,
-                mixing = fadeRemaining > 0,
+                mixing = isSmartMixInProgress(),
             )
         }
 
         maybeStartCrossfade(track, positionMs)
+    }
+
+    /**
+     * Matches Android's Automix signal: a plain equal-power fallback is still a crossfade, but it
+     * does not light the Automix animation unless analysis changed the style, cue or tempo.
+     */
+    private fun isSmartMixInProgress(): Boolean {
+        val plan = activePlan ?: return false
+        return automixEnabled && fadeRemaining > 0 && (
+            plan.transitionStyle == TransitionStyle.DJ_BLEND ||
+                plan.transitionStyle == TransitionStyle.DJ_FILTER ||
+                plan.incomingCueTime > 0.0 ||
+                plan.incomingPlaybackRate != 1.0
+            )
     }
 
     /** Both halves of the next transition, for the player's Automix line. */

@@ -270,6 +270,8 @@ private fun DesktopSelectorAction(
 /** Signing in: a browser to take the session from, or the cookie by hand. */
 @Composable
 internal fun DesktopSignInDialog(
+    interactiveBrowser: DesktopBrowserSignIn.Browser?,
+    onBrowserSignIn: (DesktopBrowserSignIn.Browser) -> Unit,
     onImport: (DesktopBrowserCookies.Profile) -> Unit,
     onPaste: (String) -> Unit,
     busy: String?,
@@ -280,7 +282,11 @@ internal fun DesktopSignInDialog(
     var pasting by remember { mutableStateOf(false) }
     var pasted by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
-        profiles = withContext(Dispatchers.IO) { DesktopBrowserCookies.profiles() }
+        profiles = withContext(Dispatchers.IO) {
+            DesktopBrowserCookies.profiles().filterNot {
+                DesktopPlatform.isWindows && it.family == DesktopBrowserCookies.Family.CHROMIUM
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -311,11 +317,19 @@ internal fun DesktopSignInDialog(
                 modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 20.dp),
             )
             Text(
-                DesktopStrings[
-                    "d_google_signs_in_inside_a_browser",
-                    "Google signs in inside a browser and hands back a session. Pick a browser " +
-                        "here that is already signed in and BitChord will use its session.",
-                ],
+                if (interactiveBrowser != null) {
+                    DesktopStrings[
+                        "d_choose_the_browser_sign_in_button_below",
+                        "Choose ${interactiveBrowser.label} below, then finish signing in inside " +
+                            "the separate browser window and close it to return to BitChord.",
+                    ]
+                } else {
+                    DesktopStrings[
+                        "d_google_signs_in_inside_a_browser",
+                        "Google signs in inside a browser and hands back a session. Pick a browser " +
+                            "here that is already signed in and BitChord will use its session.",
+                    ]
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = DesktopSecondary,
                 modifier = Modifier.padding(start = 22.dp, end = 22.dp, top = 6.dp, bottom = 10.dp),
@@ -373,7 +387,35 @@ internal fun DesktopSignInDialog(
                 }
                 else -> LazyColumn(Modifier.heightIn(max = 320.dp)) {
                     val found = profiles.orEmpty()
-                    if (found.isEmpty()) {
+                    interactiveBrowser?.let { browser ->
+                        item(key = "interactive-browser") {
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 62.dp)
+                                    .clickable(enabled = busy == null) { onBrowserSignIn(browser) }
+                                    .padding(horizontal = 22.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(browser.label, color = Color.White)
+                                    Text(
+                                        if (busy == browser.label) {
+                                            "Finish signing in, then close Chrome"
+                                        } else {
+                                            "Opens normal Chrome; close it when signed in"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = DesktopSecondary,
+                                    )
+                                }
+                                if (busy == browser.label) {
+                                    CircularProgressIndicator(color = DesktopAccent, modifier = Modifier.size(14.dp))
+                                }
+                            }
+                        }
+                    }
+                    if (found.isEmpty() && interactiveBrowser == null) {
                         item {
                             Text(
                                 DesktopStrings["d_no_browser_profile_was_found_on_this_machine", "No browser profile was found on this machine."],

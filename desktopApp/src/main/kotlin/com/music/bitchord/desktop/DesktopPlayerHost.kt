@@ -196,6 +196,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val showNerdStats = MutableStateFlow(false)
     override val smartAnalysis = MutableStateFlow(SmartAnalysis())
     override val smartFadeEnabled = MutableStateFlow(false)
+    override val smartMixInProgress = MutableStateFlow(false)
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
     override val spotifyCanvasAutoHide = MutableStateFlow(true)
     override val syncedLyrics = MutableStateFlow(true)

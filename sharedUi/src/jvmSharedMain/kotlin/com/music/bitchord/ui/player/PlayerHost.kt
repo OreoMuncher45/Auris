@@ -123,6 +123,8 @@ interface PlayerSettingsSource {
     val showNerdStats: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
     val smartFadeEnabled: StateFlow<Boolean>
+    /** True only while an analysed Automix transition is audibly mixing two tracks. */
+    val smartMixInProgress: StateFlow<Boolean>
     val smartTransitionWindow: StateFlow<TransitionWindow?>
     val spotifyCanvasAutoHide: StateFlow<Boolean>
     val syncedLyrics: StateFlow<Boolean>

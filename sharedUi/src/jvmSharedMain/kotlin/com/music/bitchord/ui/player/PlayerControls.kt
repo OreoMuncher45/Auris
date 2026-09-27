@@ -185,6 +185,8 @@ internal fun PlayerScrubber(
     durationMs: Long,
     /** A version switch's wait, drawn along the bar — see [ThinSlider.loading]. */
     loading: Boolean,
+    /** An analysed Automix handoff, drawn as a travelling sheen. */
+    mixing: Boolean,
     transitionWindow: ClosedFloatingPointRange<Float>?,
     onScrub: (Float) -> Unit,
     onScrubFinished: () -> Unit,
@@ -197,6 +199,7 @@ internal fun PlayerScrubber(
             onValueChange = onScrub,
             onValueChangeFinished = onScrubFinished,
             loading = loading,
+            mixing = mixing,
             transitionWindow = transitionWindow,
         )
         Box(

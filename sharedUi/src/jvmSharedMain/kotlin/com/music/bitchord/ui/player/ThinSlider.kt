@@ -54,6 +54,11 @@ fun ThinSlider(
     modifier: Modifier = Modifier,
     onValueChangeFinished: (() -> Unit)? = null,
     /**
+     * Sends the same travelling sheen across the bar while an analysed Automix transition is
+     * audible. Kept separate from [loading]: a mix is playback feedback, not a wait state.
+     */
+    mixing: Boolean = false,
+    /**
      * Sends a travelling sheen across the whole bar — played *and* unplayed,
      * the bar's full thickness — for as long as it is true.
      *
@@ -106,14 +111,11 @@ fun ThinSlider(
             shownLoading = false
         }
     }
-    // The played fill doesn't blink out when a switch starts, nor snap back
-    // when it lands: it retracts to nothing as the sheen takes the bar over,
-    // and slides back in when the wait is over — the loading bar *becoming*
-    // the progress bar, rather than one vanishing and the other appearing on
-    // the same frame. Keyed to the latched state and eased on the same curve
-    // and length as the sheen's own transitions, so the two never drift apart.
+    // Both operations let the sheen claim the bar. A version switch is latched for a minimum beat;
+    // an Automix handoff follows the audio engine exactly and fades away when the blend finishes.
+    val sheenVisible = shownLoading || mixing
     val fillFactor by animateFloatAsState(
-        targetValue = if (shownLoading) 0f else 1f,
+        targetValue = if (sheenVisible) 0f else 1f,
         animationSpec = tween(durationMillis = MORPH_MS, easing = FastOutSlowInEasing),
         label = "fillFactor",
     )
@@ -192,14 +194,10 @@ fun ThinSlider(
                 )
             }
         }
-        // Composed only while switching, rather than drawn inside the Canvas
-        // above: the sheen runs an infinite animation for as long as it
-        // exists, so the cheap way to stop it costing anything is for it not
-        // to exist. AnimatedVisibility keeps it through the fade, so the bar
-        // settles back into an ordinary scrubber instead of blinking out on
-        // the frame the switch lands.
+        // Composed only while switching or mixing. The infinite animation therefore costs no
+        // frames during ordinary playback, and AnimatedVisibility lets it leave gracefully.
         AnimatedVisibility(
-            visible = shownLoading,
+            visible = sheenVisible,
             // Grown out of the bar's own left end — where the progress fill
             // begins — instead of slid in from a third of its own width: the
             // capsule is full-bleed, so that slide started past the screen

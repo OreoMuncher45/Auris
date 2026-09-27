@@ -107,6 +107,9 @@ dependencies {
     // Browsers keep their cookies in SQLite, and importing a session from one is how this app signs
     // in — see DesktopBrowserCookies.
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
+    // Chromium protects its Windows master key with DPAPI. JNA's platform helpers let the app
+    // unwrap that key in the same Windows user session without invoking a shell or exposing it.
+    implementation("net.java.dev.jna:jna-platform:5.19.1")
 
     // Linux desktop media controls use the standard session-bus MPRIS interfaces.
     implementation("com.github.hypfvieh:dbus-java-core:5.2.0")
@@ -218,21 +221,46 @@ val buildAnalysisNative by tasks.registering {
                     "a Gradle daemon started before it was on PATH may be in use: ./gradlew --stop",
             )
         }
-        val compiler = !crossing || findOnPath("x86_64-w64-mingw32-g++") != null
-        if (cmake != null && !compiler) {
+        val compilerName = if (crossing) "x86_64-w64-mingw32-g++" else "g++"
+        val compiler = targetOs != "windows" || findOnPath(compilerName) != null
+        val ninja = targetOs != "windows" || findOnPath("ninja") != null
+        if (cmake != null && (!compiler || !ninja)) {
             logger.lifecycle(
-                "x86_64-w64-mingw32-g++ not found — the Windows build will have no Automix analyser. " +
-                    "On NixOS: nix-shell -p pkgsCross.mingwW64.buildPackages.gcc",
+                "$compilerName or Ninja not found — the Windows build will have no Automix analyser. " +
+                    "Install a MinGW C++ compiler and Ninja, then rebuild.",
             )
         }
-        cmake != null && compiler
+        cmake != null && compiler && ninja
     }
     doLast {
         val javaHome = System.getProperty("java.home")
+        val compiler = if (targetOs == "windows") {
+            findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
+                ?: error("the Windows C++ compiler disappeared while building the analyser")
+        } else {
+            null
+        }
+        val ninja = if (targetOs == "windows") {
+            findOnPath("ninja") ?: error("Ninja disappeared while building the analyser")
+        } else {
+            null
+        }
         providers.exec {
             commandLine(
                 buildList {
                     addAll(listOf(cmakeBinary(), "-S", cmakeSource.absolutePath, "-B", outputDir.absolutePath))
+                    if (targetOs == "windows") {
+                        // The host may not have Visual Studio/nmake. Select the MinGW toolchain we
+                        // checked above and discard any generator cached by an earlier configure.
+                        addAll(
+                            listOf(
+                                "--fresh",
+                                "-G", "Ninja",
+                                "-DCMAKE_MAKE_PROGRAM=${ninja!!.absolutePath}",
+                                "-DCMAKE_CXX_COMPILER=${compiler!!.absolutePath}",
+                            ),
+                        )
+                    }
                     add("-DCMAKE_BUILD_TYPE=Release")
                     if (crossing) add("-DCMAKE_TOOLCHAIN_FILE=${toolchain.absolutePath}")
                 },
