@@ -114,7 +114,8 @@ object TrackMatcher {
      * Scoring them all and taking the top lets the runtime and the fuller
      * artist credit break that tie instead.
      */
-    fun best(candidates: List<Song>, target: Target): Song? = ranked(candidates, target).firstOrNull()
+    fun best(candidates: List<Song>, target: Target): Song? =
+        ranked(candidates, target).firstOrNull()
 
     /**
      * The catalogue counterpart for a music-video upload selected explicitly
@@ -143,7 +144,8 @@ object TrackMatcher {
                 if (wanted.core != got.core || wanted.versions != got.versions) return@mapNotNull null
                 val artist = artistScore(target.artist, candidate.artist) ?: return@mapNotNull null
                 val duration = target.durationSec?.let { expected ->
-                    secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) } ?: -120
+                    secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) }
+                        ?: -120
                 } ?: 0
                 candidate to (artist * 1_000 + duration)
             }
@@ -394,7 +396,9 @@ object TrackMatcher {
         var words = text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
-
+        // "Paniyon Sa Full Song", "Tum Hi Ho Audio" — an upload's trailing
+        // label, printed without brackets to hang it on. Never stripped down
+        // to nothing: a track really called "Song" keeps its name.
         while (words.size > 1 && words.last() in TRAILING_NOISE) {
             words = words.dropLast(1)
         }
@@ -445,7 +449,8 @@ object TrackMatcher {
     /** Whether [text] is nothing but (part of) [artist] — the "Artist - Title" upload shape. */
     private fun isArtistName(text: String, artist: String): Boolean {
         if (artist.isBlank()) return false
-        val words = text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
+        val words =
+            text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
         val credited = artist.lowercase(Locale.ROOT).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
