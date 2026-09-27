@@ -52,6 +52,16 @@ internal object DesktopWindowsFrame {
     @JvmStatic
     private external fun nativeStartDrag(): Boolean
 
+    /**
+     * Puts DWM's material behind the window — [DesktopBackdrop.nativeKind] — or takes it away.
+     * False without the native frame, or on a Windows too old to have one.
+     */
+    fun setBackdrop(kind: Int): Boolean =
+        installed && runCatching { nativeSetBackdrop(kind) }.getOrDefault(false)
+
+    @JvmStatic
+    private external fun nativeSetBackdrop(kind: Int): Boolean
+
     @JvmStatic
     private external fun nativeInstall(title: String): Boolean
 

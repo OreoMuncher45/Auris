@@ -3032,7 +3032,7 @@ private fun DesktopTopBar(
                 Modifier
                     .width(220.dp)
                     .fillMaxHeight()
-                    .desktopChromeGlass(if (compact) DesktopChromeEdge.BOTTOM else DesktopChromeEdge.NONE)
+                    .desktopWindowGlass(if (compact) DesktopChromeEdge.BOTTOM else DesktopChromeEdge.NONE)
                     .padding(horizontal = 10.dp),
             ) {
                 if (inlineCaption) {
@@ -3077,7 +3077,7 @@ private fun DesktopTopBar(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .desktopChromeGlass(DesktopChromeEdge.BOTTOM)
+                    .desktopWindowGlass(DesktopChromeEdge.BOTTOM)
                     .padding(start = 14.dp, end = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -3327,7 +3327,7 @@ private fun DesktopSidebar(
         Modifier
             .width(220.dp)
             .fillMaxHeight()
-            .desktopChromeGlass(DesktopChromeEdge.END, fade = 0.07f),
+            .desktopWindowGlass(DesktopChromeEdge.END, fade = 0.07f),
     ) {
         Column(
             Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 16.dp),
@@ -3610,11 +3610,16 @@ private fun DesktopFrame(
 ) {
     // Held out here rather than inside the constraints box.
     val haze = remember { HazeState() }
+    // With a system material behind the chrome, the window is left clear everywhere but the
+    // page, the side column and whatever is laid over them: those paint their own ground, and
+    // only the sidebar and top bar let the material through.
+    val material by DesktopWindowBackdrop.active.collectAsState()
+    val glass = material != DesktopBackdrop.OFF
     CompositionLocalProvider(LocalDesktopHaze provides haze) {
-        Box(modifier.fillMaxSize().background(containerColor)) {
+        Box(modifier.fillMaxSize().then(if (glass) Modifier else Modifier.background(containerColor))) {
             // Both sources of the same state: the chrome blurs the backdrop behind it, and the
             // floating bottom bar blurs the page scrolling under it.
-            Box(Modifier.fillMaxSize().hazeSource(haze)) { backdrop() }
+            if (!glass) Box(Modifier.fillMaxSize().hazeSource(haze)) { backdrop() }
             Column(Modifier.fillMaxSize()) {
                 // Above everything, and outside the box the rest of the window is drawn in, because
                 // that is what a title bar is.
@@ -3626,8 +3631,14 @@ private fun DesktopFrame(
                             topBar(compact)
                             Row(Modifier.fillMaxWidth().weight(1f)) {
                                 if (!compact) sidebar()
-                                Box(Modifier.weight(1f).fillMaxHeight()) {
+                                Box(
+                                    Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .then(if (glass) Modifier.background(containerColor) else Modifier),
+                                ) {
                                     Box(Modifier.fillMaxSize().hazeSource(haze)) {
+                                        if (glass) backdrop()
                                         content(
                                             PaddingValues(
                                                 start = 0.dp,
@@ -3642,7 +3653,11 @@ private fun DesktopFrame(
                                         Box(Modifier.align(Alignment.BottomCenter)) { bottomBar(true) }
                                     }
                                 }
-                                trailing()
+                                Box(
+                                    Modifier
+                                        .fillMaxHeight()
+                                        .then(if (glass) Modifier.background(containerColor) else Modifier),
+                                ) { trailing() }
                             }
                         }
                     }
@@ -5175,6 +5190,49 @@ private fun DesktopSettingsDialog(
                             DesktopTitleBarSetting::set,
                         )
                     }
+                    // Windows 11 only, where DWM has the materials to offer.
+                    if (DesktopWindowBackdrop.available &&
+                        settingsRowVisible(DesktopStrings["d_window_material", "Window material"])
+                    ) {
+                        val backdropChoice by DesktopWindowBackdrop.selected.collectAsState()
+                        val backdropActive by DesktopWindowBackdrop.active.collectAsState()
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Text(DesktopStrings["d_window_material", "Window material"], fontWeight = FontWeight.Medium)
+                            Text(
+                                DesktopStrings[
+                                    "d_window_material_subtitle",
+                                    "Lets the desktop show through the sidebar and top bar",
+                                ],
+                                color = DesktopSecondary,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                DesktopBackdrop.entries.forEach { option ->
+                                    FilterChip(
+                                        colors = desktopChipColors(),
+                                        selected = backdropChoice == option,
+                                        onClick = { DesktopWindowBackdrop.set(option) },
+                                        label = { Text(option.label) },
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                when {
+                                    backdropChoice != DesktopBackdrop.OFF && backdropActive == DesktopBackdrop.OFF ->
+                                        "Needs Windows 11 version 22H2 or later"
+                                    backdropChoice == DesktopBackdrop.MICA ->
+                                        "A soft tint taken from your wallpaper"
+                                    backdropChoice == DesktopBackdrop.ACRYLIC ->
+                                        "A frosted blur of whatever is behind the window"
+                                    else -> "Solid, as the rest of the app"
+                                },
+                                color = DesktopSecondary,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                     SettingsToggle(
                         DesktopStrings["full_screen_cover_art", "Full-screen cover art"],
                         DesktopStrings["full_screen_cover_art_subtitle", "Runs the cover to the edges of the player instead of a square sleeve"],
@@ -6262,6 +6320,30 @@ internal fun Modifier.desktopChromeGlass(
     edge = edge,
     fade = fade,
 )
+
+/**
+ * The window's own chrome — title bar, top bar, sidebar. Over Windows 11's Mica or Acrylic
+ * ([DesktopWindowBackdrop]) it is a light dark tint and nothing else, so DWM's material shows
+ * through; the in-app blur would paint the page's backdrop over it. Otherwise the in-app glass.
+ *
+ * No dissolve over the material: it would fade the tint out into bare material right where the
+ * opaque page begins, a lighter stripe along the seam rather than a softer one.
+ */
+@Composable
+internal fun Modifier.desktopWindowGlass(
+    edge: DesktopChromeEdge = DesktopChromeEdge.NONE,
+    fade: Float = 0.2f,
+): Modifier {
+    val backdrop by DesktopWindowBackdrop.active.collectAsState()
+    return if (backdrop == DesktopBackdrop.OFF) {
+        desktopChromeGlass(edge, fade)
+    } else {
+        background(Color.Black.copy(alpha = WINDOW_GLASS_TINT))
+    }
+}
+
+/** Enough to keep white text readable over a bright wallpaper, little enough to let it through. */
+private const val WINDOW_GLASS_TINT = 0.28f
 
 @Composable
 private fun Modifier.desktopFrosted(

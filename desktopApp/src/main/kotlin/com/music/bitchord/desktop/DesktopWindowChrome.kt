@@ -52,7 +52,7 @@ internal fun DesktopTitleBar() {
         Modifier
             .fillMaxWidth()
             .height(CAPTION_HEIGHT)
-            .desktopChromeGlass(),
+            .desktopWindowGlass(),
     ) {
         Box(Modifier.fillMaxSize()) {
             DesktopWindowButtons(Modifier.align(Alignment.CenterStart))

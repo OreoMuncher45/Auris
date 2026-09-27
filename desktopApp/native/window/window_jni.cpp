@@ -93,29 +93,6 @@ LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         if (bottom) return HTBOTTOM;
     }
 
-    if (message == WM_NCHITTEST) {
-        // Everything that is not a resize border is Compose's. The window keeps WS_CAPTION and the
-        // min/max boxes for DWM's sake (snap, animations, taskbar behaviour), so the default hit
-        // test still finds the system's caption buttons where they would have been drawn — at the
-        // top right, right over the toolbar — and Windows 11 answers the hover with a "Maximize"
-        // tooltip and its snap-layout flyout for a button nobody can see. The traffic lights are
-        // the caption buttons here.
-        const LRESULT hit = g_original_proc != nullptr
-            ? CallWindowProcW(g_original_proc, window, message, wparam, lparam)
-            : DefWindowProcW(window, message, wparam, lparam);
-        switch (hit) {
-            case HTCAPTION:
-            case HTSYSMENU:
-            case HTMINBUTTON:
-            case HTMAXBUTTON:
-            case HTCLOSE:
-            case HTHELP:
-                return HTCLIENT;
-            default:
-                return hit;
-        }
-    }
-
     if (message == WM_BITCHORD_DRAG) {
         // Windows moves the window itself from here, as it does for a system caption: DWM slides
         // the composed surface, so nothing is exposed to be filled with the class brush (the white
@@ -187,6 +164,34 @@ bool install_frame(HWND window) {
     return true;
 }
 
+// Windows 11 22H2's system backdrop attribute and its values; numeric so older SDKs still build.
+constexpr DWORD BACKDROP_ATTRIBUTE = 38;  // DWMWA_SYSTEMBACKDROP_TYPE
+constexpr DWORD DARK_MODE_ATTRIBUTE = 20;  // DWMWA_USE_IMMERSIVE_DARK_MODE
+constexpr int BACKDROP_NONE = 1;  // DWMSBT_NONE
+
+/**
+ * Puts DWM's own material behind the window: 2 Mica, 3 Acrylic, anything else none. The frame is
+ * extended over the whole client so the material reaches everywhere Compose leaves transparent;
+ * without a material it goes back to the one-pixel margin the frame needs for its shadow.
+ *
+ * Dark mode is what makes the material a dark tint rather than a light one. False when the system
+ * has no backdrop attribute (before Windows 11 22H2), and the caller keeps the window opaque.
+ */
+bool set_backdrop(HWND window, int kind) {
+    if (window == nullptr || !IsWindow(window)) return false;
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(
+        window, static_cast<DWMWINDOWATTRIBUTE>(DARK_MODE_ATTRIBUTE), &dark, sizeof(dark));
+    const bool material = kind == 2 || kind == 3;
+    const int type = material ? kind : BACKDROP_NONE;
+    const HRESULT applied = DwmSetWindowAttribute(
+        window, static_cast<DWMWINDOWATTRIBUTE>(BACKDROP_ATTRIBUTE), &type, sizeof(type));
+    if (FAILED(applied)) return false;
+    MARGINS margins = material ? MARGINS{-1, -1, -1, -1} : MARGINS{1, 1, 1, 1};
+    DwmExtendFrameIntoClientArea(window, &margins);
+    return true;
+}
+
 bool send_system_command(UINT command) {
     HWND window = g_window;
     return window != nullptr && IsWindow(window) &&
@@ -206,6 +211,11 @@ Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeInstall(
 JNIEXPORT jboolean JNICALL
 Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeMinimize(JNIEnv*, jclass) {
     return send_system_command(SC_MINIMIZE) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeSetBackdrop(JNIEnv*, jclass, jint kind) {
+    return set_backdrop(g_window, static_cast<int>(kind)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL

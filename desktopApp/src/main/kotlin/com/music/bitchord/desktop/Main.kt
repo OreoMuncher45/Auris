@@ -76,6 +76,10 @@ private fun desktopMain() = application {
         // No system title bar on Windows, where the application draws its own instead — see
         // [DesktopWindowChrome].
         undecorated = DesktopPlatform.drawsOwnWindowFrame,
+        // For Mica and Acrylic behind the sidebar and top bar: only a transparent window lets
+        // DWM's material show through the chrome. Fixed at creation, so it is on wherever the
+        // material is possible and the chosen one can be switched live — see [DesktopWindowBackdrop].
+        transparent = DesktopWindowBackdrop.available,
         resizable = true,
     ) {
         val composeWindow = window
@@ -83,8 +87,12 @@ private fun desktopMain() = application {
         LaunchedEffect(composeWindow) {
             // AWT's default is white, and it is what shows for the frame or two a moved or resized
             // window takes to repaint: a white band along its edges.
-            composeWindow.background = java.awt.Color.BLACK
-            composeWindow.contentPane.background = java.awt.Color.BLACK
+            // Not over a transparent window, whose clear background is what the material shows
+            // through; DWM moves that window, so there is no band to hide.
+            if (!DesktopWindowBackdrop.available) {
+                composeWindow.background = java.awt.Color.BLACK
+                composeWindow.contentPane.background = java.awt.Color.BLACK
+            }
             // AWT measures this in device pixels while Compose's window state is in dp. Keeping
             // the scale in the conversion makes the usable minimum consistent on every display.
             val transform = composeWindow.graphicsConfiguration.defaultTransform
@@ -101,7 +109,9 @@ private fun desktopMain() = application {
                 (openingSize.width.value * transform.scaleX).roundToInt(),
                 (openingSize.height.value * transform.scaleY).roundToInt(),
             )
-            if (DesktopPlatform.isWindows) DesktopWindowsFrame.install("BitChord")
+            if (DesktopPlatform.isWindows && DesktopWindowsFrame.install("BitChord")) {
+                DesktopWindowBackdrop.apply()
+            }
         }
         val actions = remember {
             DesktopWindowActions(
