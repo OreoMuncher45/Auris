@@ -15,6 +15,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
@@ -40,6 +41,8 @@ fun HistoryScreen(
     onSongSwipe: (Song) -> Unit,
     onRetry: () -> Unit,
     contentPadding: PaddingValues,
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -69,6 +72,9 @@ fun HistoryScreen(
                         onClick = { onSongClick(songs, index) },
                         onLongPress = { onSongLongPress(song) },
                         onSwipeToQueue = { onSongSwipe(song) },
+                        isCurrent = song.isSameTrackAs(currentSong),
+                        isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                        searchPlayingStyle = true,
                     )
                     if (index < songs.lastIndex) {
                         HorizontalDivider(

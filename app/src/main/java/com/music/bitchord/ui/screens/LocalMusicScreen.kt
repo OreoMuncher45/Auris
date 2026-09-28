@@ -105,6 +105,7 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.rememberRemoteArtworkUrl
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.TopBarContentGap
@@ -538,6 +539,8 @@ private fun SongsTab(
                     song = song,
                     selected = song.videoId in selectedIds,
                     isCurrent = song.isSameTrackAs(currentSong),
+                    isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                    searchPlayingStyle = true,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                 )
@@ -562,6 +565,7 @@ private fun SongsTab(
                     selected = song.videoId in selectedIds,
                     isCurrent = song.isSameTrackAs(currentSong),
                     isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                    searchPlayingStyle = true,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                     onMore = onSongMore?.let { more -> { more(song) } },
@@ -585,6 +589,8 @@ private fun SongGridCard(
     song: Song,
     selected: Boolean = false,
     isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
+    searchPlayingStyle: Boolean = false,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -620,7 +626,9 @@ private fun SongGridCard(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if (isCurrent) {
+            if (isCurrent && searchPlayingStyle && isPlaying) {
+                SearchPlayingBars(Modifier.align(Alignment.Center))
+            } else if (isCurrent && !searchPlayingStyle) {
                 Icon(
                     Icons.Rounded.GraphicEq,
                     contentDescription = stringResource(R.string.now_playing),
@@ -633,7 +641,7 @@ private fun SongGridCard(
         ExplicitSongTitle(
             song = song,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = if (isCurrent && searchPlayingStyle) Color(0xFFFB4A62) else MaterialTheme.colorScheme.onBackground,
         )
         Text(
             text = song.artist.ifBlank { stringResource(R.string.unknown_artist) },
@@ -1388,6 +1396,8 @@ private fun DrillDownSongList(
                     song = song,
                     selected = song.videoId in selectedIds,
                     isCurrent = song.isSameTrackAs(currentSong),
+                    isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                    searchPlayingStyle = true,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },
                 )
@@ -1422,6 +1432,7 @@ private fun DrillDownSongList(
                     selected = song.videoId in selectedIds,
                     isCurrent = song.isSameTrackAs(currentSong),
                     isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                    searchPlayingStyle = true,
                     trackNumber = index + 1,
                     onClick = { onSongClick(songs, index) },
                     onLongPress = { onSongLongPress(song) },

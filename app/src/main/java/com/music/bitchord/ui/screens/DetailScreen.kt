@@ -117,6 +117,7 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.lightweightLiquidGlass
 import com.music.bitchord.ui.components.thumbnailBorder
@@ -489,6 +490,8 @@ fun DetailScreen(
                                                 onClick = { onSongClick(top, top.indexOf(song)) },
                                                 onLongPress = { onSongLongPress(song) },
                                                 downloadedTint = downloadedTint,
+                                                isCurrent = song.isSameTrackAs(currentSong),
+                                                isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
                                             )
                                         }
                                     }
@@ -532,6 +535,7 @@ fun DetailScreen(
                             isCurrent = isCurrent,
                             isPlaying = isCurrent && isPlaying,
                             activeTint = palette.accent,
+                            searchPlayingStyle = true,
                         )
                         if (position < matches.lastIndex) {
                             HorizontalDivider(
@@ -561,6 +565,8 @@ fun DetailScreen(
                         onLongPress = { onSongLongPress(song) },
                         onAdd = { onAddSuggested(song) },
                         downloadedTint = downloadedTint,
+                        isCurrent = song.isSameTrackAs(currentSong),
+                        isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
                     )
                     if (index < suggested.lastIndex) {
                         HorizontalDivider(
@@ -1432,6 +1438,8 @@ private fun CompactSongRow(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     downloadedTint: Color? = null,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -1440,21 +1448,24 @@ private fun CompactSongRow(
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = song.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .thumbnailBorder(RoundedCornerShape(7.dp))
-                .background(palette.elevated),
-        )
+        Box(Modifier.size(48.dp)) {
+            AsyncImage(
+                model = song.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .thumbnailBorder(RoundedCornerShape(7.dp))
+                    .background(palette.elevated),
+            )
+            if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             ExplicitSongTitle(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
-                color = palette.onBackground,
+                color = if (isCurrent) Color(0xFFFB4A62) else palette.onBackground,
             )
             Text(
                 text = song.artist,
@@ -1499,6 +1510,8 @@ private fun SuggestedSongRow(
     onLongPress: () -> Unit,
     onAdd: () -> Unit,
     downloadedTint: Color? = null,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -1507,21 +1520,24 @@ private fun SuggestedSongRow(
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = song.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .thumbnailBorder(RoundedCornerShape(8.dp))
-                .background(palette.elevated),
-        )
+        Box(Modifier.size(52.dp)) {
+            AsyncImage(
+                model = song.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .thumbnailBorder(RoundedCornerShape(8.dp))
+                    .background(palette.elevated),
+            )
+            if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+        }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             ExplicitSongTitle(
                 song = song,
                 style = MaterialTheme.typography.titleMedium,
-                color = palette.onBackground,
+                color = if (isCurrent) Color(0xFFFB4A62) else palette.onBackground,
             )
             Spacer(Modifier.height(2.dp))
             Text(
