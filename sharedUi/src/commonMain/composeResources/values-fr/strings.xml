@@ -41,6 +41,7 @@
     <string name="listen_together_open">Écouter ensemble</string>
     <string name="listen_together_open_count">Écoute commune · %1$d</string>
     <string name="listen_together_you">Toi</string>
+    <string name="mixing">Mixage</string>
     <string name="lossless">Sans perte</string>
     <string name="lyrics_already_in_language">Ces paroles sont déjà en %1$s</string>
     <string name="lyrics_already_romanized">Ces paroles utilisent déjà l\'alphabet latin</string>

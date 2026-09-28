@@ -41,6 +41,7 @@
     <string name="listen_together_open">Listen together</string>
     <string name="listen_together_open_count">Listening together · %1$d</string>
     <string name="listen_together_you">You</string>
+    <string name="mixing">Đang mix</string>
     <string name="lossless">Lossless</string>
     <string name="lyrics_already_in_language">These lyrics are already in %1$s</string>
     <string name="lyrics_already_romanized">Lời bài hát này đã dùng ký tự Latinh</string>

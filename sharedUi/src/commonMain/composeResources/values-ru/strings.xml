@@ -41,6 +41,7 @@
     <string name="listen_together_open">Слушать вместе</string>
     <string name="listen_together_open_count">Слушаем вместе · %1$d</string>
     <string name="listen_together_you">Вы</string>
+    <string name="mixing">Сведение</string>
     <string name="lossless">Без потерь</string>
     <string name="lyrics_already_in_language">Текст уже на языке %1$s</string>
     <string name="lyrics_already_romanized">Этот текст уже написан латиницей</string>

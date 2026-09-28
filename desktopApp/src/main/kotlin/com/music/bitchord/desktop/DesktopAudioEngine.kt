@@ -2,6 +2,7 @@ package com.music.bitchord.desktop
 
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AutomixPerformanceMode
+import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
@@ -364,6 +365,16 @@ class DesktopPlaybackEngine(
 
     /** Resolves and prepares the next queue item without starting it. */
     fun prepareNext(song: Song?) {
+        // Past the midpoint of a blend the player already shows the incoming song, and the app
+        // answers that by asking for the track *after* it — which would clear the upcoming track
+        // this blend is still playing. Held until the blend ends, and then carried out.
+        synchronized(blendLock) {
+            if (displaySwitched) {
+                deferredNext = song
+                hasDeferredNext = true
+                return
+            }
+        }
         nextResolveJob?.cancel()
         clearUpcoming()
         if (song == null || transitionSecondsFor(song) == 0) return
@@ -439,6 +450,23 @@ class DesktopPlaybackEngine(
     private var incomingSamples = 0L
     private var mixed = FloatArray(0)
 
+    /**
+     * Output frames handed to the sink, on the same count as [DesktopAudioSink.framesPlayed]:
+     * the difference is what is queued but not yet heard. Re-synced wherever the sink drops or
+     * restarts its queue.
+     */
+    private var framesWritten = 0L
+
+    /**
+     * Whether the player has already moved to the incoming song. Set halfway through a blend,
+     * matching Android: the outgoing song stays on screen while it is the louder of the two, and
+     * the incoming one takes over the moment it is. The audio carries on blending to the end.
+     */
+    @Volatile private var displaySwitched = false
+    private val blendLock = Any()
+    private var deferredNext: Song? = null
+    private var hasDeferredNext = false
+
     /** One filter over each side of a mix. */
     private val outgoingFilter = TransitionFilter()
     private val incomingFilter = TransitionFilter()
@@ -461,6 +489,7 @@ class DesktopPlaybackEngine(
         val track = current
         if (track == null || paused) {
             if (paused) sink.pause()
+            if (paused && fadeRemaining > 0) publishBlend(playing = false)
             Thread.sleep(20)
             return
         }
@@ -480,6 +509,7 @@ class DesktopPlaybackEngine(
         val trimmedCount = quiet?.outputCount ?: blendedCount
         val (stretched, stretchedCount) = stretch(trimmed, trimmedCount)
         sink.write(stretched, stretchedCount)
+        framesWritten += stretchedCount / sink.format.channels.coerceAtLeast(1)
         publishPosition(track)
     }
 
@@ -515,6 +545,11 @@ class DesktopPlaybackEngine(
 
             val out = kotlin.math.sqrt(1f - progress)
             val into = kotlin.math.sqrt(progress)
+            // Equal-power gains sum past 1 — up to 1.41 at the midpoint — and two loud masters
+            // peaking together would be clipped hard by the sink. A smooth trim of
+            // 1 / sqrt(out + into) holds that to 1.19 for at most 1.5 dB, and reshapes nothing:
+            // the same trim Android's two players take.
+            val trim = 1f / kotlin.math.sqrt((out + into).coerceAtLeast(1f))
             val stop = minOf(count, index + subBlock)
             val span = stop - index
             while (index < stop) {
@@ -525,12 +560,14 @@ class DesktopPlaybackEngine(
                 } else {
                     0f
                 }
-                mixed[index] = leaving * out + arriving * into
+                mixed[index] = (leaving * out + arriving * into) * trim
                 index++
             }
             fadeRemaining -= span
         }
-        if (fadeRemaining <= 0) promoteUpcoming()
+        val progress = 1f - (fadeRemaining.toFloat() / fadeTotal).coerceIn(0f, 1f)
+        if (!displaySwitched && progress >= DISPLAY_SWITCH_AT && fadeRemaining > 0) switchDisplay(incoming)
+        if (fadeRemaining <= 0) promoteUpcoming() else publishBlend(playing = true)
         return mixed to count
     }
 
@@ -592,7 +629,9 @@ class DesktopPlaybackEngine(
         // Where the incoming track really is, not where it starts. Published as
         // its start left the scrubber and the lyrics a whole fade behind the
         // audio, which only a manual seek could put right.
-        val handoverUs = incoming.startUs + incomingElapsedUs()
+        // Less what is still queued in the sink: [baseFrames] restarts the played-frame clock
+        // here, so the queued audio — this track's — is counted again as it plays out.
+        val handoverUs = incoming.startUs + incomingElapsedUs() - queuedSourceUs()
         DesktopTrackLog.log(
             "transition complete: '${incoming.song.title}' resumes at " +
                 "${"%.1f".format(handoverUs / 1_000_000.0)}s " +
@@ -601,7 +640,102 @@ class DesktopPlaybackEngine(
         )
         publishTrack(incoming, isPlaying = !paused, positionUs = handoverUs)
         incomingSamples = 0L
+        val announced = displaySwitched
+        endBlend()
+        if (!announced) onCrossfaded(incoming.song)
+    }
+
+    /**
+     * Moves the player onto the incoming song halfway through the blend: its title, its
+     * artwork, its position — and the app's queue, through [onCrossfaded]. The audio is
+     * untouched and keeps blending to the end; [promoteUpcoming] then only retires the
+     * outgoing decoder.
+     */
+    private fun switchDisplay(incoming: Track) {
+        synchronized(blendLock) { displaySwitched = true }
+        DesktopTrackLog.log("blend midpoint: showing '${incoming.song.title}'")
+        publishTrack(incoming, isPlaying = !paused, positionUs = incomingHeardUs(incoming))
         onCrossfaded(incoming.song)
+    }
+
+    /**
+     * Clears everything a blend leaves behind — the scrubber's beat, the switched display — and
+     * carries out a [prepareNext] that arrived while it ran. Called however the blend ended.
+     */
+    private fun endBlend() {
+        DesktopPlayerSettings.smartMixBlend.value = null
+        var had = false
+        var next: Song? = null
+        synchronized(blendLock) {
+            displaySwitched = false
+            had = hasDeferredNext
+            next = deferredNext
+            hasDeferredNext = false
+            deferredNext = null
+        }
+        if (had) prepareNext(next)
+    }
+
+    /** Source time of audio written to the sink but not yet heard. */
+    private fun queuedSourceUs(): Long {
+        val rate = sink.format.sampleRate
+        if (rate <= 0) return 0L
+        val queued = (framesWritten - sink.framesPlayed()).coerceAtLeast(0L)
+        return (queued * 1_000_000L / rate * playbackSpeed).toLong()
+    }
+
+    /** Where in the incoming track the listener is right now, mid-blend. */
+    private fun incomingHeardUs(incoming: Track): Long =
+        (incoming.startUs + incomingElapsedUs() - queuedSourceUs()).coerceAtLeast(incoming.startUs)
+
+    /**
+     * Tells the shared scrubber where the blend's beats fall — see Android's
+     * `CrossfadeController.publishBlend`, whose rules this follows: the grid of whichever song is
+     * the louder, placed against what is heard rather than what is decoded, and only re-sent when
+     * it has moved further than a tick's jitter.
+     */
+    private fun publishBlend(playing: Boolean) {
+        if (!automixEnabled) return
+        val track = current ?: return
+        val incoming = upcoming ?: return
+        val last = DesktopPlayerSettings.smartMixBlend.value
+        if (last != null && !playing && !last.playing) return
+        val speed = playbackSpeed.toDouble().takeIf { it > 0.0 } ?: 1.0
+        val outgoingHeardUs = _state.value.let { state ->
+            if (state.song?.videoId == track.song.videoId) state.positionMs * 1_000 else null
+        } ?: outgoingHeardUs()
+        val sides = listOf(
+            analyzer.analysisFor(track.song.videoId) to outgoingHeardUs,
+            analyzer.analysisFor(incoming.song.videoId) to incomingHeardUs(incoming),
+        ).let { if (displaySwitched) it.reversed() else it }
+        val side = sides.firstOrNull { (analysis, _) -> analysis.beatInterval > 0.0 || analysis.bpm > 0.0 }
+        var beatMs = 0f
+        var anchor = 0L
+        if (side != null) {
+            val (analysis, heardUs) = side
+            val beat = if (analysis.beatInterval > 0.0) analysis.beatInterval else 60.0 / analysis.bpm
+            val sinceBeat = ((heardUs / 1_000_000.0 - analysis.firstBeat) % beat + beat) % beat
+            beatMs = (beat * 1000.0 / speed).toFloat()
+            anchor = System.nanoTime() - (sinceBeat / speed * 1e9).toLong()
+        }
+        if (last != null && last.playing == playing && sameGrid(last, beatMs, anchor)) return
+        DesktopPlayerSettings.smartMixBlend.value = MixBlend(beatMs = beatMs, beatAnchorNanos = anchor, playing = playing)
+    }
+
+    /** The outgoing track's heard position, from the sink's clock — [publishPosition]'s sum. */
+    private fun outgoingHeardUs(): Long {
+        val rate = sink.format.sampleRate
+        if (rate <= 0) return seekOffsetUs
+        val played = sink.framesPlayed() - baseFrames + (silence?.skippedFrames ?: 0L)
+        return seekOffsetUs + (played * 1_000_000L / rate * playbackSpeed).toLong()
+    }
+
+    private fun sameGrid(last: MixBlend, beatMs: Float, anchor: Long): Boolean {
+        if (beatMs <= 0f || last.beatMs <= 0f) return beatMs <= 0f && last.beatMs <= 0f
+        if (kotlin.math.abs(beatMs - last.beatMs) > beatMs * 0.005f) return false
+        val beatNanos = (beatMs * 1_000_000.0).toLong().coerceAtLeast(1L)
+        val offset = Math.floorMod(anchor - last.beatAnchorNanos, beatNanos)
+        return minOf(offset, beatNanos - offset) <= ANCHOR_TOLERANCE_NANOS
     }
 
     private fun drainCommands() {
@@ -617,7 +751,9 @@ class DesktopPlaybackEngine(
                 Command.ClearUpcoming -> {
                     upcoming?.decoder?.close()
                     upcoming = null
+                    val wasBlending = fadeRemaining > 0
                     fadeRemaining = 0
+                    if (wasBlending) endBlend()
                 }
                 Command.Flush -> {
                     current?.decoder?.close()
@@ -626,6 +762,8 @@ class DesktopPlaybackEngine(
                     upcoming = null
                     fadeRemaining = 0
                     sink.flush()
+                    framesWritten = sink.framesPlayed()
+                    endBlend()
                 }
             }
         }
@@ -652,6 +790,7 @@ class DesktopPlaybackEngine(
                 }
         }
         sink.gain = volume
+        framesWritten = sink.framesPlayed()
         speedProcessor = DesktopAudioSpeed(sink.format.channels, sink.format.sampleRate)
         spatial = DesktopSpatialAudio(sink.format.channels, sink.format.sampleRate)
         spatialIncoming = DesktopSpatialAudio(sink.format.channels, sink.format.sampleRate)
@@ -674,6 +813,7 @@ class DesktopPlaybackEngine(
         sink.open(decoded.copy(bytesPerSample = precisionBytes(), isFloat = preferFloat))
             .onSuccess {
                 sink.gain = volume
+                framesWritten = sink.framesPlayed()
                 buildChain()
                 // A reopened line counts frames from zero again, so the clock has to be rebased
                 // onto wherever the track had got to.
@@ -716,9 +856,13 @@ class DesktopPlaybackEngine(
     }
 
     private fun performSeek(millis: Long) {
+        // Past the midpoint the listener is looking at — and seeking in — the incoming song, so
+        // the blend is finished on the spot and the seek lands on that one.
+        if (displaySwitched && upcoming != null) promoteUpcoming()
         val track = current ?: return
         track.decoder.seek(millis * 1_000)
         sink.flush()
+        framesWritten = sink.framesPlayed()
         speedProcessor?.reset()
         spatial?.reset()
         spatialIncoming?.reset()
@@ -765,6 +909,13 @@ class DesktopPlaybackEngine(
     private fun publishPosition(track: Track) {
         val format = sink.format
         if (format.sampleRate == 0) return
+        if (displaySwitched) {
+            val incoming = upcoming ?: return
+            val positionMs = incomingHeardUs(incoming) / 1_000
+            if (_state.value.positionMs / 250 == positionMs / 250) return
+            _state.update { it.copy(positionMs = positionMs, isPlaying = !paused, mixing = isSmartMixInProgress()) }
+            return
+        }
         val played = sink.framesPlayed() - baseFrames + (silence?.skippedFrames ?: 0L)
         val elapsedUs = played * 1_000_000L / format.sampleRate
         // Stretched output covers more or less source time than it occupies.
@@ -986,6 +1137,12 @@ class DesktopPlaybackEngine(
             TrackAnalysisState.ANALYSED,
             TrackAnalysisState.REFINING,
         )
+
+        /** Where in a blend the player moves to the incoming song: halfway, as on Android. */
+        private const val DISPLAY_SWITCH_AT = 0.5f
+
+        /** Jitter tolerated in a republished beat anchor; see [publishBlend]. */
+        private const val ANCHOR_TOLERANCE_NANOS = 25_000_000L
 
         const val MAX_CROSSFADE_SECONDS = 12
         const val AUTOMIX_FALLBACK_SECONDS = 6

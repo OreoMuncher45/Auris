@@ -1,5 +1,6 @@
 # Gradle
 .gradle/
+.vscode/
 /build/
 /app/build/
 /desktopApp/bin/

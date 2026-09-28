@@ -41,6 +41,7 @@
     <string name="listen_together_open">一緒に聴く</string>
     <string name="listen_together_open_count">一緒に聴いています · %1$d</string>
     <string name="listen_together_you">あなた</string>
+    <string name="mixing">ミキシング</string>
     <string name="lossless">ロスレス</string>
     <string name="lyrics_already_in_language">この歌詞はすでに%1$sです</string>
     <string name="lyrics_already_romanized">この歌詞はすでにラテン文字です</string>

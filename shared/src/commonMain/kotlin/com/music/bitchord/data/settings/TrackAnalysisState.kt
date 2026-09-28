@@ -38,3 +38,20 @@ data class SmartAnalysis(
  * occupy.
  */
 data class TransitionWindow(val start: Float, val end: Float)
+
+/**
+ * An Automix blend in flight, as the scrubber draws it: the beat it is running
+ * on, and whether it is moving. Only republished when one of those changes.
+ */
+data class MixBlend(
+    /**
+     * Wall-clock length of one beat at the tempo the blend is actually playing
+     * — after any beatmatch stretch and the listener's own speed — or 0 when
+     * neither track's tempo is known.
+     */
+    val beatMs: Float,
+    /** A `System.nanoTime()` at which a beat landed; with [beatMs], places every other one. */
+    val beatAnchorNanos: Long,
+    /** Whether the blend is playing rather than paused; a paused blend holds still. */
+    val playing: Boolean,
+)

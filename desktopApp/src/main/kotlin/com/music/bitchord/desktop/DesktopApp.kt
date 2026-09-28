@@ -36,6 +36,7 @@ import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.QueueSidePanel
 import com.music.bitchord.ui.player.PlayerBack
 import com.music.bitchord.ui.player.RepeatModes
+import com.music.bitchord.ui.player.rememberMixPulse
 import androidx.compose.runtime.SideEffect
 import com.music.bitchord.data.model.QueueTier
 import androidx.compose.animation.AnimatedVisibility
@@ -184,6 +185,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
@@ -3451,6 +3454,12 @@ private fun DesktopTopBar(
 ) {
     val titleBarEnabled by DesktopTitleBarSetting.enabled.collectAsState()
     val inlineCaption = DesktopPlatform.drawsOwnWindowFrame && !titleBarEnabled
+    // The same beat clock the player's scrubber runs, so this line and the player breathe
+    // together through an Automix blend.
+    val mixBlend = DesktopPlayerSettings.smartMixBlend.collectAsState()
+    val reduceAnimation by DesktopPlayerSettings.reduceAnimation.collectAsState()
+    val mixPulse = rememberMixPulse({ mixBlend.value }, enabled = !reduceAnimation)
+    val currentProgress by rememberUpdatedState(progress)
 
     // Apple Music uses one calm strip for both player controls and window furniture. The left
     // sidebar owns the traffic lights; the rest is a balanced transport / now-playing / utility
@@ -3616,13 +3625,24 @@ private fun DesktopTopBar(
                                             )
                                         }
                                     }
+                                    // Drawn rather than sized: through a blend the line covers
+                                    // the full width and pulses on the beat, as the player's
+                                    // scrubber does, and reading either in draw keeps the frame
+                                    // clock from recomposing the whole bar.
                                     Box(
                                         Modifier
                                             .align(Alignment.BottomStart)
                                             .padding(start = 44.dp)
-                                            .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                            .fillMaxWidth()
                                             .height(2.dp)
-                                            .background(Color.White.copy(alpha = 0.48f)),
+                                            .drawBehind {
+                                                val base = currentProgress.coerceIn(0f, 1f)
+                                                val fraction = base + (1f - base) * mixPulse.cover
+                                                drawRect(
+                                                    color = Color.White.copy(alpha = mixPulse.alpha(0.48f)),
+                                                    size = Size(size.width * fraction, size.height),
+                                                )
+                                            },
                                     )
                                 }
                             }

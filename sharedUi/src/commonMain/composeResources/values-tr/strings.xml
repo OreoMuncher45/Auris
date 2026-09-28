@@ -41,6 +41,7 @@
     <string name="listen_together_open">Birlikte dinle</string>
     <string name="listen_together_open_count">Birlikte dinleme · %1$d</string>
     <string name="listen_together_you">Sen</string>
+    <string name="mixing">Miksleniyor</string>
     <string name="lossless">Kayıpsız</string>
     <string name="lyrics_already_in_language">Bu sözler zaten %1$s dilinde</string>
     <string name="lyrics_already_romanized">Bu sözler zaten Latin harfleri kullanıyor</string>

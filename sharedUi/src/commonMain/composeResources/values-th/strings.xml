@@ -41,6 +41,7 @@
     <string name="listen_together_open">ฟังด้วยกัน</string>
     <string name="listen_together_open_count">กำลังฟังด้วยกัน · %1$d</string>
     <string name="listen_together_you">คุณ</string>
+    <string name="mixing">กำลังมิกซ์</string>
     <string name="lossless">ไม่สูญเสียคุณภาพ</string>
     <string name="lyrics_already_in_language">เนื้อเพลงนี้เป็นภาษา %1$s อยู่แล้ว</string>
     <string name="lyrics_already_romanized">เนื้อเพลงนี้ใช้อักษรละตินอยู่แล้ว</string>

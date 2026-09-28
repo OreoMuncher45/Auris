@@ -11,6 +11,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.data.listentogether.ListenTogether
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TrackAnalysisState
 import com.music.bitchord.data.settings.TransitionWindow
@@ -81,13 +82,13 @@ import java.util.Locale
  * MediaSession, audio focus, its listeners and its bookkeeping onto the incoming
  * player.
  *
- * It fires as the incoming track's first note sounds, not at the end of the
- * blend, which keeps the behaviour the old design was built around: the queue
- * index, the metadata, the notification and the UI all flip to the incoming song
- * the moment it becomes audible, rather than trailing the song on its way out.
- * From that instant [outgoing] is the idle player, still audible, being faded
- * out — which is exactly what the previous design used its tail player for, at
- * none of the cost.
+ * It fires halfway through the blend — [HANDOFF_AT] — where the equal-power
+ * curve makes the two tracks equally loud and the incoming one takes over. The
+ * queue index, the metadata, the notification and the UI flip to the incoming
+ * song there: not at its first, barely audible note, and not trailing the song
+ * on its way out. Before it the incoming player is a silent-then-rising
+ * shadow of the session; after it [outgoing] is the idle player, still audible,
+ * being faded out.
  *
  * ## Curve
  *
@@ -108,8 +109,7 @@ class CrossfadeController(
      * track: the MediaSession's player, audio focus, the service's listeners and
      * everything it books against a track change.
      *
-     * Called once per transition, at the instant the incoming track becomes
-     * audible. After it returns, [active] must answer `incoming` and [standby]
+     * Called once per transition, halfway through the blend. After it returns, [active] must answer `incoming` and [standby]
      * must answer `outgoing` — this class re-reads neither during a transition,
      * but everything else in the service does.
      */
@@ -158,8 +158,23 @@ class CrossfadeController(
      * it: the standby's processor has to be told which song it is about to
      * level, or it spends the first half of the blend applying the outgoing
      * track's gain to the incoming one.
+     *
+     * Also given the media id of whatever follows the incoming track on the
+     * standby's queue, so that player's per-track state can follow it across
+     * a later gapless boundary without waiting on the service.
      */
-    private val onArmIncoming: (MediaItem) -> Unit = {},
+    private val onArmIncoming: (MediaItem, String?) -> Unit = { _, _ -> },
+    /**
+     * A smooth headroom trim for both players while two tracks overlap:
+     * `1 / sqrt(incomingGain + outgoingGain)`, 1 otherwise.
+     *
+     * Equal-power gains sum to more than 1 — up to 1.41 at the midpoint — so
+     * two loud masters peaking together pass full scale in the platform mixer
+     * and are hard-clipped into a crackle. The trim holds that to 1.19 at a
+     * cost of at most 1.5 dB mid-blend. A gain rather than a limiter on
+     * purpose — see [LoudnessProcessor].
+     */
+    private val onBlendHeadroom: (Float) -> Unit = {},
     /**
      * True while the service is mid-swap between two versions/cuts of the
      * current track. That swap fades across the same active/standby pair
@@ -297,6 +312,14 @@ class CrossfadeController(
     )
 
     private var fadeStartedAt = 0L
+
+    /**
+     * Both tracks' analyses as the blend began, for the beat the scrubber
+     * glows on — see [publishBlend]. Fixed at the start, like [render], so a
+     * refining pass landing mid-blend cannot move the grid under the glow.
+     */
+    private var outgoingAnalysis = TrackAnalysis()
+    private var incomingAnalysis = TrackAnalysis()
     private var bailStartedAt = 0L
     private var armDeadline = 0L
 
@@ -437,7 +460,9 @@ class CrossfadeController(
         listeningTo = null
         active().volume = 1f
         AppSettings.smartMixInProgress.value = false
+        AppSettings.smartMixBlend.value = null
         filters.open()
+        onBlendHeadroom(1f)
     }
 
     // ---- Entry points -------------------------------------------------------
@@ -467,10 +492,14 @@ class CrossfadeController(
         // carries on alone over a stopped one. Mirrored every tick rather than
         // handled as an event, so audio focus loss, the sleep timer and the
         // pause button all get the same treatment for free. Which player follows
-        // which flips at the handoff: before it the standby shadows the session,
-        // after it the outgoing tail does.
+        // which flips at the handoff, halfway through the blend: before it the
+        // incoming track shadows the session, after it the outgoing tail does.
         if (phase == Phase.FADING || phase == Phase.BAILING) {
-            outgoing?.playWhenReady = incoming?.playWhenReady ?: true
+            if (handedOff) {
+                outgoing?.playWhenReady = incoming?.playWhenReady ?: true
+            } else {
+                outgoing?.playWhenReady?.let { incoming?.playWhenReady = it }
+            }
         }
 
         // Every tick, not only when a transition can be planned. This used to
@@ -924,11 +953,15 @@ class CrossfadeController(
         // fight each other. Undone in [finish].
         into.setPlaybackSpeed((AppSettings.playbackSpeed.value * incomingPlaybackRate).toFloat())
         into.volume = 0f
-        // Before `setMediaItems`, so the standby's per-player audio state is
-        // right for the incoming track from its very first decoded frame
-        // rather than from the handoff, which is half a blend too late.
-        items.getOrNull(nextIndex)?.let(onArmIncoming)
         into.setMediaItems(items, nextIndex, incomingCueTimeMs)
+        // Before `prepare`, so the standby's per-player audio state is right
+        // for the incoming track from its very first decoded frame rather than
+        // from the handoff, which is half a blend too late.
+        items.getOrNull(nextIndex)?.let { item ->
+            val after = into.nextMediaItemIndex
+            val afterId = if (after == C.INDEX_UNSET) null else items.getOrNull(after)?.mediaId
+            onArmIncoming(item, afterId)
+        }
         // Buffers without sounding. Started for real in [startFade].
         into.playWhenReady = false
         into.prepare()
@@ -970,28 +1003,55 @@ class CrossfadeController(
     }
 
     /**
-     * Starts the incoming track and moves the session onto it.
+     * Starts the incoming track under the outgoing one.
      *
-     * The handoff happens *here*, as the first note sounds, not at the end of
-     * the blend. Everything hanging off the session player — queue index,
-     * metadata, the notification, the UI, audio focus — flips to the incoming
-     * song the moment it becomes audible, rather than trailing the song on its
-     * way out. From this point [outgoing] is the idle player, still audible,
-     * being faded away.
+     * The session stays where it is: the player, the notification and the
+     * queue keep showing the outgoing song through the first half of the
+     * blend, while its bar fills to the end, and move to the incoming song at
+     * the midpoint — see [handOff]. Switching the moment the incoming track
+     * first sounded put a song on screen that could barely be heard yet, under
+     * one that was still plainly playing.
      */
     private fun startFade() {
         val out = outgoing ?: return bail()
         val into = incoming ?: return bail()
 
-        // AutoPlay may have appended to the queue since the standby was loaded
-        // with a copy of it; those tracks would otherwise be lost at the swap.
-        reconcileQueue(out, into)
-
         into.volume = 0f
         into.playWhenReady = true
         fadeStartedAt = SystemClock.elapsedRealtime()
+        outgoingAnalysis = out.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
+        incomingAnalysis = into.currentMediaItem?.let(analysisFor) ?: TrackAnalysis()
 
-        Log.d(TAG, "handoff at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
+        Log.d(TAG, "blend start at cue=${into.currentPosition}ms out=${out.currentPosition}ms")
+
+        // Published before the mix flag, in the same tick: the scrubber shows
+        // the old sheen for a mix flag with no blend beside it, and would flash
+        // it for a frame otherwise.
+        publishBlend(out, into, force = true)
+        AppSettings.smartMixInProgress.value = isRealMix()
+        // The bar fills to the end through the first half of the blend, which
+        // would run straight over the marker for the transition now under way.
+        AppSettings.smartTransitionWindow.value = null
+        phase = Phase.FADING
+    }
+
+    /**
+     * Moves the session onto the incoming player, halfway through the blend.
+     *
+     * Everything hanging off the session player — queue index, metadata, the
+     * notification, the UI, audio focus — flips to the incoming song at the
+     * point it becomes the louder of the two. From here [outgoing] is the idle
+     * player, still audible, being faded away.
+     */
+    private fun handOff(out: ExoPlayer, into: ExoPlayer) {
+        if (handedOff) return
+        // AutoPlay may have appended to the queue since the standby was loaded
+        // with a copy of it — during arming or the first half of the blend,
+        // both of which the outgoing player owned — and those tracks would
+        // otherwise be lost at the swap.
+        reconcileQueue(out, into)
+
+        Log.d(TAG, "handoff at in=${into.currentPosition}ms out=${out.currentPosition}ms")
 
         // Before the swap, so the listener follows the session rather than
         // firing on a player this class is about to demote.
@@ -1011,12 +1071,6 @@ class CrossfadeController(
         if (out.mediaItemCount > out.currentMediaItemIndex + 1) {
             out.removeMediaItems(out.currentMediaItemIndex + 1, out.mediaItemCount)
         }
-
-        AppSettings.smartMixInProgress.value = isRealMix()
-        // The queue has just moved on, so the marker's fractions now refer to a
-        // track the session player is no longer showing a position for.
-        AppSettings.smartTransitionWindow.value = null
-        phase = Phase.FADING
     }
 
     /**
@@ -1076,8 +1130,28 @@ class CrossfadeController(
         val elapsed = (player.currentPosition - incomingCueTimeMs).coerceAtLeast(0L)
         val progress = (elapsed.toFloat() / span).coerceIn(0f, 1f)
 
-        player.volume = riseGain(progress)
-        out.volume = fallGain(progress)
+        // Before the handoff the session is still the outgoing player, so a
+        // failure on the incoming one would otherwise go unheard: its position
+        // stops, the blend parks at whatever mix it had reached, and the
+        // outgoing track runs out under it.
+        if (!handedOff && player.playbackState == Player.STATE_IDLE) return bail()
+
+        val rise = riseGain(progress)
+        val fall = fallGain(progress)
+        player.volume = rise
+        out.volume = fall
+        onBlendHeadroom(headroomFor(rise, fall))
+
+        // The midpoint, or sooner if the outgoing track is about to run out
+        // from under it: until the handoff its queue still runs on past the
+        // track, and reaching the end would start the next item — the very
+        // song fading in — a second time on the player that is leaving.
+        val outRemaining = out.duration.takeIf { it != C.TIME_UNSET && it > 0L }
+            ?.minus(out.currentPosition)
+        if (!handedOff && (progress >= HANDOFF_AT || (outRemaining != null && outRemaining <= HANDOFF_GUARD_MS))) {
+            handOff(out, player)
+        }
+        publishBlend(out, player)
         // Only from here, never during ARMING: the standby is silent until the
         // handoff, and [filters] describes the split between the track arriving
         // and the track leaving, which only exists once both are audible.
@@ -1098,7 +1172,76 @@ class CrossfadeController(
             out.playbackState == Player.STATE_ENDED ||
             out.playbackState == Player.STATE_IDLE ||
             settingSwitchedOff
-        if (done) finish()
+        if (done) {
+            // A blend cut short before its midpoint still ends on the incoming
+            // track — it is the one playing on, and what [finish] keeps.
+            handOff(out, player)
+            finish()
+        }
+    }
+
+    /**
+     * Tells the scrubber where the blend's beats fall, and whether it is moving.
+     *
+     * The grid comes from whichever side the listener is hearing more of —
+     * the outgoing track until the handoff, the incoming one after — at the
+     * rate it is actually playing: the listener's speed, and for the incoming
+     * side the beatmatch stretch on top. On a beatmatched pair both grids
+     * agree anyway; on one that isn't, this follows the dominant track.
+     *
+     * Computed every fade tick but *published* only when it has moved: the
+     * scrubber runs its own beat clock and only leans on this anchor, so
+     * re-sending the same grid thirty times a second just wakes every
+     * collector for nothing. A new value goes out when the tempo changes, the
+     * anchor drifts past [ANCHOR_TOLERANCE_NANOS] — a pause, a stall, the
+     * grid moving to the other song — or playback starts or stops.
+     */
+    private fun publishBlend(out: ExoPlayer, into: ExoPlayer, force: Boolean = false) {
+        if (!smartFadeActive) return
+        val session = if (handedOff) into else out
+        val playing = session.isPlaying
+        val last = AppSettings.smartMixBlend.value
+        // A paused blend's grid is frozen along with its players; re-deriving
+        // it against a clock that keeps running would only slide the anchor.
+        if (!force && last != null && !playing && !last.playing) return
+
+        val speed = AppSettings.playbackSpeed.value.toDouble().takeIf { it > 0.0 } ?: 1.0
+        val outSide = BeatSide(outgoingAnalysis, out.currentPosition, speed)
+        val inSide = BeatSide(incomingAnalysis, into.currentPosition, speed * incomingPlaybackRate)
+        val side = (if (handedOff) listOf(inSide, outSide) else listOf(outSide, inSide))
+            .firstOrNull { it.beatSeconds > 0.0 }
+        var beatMs = 0f
+        var anchor = 0L
+        if (side != null) {
+            val beat = side.beatSeconds
+            val sinceBeat = ((side.positionMs / 1000.0 - side.analysis.firstBeat) % beat + beat) % beat
+            beatMs = (beat * 1000.0 / side.rate).toFloat()
+            anchor = System.nanoTime() - (sinceBeat / side.rate * 1e9).toLong()
+        }
+        if (!force && last != null && last.playing == playing && sameGrid(last, beatMs, anchor)) return
+        AppSettings.smartMixBlend.value = MixBlend(
+            beatMs = beatMs,
+            beatAnchorNanos = anchor,
+            playing = playing,
+        )
+    }
+
+    /** Whether [beatMs] and [anchor] describe the grid [last] already published, to within a tick's jitter. */
+    private fun sameGrid(last: MixBlend, beatMs: Float, anchor: Long): Boolean {
+        if (beatMs <= 0f || last.beatMs <= 0f) return beatMs <= 0f && last.beatMs <= 0f
+        if (abs(beatMs - last.beatMs) > beatMs * TEMPO_TOLERANCE) return false
+        val beatNanos = (beatMs * 1_000_000.0).toLong().coerceAtLeast(1L)
+        // Distance between the two anchors, the short way round one beat.
+        val offset = Math.floorMod(anchor - last.beatAnchorNanos, beatNanos)
+        return minOf(offset, beatNanos - offset) <= ANCHOR_TOLERANCE_NANOS
+    }
+
+    private class BeatSide(val analysis: TrackAnalysis, val positionMs: Long, val rate: Double) {
+        val beatSeconds: Double = when {
+            analysis.beatInterval > 0.0 -> analysis.beatInterval
+            analysis.bpm > 0.0 -> 60.0 / analysis.bpm
+            else -> 0.0
+        }
     }
 
     /**
@@ -1161,14 +1304,16 @@ class CrossfadeController(
 
     /** Ramps the outgoing track away rather than cutting it, so an interruption has no click in it. */
     private fun driveBail() {
-        val out = outgoing
-        if (out == null) {
+        val leaving = leavingOnBail()
+        if (leaving == null) {
             finish()
             return
         }
         val progress = (SystemClock.elapsedRealtime() - bailStartedAt).toFloat() / BAIL_MS
         if (progress < 1f) {
-            out.volume = bailFromGain * fallGain(progress)
+            val fall = bailFromGain * fallGain(progress)
+            leaving.volume = fall
+            onBlendHeadroom(headroomFor(1f, fall))
             return
         }
         finish()
@@ -1191,21 +1336,26 @@ class CrossfadeController(
         if (phase == Phase.IDLE || phase == Phase.BAILING) return
         Log.d(TAG, "bail from $phase")
         AppSettings.smartMixInProgress.value = false
-        if (!handedOff) {
+        AppSettings.smartMixBlend.value = null
+        if (!handedOff && phase != Phase.FADING) {
             // Nothing was ever audible; no ramp to run.
             finish()
             return
         }
-        // Glided open rather than snapped: the incoming track is audible here,
-        // and if the bail caught a bass swap mid-handover its low end is
-        // currently lifted out. Dropping a 24 dB/octave filter in one buffer is
-        // the click this ramp exists to avoid.
+        // Glided open rather than snapped: both tracks are audible here, and
+        // if the bail caught a bass swap mid-handover a low end is currently
+        // lifted out. Dropping a 24 dB/octave filter in one buffer is the click
+        // this ramp exists to avoid.
         filters.open()
-        incoming?.volume = 1f
-        bailFromGain = outgoing?.volume ?: 0f
+        // Whichever track is *not* the session's is the one ramped away: the
+        // outgoing tail after the handoff, the incoming track before it.
+        if (handedOff) incoming?.volume = 1f else outgoing?.volume = 1f
+        bailFromGain = leavingOnBail()?.volume ?: 0f
         bailStartedAt = SystemClock.elapsedRealtime()
         phase = Phase.BAILING
     }
+
+    private fun leavingOnBail(): ExoPlayer? = if (handedOff) outgoing else incoming
 
     private fun finish() {
         if (phase != Phase.IDLE) {
@@ -1218,9 +1368,11 @@ class CrossfadeController(
             settledAt = SystemClock.elapsedRealtime()
         }
         AppSettings.smartMixInProgress.value = false
+        AppSettings.smartMixBlend.value = null
         // Unconditional and idempotent, like the speed reset below: correct
         // whether or not this transition ever filtered anything.
         filters.open()
+        onBlendHeadroom(1f)
         render = Render()
 
         if (handedOff) {
@@ -1247,6 +1399,8 @@ class CrossfadeController(
         queuedItemCount = 0
         incomingCueTimeMs = 0L
         incomingPlaybackRate = 1.0
+        outgoingAnalysis = TrackAnalysis()
+        incomingAnalysis = TrackAnalysis()
         phase = Phase.IDLE
     }
 
@@ -1285,6 +1439,24 @@ class CrossfadeController(
         val configured = configuredFadeMs()
         if (duration == C.TIME_UNSET || duration <= 0L) return configured
         return minOf(configured, duration / 3).coerceAtLeast(0L)
+    }
+
+    /**
+     * [filters] addressed by track rather than by session role.
+     *
+     * The service wires [TransitionFilters.incoming] to the session player's
+     * sink and [TransitionFilters.outgoing] to the spare's, which describes the
+     * two tracks only once the handoff has moved the session. The handoff is
+     * halfway through the blend now, so for the first half the roles are the
+     * other way round, and each ride would otherwise be filtering the wrong
+     * song.
+     */
+    private val tracks = object : TransitionFilters {
+        override fun incoming(lowPassHz: Float, highPassHz: Float) =
+            if (handedOff) filters.incoming(lowPassHz, highPassHz) else filters.outgoing(lowPassHz, highPassHz)
+
+        override fun outgoing(lowPassHz: Float, highPassHz: Float) =
+            if (handedOff) filters.outgoing(lowPassHz, highPassHz) else filters.incoming(lowPassHz, highPassHz)
     }
 
     /**
@@ -1348,11 +1520,11 @@ class CrossfadeController(
         // and a full one is properly separated, rather than everything getting
         // the same treatment at different speeds.
         val floor = glide(open, VOCAL_SEPARATION_FLOOR_HZ, amount)
-        filters.outgoing(
+        tracks.outgoing(
             glide(open, floor, progress.toDouble().pow(FILTER_SWEEP_SHAPE)).toFloat(),
             TransitionFilterProcessor.OFF_HZ,
         )
-        filters.incoming(
+        tracks.incoming(
             TransitionFilterProcessor.OPEN_HZ,
             entryHighPass(progress, amount, VOCAL_SEPARATION_HIGH_PASS_HZ, ENTRY_OPEN_BY),
         )
@@ -1402,8 +1574,8 @@ class CrossfadeController(
         val entry = glide(open, FILTER_ENTRY_HZ, sweep)
         val floor = glide(open, FILTER_FLOOR_HZ, sweep)
         val cutoff = glide(entry, floor, progress.toDouble().pow(FILTER_SWEEP_SHAPE))
-        filters.outgoing(cutoff.toFloat(), TransitionFilterProcessor.OFF_HZ)
-        filters.incoming(
+        tracks.outgoing(cutoff.toFloat(), TransitionFilterProcessor.OFF_HZ)
+        tracks.incoming(
             TransitionFilterProcessor.OPEN_HZ,
             entryHighPass(progress, sweep, ENTRY_HIGH_PASS_HZ, ENTRY_OPEN_BY),
         )
@@ -1487,8 +1659,8 @@ class CrossfadeController(
                 BLEND_ENTRY_OPEN_BY + (BLEND_ENTRY_CLASH_OPEN_BY - BLEND_ENTRY_OPEN_BY) * clash,
             ),
         )
-        filters.incoming(TransitionFilterProcessor.OPEN_HZ, entry)
-        filters.outgoing(blendExitLowPass(progress, clash), bassCutoff(handover))
+        tracks.incoming(TransitionFilterProcessor.OPEN_HZ, entry)
+        tracks.outgoing(blendExitLowPass(progress, clash), bassCutoff(handover))
     }
 
     /**
@@ -1539,6 +1711,12 @@ class CrossfadeController(
 
     private fun fallGain(progress: Float): Float =
         cos(progress.coerceIn(0f, 1f) * PI.toFloat() / 2f)
+
+    /** See [onBlendHeadroom]. */
+    private fun headroomFor(incomingGain: Float, outgoingGain: Float): Float {
+        val sum = incomingGain + outgoingGain
+        return if (sum <= 1f) 1f else 1f / kotlin.math.sqrt(sum)
+    }
 
     // There is deliberately no second, equal-gain pair here any more. It existed
     // for the handoff of a track from one player to the other, where the two
@@ -1800,6 +1978,30 @@ class CrossfadeController(
          * that is leaving.
          */
         const val BLEND_EXIT_LOW_PASS_HZ = 2_200.0
+
+        /**
+         * Where in the blend the session moves to the incoming track: halfway,
+         * which with an equal-power curve is the instant the two are equally
+         * loud and the incoming one takes over.
+         */
+        const val HANDOFF_AT = 0.5f
+
+        /**
+         * Hands off early when the outgoing track is this close to its end,
+         * before its still-intact queue can advance it. Several fade ticks, so
+         * one late tick cannot miss it.
+         */
+        const val HANDOFF_GUARD_MS = 400L
+
+        /**
+         * How far a freshly derived beat anchor may sit from the published one
+         * before it is worth sending. Above a tick's worth of position jitter,
+         * well under what the eye reads as a pulse off the beat.
+         */
+        const val ANCHOR_TOLERANCE_NANOS = 25_000_000L
+
+        /** Relative tempo change worth re-publishing; beatmatch rates are fixed per blend. */
+        const val TEMPO_TOLERANCE = 0.005f
 
         const val IDLE_STEP_MS = 250L
 

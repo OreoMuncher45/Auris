@@ -122,6 +122,14 @@ class PrecisionAudioSink(
     private var timestampedInputTimeUs: Long = C.TIME_UNSET
     private var framesEmittedForInput: Long = 0L
 
+    /**
+     * Whether audio has flowed since the last flush — which is what tells a
+     * gapless track boundary apart from a skip. Both reach [setOutputStreamOffsetUs],
+     * but only a boundary arrives mid-stream, and only there is the chain's
+     * "next track" the one actually starting.
+     */
+    private var streaming = false
+
     override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
         val format = audioSinkConfig.format
         activeFormat = format
@@ -270,6 +278,7 @@ class PrecisionAudioSink(
         val channelCount = audioBlock.channelCount
         val bytesPerFrame = inEncoding.bytesPerFrame(channelCount)
         if (bytesPerFrame <= 0) return true
+        streaming = true
 
         // 1. Drain pending output from previous cycle if delegate had backpressure
         if (outputByteBuffer.hasRemaining()) {
@@ -373,7 +382,20 @@ class PrecisionAudioSink(
         return presentationTimeUs + Util.sampleCountToDurationUs(frames, configuredSampleRate)
     }
 
+    /**
+     * Called by the renderer as the output side moves onto the next stream —
+     * after the outgoing track's last buffer, before the incoming one's first.
+     * That is the one moment the DSP chain can switch per-track state on the
+     * right sample, so a gapless boundary is passed on; a skip, which flushed
+     * first, is not.
+     */
+    override fun setOutputStreamOffsetUs(outputStreamOffsetUs: Long) {
+        if (streaming) dspChain.onStreamBoundary()
+        super.setOutputStreamOffsetUs(outputStreamOffsetUs)
+    }
+
     override fun flush() {
+        streaming = false
         outputByteBuffer.clear()
         outputByteBuffer.flip()
         audioBlock.clear()
@@ -388,6 +410,7 @@ class PrecisionAudioSink(
     }
 
     override fun reset() {
+        streaming = false
         processCounter = 0L
         outputByteBuffer.clear()
         outputByteBuffer.flip()

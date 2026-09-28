@@ -41,6 +41,7 @@
     <string name="listen_together_open">一起听</string>
     <string name="listen_together_open_count">一起听 · %1$d</string>
     <string name="listen_together_you">你</string>
+    <string name="mixing">混音中</string>
     <string name="lossless">无损</string>
     <string name="lyrics_already_in_language">歌词已经是%1$s</string>
     <string name="lyrics_already_romanized">这些歌词已经是拉丁字母</string>

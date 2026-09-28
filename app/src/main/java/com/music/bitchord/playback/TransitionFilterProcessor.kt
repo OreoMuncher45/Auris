@@ -51,6 +51,9 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
     private val highA3 = FloatArray(STAGES)
     private val highK = FloatArray(STAGES)
 
+    /** Whether the integrators hold anything since they were last cleared. */
+    private var filterStateDirty = false
+
     /**
      * Aims the filter. [lowPassHz] at or above [OPEN_HZ] and [highPassHz] at or
      * below [OFF_HZ] mean "not filtering", which is the state this returns to
@@ -96,8 +99,10 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         val parked = targetLow >= OPEN_HZ && targetHigh <= OFF_HZ &&
             currentLowPassHz >= OPEN_HZ - SETTLED_HZ && currentHighPassHz <= OFF_HZ + SETTLED_HZ
         if (parked) {
+            clearStateIfNeeded()
             return
         }
+        filterStateDirty = true
 
         var remaining = frameCount
         var frameOffset = 0
@@ -169,10 +174,12 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
         val parked = targetLow >= OPEN_HZ && targetHigh <= OFF_HZ &&
             currentLowPassHz >= OPEN_HZ - SETTLED_HZ && currentHighPassHz <= OFF_HZ + SETTLED_HZ
         if (parked) {
+            clearStateIfNeeded()
             outputBuffer.put(inputBuffer)
             outputBuffer.flip()
             return
         }
+        filterStateDirty = true
 
         inputBuffer.order(ByteOrder.nativeOrder())
         outputBuffer.order(ByteOrder.nativeOrder())
@@ -199,6 +206,22 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             remaining -= subBlock
         }
         outputBuffer.flip()
+    }
+
+    /**
+     * Forgets the integrators once the filter parks.
+     *
+     * Parking skips the filter without running it, so whatever the integrators
+     * held when the last transition ended would otherwise sit there until the
+     * next one — minutes later — and be the first thing that transition's
+     * filter output: a step of stale signal at the head of the blend, heard as
+     * a click. Zeroed state is a filter at rest, which is what an unused one is.
+     */
+    private fun clearStateIfNeeded() {
+        if (!filterStateDirty) return
+        lowState.fill(0f)
+        highState.fill(0f)
+        filterStateDirty = false
     }
 
     // ---- Filter ------------------------------------------------------------

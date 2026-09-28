@@ -41,6 +41,7 @@
     <string name="listen_together_open">साथ में सुनें</string>
     <string name="listen_together_open_count">साथ में सुन रहे हैं · %1$d</string>
     <string name="listen_together_you">आप</string>
+    <string name="mixing">मिक्सिंग</string>
     <string name="lossless">लॉसलेस</string>
     <string name="lyrics_already_in_language">ये लिरिक्स पहले से %1$s में हैं</string>
     <string name="lyrics_already_romanized">ये लिरिक्स पहले से लैटिन अक्षरों में हैं</string>

@@ -41,6 +41,7 @@
     <string name="listen_together_open">להאזין ביחד</string>
     <string name="listen_together_open_count">מאזינים ביחד · %1$d</string>
     <string name="listen_together_you">אתם</string>
+    <string name="mixing">מיקס</string>
     <string name="lossless">Lossless</string>
     <string name="lyrics_already_in_language">המילים כבר ב%1$s</string>
     <string name="lyrics_already_romanized">המילים האלה כבר כתובות באותיות לטיניות</string>

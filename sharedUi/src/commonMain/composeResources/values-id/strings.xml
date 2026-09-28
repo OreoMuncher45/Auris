@@ -41,6 +41,7 @@
     <string name="listen_together_open">Dengar bersama</string>
     <string name="listen_together_open_count">Mendengar bersama · %1$d</string>
     <string name="listen_together_you">Kamu</string>
+    <string name="mixing">Mixing</string>
     <string name="lossless">Lossless</string>
     <string name="lyrics_already_in_language">Lirik ini sudah dalam %1$s</string>
     <string name="lyrics_already_romanized">Lirik ini sudah memakai huruf Latin</string>
