@@ -7,6 +7,7 @@
 # Run it from the backend/ directory of a checkout on the VM. The DNS A record
 # for $DOMAIN must already point at this VM, or Caddy cannot get a certificate.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 
 DOMAIN="${DOMAIN:?set DOMAIN, e.g. DOMAIN=jam.bitchord.kushagrasingh.in}"
 GO_VERSION="${GO_VERSION:-1.27.0}"
