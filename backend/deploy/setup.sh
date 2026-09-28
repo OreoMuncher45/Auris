@@ -54,8 +54,9 @@ echo "== firewall"
 # Oracle's Ubuntu images ship an iptables REJECT rule that blocks everything
 # but SSH, independent of the VCN security list. Open 80/443 above it.
 for port in 80 443; do
-  iptables -C INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null ||
-    iptables -I INPUT 6 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
+  while iptables -D INPUT -p tcp --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; do :; done
+  reject="$(iptables -L INPUT --line-numbers -n | awk '$2 == "REJECT" { print $1; exit }')"
+  iptables -I INPUT "${reject:-1}" -p tcp --dport "$port" -m state --state NEW -j ACCEPT
 done
 netfilter-persistent save
 
