@@ -20,8 +20,10 @@ case "$(uname -m)" in
 esac
 
 echo "== packages"
-apt-get update -y
-apt-get install -y curl debian-keyring debian-archive-keyring apt-transport-https gnupg iptables-persistent
+if ! dpkg -s curl git gnupg iptables-persistent >/dev/null 2>&1; then
+  apt-get update -y
+  apt-get install -y curl git debian-keyring debian-archive-keyring apt-transport-https gnupg iptables-persistent
+fi
 
 echo "== Go $GO_VERSION"
 if ! /usr/local/go/bin/go version 2>/dev/null | grep -q "go$GO_VERSION"; then
@@ -50,8 +52,15 @@ if ! command -v caddy >/dev/null; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
   apt-get update -y && apt-get install -y caddy
 fi
-sed "s/{\$DOMAIN}/$DOMAIN/" "$BACKEND_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
-systemctl reload caddy || systemctl restart caddy
+sed "s/{\$DOMAIN}/$DOMAIN/" "$BACKEND_DIR/deploy/Caddyfile" > /tmp/Caddyfile
+if ! cmp -s /tmp/Caddyfile /etc/caddy/Caddyfile; then
+  mv /tmp/Caddyfile /etc/caddy/Caddyfile
+  systemctl reload caddy || systemctl restart caddy
+fi
+
+echo "== deploy hook"
+echo "$DOMAIN" > /etc/bitchord-domain
+install -m 755 "$BACKEND_DIR/deploy/bitchord-deploy.sh" /usr/local/sbin/bitchord-deploy
 
 echo "== firewall"
 # Oracle's Ubuntu images ship an iptables REJECT rule that blocks everything
