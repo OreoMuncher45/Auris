@@ -40,6 +40,9 @@ install -m 644 "$BACKEND_DIR/deploy/bitchord-jam.service" /etc/systemd/system/bi
 systemctl daemon-reload
 systemctl enable bitchord-jam
 systemctl restart bitchord-jam
+install -m 644 "$BACKEND_DIR/deploy/bitchord-keepalive.service" /etc/systemd/system/bitchord-keepalive.service
+systemctl daemon-reload
+systemctl enable --now bitchord-keepalive
 
 echo "== caddy (HTTPS + WebSocket proxy)"
 if ! command -v caddy >/dev/null; then

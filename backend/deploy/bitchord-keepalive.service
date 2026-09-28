@@ -1,0 +1,16 @@
+[Unit]
+Description=Keep the Always Free VM above Oracle's idle-reclaim threshold
+# Oracle may reclaim an Always Free VM whose 95th-percentile CPU stays under
+# 20% for 7 days. This holds a steady ~25%, and SCHED_IDLE means it only ever
+# gets CPU time the party server isn't using.
+
+[Service]
+ExecStart=/bin/sh -c 'while :; do :; done'
+CPUQuota=25%
+CPUSchedulingPolicy=idle
+Nice=19
+DynamicUser=true
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
