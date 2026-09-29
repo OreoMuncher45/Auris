@@ -111,6 +111,24 @@ enum class TransitionStyle {
 }
 
 /**
+ * The gesture used inside an unmatched-tempo [TransitionStyle.DJ_FILTER].
+ *
+ * This is deterministic per pair rather than random per planner tick: the
+ * planner runs repeatedly while a song plays, and a genuinely random answer
+ * would make the marker and the renderer change their minds before arming.
+ */
+enum class FilterTransitionVariant {
+    /** Strong complementary high/low-pass sweep. */
+    SWEEP,
+
+    /** Lighter colour change with a conspicuous low-end and fader handoff. */
+    BASS_HANDOFF,
+
+    /** Filter ride whose outgoing side trails away through the beat-synced echo. */
+    ECHO_RIDE,
+}
+
+/**
  * The planned transition for one pair of tracks, in outgoing-track timeline
  * seconds.
  *
@@ -149,6 +167,8 @@ data class TransitionPlan(
     val bedPosition: Double = BED_POSITION,
     val bassSwapFraction: Double = 0.7,
     val filterSweep: Double = 0.0,
+    /** The stable per-pair gesture for [TransitionStyle.DJ_FILTER]. */
+    val filterVariant: FilterTransitionVariant = FilterTransitionVariant.SWEEP,
     /**
      * How strongly the two tracks are expected to be singing over each other
      * through this overlap, 0..1; see [vocalOverlapAmount].
@@ -212,6 +232,16 @@ private fun itemText(track: TransitionTrackInfo?): String =
     if (track == null) "" else listOf(track.title, track.artist, track.album)
         .filter { it.isNotBlank() }
         .joinToString(" ")
+
+/** A small stable hash so the same queue pair always receives the same gesture on every target. */
+private fun filterVariantFor(current: TransitionTrackInfo?, next: TransitionTrackInfo?): FilterTransitionVariant {
+    var hash = 0xCBF29CE484222325uL
+    val key = "${current?.id.orEmpty()}\u0000${next?.id.orEmpty()}"
+    for (character in key) {
+        hash = (hash xor character.code.toULong()) * 0x100000001B3uL
+    }
+    return FilterTransitionVariant.entries[(hash % FilterTransitionVariant.entries.size.toULong()).toInt()]
+}
 
 /**
  * Gapless is for an album being played through, not for any two songs that
@@ -810,8 +840,13 @@ private fun phraseSwitch(
         nextDuration = nextLength,
         advanced = advanced,
     ) as? WsolaPlanResult.Planned ?: return null
+    // Advanced mode never slows the incoming song or retimes the audible
+    // outgoing song. A phrase switch that requires either degrades to the
+    // vocal-aware filter planner below.
+    if (advanced && planned.stretchRatio < 1.0) return null
 
     val overlap = planned.transitionEnd - planned.transitionStart
+    val renderedIncomingRate = incomingRateFor(planned.stretchRatio, advanced)
     return TransitionPlan(
         markerVisible = true,
         transitionStart = planned.transitionStart,
@@ -821,7 +856,7 @@ private fun phraseSwitch(
         handoffDuration = overlap,
         incomingCueTime = planned.incomingCueTime,
         incomingHandoffTime = planned.incomingHandoffTime,
-        incomingPlaybackRate = incomingRateFor(planned.stretchRatio, advanced),
+        incomingPlaybackRate = renderedIncomingRate,
         outgoingPlaybackRate = outgoingRateFor(planned.stretchRatio, advanced),
         pickupSeconds = incomingAudibleStart(nextAnalysis),
         transitionBeats = planned.beats,
@@ -848,13 +883,13 @@ private fun phraseSwitch(
             transitionStart = planned.transitionStart,
             transitionEnd = planned.transitionEnd,
             incomingCueTime = planned.incomingCueTime,
-            incomingPlaybackRate = planned.stretchRatio,
+            incomingPlaybackRate = renderedIncomingRate,
         ),
         outgoingBpm = planned.outgoingBpm,
         incomingBpm = planned.incomingBpm,
         beatSeconds = 60 / planned.outgoingBpm,
-        // The BEATMATCHED tier already demanded both grids at beatmatch confidence.
-        phaseLock = true,
+        // Playback speed remains fixed once either deck is audible.
+        phaseLock = false,
         transitionStyle = TransitionStyle.DJ_BLEND,
     )
 }
@@ -871,15 +906,16 @@ private val STRETCH_WINDOW = 0.9..1.1
 /**
  * How fast the incoming track plays for a blend whose incoming timeline must
  * run [mediaRatio] times the outgoing one's. Classically that is simply the
- * ratio, up or down. Advanced never slows a track: a ratio below 1 is met by
- * speeding the outgoing track up instead — see [outgoingRateFor].
+ * ratio, up or down. Advanced only speeds up the incoming track. Changing the
+ * already-audible outgoing deck's AudioTrack rate causes discontinuities on
+ * some Android routes, so a faster incoming track uses a filter transition.
  */
 private fun incomingRateFor(mediaRatio: Double, advanced: Boolean): Double =
     roundRate(if (advanced && mediaRatio < 1) 1.0 else mediaRatio)
 
-/** [incomingRateFor]'s partner: the outgoing track's speed-up, 1 unless advanced and it is the slower. */
+/** The audible outgoing deck is never tempo-shifted. */
 private fun outgoingRateFor(mediaRatio: Double, advanced: Boolean): Double =
-    roundRate(if (advanced && mediaRatio < 1) 1 / mediaRatio else 1.0)
+    1.0
 
 private fun roundRate(rate: Double): Double = (rate * 10000).roundToInt() / 10000.0
 
@@ -904,6 +940,12 @@ private const val CALM_ENERGY = 0.7
 
 /** A planned overlap singing over itself this much is worth trying another exit for. */
 private const val VOCAL_REROUTE_OVERLAP = 0.3
+
+/** At this overlap, musical variety yields to keeping only one lead vocal prominent. */
+private const val VOCAL_SAFE_FALLBACK_THRESHOLD = 0.18
+
+/** Conservative overlap used when both tracks look sung but a timed vocal mask is unavailable. */
+private const val VOCAL_MASK_MISSING_PROTECTION = 0.55
 
 /** ...and an alternative is taken only if it at least halves the collision. */
 private const val VOCAL_REROUTE_GAIN = 0.5
@@ -1004,6 +1046,7 @@ private fun adaptiveOverlap(
     nextAnalysis: TrackAnalysis,
     traits: PairTraits? = null,
     energy: Double = 1.0,
+    filterVariant: FilterTransitionVariant = FilterTransitionVariant.SWEEP,
 ): Overlap {
     val currentBpm = analysis.bpm.orZero()
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -1019,8 +1062,20 @@ private fun adaptiveOverlap(
         if (!vocalConflict && (abs(1 - ratio) > 0.07 || (distance != null && distance > 4))) 16 else 8
     } else {
         // Tempo alone keeps the long ride: the one-kick bass handover is what
-        // stops two unmatched grids flamming, not a shorter overlap.
-        val base = if (traits.keyClash || traits.vocalConflict) 8 else 16
+        // stops two unmatched grids flamming. Unmatched fallbacks deliberately
+        // stay compact and vary by gesture; the old 10-12 second sweep made
+        // every fallback sound like the same ordinary crossfade.
+        val base = if (traits.tempoFar) {
+            when (filterVariant) {
+                FilterTransitionVariant.SWEEP -> 12
+                FilterTransitionVariant.BASS_HANDOFF,
+                FilterTransitionVariant.ECHO_RIDE -> 8
+            }
+        } else if (traits.keyClash || traits.vocalConflict) {
+            8
+        } else {
+            16
+        }
         (base * energy).roundToInt().coerceIn(MIN_FADE_BEATS, MAX_ADVANCED_BEATS)
     }
     val beatSeconds = 60 / currentBpm
@@ -1228,7 +1283,10 @@ fun planTransition(
         }
 
     val traits = if (advanced) PairTraits(analysis, nextAnalysis) else null
-    val primary = mixPlan(analysis, nextAnalysis, mixAnchor, mixOutAnchor.type, length, nextLength, traits)
+    val filterVariant = if (traits != null) filterVariantFor(currentTrack, nextTrack) else FilterTransitionVariant.SWEEP
+    val primary = mixPlan(
+        analysis, nextAnalysis, mixAnchor, mixOutAnchor.type, length, nextLength, traits, filterVariant,
+    )
     // An exit where the outgoing track is still singing over the incoming one
     // is worth trading for another the analysis ranked, if one halves the
     // collision. Only planned while it could still be taken: once the playhead
@@ -1240,7 +1298,7 @@ fun planTransition(
         rankedMixOuts.asSequence()
             .filter { abs(it.time - mixAnchor) > 1.0 && it.time <= length }
             .take(MAX_REROUTE_CANDIDATES)
-            .map { mixPlan(analysis, nextAnalysis, it.time, it.type, length, nextLength, traits) }
+            .map { mixPlan(analysis, nextAnalysis, it.time, it.type, length, nextLength, traits, filterVariant) }
             .filter { playbackTime < it.transitionStart }
             .minByOrNull { it.vocalOverlap }
             ?.takeIf { it.vocalOverlap <= primary.vocalOverlap * VOCAL_REROUTE_GAIN }
@@ -1273,6 +1331,7 @@ private fun mixPlan(
     length: Double,
     nextLength: Double,
     traits: PairTraits?,
+    filterVariant: FilterTransitionVariant,
 ): TransitionPlan {
     val currentBpm = analysis.bpm.orZero()
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -1282,14 +1341,18 @@ private fun mixPlan(
     } else {
         1.0
     }
-    val (overlap, transitionBeats, incomingPlaybackRate) = adaptiveOverlap(analysis, nextAnalysis, traits, energy)
+    val (overlap, transitionBeats, incomingPlaybackRate) = adaptiveOverlap(
+        analysis, nextAnalysis, traits, energy, filterVariant,
+    )
     val handoffBpm = if (currentBpm > 0) currentBpm else nextBpm
     // Advanced also blends any pair a speed-up matches on two trusted grids —
     // the 5-10% apart that used to be left to a filter ride.
-    val sameBeatBlend = currentBpm > 0 && nextBpm > 0 &&
-        abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
-        (analysis.beatConfidence.orZero() >= 0.2 || nextAnalysis.beatConfidence.orZero() >= 0.2) ||
-        traits?.phaseLockable == true
+    val sameBeatBlend = (traits == null || incomingPlaybackRate >= 1.0) && (
+        currentBpm > 0 && nextBpm > 0 &&
+            abs(1 - normalizedTempoRatio(currentBpm, nextBpm)) <= 0.05 &&
+            (analysis.beatConfidence.orZero() >= 0.2 || nextAnalysis.beatConfidence.orZero() >= 0.2) ||
+            traits?.phaseLockable == true
+        )
     val outgoingArrangementOverlap =
         if (sameBeatBlend && mixOutType == "content_end") {
             min(ARRANGEMENT_OVERLAP_BEATS * 60 / currentBpm, MAX_DISCARDED_MUSIC_SECONDS)
@@ -1305,7 +1368,16 @@ private fun mixPlan(
         arrangementEnd
     }
     val maxBeats = if (traits != null) MAX_ADVANCED_BEATS.toDouble() else AUTO_TRANSITION_MAX_BEATS
-    val maxSeconds = if (traits != null && energy > 1) CALM_MAX_SECONDS else AUTO_TRANSITION_MAX_SECONDS
+    val fallbackMaxSeconds = when (filterVariant) {
+        FilterTransitionVariant.SWEEP -> 8.0
+        FilterTransitionVariant.BASS_HANDOFF -> 7.0
+        FilterTransitionVariant.ECHO_RIDE -> 7.0
+    }
+    val maxSeconds = when {
+        traits != null && !sameBeatBlend -> fallbackMaxSeconds
+        traits != null && energy > 1 -> CALM_MAX_SECONDS
+        else -> AUTO_TRANSITION_MAX_SECONDS
+    }
     val maximumOverlap = minOf(
         if (handoffBpm > 0) (maxBeats * 60) / handoffBpm else maxSeconds,
         maxSeconds,
@@ -1391,21 +1463,46 @@ private fun mixPlan(
 
     val alignedOverlap = mixEnd - transitionStart
     val hasBassContent = analysis.lowEnergyCurve.isNotEmpty() || nextAnalysis.lowEnergyCurve.isNotEmpty()
-    // Advanced: a filter ride whose outgoing track is still singing at the
-    // handover, or leaves on a sudden energy drop, echoes out instead of
-    // being filtered away — the last line trails off in time rather than
-    // being muffled mid-word. Never a beat-matched blend, which blends.
-    val echoSeconds = if (gridBeatSeconds > 0 && !sameBeatBlend) {
+    val measuredVocalOverlap = plannedVocalOverlap(
+        analysis = analysis,
+        nextAnalysis = nextAnalysis,
+        transitionStart = transitionStart,
+        transitionEnd = mixEnd,
+        incomingCueTime = finalIncomingCueTime,
+        incomingPlaybackRate = incomingPlaybackRate,
+    )
+    // A missing time mask must not mean "instrumental". Whole-track vocal
+    // likelihood is less precise, but it is a safe fallback when either side
+    // has not produced its mask yet.
+    val vocalOverlap = max(
+        measuredVocalOverlap,
+        if (
+            traits?.vocalConflict == true &&
+            (analysis.vocalActivityMask.isEmpty() || nextAnalysis.vocalActivityMask.isEmpty())
+        ) VOCAL_MASK_MISSING_PROTECTION else 0.0,
+    )
+    val vocalSafeFallback = !sameBeatBlend && vocalOverlap >= VOCAL_SAFE_FALLBACK_THRESHOLD
+    // One stable fallback personality trails the outgoing track on a beat.
+    // It is selected per track pair, not per playback attempt, so retrying a
+    // transition never changes the plan underneath the renderer.
+    val echoSeconds = if (
+        gridBeatSeconds > 0 &&
+        !sameBeatBlend &&
+        !vocalSafeFallback &&
+        filterVariant == FilterTransitionVariant.ECHO_RIDE
+    ) {
         val echo = echoSecondsFor(gridBeatSeconds)
-        // The renderer bar-snaps [FILTER_ECHO_AT]; two beats either way covers it.
         val echoPoint = transitionStart + FILTER_ECHO_AT * alignedOverlap
         val room = echoPoint + 2 * gridBeatSeconds + echoTailSeconds(echo) + ECHO_ROOM_MARGIN_SECONDS <= length
-        val vocalExit = (
-            vocalActivityBetween(analysis, echoPoint - 4 * gridBeatSeconds, echoPoint) ?: 0.0
-            ) >= VOCAL_ACTIVE_THRESHOLD
-        if (room && (vocalExit || mixOutType == "energy_cliff")) echo else 0.0
+        if (room) echo else 0.0
     } else {
         0.0
+    }
+    val resolvedFilterVariant = when {
+        vocalSafeFallback -> FilterTransitionVariant.SWEEP
+        filterVariant == FilterTransitionVariant.ECHO_RIDE && echoSeconds <= 0.0 ->
+            FilterTransitionVariant.BASS_HANDOFF
+        else -> filterVariant
     }
     return TransitionPlan(
         markerVisible = true,
@@ -1428,16 +1525,12 @@ private fun mixPlan(
         // outgoing track behind a closing low-pass. Left at zero on the blend
         // branch so the renderer doesn't do both at once.
         filterSweep = if (sameBeatBlend) 0.0 else FILTER_SWEEP,
-        vocalOverlap = plannedVocalOverlap(
-            analysis = analysis,
-            nextAnalysis = nextAnalysis,
-            transitionStart = transitionStart,
-            transitionEnd = mixEnd,
-            incomingCueTime = finalIncomingCueTime,
-            incomingPlaybackRate = incomingPlaybackRate,
-        ),
+        filterVariant = if (sameBeatBlend) FilterTransitionVariant.SWEEP else resolvedFilterVariant,
+        vocalOverlap = vocalOverlap,
         beatSeconds = gridBeatSeconds,
-        phaseLock = traits?.phaseLockable == true,
+        // Tempo is fixed while audible. Live phase-lock pulses changed
+        // AudioTrack playback parameters mid-buffer and cracked on some phones.
+        phaseLock = false,
         echoSeconds = echoSeconds,
         reason = "smart-duration",
     )

@@ -187,7 +187,6 @@ fun SettingsScreen(
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
-    val advancedAutomix by AppSettings.advancedAutomixEnabled.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val dolbyAtmos by AppSettings.dolbyAtmos.collectAsStateWithLifecycle()
@@ -642,20 +641,6 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setSmartFadeEnabled(!smartFade) },
                 )
-            }
-            // Reads as part of Automix above it, and means nothing while
-            // Automix itself is off — same treatment as Play animated cover
-            // over cellular under Animated cover art.
-            if (smartFade) {
-                val advancedAutomixTitle = stringResource(R.string.advanced_automix)
-                row(advancedAutomixTitle, "automix", "dj", "beatmatch", divided = false) {
-                    SettingsSubRow(
-                        title = advancedAutomixTitle,
-                        checked = advancedAutomix,
-                        onCheckedChange = AppSettings::setAdvancedAutomixEnabled,
-                        subtitle = stringResource(R.string.advanced_automix_subtitle),
-                    )
-                }
             }
             val automixPerformanceTitle = stringResource(R.string.automix_performance)
             row(automixPerformanceTitle, "cpu", "battery") {

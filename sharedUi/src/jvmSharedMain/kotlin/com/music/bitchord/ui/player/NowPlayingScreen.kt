@@ -647,6 +647,7 @@ fun NowPlayingScreen(
     // CanvasRepository, which is also where the "is this actually the right
     // track" check lives.
     val spotifyCanvasAutoHide by PlayerSettings.spotifyCanvasAutoHide.collectAsStateWithLifecycle()
+    val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
     val canvas = rememberCanvasArtwork(song)
     var canvasAspect by remember(canvas) { mutableFloatStateOf(0f) }
     // Whether the clip actually has a frame on screen right now, and one of
@@ -1104,10 +1105,11 @@ fun NowPlayingScreen(
         volume.dragging,
         lyricsOpen,
         queueOpen,
+        mixing,
     ) {
         if (!spotifyCanvasPresentation || !spotifyCanvasControlsOpen ||
             !spotifyCanvasAutoHide || !isPlaying || scrub.scrubbing || volume.dragging ||
-            lyricsOpen || queueOpen
+            lyricsOpen || queueOpen || mixing
         ) return@LaunchedEffect
         delay(SPOTIFY_CANVAS_CONTROLS_IDLE_MS)
         spotifyCanvasControlsOpen = false
@@ -1119,6 +1121,12 @@ fun NowPlayingScreen(
         if (spotifyCanvasPresentation && !lyricsOpen && !queueOpen) {
             spotifyCanvasControlsOpen = true
         }
+    }
+    // A transition can begin while Canvas is standing alone. Restore and pin
+    // the compact deck so both the outgoing and incoming song are identified;
+    // normal tap/idle collapsing resumes as soon as the mix finishes.
+    LaunchedEffect(spotifyCanvasPresentation, mixing) {
+        if (spotifyCanvasPresentation && mixing) spotifyCanvasControlsOpen = true
     }
     // Portrait clips always use the existing artwork mesh, even if the user
     // selected the legacy backdrop for ordinary artwork.
@@ -1413,7 +1421,6 @@ fun NowPlayingScreen(
             label = "landscapeArtworkScale",
         )
         val versionAligning by PlayerSettings.versionAlignmentInProgress.collectAsStateWithLifecycle()
-        val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
         val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
         val panelOpen = lyricsOpen || queueOpen
 
@@ -1966,7 +1973,7 @@ fun NowPlayingScreen(
                 // the compact metadata row consume their own taps first; empty
                 // video above or below them toggles the lower deck either way.
                 .toggleSpotifyCanvasControlsOnTap(
-                    enabled = spotifyCanvasPresentation,
+                    enabled = spotifyCanvasPresentation && !mixing,
                     onToggle = { spotifyCanvasControlsOpen = !spotifyCanvasControlsOpen },
                 )
                 .then(skipSwipeGesture),
@@ -2811,7 +2818,7 @@ fun NowPlayingScreen(
             SlidingPlayerDeck(
                 visible = (!lyricsOpen || lyricsControlsOpen) &&
                     (!queueOpen || queueControlsOpen) &&
-                    (!spotifyCanvasPresentation || spotifyCanvasControlsOpen),
+                    (!spotifyCanvasPresentation || spotifyCanvasControlsOpen || mixing),
                 reveal = playerDeckReveal,
             ) {
             Column(
@@ -2881,7 +2888,6 @@ fun NowPlayingScreen(
                 )
             }
             val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
-            val mixing by PlayerSettings.smartMixInProgress.collectAsStateWithLifecycle()
             PlayerScrubber(
                 shown = shown,
                 durationMs = durationMs,
