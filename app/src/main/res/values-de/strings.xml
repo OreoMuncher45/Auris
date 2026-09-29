@@ -616,6 +616,8 @@
     <string name="version_cut_aligned">ausgerichtet</string>
     <string name="automix_enabled_subtitle">Timing und Überblendung jedes Übergangs werden direkt aus den Titeln bestimmt. Schalte dies aus, wenn das Telefon heiß wird oder die Wiedergabe stockt.</string>
     <string name="automix_disabled_subtitle">Timing und Überblendung von Übergängen erfolgen automatisch, ohne Regler. Die Leistung kann auf langsameren Geräten variieren.</string>
+    <string name="advanced_automix">Erweiterter Automix</string>
+    <string name="advanced_automix_subtitle">Mischt wie ein DJ: hält die Beats synchron, setzt jeden Übergang auf den Beat und schneidet zwischen Songs, die nicht zusammenpassen. Keine zusätzliche Verarbeitung.</string>
     <string name="no_lyrics_sources_enabled">Keine. Songtexte werden nicht abgerufen.</string>
     <string name="song_cache_large_subtitle">Behält bis zu %1$s heruntergeladenes Audio auf dem Speicher. Das kann einen spürbaren Teil deines freien Speicherplatzes beanspruchen.</string>
     <string name="song_cache_limit_subtitle">Behält heruntergeladenes Audio auf dem Speicher für sofortiges Springen und Wiederholen</string>

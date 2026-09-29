@@ -664,6 +664,8 @@
     <string name="version_cut_aligned">allineato</string>
     <string name="automix_enabled_subtitle">Calcola i tempi e fonde ogni transizione dai brani stessi. Disattivalo se il telefono si scalda o la riproduzione si blocca.</string>
     <string name="automix_disabled_subtitle">Calcola i tempi e fonde le transizioni automaticamente, senza un cursore. Le prestazioni possono variare sui dispositivi più lenti.</string>
+    <string name="advanced_automix">Automix avanzato</string>
+    <string name="advanced_automix_subtitle">Mixa come un DJ: tiene i battiti allineati, fa ogni passaggio sul tempo e taglia tra i brani che non si fondono. Nessuna elaborazione aggiuntiva.</string>
     <string name="no_lyrics_sources_enabled">Nessuna. I testi non verranno recuperati.</string>
     <string name="song_cache_large_subtitle">Mantiene fino a %1$s di audio scaricato sul disco. Questo può occupare una quota significativa dello spazio libero.</string>
     <string name="song_cache_limit_subtitle">Mantiene l\'audio scaricato sul disco per ricerca istantanea e replay</string>

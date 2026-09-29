@@ -617,6 +617,8 @@
     <string name="version_cut_aligned">aligné</string>
     <string name="automix_enabled_subtitle">Chronomètre et mélange chaque transition à partir des morceaux eux-mêmes. Désactivez-le si le téléphone chauffe ou si la lecture saccade.</string>
     <string name="automix_disabled_subtitle">Chronomètre et mélange les transitions automatiquement, sans curseur. Les performances peuvent varier sur les appareils plus lents.</string>
+    <string name="advanced_automix">Automix avancé</string>
+    <string name="advanced_automix_subtitle">Mixe comme un DJ : garde les temps calés, place chaque changement sur le temps et coupe entre les morceaux qui ne se mélangent pas. Aucun traitement supplémentaire.</string>
     <string name="no_lyrics_sources_enabled">Aucune. Les paroles ne seront pas récupérées.</string>
     <string name="song_cache_large_subtitle">Conserve jusqu\'à %1$s d\'audio téléchargé sur le disque. Cela peut occuper une part importante de votre espace libre.</string>
     <string name="song_cache_limit_subtitle">Conserve l\'audio téléchargé sur le disque pour une recherche instantanée et de nouvelles écoutes</string>

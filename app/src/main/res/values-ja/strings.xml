@@ -598,6 +598,8 @@
     <string name="version_cut_aligned">同期済み</string>
     <string name="automix_enabled_subtitle">トラック自体からすべての切り替えのタイミングとブレンドを計算します。端末が熱くなったり再生が途切れたりする場合はオフにしてください。</string>
     <string name="automix_disabled_subtitle">スライダーなしで切り替えのタイミングとブレンドを自動的に計算します。低スペック端末ではパフォーマンスが変わることがあります。</string>
+    <string name="advanced_automix">高度なオートミックス</string>
+    <string name="advanced_automix_subtitle">DJ のようにミックスします。ビートを揃え、切り替えを拍に合わせ、合わない曲同士はカットでつなぎます。追加の処理は不要です。</string>
     <string name="no_lyrics_sources_enabled">なし。歌詞は取得されません。</string>
     <string name="song_cache_large_subtitle">ダウンロードした音声を最大%1$sまでディスクに保持します。空き容量をかなり使用することがあります。</string>
     <string name="song_cache_limit_subtitle">即座にシークや再生ができるよう、ダウンロードした音声をディスクに保持します</string>

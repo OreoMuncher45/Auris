@@ -627,6 +627,8 @@
     <string name="version_cut_aligned">จัดตำแหน่งแล้ว</string>
     <string name="automix_enabled_subtitle">กำหนดจังหวะและผสานทุกช่วงเปลี่ยนเพลงจากตัวแทร็กเอง ปิดหากเครื่องร้อนหรือการเล่นกระตุก</string>
     <string name="automix_disabled_subtitle">กำหนดจังหวะและผสานช่วงเปลี่ยนเพลงโดยอัตโนมัติ โดยไม่มีแถบเลื่อน ประสิทธิภาพอาจแตกต่างกันในอุปกรณ์ที่ช้ากว่า</string>
+    <string name="advanced_automix">Automix ขั้นสูง</string>
+    <string name="advanced_automix_subtitle">มิกซ์แบบดีเจ: รักษาจังหวะให้ตรงกัน เปลี่ยนเพลงตรงจังหวะ และตัดข้ามเพลงที่เข้ากันไม่ได้ ไม่มีการประมวลผลเพิ่ม</string>
     <string name="no_lyrics_sources_enabled">ไม่มี จะไม่มีการดึงเนื้อเพลง</string>
     <string name="song_cache_large_subtitle">เก็บเสียงที่ดาวน์โหลดไว้บนดิสก์สูงสุด %1$s ซึ่งอาจใช้พื้นที่ว่างของคุณไปมาก</string>
     <string name="song_cache_limit_subtitle">เก็บเสียงที่ดาวน์โหลดไว้บนดิสก์เพื่อการเลื่อนฟังและฟังซ้ำได้ทันที</string>

@@ -616,6 +616,8 @@
     <string name="version_cut_aligned">अलाइन हो गया</string>
     <string name="automix_enabled_subtitle">ट्रैक्स से खुद हर ट्रांज़िशन का समय और मिश्रण तय करता है। फ़ोन गर्म होने या प्लेबैक अटकने पर इसे बंद कर दें।</string>
     <string name="automix_disabled_subtitle">बिना स्लाइडर के, ट्रांज़िशन का समय और मिश्रण अपने आप तय करता है। धीमे डिवाइस पर परफ़ॉर्मेंस अलग हो सकती है।</string>
+    <string name="advanced_automix">एडवांस्ड ऑटोमिक्स</string>
+    <string name="advanced_automix_subtitle">DJ की तरह मिक्स करता है: बीट्स को मिलाए रखता है, हर बदलाव बीट पर करता है और जो गाने मेल नहीं खाते उनके बीच कट करता है। कोई अतिरिक्त प्रोसेसिंग नहीं।</string>
     <string name="no_lyrics_sources_enabled">कोई नहीं। लिरिक्स नहीं लिए जाएंगे।</string>
     <string name="song_cache_large_subtitle">डिस्क पर %1$s तक डाउनलोड किया गया ऑडियो रखता है। इससे आपकी खाली जगह का एक बड़ा हिस्सा इस्तेमाल हो सकता है।</string>
     <string name="song_cache_limit_subtitle">तुरंत सीक करने और दोबारा सुनने के लिए डाउनलोड किया गया ऑडियो डिस्क पर रखता है</string>

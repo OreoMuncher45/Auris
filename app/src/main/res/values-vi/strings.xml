@@ -641,6 +641,8 @@
     <string name="version_cut_aligned">đã khớp</string>
     <string name="automix_enabled_subtitle">Tự động căn thời gian và hòa âm từng đoạn chuyển bài dựa trên bản nhạc. Tắt đi nếu điện thoại nóng lên hoặc nhạc bị giật lag.</string>
     <string name="automix_disabled_subtitle">Tự động căn thời gian và hòa âm đoạn chuyển bài mà không cần thanh trượt. Hiệu năng có thể khác nhau trên các thiết bị yếu hơn.</string>
+    <string name="advanced_automix">Automix nâng cao</string>
+    <string name="advanced_automix_subtitle">Trộn nhạc như DJ: giữ nhịp khớp nhau, chuyển bài đúng phách và cắt giữa những bài không hòa hợp. Không xử lý thêm.</string>
     <string name="no_lyrics_sources_enabled">Không có. Sẽ không tải lời bài hát.</string>
     <string name="song_cache_large_subtitle">Lưu tối đa %1$s âm thanh đã tải trên ổ đĩa. Tùy chọn này có thể chiếm dung lượng đáng kể trong bộ nhớ trống của bạn.</string>
     <string name="song_cache_limit_subtitle">Lưu trữ âm thanh đã tải trên đĩa để tua nhanh và phát lại tức thì</string>

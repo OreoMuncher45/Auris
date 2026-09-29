@@ -639,6 +639,8 @@
     <string name="version_cut_aligned">выровнено</string>
     <string name="automix_enabled_subtitle">Рассчитывает время и смешивает каждый переход на основе самих треков. Отключите, если телефон нагревается или воспроизведение прерывается.</string>
     <string name="automix_disabled_subtitle">Автоматически рассчитывает время и смешивает переходы без ползунка. Производительность может отличаться на медленных устройствах.</string>
+    <string name="advanced_automix">Расширенный автомикс</string>
+    <string name="advanced_automix_subtitle">Сводит как диджей: держит биты синхронно, делает каждый переход в долю и режет между треками, которые не сочетаются. Без дополнительной обработки.</string>
     <string name="no_lyrics_sources_enabled">Ничего. Текст песен не будет загружаться.</string>
     <string name="song_cache_large_subtitle">Хранит на диске до %1$s загруженного аудио. Это может занять заметную часть свободного места.</string>
     <string name="song_cache_limit_subtitle">Хранит загруженное аудио на диске для мгновенной перемотки и повторного прослушивания</string>

@@ -569,6 +569,8 @@
     <string name="version_cut_aligned">alinhado</string>
     <string name="automix_enabled_subtitle">Cronometra e mistura cada transição. Desligue se o telefone aquecer ou engasgar.</string>
     <string name="automix_disabled_subtitle">Mistura transições automaticamente, sem slider. O desempenho pode variar.</string>
+    <string name="advanced_automix">Automix avançado</string>
+    <string name="advanced_automix_subtitle">Mixa como um DJ: mantém as batidas alinhadas, faz cada mudança no tempo e corta entre músicas que não combinam. Sem processamento extra.</string>
     <string name="no_lyrics_sources_enabled">Nenhuma. As letras não serão baixadas.</string>
     <string name="song_cache_large_subtitle">Mantém até %1$s de áudio em disco. Isso pode usar bastante espaço.</string>
     <string name="song_cache_limit_subtitle">Mantém áudio em disco para navegação instantânea e replays</string>

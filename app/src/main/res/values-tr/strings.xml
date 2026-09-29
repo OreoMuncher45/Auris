@@ -646,6 +646,8 @@
     <string name="version_cut_aligned">hizalandı</string>
     <string name="automix_enabled_subtitle">Her geçişin zamanlamasını ve karışımını parçaların kendisinden yapar. Telefon ısınırsa veya çalma takılırsa kapat.</string>
     <string name="automix_disabled_subtitle">Geçişlerin zamanlamasını ve karışımını kaydırıcı olmadan otomatik olarak yapar. Performans daha yavaş cihazlarda değişebilir.</string>
+    <string name="advanced_automix">Gelişmiş Automix</string>
+    <string name="advanced_automix_subtitle">Bir DJ gibi miksler: ritimleri senkron tutar, her geçişi vuruşta yapar ve uyuşmayan şarkılar arasında keser. Ek işlem yok.</string>
     <string name="no_lyrics_sources_enabled">Yok. Sözler alınmayacak.</string>
     <string name="song_cache_large_subtitle">Diskte %1$s\'a kadar indirilen sesi tutar. Bu, boş alanının önemli bir kısmını kaplayabilir.</string>
     <string name="song_cache_limit_subtitle">Anında atlama ve tekrar dinleme için indirilen sesi diskte tutar</string>

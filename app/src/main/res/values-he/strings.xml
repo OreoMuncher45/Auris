@@ -568,6 +568,8 @@
     <string name="version_cut_aligned">מיושר</string>
     <string name="automix_enabled_subtitle">מתזמן ומשלב כל מעבר מהרצועות עצמן. כבה זאת אם הטלפון מתחמם או ההפעלה מגמגמת.</string>
     <string name="automix_disabled_subtitle">מתזמן ומשלב מעברים באופן אוטומטי, ללא מחוון. הביצועים עשויים להשתנות במכשירים איטיים.</string>
+    <string name="advanced_automix">Automix מתקדם</string>
+    <string name="advanced_automix_subtitle">מערבב כמו די-ג׳יי: שומר על הקצב מסונכרן, מבצע כל מעבר על הפעמה וחותך בין שירים שלא מתמזגים. ללא עיבוד נוסף.</string>
     <string name="no_lyrics_sources_enabled">אין. מילים לא יורדו.</string>
     <string name="song_cache_large_subtitle">שומר עד %1$s של שמע שהורד בכונן. זה יכול לתפוס נתח משמעותי מהמקום הפנוי שלך.</string>
     <string name="song_cache_limit_subtitle">שומר שמע שהורד בכונן לחיפוש מיידי ולהשמעות חוזרות</string>

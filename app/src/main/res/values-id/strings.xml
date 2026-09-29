@@ -598,6 +598,8 @@
     <string name="version_cut_aligned">selaras</string>
     <string name="automix_enabled_subtitle">Mengatur waktu dan memadukan setiap transisi dari trek itu sendiri. Nonaktifkan jika ponsel menjadi panas atau pemutaran tersendat.</string>
     <string name="automix_disabled_subtitle">Mengatur waktu dan memadukan transisi secara otomatis, tanpa penggeser. Performa dapat bervariasi pada perangkat yang lebih lambat.</string>
+    <string name="advanced_automix">Automix Lanjutan</string>
+    <string name="advanced_automix_subtitle">Mencampur seperti DJ: menjaga ketukan tetap selaras, melakukan setiap perpindahan tepat di ketukan, dan memotong antar lagu yang tidak cocok. Tanpa pemrosesan tambahan.</string>
     <string name="no_lyrics_sources_enabled">Tidak ada. Lirik tidak akan diambil.</string>
     <string name="song_cache_large_subtitle">Menyimpan hingga %1$s audio yang diunduh di disk. Ini dapat memakan porsi ruang kosong yang cukup besar.</string>
     <string name="song_cache_limit_subtitle">Menyimpan audio yang diunduh di disk untuk pencarian posisi dan pemutaran ulang instan</string>

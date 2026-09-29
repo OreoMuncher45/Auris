@@ -1648,6 +1648,21 @@ class PlaybackService : MediaLibraryService() {
 
                 override fun outgoing(lowPassHz: Float, highPassHz: Float) =
                     spareFilter.setCutoffs(lowPassHz, highPassHz)
+
+                override fun incomingLeadMs(): Long = activeFilter.leadUs / 1000
+
+                override fun outgoingLeadMs(): Long = spareFilter.leadUs / 1000
+
+                override fun incomingEcho(delaySeconds: Float, send: Float, dry: Float) =
+                    activeFilter.setEcho(delaySeconds, send, dry)
+
+                override fun outgoingEcho(delaySeconds: Float, send: Float, dry: Float) =
+                    spareFilter.setEcho(delaySeconds, send, dry)
+
+                override fun parkEchoes() {
+                    transitionFilterA.parkEcho()
+                    transitionFilterB.parkEcho()
+                }
             },
             analysisRunningFor = { item -> trackAnalyzer.isAnalysing(item.mediaId) },
             // The standby is still the spare when this runs — it only becomes
@@ -1888,7 +1903,10 @@ class PlaybackService : MediaLibraryService() {
             standbyPlayer.skipSilenceEnabled = activePlayer.skipSilenceEnabled
             standbyPlayer.repeatMode = activePlayer.repeatMode
             standbyPlayer.shuffleModeEnabled = activePlayer.shuffleModeEnabled
-            standbyPlayer.setPlaybackSpeed(activePlayer.playbackParameters.speed)
+            // The listener's speed, not the active player's: straight after an
+            // Advanced Automix blend the active player is still easing off its
+            // beatmatch stretch, and copying that would keep it for good.
+            standbyPlayer.setPlaybackSpeed(AppSettings.playbackSpeed.value)
             standbyPlayer.volume = 0f
             standbyPlayer.setMediaItems(newItems, currentIndex, alignedStartPos)
             spareLoudness().track(mediaId, nextMediaIdOf(standbyPlayer))

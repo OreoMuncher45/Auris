@@ -598,6 +598,8 @@
     <string name="version_cut_aligned">已对齐</string>
     <string name="automix_enabled_subtitle">根据曲目本身自动把控每次过渡的时机与混合效果。如果手机发热或播放卡顿，请将其关闭。</string>
     <string name="automix_disabled_subtitle">自动把控过渡的时机与混合效果，无需手动调节。在性能较弱的设备上效果可能有所不同。</string>
+    <string name="advanced_automix">高级自动混音</string>
+    <string name="advanced_automix_subtitle">像 DJ 一样混音：保持节拍同步，每次切换都踩在拍子上，并在不搭的歌曲之间直接切换。无需额外处理。</string>
     <string name="no_lyrics_sources_enabled">无。将不会获取歌词。</string>
     <string name="song_cache_large_subtitle">最多在磁盘上保留 %1$s 的已下载音频，这可能会占用较多可用空间。</string>
     <string name="song_cache_limit_subtitle">将已下载的音频保留在磁盘上，以便即时跳转和重播</string>

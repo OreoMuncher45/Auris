@@ -232,6 +232,15 @@ object AppSettings {
      */
     val smartFadeEnabled = MutableStateFlow(false)
 
+    /**
+     * Advanced Automix, a sub-option of [smartFadeEnabled]: the same analysis
+     * rendered the way a DJ would — beats held in phase, the stretch eased off
+     * afterwards, per-style fader curves, moves on the beat, cuts for pairs that
+     * will not blend. No extra analysis or audio processing; only how the
+     * existing gains, filters and playback speed are driven. Off by default.
+     */
+    val advancedAutomixEnabled = MutableStateFlow(false)
+
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
     val skipSilence = MutableStateFlow(false)
@@ -769,6 +778,7 @@ object AppSettings {
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        advancedAutomixEnabled.value = prefs.getBoolean(KEY_ADVANCED_AUTOMIX, false)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -1059,6 +1069,11 @@ object AppSettings {
     fun setSmartFadeEnabled(value: Boolean) {
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
+    }
+
+    fun setAdvancedAutomixEnabled(value: Boolean) {
+        advancedAutomixEnabled.value = value
+        prefs.edit().putBoolean(KEY_ADVANCED_AUTOMIX, value).apply()
     }
 
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
@@ -1887,6 +1902,7 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_ADVANCED_AUTOMIX = "advanced_automix_enabled"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
