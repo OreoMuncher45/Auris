@@ -24,6 +24,8 @@ internal class DesktopAudioSpeed(
     private var tail = FloatArray(hop * channels)
     private var hasTail = false
     private var output = FloatArray(0)
+    /** Once a track has been stretched, stay in the windowed path at 1x until it is reset. */
+    private var engaged = false
 
     /** How much of the array [process] returned belongs to this call. */
     var outputCount: Int = 0
@@ -32,13 +34,14 @@ internal class DesktopAudioSpeed(
     /** Stretches [count] interleaved samples. */
     fun process(input: FloatArray, count: Int): FloatArray {
         val rate = speed
-        if (abs(rate - 1f) < 0.001f) {
+        if (abs(rate - 1f) < 0.001f && !engaged) {
             // Nothing to do, and nothing to be gained by pretending otherwise: a window pass at 1.0
             // would still smear transients slightly.
             reset()
             outputCount = count
             return input
         }
+        engaged = true
 
         append(input, count)
         val advance = (hop * rate).roundToInt().coerceAtLeast(1)
@@ -119,6 +122,7 @@ internal class DesktopAudioSpeed(
     fun reset() {
         pendingFrames = 0
         hasTail = false
+        engaged = false
         outputCount = 0
     }
 }

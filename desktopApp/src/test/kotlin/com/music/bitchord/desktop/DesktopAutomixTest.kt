@@ -59,6 +59,7 @@ class DesktopAutomixTest {
             duration = seconds,
             fadeSeconds = 6.0,
             mode = CrossfadeMode.SMART,
+            advanced = true,
         )
 
         assertTrue(!plan.blocked, "the planner refused the pair: ${plan.reason}")

@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import com.music.bitchord.playback.TransitionFilter
 import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.TransitionStyle
+import com.music.bitchord.playback.smart.FilterTransitionVariant
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.sin
@@ -138,6 +139,44 @@ class DesktopTransitionFilterTest {
         // And it genuinely travels: ends held apart rather than both sitting open.
         assertTrue(incomingLow.last() > incomingLow.first() * 2, "the incoming track never gained the low end")
         assertTrue(outgoingLow.last() < outgoingLow.first() * 0.5, "the outgoing track never lost the low end")
+    }
+
+    @Test
+    fun `fallback personalities have distinct fader rides`() {
+        fun gains(variant: FilterTransitionVariant): List<Float> {
+            val result = FloatArray(2)
+            DesktopTransitionRide.gains(
+                TransitionPlan(
+                transitionStyle = TransitionStyle.DJ_FILTER,
+                filterVariant = variant,
+                transitionBeats = 8,
+                fadeSeconds = 4.0,
+                ),
+                0.4f,
+                result,
+            )
+            return result.toList()
+        }
+
+        val sweep = gains(FilterTransitionVariant.SWEEP)
+        val bass = gains(FilterTransitionVariant.BASS_HANDOFF)
+        val echo = gains(FilterTransitionVariant.ECHO_RIDE)
+        assertTrue(sweep != bass && bass != echo && sweep != echo)
+    }
+
+    @Test
+    fun `echo ride keeps the outgoing fader up for its delay tail`() {
+        val plan = TransitionPlan(
+            transitionStyle = TransitionStyle.DJ_FILTER,
+            filterVariant = FilterTransitionVariant.ECHO_RIDE,
+            transitionBeats = 8,
+            fadeSeconds = 4.0,
+            echoSeconds = 0.5,
+        )
+        val gains = FloatArray(2)
+        DesktopTransitionRide.gains(plan, 1f, gains)
+        assertTrue(gains[0] > 0.99f)
+        assertTrue(DesktopTransitionRide.echoLevel(plan, 1.25f) < 0.5f)
     }
 
     /** The two filters as the ride aims them at [progress], glided to target. */

@@ -12,6 +12,7 @@ import com.music.bitchord.playback.smart.CrossfadeMode
 import com.music.bitchord.playback.smart.TransitionPlan
 import com.music.bitchord.playback.smart.TransitionStyle
 import com.music.bitchord.playback.smart.TransitionTrackInfo
+import com.music.bitchord.playback.smart.echoTailSeconds
 import com.music.bitchord.playback.smart.planTransition
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.ceil
 
 /** Playback, decoded here rather than behind JavaFX. */
 /**
@@ -102,6 +104,12 @@ class DesktopPlaybackEngine(
     ) {
         var gain = 1f
         var finished = false
+        var tempo: DesktopTempoBuffer? = null
+        var tempoRate = 1.0
+        var tempoEaseStep = 0.0
+        var tempoEaseEveryFrames = 0L
+        var tempoEaseNextFrame = Long.MAX_VALUE
+        var tempoOutputFrames = 0L
     }
 
     private sealed interface Command {
@@ -436,6 +444,9 @@ class DesktopPlaybackEngine(
     private var baseFrames = 0L
     private var fadeRemaining = 0
     private var fadeTotal = 0
+    /** Fade plus any echo tail. [fadeTotal] remains the nominal fader span. */
+    private var transitionTotal = 0
+    private var transitionEcho: DesktopTransitionEcho? = null
 
     /**
      * Samples of the incoming track already rendered under the outgoing one.
@@ -447,8 +458,12 @@ class DesktopPlaybackEngine(
      * there is a single sink, so what the incoming track has actually consumed
      * has to be counted to be known.
      */
-    private var incomingSamples = 0L
+    private var incomingSourceFrames = 0.0
     private var mixed = FloatArray(0)
+    private var endPadding = FloatArray(0)
+    private val transitionGains = FloatArray(2)
+    private var currentReadCount = 0
+    private var incomingReadCount = 0
 
     /**
      * Output frames handed to the sink, on the same count as [DesktopAudioSink.framesPlayed]:
@@ -495,12 +510,24 @@ class DesktopPlaybackEngine(
         }
         sink.resume()
 
-        val block = track.decoder.readSamples()
+        val block = readCurrent(track)
+        val count = currentReadCount
         if (block == null) {
+            if (fadeRemaining > 0 && upcoming != null) {
+                val channels = sink.format.channels.coerceAtLeast(1)
+                val wanted = MIX_END_PADDING_FRAMES * channels
+                if (endPadding.size < wanted) endPadding = FloatArray(wanted)
+                java.util.Arrays.fill(endPadding, 0, wanted, 0f)
+                val (blended, blendedCount) = blend(track, endPadding, wanted)
+                val (stretched, stretchedCount) = stretch(blended, blendedCount)
+                sink.write(stretched, stretchedCount)
+                framesWritten += stretchedCount / channels
+                publishPosition(track)
+                return
+            }
             finishTrack(track)
             return
         }
-        val count = track.decoder.sampleCount
         if (count == 0) return
 
         val (blended, blendedCount) = blend(track, block, count)
@@ -523,11 +550,10 @@ class DesktopPlaybackEngine(
         if (fadeRemaining <= 0 || incoming == null) return block to count
 
         if (mixed.size < count) mixed = FloatArray(count)
-        val other = incoming.decoder.readSamples()
-        val otherCount = if (other == null) 0 else incoming.decoder.sampleCount
-        // What is mixed, not what was decoded: the loop below reads at most [count] of them, and
-        // counting the surplus would have the incoming track appear further along than it sounds.
-        incomingSamples += minOf(otherCount, count)
+        val other = readIncoming(incoming, count)
+        val otherCount = incomingReadCount
+        val incomingRate = incoming.tempoRate.takeIf { it > 0.0 } ?: 1.0
+        incomingSourceFrames += otherCount.toDouble() / sink.format.channels.coerceAtLeast(1) * incomingRate
         if (other != null) {
             widen(spatialIncoming, incoming, other, otherCount)
             equalise(equalizerIncoming, other, otherCount)
@@ -538,23 +564,40 @@ class DesktopPlaybackEngine(
 
         var index = 0
         while (index < count) {
-            val progress = 1f - (fadeRemaining.toFloat() / fadeTotal).coerceIn(0f, 1f)
-            plan?.let { DesktopTransitionRide.aim(it, progress, outgoingFilter, incomingFilter) }
+            val progress = ((transitionTotal - fadeRemaining).toFloat() / fadeTotal.coerceAtLeast(1))
+            val styleProgress = progress.coerceIn(0f, 1f)
+            plan?.let { DesktopTransitionRide.aim(it, styleProgress, outgoingFilter, incomingFilter) }
             outgoingFilter.advance()
             incomingFilter.advance()
 
-            val out = kotlin.math.sqrt(1f - progress)
-            val into = kotlin.math.sqrt(progress)
+            if (plan != null) DesktopTransitionRide.gains(plan, styleProgress, transitionGains)
+            val out = if (plan != null) transitionGains[0] else kotlin.math.sqrt(1f - styleProgress)
+            val into = if (plan != null) transitionGains[1] else kotlin.math.sqrt(styleProgress)
             // Equal-power gains sum past 1 — up to 1.41 at the midpoint — and two loud masters
             // peaking together would be clipped hard by the sink. A smooth trim of
             // 1 / sqrt(out + into) holds that to 1.19 for at most 1.5 dB, and reshapes nothing:
             // the same trim Android's two players take.
-            val trim = 1f / kotlin.math.sqrt((out + into).coerceAtLeast(1f))
+            val outgoingLevel = if (plan != null && plan.echoSeconds > 0.0) {
+                DesktopTransitionRide.echoLevel(plan, progress)
+            } else {
+                out
+            }
+            val trim = 1f / kotlin.math.sqrt((outgoingLevel + into).coerceAtLeast(1f))
             val stop = minOf(count, index + subBlock)
             val span = stop - index
             while (index < stop) {
                 val channel = index % channels
-                val leaving = outgoingFilter.filter(channel, block[index])
+                var leaving = outgoingFilter.filter(channel, block[index])
+                if (plan != null && plan.echoSeconds > 0.0) {
+                    val echoAt = DesktopTransitionRide.echoAt(plan)
+                    val echoFrom = DesktopTransitionRide.echoFrom(plan)
+                    if (progress >= echoFrom) {
+                        val send = if (progress >= echoAt) 0f else ((progress - echoFrom) / (echoAt - echoFrom)).coerceIn(0f, 1f)
+                        val kill = DesktopTransitionRide.echoKill(plan)
+                        val dry = (1f - ((progress - echoAt) / kill).coerceIn(0f, 1f))
+                        leaving = transitionEcho?.process(leaving, send, dry) ?: leaving
+                    }
+                }
                 val arriving = if (index < otherCount) {
                     incomingFilter.filter(channel, other!![index])
                 } else {
@@ -565,10 +608,65 @@ class DesktopPlaybackEngine(
             }
             fadeRemaining -= span
         }
-        val progress = 1f - (fadeRemaining.toFloat() / fadeTotal).coerceIn(0f, 1f)
-        if (!displaySwitched && progress >= DISPLAY_SWITCH_AT && fadeRemaining > 0) switchDisplay(incoming)
+        val progress = ((transitionTotal - fadeRemaining).toFloat() / fadeTotal.coerceAtLeast(1))
+        val handoffAt = plan?.let(DesktopTransitionRide::handoffAt) ?: DISPLAY_SWITCH_AT
+        if (!displaySwitched && progress >= handoffAt && fadeRemaining > 0) switchDisplay(incoming)
         if (fadeRemaining <= 0) promoteUpcoming() else publishBlend(playing = true)
         return mixed to count
+    }
+
+    /** Reads the playing deck, preserving a tempo buffer inherited from its incoming handoff. */
+    private fun readCurrent(track: Track): FloatArray? {
+        val tempo = track.tempo ?: run {
+            val block = track.decoder.readSamples()
+            currentReadCount = if (block == null) 0 else track.decoder.sampleCount
+            return block
+        }
+        while (tempo.available == 0) {
+            val source = track.decoder.readSamples() ?: run {
+                currentReadCount = 0
+                return null
+            }
+            tempo.speed = track.tempoRate.toFloat()
+            tempo.push(source, track.decoder.sampleCount)
+        }
+        val block = tempo.take(DEFAULT_TEMPO_OUTPUT_SAMPLES)
+        currentReadCount = tempo.outputCount
+        advanceTempoEase(track, currentReadCount / sink.format.channels.coerceAtLeast(1))
+        return block
+    }
+
+    /** Supplies exactly one outgoing block of the incoming deck, retaining any stretched surplus. */
+    private fun readIncoming(track: Track, wanted: Int): FloatArray? {
+        val tempo = track.tempo
+        if (tempo == null) {
+            val block = track.decoder.readSamples()
+            incomingReadCount = minOf(if (block == null) 0 else track.decoder.sampleCount, wanted)
+            return block
+        }
+        while (tempo.available < wanted) {
+            val source = track.decoder.readSamples() ?: break
+            tempo.speed = track.tempoRate.toFloat()
+            tempo.push(source, track.decoder.sampleCount)
+        }
+        if (tempo.available == 0) {
+            incomingReadCount = 0
+            return null
+        }
+        val block = tempo.take(wanted)
+        incomingReadCount = tempo.outputCount
+        return block
+    }
+
+    /** Eases a promoted beatmatch stretch back by at most 0.75% on each beat. */
+    private fun advanceTempoEase(track: Track, outputFrames: Int) {
+        if (track.tempoEaseStep <= 0.0 || outputFrames <= 0) return
+        track.tempoOutputFrames += outputFrames
+        while (track.tempoOutputFrames >= track.tempoEaseNextFrame && track.tempoRate > 1.0) {
+            track.tempoRate = (track.tempoRate - track.tempoEaseStep).coerceAtLeast(1.0)
+            track.tempoEaseNextFrame += track.tempoEaseEveryFrames
+        }
+        if (track.tempoRate <= 1.0001) track.tempoRate = 1.0
     }
 
     /** Widens one track's samples, unless the audio is Dolby Atmos. */
@@ -607,11 +705,21 @@ class DesktopPlaybackEngine(
 
     private fun promoteUpcoming() {
         val incoming = upcoming ?: return
+        val plan = activePlan
         activePlan = null
+        transitionEcho = null
         outgoingFilter.open()
         incomingFilter.open()
         current?.decoder?.close()
         current = incoming
+        if (incoming.tempo != null && incoming.tempoRate > 1.0) {
+            val steps = ceil((incoming.tempoRate - 1.0) / TEMPO_STEP_PER_BEAT).toInt().coerceAtLeast(1)
+            incoming.tempoEaseStep = (incoming.tempoRate - 1.0) / steps
+            incoming.tempoEaseEveryFrames = (
+                (plan?.beatSeconds ?: 0.0).takeIf { it > 0.0 } ?: EASE_FALLBACK_SECONDS
+                ).times(sink.format.sampleRate).toLong().coerceAtLeast(1L)
+            incoming.tempoEaseNextFrame = incoming.tempoOutputFrames + incoming.tempoEaseEveryFrames
+        }
         // The equalisers swap with the tracks they belong to. The incoming one has been filtering
         // this track for the whole crossfade, and its sections — a 60 Hz shelf above all — are
         // ringing with that audio; handing the track over to the other one instead would hand it
@@ -631,7 +739,7 @@ class DesktopPlaybackEngine(
         // audio, which only a manual seek could put right.
         // Less what is still queued in the sink: [baseFrames] restarts the played-frame clock
         // here, so the queued audio — this track's — is counted again as it plays out.
-        val handoverUs = incoming.startUs + incomingElapsedUs() - queuedSourceUs()
+        val handoverUs = incoming.startUs + incomingElapsedUs() - queuedSourceUs(incoming.tempoRate)
         DesktopTrackLog.log(
             "transition complete: '${incoming.song.title}' resumes at " +
                 "${"%.1f".format(handoverUs / 1_000_000.0)}s " +
@@ -639,7 +747,7 @@ class DesktopPlaybackEngine(
                 "+ ${"%.1f".format(incomingElapsedUs() / 1_000_000.0)}s blended)",
         )
         publishTrack(incoming, isPlaying = !paused, positionUs = handoverUs)
-        incomingSamples = 0L
+        incomingSourceFrames = 0.0
         val announced = displaySwitched
         endBlend()
         if (!announced) onCrossfaded(incoming.song)
@@ -677,16 +785,16 @@ class DesktopPlaybackEngine(
     }
 
     /** Source time of audio written to the sink but not yet heard. */
-    private fun queuedSourceUs(): Long {
+    private fun queuedSourceUs(deckRate: Double = 1.0): Long {
         val rate = sink.format.sampleRate
         if (rate <= 0) return 0L
         val queued = (framesWritten - sink.framesPlayed()).coerceAtLeast(0L)
-        return (queued * 1_000_000L / rate * playbackSpeed).toLong()
+        return (queued * 1_000_000L / rate * playbackSpeed * deckRate).toLong()
     }
 
     /** Where in the incoming track the listener is right now, mid-blend. */
     private fun incomingHeardUs(incoming: Track): Long =
-        (incoming.startUs + incomingElapsedUs() - queuedSourceUs()).coerceAtLeast(incoming.startUs)
+        (incoming.startUs + incomingElapsedUs() - queuedSourceUs(incoming.tempoRate)).coerceAtLeast(incoming.startUs)
 
     /**
      * Tells the shared scrubber where the blend's beats fall — see Android's
@@ -700,19 +808,19 @@ class DesktopPlaybackEngine(
         val incoming = upcoming ?: return
         val last = DesktopPlayerSettings.smartMixBlend.value
         if (last != null && !playing && !last.playing) return
-        val speed = playbackSpeed.toDouble().takeIf { it > 0.0 } ?: 1.0
+        val listenerSpeed = playbackSpeed.toDouble().takeIf { it > 0.0 } ?: 1.0
         val outgoingHeardUs = _state.value.let { state ->
             if (state.song?.videoId == track.song.videoId) state.positionMs * 1_000 else null
         } ?: outgoingHeardUs()
         val sides = listOf(
-            analyzer.analysisFor(track.song.videoId) to outgoingHeardUs,
-            analyzer.analysisFor(incoming.song.videoId) to incomingHeardUs(incoming),
+            Triple(analyzer.analysisFor(track.song.videoId), outgoingHeardUs, listenerSpeed * track.tempoRate),
+            Triple(analyzer.analysisFor(incoming.song.videoId), incomingHeardUs(incoming), listenerSpeed * incoming.tempoRate),
         ).let { if (displaySwitched) it.reversed() else it }
-        val side = sides.firstOrNull { (analysis, _) -> analysis.beatInterval > 0.0 || analysis.bpm > 0.0 }
+        val side = sides.firstOrNull { (analysis, _, _) -> analysis.beatInterval > 0.0 || analysis.bpm > 0.0 }
         var beatMs = 0f
         var anchor = 0L
         if (side != null) {
-            val (analysis, heardUs) = side
+            val (analysis, heardUs, speed) = side
             val beat = if (analysis.beatInterval > 0.0) analysis.beatInterval else 60.0 / analysis.bpm
             val sinceBeat = ((heardUs / 1_000_000.0 - analysis.firstBeat) % beat + beat) % beat
             beatMs = (beat * 1000.0 / speed).toFloat()
@@ -885,7 +993,7 @@ class DesktopPlaybackEngine(
 
     /** How much of the incoming track the blend has already played, in source time. */
     private fun incomingElapsedUs(): Long =
-        blendElapsedUs(incomingSamples, sink.format.channels, sink.format.sampleRate)
+        (incomingSourceFrames * 1_000_000.0 / sink.format.sampleRate.coerceAtLeast(1)).toLong()
 
     private fun publishTrack(track: Track, isPlaying: Boolean, positionUs: Long = track.startUs) {
         seekOffsetUs = positionUs
@@ -1010,9 +1118,20 @@ class DesktopPlaybackEngine(
                 (if (plan.incomingCueTime > 0) ", cued at ${"%.1f".format(plan.incomingCueTime)}s" else ""),
         )
         fadeTotal = (seconds * sink.format.sampleRate * sink.format.channels).toInt()
-        fadeRemaining = fadeTotal
-        incomingSamples = 0L
+        val echoTail = (echoTailSeconds(plan.echoSeconds) * sink.format.sampleRate * sink.format.channels).toInt()
+        transitionTotal = fadeTotal + echoTail
+        fadeRemaining = transitionTotal
+        incomingSourceFrames = 0.0
         activePlan = plan
+        incoming.tempo = if (plan.incomingPlaybackRate > 1.0001) {
+            DesktopTempoBuffer(sink.format.channels, sink.format.sampleRate).also {
+                it.speed = plan.incomingPlaybackRate.toFloat()
+            }
+        } else null
+        incoming.tempoRate = plan.incomingPlaybackRate.coerceAtLeast(1.0)
+        transitionEcho = if (plan.echoSeconds > 0.0) {
+            DesktopTransitionEcho(sink.format.sampleRate, sink.format.channels).also { it.configure(plan.echoSeconds) }
+        } else null
         outgoingFilter.flush()
         incomingFilter.flush()
     }
@@ -1036,6 +1155,7 @@ class DesktopPlaybackEngine(
             duration = durationMs / 1_000.0,
             fadeSeconds = if (manualSeconds > 0) manualSeconds.toDouble() else AUTOMIX_FALLBACK_SECONDS.toDouble(),
             mode = if (smart) CrossfadeMode.SMART else CrossfadeMode.STANDARD,
+            advanced = smart,
         )
     }
 
@@ -1143,6 +1263,11 @@ class DesktopPlaybackEngine(
 
         /** Jitter tolerated in a republished beat anchor; see [publishBlend]. */
         private const val ANCHOR_TOLERANCE_NANOS = 25_000_000L
+
+        private const val MIX_END_PADDING_FRAMES = 2_048
+        private const val DEFAULT_TEMPO_OUTPUT_SAMPLES = 4_096
+        private const val TEMPO_STEP_PER_BEAT = 0.0075
+        private const val EASE_FALLBACK_SECONDS = 0.5
 
         const val MAX_CROSSFADE_SECONDS = 12
         const val AUTOMIX_FALLBACK_SECONDS = 6
