@@ -305,20 +305,26 @@ fun AudioPipelineDialog(
                         .onGloballyPositioned { columnCoordinates = it },
                 ) {
                     // 1. Track Info Stage
-                    val sourceName = nerdStats?.sourceName ?: "—"
-                    val format = NerdStats.codecLabel(nerdStats?.mimeType) ?: nerdStats?.mimeType ?: "—"
-                    val bitDepth = nerdStats?.bitDepth?.let { "$it-bit" }
-                        ?: nerdStats?.claimed?.bitDepth?.let { "$it-bit" }
+                    val currentStats = nerdStats
+                    val sourceName = currentStats?.sourceName ?: "—"
+                    val format = NerdStats.codecLabel(currentStats?.mimeType) ?: currentStats?.mimeType ?: "—"
+                    val bitDepth = if (currentStats?.isLossless == true) {
+                        currentStats.bitDepth?.let { "$it-bit" }
+                            ?: currentStats.claimed?.bitDepth?.let { "$it-bit" }
+                            ?: "—"
+                    } else {
+                        "—"
+                    }
+                    val sampleRate = currentStats?.sampleRateHz?.let { "$it Hz" }
+                        ?: currentStats?.claimed?.sampleRateHz?.let { "$it Hz" }
                         ?: "—"
-                    val sampleRate = nerdStats?.sampleRateHz?.let { "$it Hz" }
-                        ?: nerdStats?.claimed?.sampleRateHz?.let { "$it Hz" }
-                        ?: "—"
-                    val bitrate = nerdStats?.bitrateKbps?.let { "$it kbps" } ?: "—"
-                    val channels = when (nerdStats?.channels) {
+                    val bitrate = currentStats?.bitrateKbps?.let { "$it kbps" } ?: "—"
+                    val pcmDataRate = currentStats?.pcmDataRateKbps?.let { "$it kbps" } ?: "—"
+                    val channels = when (currentStats?.channels) {
                         1 -> stringResource(R.string.mono)
                         2 -> stringResource(R.string.stereo)
                         null -> "—"
-                        else -> "${nerdStats?.channels} (Surround)"
+                        else -> "${currentStats.channels} (Surround)"
                     }
 
                     PipelineRule()
@@ -335,6 +341,7 @@ fun AudioPipelineDialog(
                         PipelineRow(stringResource(R.string.pipeline_bit_depth), bitDepth)
                         PipelineRow(stringResource(R.string.pipeline_sample_rate), sampleRate)
                         PipelineRow(stringResource(R.string.pipeline_bitrate), bitrate)
+                        PipelineRow(stringResource(R.string.pipeline_pcm_data_rate), pcmDataRate)
                         PipelineRow(stringResource(R.string.pipeline_channels), channels)
                     }
 
@@ -358,7 +365,7 @@ fun AudioPipelineDialog(
 
                     // 3. Resampler Stage
                     val inRate = nerdStats?.sampleRateHz
-                    val outRate = outputStatus.actualSampleRateHz ?: inRate
+                    val outRate = outputStatus.actualSampleRateHz
                     val isPassthrough = inRate != null && outRate != null && inRate == outRate
                     val ioRateText = if (inRate != null && outRate != null) {
                         "$inRate Hz → $outRate Hz"
@@ -370,12 +377,12 @@ fun AudioPipelineDialog(
                         "—"
                     }
                     val resamplerType = when {
-                        inRate == null && outRate == null -> "—"
+                        inRate == null || outRate == null -> "—"
                         isPassthrough -> "None"
                         else -> "Resampler"
                     }
                     val qualityText = when {
-                        inRate == null && outRate == null -> "—"
+                        inRate == null || outRate == null -> "—"
                         isPassthrough -> "Passthrough"
                         else -> "Resampled"
                     }
@@ -397,7 +404,7 @@ fun AudioPipelineDialog(
 
                     // 4. DSP Stage
                     val pcmFormat = outputStatus.dspFormat
-                    val dspRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz
+                    val dspRate = nerdStats?.sampleRateHz
                     val dspRateText = if (dspRate != null) "$dspRate Hz" else "—"
                     val eqPresetText = if (eqEnabled) {
                         eqPreset.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
@@ -479,10 +486,15 @@ fun AudioPipelineDialog(
                         AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM24"
                         AudioFormat.ENCODING_PCM_32BIT -> "PCM32"
                         AudioFormat.ENCODING_PCM_16BIT -> "PCM16"
-                        else -> "Float32"
+                        else -> null
                     }
-                    val audioTrackRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz ?: 48000
-                    val audioTrackText = "$audioTrackEncoding / $audioTrackRate Hz"
+                    val audioTrackRate = outputStatus.actualSampleRateHz
+                    val audioTrackText = when {
+                        audioTrackEncoding != null && audioTrackRate != null -> "$audioTrackEncoding / $audioTrackRate Hz"
+                        audioTrackEncoding != null -> audioTrackEncoding
+                        audioTrackRate != null -> "$audioTrackRate Hz"
+                        else -> "—"
+                    }
 
                     PipelineRule()
                     PipelineSection(

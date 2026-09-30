@@ -27,6 +27,16 @@ import java.util.concurrent.ConcurrentHashMap
  * setting to be quietly doing nothing, and it is invisible unless the two
  * numbers are put side by side. See [downgraded].
  */
+/**
+ * Architectural provenance of audio pipeline telemetry statistics.
+ */
+enum class TelemetryProvenance {
+    AUTHORITATIVE,
+    MEASURED,
+    DERIVED,
+    UNKNOWN,
+}
+
 object NerdStats {
 
     class Snapshot(
@@ -40,6 +50,10 @@ object NerdStats {
         val claimed: StreamFormat? = null,
         /** Authoritative source/provider that supplied this stream. */
         val sourceName: String? = null,
+        /** Provenance of the displayed source/encoded bitrate. */
+        val bitrateProvenance: TelemetryProvenance = TelemetryProvenance.UNKNOWN,
+        /** True PCM throughput (sampleRate * bitDepth * channels / 1000). Never conflated with encoded bitrate. */
+        val pcmDataRateKbps: Int? = null,
     ) {
         /**
          * Whether what arrived is measurably worse than what was promised.
@@ -158,6 +172,9 @@ object NerdStats {
 
     fun isDolbyAtmosMime(mimeType: String?): Boolean =
         mimeType != null && (mimeType.endsWith("eac3-joc") || mimeType.endsWith("eac3"))
+
+    fun isRawPcm(mimeType: String?): Boolean =
+        mimeType != null && (mimeType == "audio/raw" || mimeType.endsWith("wav", ignoreCase = true) || mimeType == "audio/x-wav")
 
     /**
      * The upper bound in kbps for a low-bitrate / data-saver lossy stream.
@@ -334,6 +351,10 @@ object NerdStats {
      *   half of this that decides whether the track gets its lossless copy back
      *   rather than merely how it is labelled.
      */
+    fun onTrackTransition() {
+        current.value = null
+    }
+
     fun forgetLastSession() {
         current.value = null
         racingLossless.value = emptySet()
