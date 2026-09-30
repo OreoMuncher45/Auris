@@ -916,7 +916,20 @@ private fun BitChordApp(
         }
     }
 
-    val detailListState = remember(detail?.browseId) { LazyListState() }
+    // AnimatedContent keeps the outgoing page composed during its fade. A
+    // single state remembered from only the *current* detail id is therefore
+    // handed to both the outgoing and incoming LazyColumns for that interval.
+    // Compose lazy state is one-layout state: sharing it between those lists
+    // can leave the incoming album attached to the disappearing artist/grid
+    // layout and unable to consume scroll gestures. Keep one state per page
+    // while it is on the navigation stack instead.
+    val detailListStates = remember { mutableMapOf<String, LazyListState>() }
+    val detailListState = detail?.browseId?.let { browseId ->
+        detailListStates.getOrPut(browseId) { LazyListState() }
+    } ?: remember { LazyListState() }
+    LaunchedEffect(detailStack.map { it.browseId }) {
+        detailListStates.keys.retainAll(detailStack.mapTo(HashSet()) { it.browseId })
+    }
     val detailTitleDrop = with(LocalDensity.current) { DETAIL_TITLE_DROP.toPx() }
     val detailScrolled by remember(detailListState, detailTitleDrop) {
         derivedStateOf {
@@ -2390,6 +2403,12 @@ private fun BitChordApp(
                     val held = remember(key) { mutableStateOf(live) }
                     if (live != null) held.value = live
                     val page = held.value
+                    // This state belongs to this AnimatedContent slot, not to
+                    // whichever detail happens to be at the top of the stack
+                    // while the slot is fading out.
+                    val pageDetailListState = remember(key) {
+                        detailListStates.getOrPut(key) { LazyListState() }
+                    }
                     if (key == "history") {
                         HistoryScreen(
                             state = historyState,
@@ -2632,7 +2651,7 @@ private fun BitChordApp(
                             page = page,
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
-                            listState = detailListState,
+                            listState = pageDetailListState,
                             activeShelf = detailActiveShelf,
                             onActiveShelfChange = { detailActiveShelf = it },
                             onSongClick = { songs, index ->

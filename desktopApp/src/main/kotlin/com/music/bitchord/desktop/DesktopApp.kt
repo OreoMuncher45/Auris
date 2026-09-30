@@ -315,7 +315,7 @@ import org.jetbrains.compose.resources.painterResource
  */
 internal val DesktopPageGutter = PAGE_GUTTER
 
-internal val DesktopBackground = Color.Black
+internal val DesktopBackground = Color(0xFF282828)
 internal val DesktopSurface = Color(0xFF0D0D0F)
 private val DesktopSurfaceRaised = Color(0xFF1C1C1E)
 internal val DesktopGlass = Color(0x661C1C1E)
@@ -470,6 +470,12 @@ private enum class DesktopRepeatMode {
 @Composable
 fun BitChordDesktopApp() {
     val scope = rememberCoroutineScope()
+    // Filled once the audio engine exists. Local playback helpers use this single hook so every
+    // transport and queue gesture reaches Listen Together without duplicating protocol logic.
+    val partySyncHolder = remember { arrayOfNulls<DesktopPartySync>(1) }
+    var personalQueueStash by remember { mutableStateOf<DesktopQueue?>(null) }
+    var personalPositionStash by remember { mutableStateOf(0L) }
+    var personalPlayingStash by remember { mutableStateOf(false) }
     val persistence = remember { DesktopPersistence() }
     var destination by remember { mutableStateOf(DesktopDestination.LISTEN_NOW) }
     var query by remember { mutableStateOf("") }
@@ -738,6 +744,10 @@ fun BitChordDesktopApp() {
     lateinit var playbackEngine: DesktopPlaybackEngine
 
     fun saveQueue() {
+        // A party queue is temporary. The phone keeps the listener's own queue aside and so does
+        // desktop; never let a shared running order overwrite the queue restored after leaving or
+        // after a process restart.
+        if (DesktopListenTogether.state.value.inParty) return
         persistence.saveQueue(liveQueue.songs)
         persistence.saveString("queue_index", liveQueue.index.toString())
     }
@@ -750,6 +760,7 @@ fun BitChordDesktopApp() {
         saveQueue()
         persistence.saveHistory(history)
         playbackEngine.load(song, startPlaying)
+        partySyncHolder[0]?.onLocalIntent()
         scope.launch { DesktopScrobbling.updateNowPlaying(song) }
     }
 
@@ -855,18 +866,22 @@ fun BitChordDesktopApp() {
 
     /** Slots a track in right after the one playing. */
     fun playNext(song: Song) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         val queued = canonicalSong(song).copy(radioName = liveQueue.current?.radioName)
             .withSource(currentQueueSource())
         liveQueue = liveQueue.insert(liveQueue.index + 1, queued)
         saveQueue()
+        partySyncHolder[0]?.onLocalIntent()
     }
 
     /** Puts a track at the end of what the listener queued — not the end of the queue. */
     fun addToQueue(song: Song) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         val queued = canonicalSong(song).copy(radioName = liveQueue.current?.radioName)
             .withSource(currentQueueSource())
         liveQueue = liveQueue.insert(liveQueue.autoplaySectionStart, queued)
         saveQueue()
+        partySyncHolder[0]?.onLocalIntent()
     }
 
     /** Starts the station YouTube Music builds around one track. */
@@ -1027,6 +1042,7 @@ fun BitChordDesktopApp() {
      * already playing rather than being refused as one this seed has been loaded for.
      */
     fun setAutoplay(enabled: Boolean) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         autoplay = enabled
         persistence.saveBoolean("autoplay", enabled)
         autoplayJob?.cancel()
@@ -1041,9 +1057,11 @@ fun BitChordDesktopApp() {
                 saveQueue()
             }
         }
+        if (DesktopListenTogether.state.value.inParty) DesktopListenTogether.setAutoplay(enabled)
     }
 
     fun playNext() {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         when {
             liveQueue.hasNext -> {
                 liveQueue = liveQueue.next()
@@ -1058,11 +1076,13 @@ fun BitChordDesktopApp() {
     }
 
     fun playPrevious() {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         val positionMs = playbackEngine.state.value.positionMs
 
         // After 10 seconds, Previous restarts the current song.
         if (positionMs > BACK_RESTARTS_AFTER_MS) {
             playbackEngine.seekTo(0L)
+            partySyncHolder[0]?.onLocalIntent()
             return
         }
 
@@ -1077,6 +1097,7 @@ fun BitChordDesktopApp() {
      * the queue shows stays what plays.
      */
     fun setShuffle(enabled: Boolean) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         shuffle = enabled
         persistence.saveBoolean("shuffle", enabled)
         liveQueue = if (enabled) {
@@ -1086,6 +1107,7 @@ fun BitChordDesktopApp() {
             liveQueue.inOrderOf(preShuffleOrder).also { preShuffleOrder = emptyList() }
         }
         saveQueue()
+        partySyncHolder[0]?.onLocalIntent()
     }
 
     fun closePlaylistDialogs() {
@@ -1195,15 +1217,104 @@ fun BitChordDesktopApp() {
                     history = (listOf(song) + history.filterNot { it.videoId == song.videoId }).take(50)
                     persistence.saveHistory(history)
                     DesktopScrobbling.updateNowPlaying(song)
+                    partySyncHolder[0]?.onLocalIntent()
                 }
             },
         )
     }
+    val partySync = remember(playbackEngine) {
+        DesktopPartySync(
+            scope = scope,
+            engine = playbackEngine,
+            playTrack = { track ->
+                val song = liveQueue.songs.firstOrNull { it.videoId == track.videoId }
+                    ?: track.toDesktopSong()
+                selectedSong = song
+                playbackEngine.load(song, playWhenReady = false)
+            },
+            localQueue = { liveQueue.songs to liveQueue.index },
+            applyPartyQueue = { shared ->
+                val remoteSongs = shared.items.map { it.toDesktopSong() }.ifEmpty {
+                    DesktopListenTogether.state.value.playback.track
+                        ?.let { listOf(it.toDesktopSong()) }
+                        .orEmpty()
+                }
+                val remoteIndex = if (remoteSongs.isEmpty()) 0 else {
+                    shared.index.coerceIn(0, remoteSongs.lastIndex)
+                }
+                if (remoteSongs.map { it.videoId } != liveQueue.songs.map { it.videoId } ||
+                    remoteIndex != liveQueue.index
+                ) {
+                    liveQueue = DesktopQueue(
+                        songs = remoteSongs,
+                        index = remoteIndex,
+                    )
+                }
+            },
+            applyPartyAutoplay = { enabled ->
+                if (autoplay != enabled) {
+                    autoplay = enabled
+                    persistence.saveBoolean("autoplay", enabled)
+                    autoplayJob?.cancel()
+                    autoplayJob = null
+                    autoplaySeed = null
+                    if (!enabled) liveQueue = liveQueue.withoutAutoplay()
+                }
+            },
+            onEnteredParty = {
+                if (personalQueueStash == null) {
+                    personalQueueStash = liveQueue
+                    personalPositionStash = playbackEngine.state.value.positionMs
+                    personalPlayingStash = playbackEngine.state.value.isPlaying
+                }
+            },
+            onLeftParty = {
+                personalQueueStash?.let { stashed ->
+                    liveQueue = stashed
+                    selectedSong = stashed.current
+                    stashed.current?.let {
+                        playbackEngine.load(it, personalPlayingStash, personalPositionStash)
+                    }
+                    saveQueue()
+                }
+                personalQueueStash = null
+            },
+        )
+    }
+    DisposableEffect(partySync) {
+        partySyncHolder[0] = partySync
+        partySync.start()
+        onDispose {
+            partySync.stop()
+            if (partySyncHolder[0] === partySync) partySyncHolder[0] = null
+        }
+    }
+    fun togglePlayPauseFromUser() {
+        if (partySync.handleLockedPlayPause()) return
+        playbackEngine.togglePlayPause()
+        partySync.onLocalIntent()
+    }
+    fun playFromUser() {
+        if (DesktopListenTogether.state.value.controlsLocked) {
+            if (!playbackEngine.state.value.isPlaying) partySync.handleLockedPlayPause()
+            return
+        }
+        playbackEngine.play()
+        partySync.onLocalIntent()
+    }
+    fun pauseFromUser() {
+        if (DesktopListenTogether.state.value.controlsLocked) {
+            if (playbackEngine.state.value.isPlaying) partySync.handleLockedPlayPause()
+            return
+        }
+        playbackEngine.pause()
+        partySync.onLocalIntent()
+    }
     val mprisController = remember(playbackEngine) {
         DesktopMprisController(
-            onPlay = { playbackEngine.play() },
-            onPause = { playbackEngine.pause() },
-            onPlayPause = { playbackEngine.togglePlayPause() },
+            onPlay = ::playFromUser,
+            onPause = ::pauseFromUser,
+            onPlayPause = ::togglePlayPauseFromUser,
             onNext = ::playNext,
             onPrevious = ::playPrevious,
             onShuffleChanged = { enabled ->
@@ -1226,7 +1337,12 @@ fun BitChordDesktopApp() {
                 volume = value.toFloat().coerceIn(0.0f, 1.0f)
                 persistence.saveString("volume", volume.toString())
             },
-            onSeek = { positionMs -> playbackEngine.seekTo(positionMs) },
+            onSeek = { positionMs ->
+                if (!DesktopListenTogether.state.value.controlsLocked) {
+                    playbackEngine.seekTo(positionMs)
+                    partySync.onLocalIntent()
+                }
+            },
         )
     }
     DisposableEffect(mprisController) {
@@ -1238,11 +1354,11 @@ fun BitChordDesktopApp() {
     DisposableEffect(playbackEngine) {
         DesktopWindowsMedia.start(
             DesktopWindowsMedia.Controller(
-                onPlay = { playbackEngine.play() },
-                onPause = { playbackEngine.pause() },
+                onPlay = ::playFromUser,
+                onPause = ::pauseFromUser,
                 onNext = ::playNext,
                 onPrevious = ::playPrevious,
-                onStop = { playbackEngine.pause() },
+                onStop = ::pauseFromUser,
             ),
         )
         onDispose { DesktopWindowsMedia.stop() }
@@ -1872,7 +1988,7 @@ fun BitChordDesktopApp() {
                 DesktopWindowVisibility.show()
                 overlays.nowPlaying = true
             },
-            onPlayPause = { if (selectedSong != null) playbackEngine.togglePlayPause() },
+            onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
         )
     }
     DisposableEffect(tray, trayIconEnabled) {
@@ -1894,7 +2010,7 @@ fun BitChordDesktopApp() {
     }
     LaunchedEffect(tray) {
         DesktopTrayMenu.bind(
-            onPlayPause = { if (selectedSong != null) playbackEngine.togglePlayPause() },
+            onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
             onNext = ::playNext,
             onPrevious = ::playPrevious,
             onOpenPlayer = {
@@ -2361,16 +2477,19 @@ fun BitChordDesktopApp() {
 
     // The queue's edits, for the player's queue and the queue column alike.
     fun removeFromQueue(at: Int) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         if (at in liveQueue.songs.indices && at != liveQueue.index) {
             liveQueue = liveQueue.copy(
                 songs = liveQueue.songs.filterIndexed { index, _ -> index != at },
                 index = if (at < liveQueue.index) liveQueue.index - 1 else liveQueue.index,
             )
             saveQueue()
+            partySyncHolder[0]?.onLocalIntent()
         }
     }
 
     fun moveInQueue(from: Int, to: Int) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         val songs = liveQueue.songs
         if (from in songs.indices && to in songs.indices && from != to) {
             val moved = songs.toMutableList().apply { add(to, removeAt(from)) }
@@ -2383,20 +2502,25 @@ fun BitChordDesktopApp() {
             }
             liveQueue = liveQueue.copy(songs = moved, index = newIndex)
             saveQueue()
+            partySyncHolder[0]?.onLocalIntent()
         }
     }
 
     // Clears what is still to come; the track playing and its history stay where they are.
     fun clearQueue() {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         liveQueue = liveQueue.copy(songs = liveQueue.songs.take(liveQueue.index + 1))
         saveQueue()
+        partySyncHolder[0]?.onLocalIntent()
     }
 
     fun seekPlayer(target: Long) {
+        if (DesktopListenTogether.state.value.controlsLocked) return
         val duration = playback.durationMs
         playbackEngine.seekTo(
             if (duration > 0) target.coerceIn(0L, duration) else target.coerceAtLeast(0L),
         )
+        partySyncHolder[0]?.onLocalIntent()
     }
 
     MaterialTheme(
@@ -2421,7 +2545,7 @@ fun BitChordDesktopApp() {
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     when (event.key) {
                         Key.MediaPlayPause -> {
-                            if (selectedSong != null) playbackEngine.togglePlayPause()
+                            if (selectedSong != null) togglePlayPauseFromUser()
                             true
                         }
                         Key.MediaNext -> {
@@ -2473,7 +2597,7 @@ fun BitChordDesktopApp() {
                         volume = playback.volume,
                         shuffle = shuffle,
                         repeatMode = repeatMode,
-                        onPlayPause = { if (selectedSong != null) playbackEngine.togglePlayPause() },
+                        onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
                         onPrevious = ::playPrevious,
                         onNext = ::playNext,
                         onShuffleChange = ::setShuffle,
@@ -2527,7 +2651,7 @@ fun BitChordDesktopApp() {
                         isPlaying = playback.isPlaying,
                         onDestinationSelected = ::selectDestination,
                         onExpand = { overlays.nowPlaying = true },
-                        onPlayPause = { if (selectedSong != null) playbackEngine.togglePlayPause() },
+                        onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
                         onNext = ::playNext,
                     )
                 },
@@ -2609,14 +2733,16 @@ fun BitChordDesktopApp() {
                                 else -> LikeStatus.INDIFFERENT
                             },
                             onToggleLike = { toggleLike(current) },
-                            onPlayPause = { playbackEngine.togglePlayPause() },
+                            onPlayPause = ::togglePlayPauseFromUser,
                             onNext = ::playNext,
                             onPrevious = ::playPrevious,
-                            onBlockedControl = {},
+                            onBlockedControl = {
+                                DesktopPlayerHost.showMessage("Only the party host can change playback")
+                            },
                             onSeek = ::seekPlayer,
                             onSeekFraction = { fraction ->
                                 val duration = playbackEngine.state.value.durationMs
-                                if (duration > 0) playbackEngine.seekTo((fraction * duration).toLong())
+                                if (duration > 0) seekPlayer((fraction * duration).toLong())
                             },
                             onToggleShuffle = { setShuffle(!shuffle) },
                             // The phone's order: off, all, one.
@@ -3076,7 +3202,10 @@ fun BitChordDesktopApp() {
                         DesktopDiscordTokenDialog(onDismiss = { overlays.discordToken = false })
                     }
                     if (overlays.listenTogether) {
-                        DesktopListenTogetherDialog(onDismiss = { overlays.listenTogether = false })
+                        DesktopListenTogetherDialog(
+                            autoplayEnabled = autoplay,
+                            onDismiss = { overlays.listenTogether = false },
+                        )
                     }
                     if (overlays.audioOutput) {
                         DesktopAudioOutputDialog(onDismiss = { overlays.audioOutput = false })
@@ -4822,13 +4951,15 @@ private fun DesktopSettingsDialog(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        // The same card the song menu and the lyrics dialog are drawn on, rather than a Material
-        // surface with an elevation shadow — see [desktopCard].
+        // Android presents Settings as a full page of inset groups. Desktop keeps the modal
+        // affordance, but gives that page enough width and height to breathe instead of squeezing
+        // it into a utility dialog.
         Box(
             Modifier
-                .width(660.dp)
-                .fillMaxHeight(0.84f)
-                .desktopCard(RoundedCornerShape(18.dp))
+                .widthIn(min = 700.dp, max = 840.dp)
+                .fillMaxWidth(0.88f)
+                .fillMaxHeight(0.92f)
+                .desktopCard(RoundedCornerShape(22.dp))
                 // Swallows the click so pressing inside the card does not dismiss it through the
                 // scrim underneath.
                 .clickable(
@@ -4838,24 +4969,39 @@ private fun DesktopSettingsDialog(
                 ),
         ) {
             Column(Modifier.fillMaxSize()) {
-                Text(
-                    DesktopStrings["settings", "Settings"],
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(start = 26.dp, top = 24.dp, bottom = 16.dp),
-                )
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp, top = 20.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            DesktopStrings["settings", "Settings"],
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            "Playback, sound, appearance and account",
+                            color = DesktopSecondary,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Rounded.Close, DesktopStrings["close", "Close"])
+                    }
+                }
                 var settingsQuery by remember { mutableStateOf("") }
                 DesktopSearchField(
                     query = settingsQuery,
                     onQueryChange = { settingsQuery = it },
                     onSearch = {},
                     placeholder = DesktopStrings["settings_search_hint", "Search settings"],
-                    modifier = Modifier.padding(start = 22.dp, end = 22.dp, bottom = 14.dp),
+                    modifier = Modifier.padding(start = 28.dp, end = 28.dp, bottom = 16.dp),
                 )
+                HorizontalDivider(color = DesktopCardEdge)
                 CompositionLocalProvider(LocalSettingsQuery provides settingsQuery.trim()) {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(start = 22.dp, end = 22.dp, bottom = 12.dp),
+                    contentPadding = PaddingValues(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 28.dp),
                 ) {
             item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
@@ -5385,22 +5531,6 @@ private fun DesktopSettingsDialog(
                 DesktopSettingsFooter(onLicenses = { licensesOpen = true })
             }
         }
-        }
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            Button(
-                onClick = onDismiss,
-                shape = RoundedCornerShape(50),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = DesktopAccent,
-                    contentColor = Color.Black,
-                ),
-                contentPadding = PaddingValues(horizontal = 26.dp, vertical = 10.dp),
-            ) {
-                Text(DesktopStrings["done", "Done"], fontWeight = FontWeight.SemiBold)
-            }
         }
             }
         }
@@ -6595,16 +6725,16 @@ private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
     val visible = wholeGroup || matched.isNotEmpty()
     // The gap belongs to the group, not to the list: as list spacing, every filtered-out group
     // still left its 18dp behind and the surviving ones sat under a band of empty space.
-    Column(if (visible) Modifier.padding(bottom = 18.dp) else Modifier) {
+    Column(if (visible) Modifier.padding(bottom = 20.dp) else Modifier) {
         if (visible) {
             Text(
                 title.uppercase(),
                 color = DesktopSecondary,
-                style = MaterialTheme.typography.labelMedium,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
             )
         }
-        Column(if (visible) Modifier.desktopCardInset(RoundedCornerShape(12.dp)) else Modifier) {
+        Column(if (visible) Modifier.desktopCardInset(RoundedCornerShape(16.dp)) else Modifier) {
             CompositionLocalProvider(
                 LocalSettingsQuery provides if (wholeGroup) "" else query,
                 LocalSettingsMatches provides matched,
@@ -6712,8 +6842,22 @@ internal fun DesktopBareSlider(
 @Composable
 private fun SettingsToggle(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     if (!settingsRowVisible(title, subtitle)) return
-    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) { Text(title); Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall) }
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(if (hovered) DesktopRowHover else Color.Transparent)
+            .hoverable(interaction)
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 18.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+        }
+        Spacer(Modifier.width(18.dp))
         Switch(checked = checked, onCheckedChange = onCheckedChange, colors = desktopSwitchColors())
     }
 }
@@ -6726,17 +6870,32 @@ private fun SettingsRow(
     onClick: (() -> Unit)? = null,
 ) {
     if (!settingsRowVisible(title, subtitle)) return
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(enabled = onClick != null) { onClick?.invoke() }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .background(if (hovered && onClick != null) DesktopRowHover else Color.Transparent)
+            .hoverable(interaction)
+            .clickable(enabled = onClick != null, onClick = { onClick?.invoke() })
+            .padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, null, tint = DesktopAccent)
+        Box(
+            Modifier.size(34.dp).clip(RoundedCornerShape(9.dp)).background(Color.White.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, null, tint = DesktopAccent, modifier = Modifier.size(19.dp))
+        }
         Spacer(Modifier.width(14.dp))
-        Column { Text(title); Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall) }
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+        }
+        if (onClick != null) {
+            Spacer(Modifier.width(10.dp))
+            Icon(BitChordIcons.ChevronRight, null, tint = DesktopSecondary, modifier = Modifier.size(18.dp))
+        }
     }
 }
 

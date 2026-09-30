@@ -1,7 +1,9 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.data.listentogether.PartyTrack
+import com.music.bitchord.data.listentogether.PartyQueue
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.QueueTier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,6 +44,13 @@ internal class DesktopPartySync(
     private val engine: DesktopPlaybackEngine,
     /** Puts the party's track on this device, resolving a stream for it. */
     private val playTrack: (PartyTrack) -> Unit,
+    /** The visible desktop queue, used to publish queue edits with playback intents. */
+    private val localQueue: () -> Pair<List<Song>, Int> = { emptyList<Song>() to -1 },
+    /** Applies a remote queue without feeding it back through [onLocalIntent]. */
+    private val applyPartyQueue: (PartyQueue) -> Unit = {},
+    private val applyPartyAutoplay: (Boolean) -> Unit = {},
+    private val onEnteredParty: () -> Unit = {},
+    private val onLeftParty: () -> Unit = {},
 ) {
 
     private val jobs = mutableListOf<Job>()
@@ -51,6 +60,10 @@ internal class DesktopPartySync(
     private var alignedSeq = -1L
     private var driftStrikes = 0
     private var driftCooldownUntilMs = 0L
+    private var appliedQueueSeq = -1L
+    private var locallyPaused = false
+    private var lastPartyCode: String? = null
+    private var appliedAutoplay: Boolean? = null
 
     /**
      * Until when inbound reconciliation is held off.
@@ -64,9 +77,18 @@ internal class DesktopPartySync(
         stop()
         jobs += scope.launch {
             DesktopListenTogether.state
-                .map { it.playback.seq to it.playback.isPlaying }
+                .map { Triple(it.playback.seq, it.queue.seq, it.code) }
                 .distinctUntilChanged()
-                .collect { reconcile() }
+                .collect { key ->
+                    if (key.third != lastPartyCode) {
+                        val wasInParty = lastPartyCode != null
+                        val nowInParty = key.third != null
+                        lastPartyCode = key.third
+                        if (!wasInParty && nowInParty) onEnteredParty()
+                        if (wasInParty && !nowInParty) onLeftParty()
+                    }
+                    reconcile()
+                }
         }
         // A steady tick as well as the frames: drift accumulates between controls, and nothing
         // arrives to announce it.
@@ -86,13 +108,33 @@ internal class DesktopPartySync(
         loadingVideoId = null
         alignedSeq = -1L
         driftStrikes = 0
+        appliedQueueSeq = -1L
+        locallyPaused = false
+        lastPartyCode = null
+        appliedAutoplay = null
     }
 
     /** Something the listener asked for here, which the party should be told about. */
     fun onLocalIntent() {
-        if (!DesktopListenTogether.state.value.inParty) return
+        val party = DesktopListenTogether.state.value
+        if (!party.inParty || party.controlsLocked) return
         quietUntilMs = nowMs() + INTENT_QUIET_MS
         publish()
+    }
+
+    /** In a host-locked party, play/pause affects only this computer. */
+    fun handleLockedPlayPause(): Boolean {
+        val party = DesktopListenTogether.state.value
+        if (!party.controlsLocked) return false
+        if (engine.state.value.isPlaying) {
+            locallyPaused = true
+            engine.pause()
+        } else {
+            locallyPaused = false
+            DesktopListenTogether.partyPositionMs()?.let(engine::seekTo)
+            engine.play()
+        }
+        return true
     }
 
     /** Puts this device where the party is, writing to the engine rather than through intents. */
@@ -100,11 +142,29 @@ internal class DesktopPartySync(
         val party = DesktopListenTogether.state.value
         if (!party.inParty) {
             loadingVideoId = null
+            appliedQueueSeq = -1L
+            locallyPaused = false
+            appliedAutoplay = null
             return
         }
+        if (!party.controlsLocked) locallyPaused = false
         if (nowMs() < quietUntilMs) return
+        if (party.queue.seq != appliedQueueSeq) {
+            appliedQueueSeq = party.queue.seq
+            applyPartyQueue(party.queue)
+        }
         val target = party.playback
-        val track = target.track ?: return
+        if (target.autoplayEnabled != appliedAutoplay) {
+            appliedAutoplay = target.autoplayEnabled
+            applyPartyAutoplay(target.autoplayEnabled)
+        }
+        val track = target.track
+        if (track == null) {
+            // A newly created party is empty. Its host seeds it with the music already playing;
+            // listeners never race the host for that first state.
+            if (party.you?.isHost == true && party.connection == DesktopListenTogether.Connection.LIVE) publish()
+            return
+        }
         val playback = engine.state.value
 
         // A local file is this device's own business; the party has no copy of it to agree on.
@@ -124,6 +184,7 @@ internal class DesktopPartySync(
         loadingVideoId = null
 
         if (!target.isPlaying) {
+            locallyPaused = false
             if (playback.isPlaying) engine.pause()
             if (abs(playback.positionMs - target.positionMs) > PAUSED_TOLERANCE_MS) {
                 engine.seekTo(target.positionMs)
@@ -132,6 +193,7 @@ internal class DesktopPartySync(
         }
 
         val want = DesktopListenTogether.partyPositionMs()
+        if (locallyPaused) return
         if (!playback.isPlaying) {
             val wait = DesktopListenTogether.msUntilStart()
             if (wait > 0) {
@@ -177,6 +239,17 @@ internal class DesktopPartySync(
         if (song.localPath != null || song.localUri != null) return
         val track = song.toPartyTrack(playback.durationMs)
         val position = playback.positionMs.coerceAtLeast(0L)
+
+        val (songs, index) = localQueue()
+        val shareable = songs.filter { it.localPath == null && it.localUri == null }
+            .take(MAX_PARTY_QUEUE)
+            .map { queued -> queued.toPartyTrack(if (queued.videoId == song.videoId) playback.durationMs else 0L) }
+        val shareIndex = shareable.indexOfFirst { it.videoId == song.videoId }
+        if (shareable.map(PartyTrack::videoId) != party.queue.items.map(PartyTrack::videoId) ||
+            (shareIndex >= 0 && shareIndex != party.queue.index)
+        ) {
+            DesktopListenTogether.setQueue(shareable, shareIndex.coerceAtLeast(index.coerceAtLeast(0)))
+        }
 
         when {
             party.playback.track?.videoId != track.videoId ->
@@ -254,6 +327,7 @@ internal class DesktopPartySync(
         const val SEEK_REPORT_FLOOR_MS = 1_000L
         const val INTENT_QUIET_MS = 2_500L
         const val RECONCILE_INTERVAL_MS = 700L
+        const val MAX_PARTY_QUEUE = 101
     }
 }
 
@@ -264,4 +338,14 @@ internal fun Song.toPartyTrack(durationMs: Long): PartyTrack = PartyTrack(
     artist = artist,
     thumbnailUrl = thumbnailUrl,
     durationMs = durationMs.takeIf { it > 0 },
+    fromAutoplay = queueTier == QueueTier.AUTOPLAY,
+)
+
+/** A shared queue item as a desktop-playable catalogue song. */
+internal fun PartyTrack.toDesktopSong(): Song = Song(
+    videoId = videoId,
+    title = title,
+    artist = artist,
+    thumbnailUrl = thumbnailUrl,
+    queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.USER_QUEUE,
 )

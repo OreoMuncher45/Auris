@@ -162,6 +162,9 @@ private val HEADER_GUTTER = PAGE_GUTTER + 14.dp
 /** Extra breathing room for the editorial copy on album and artist pages. */
 private val ABOUT_GUTTER = PAGE_GUTTER + 12.dp
 
+/** A slightly tighter shared edge for the artist bio and everything below it. */
+private val ARTIST_CONTENT_GUTTER = PAGE_GUTTER + 6.dp
+
 /**
  * How far past the foot of the artwork the title block is allowed to hang.
  *
@@ -463,6 +466,7 @@ fun DetailScreen(
                         ),
                         text = description,
                         palette = palette,
+                        horizontalPadding = if (isArtist) ARTIST_CONTENT_GUTTER else ABOUT_GUTTER,
                     )
                 }
             }
@@ -475,11 +479,15 @@ fun DetailScreen(
                     // it pages sideways four at a time and stops at twenty.
                     item {
                         val top = state.data.take(MAX_ARTIST_SONGS)
-                        SectionHeading(stringResource(R.string.top_songs), palette)
+                        SectionHeading(
+                            title = stringResource(R.string.top_songs),
+                            palette = palette,
+                            horizontalPadding = ARTIST_CONTENT_GUTTER,
+                        )
                         BoxWithConstraints {
                             val columnWidth = trackColumnWidth(maxWidth)
                             LazyRow(
-                                contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                                contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 items(top.chunked(SONGS_PER_COLUMN)) { column ->
@@ -585,9 +593,10 @@ fun DetailScreen(
                         title = shelf.title,
                         palette = palette,
                         onShowAll = if (canShowAll) { { onActiveShelfChange(shelf) } } else null,
+                        horizontalPadding = ARTIST_CONTENT_GUTTER,
                     )
                     LazyRow(
-                        contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                        contentPadding = PaddingValues(horizontal = ARTIST_CONTENT_GUTTER),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         items(displayItems) { item ->
@@ -1353,7 +1362,12 @@ private fun StatChip(icon: ImageVector, text: String, palette: ArtworkPalette) {
  * behind it to reveal.
  */
 @Composable
-private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
+private fun AboutSection(
+    title: String,
+    text: String,
+    palette: ArtworkPalette,
+    horizontalPadding: Dp = ABOUT_GUTTER,
+) {
     var expanded by remember(text) { mutableStateOf(false) }
     var clipped by remember(text) { mutableStateOf(false) }
     Column {
@@ -1362,7 +1376,10 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
             style = MaterialTheme.typography.titleMedium,
             color = palette.onBackground,
             modifier = Modifier.padding(
-                start = ABOUT_GUTTER, end = ABOUT_GUTTER, top = 2.dp, bottom = 6.dp,
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = 2.dp,
+                bottom = 6.dp,
             ),
         )
         Text(
@@ -1376,7 +1393,7 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
             modifier = Modifier
                 .fillMaxWidth()
                 .animateContentSize()
-                .padding(horizontal = ABOUT_GUTTER)
+                .padding(horizontal = horizontalPadding)
                 .let { m -> if (clipped || expanded) m.clickable { expanded = !expanded } else m },
         )
         if (clipped || expanded) {
@@ -1385,7 +1402,7 @@ private fun AboutSection(title: String, text: String, palette: ArtworkPalette) {
                 style = MaterialTheme.typography.labelLarge,
                 color = palette.accent,
                 modifier = Modifier
-                    .padding(horizontal = ABOUT_GUTTER, vertical = 4.dp)
+                    .padding(horizontal = horizontalPadding, vertical = 4.dp)
                     .clickable { expanded = !expanded },
             )
         }
@@ -1397,11 +1414,17 @@ private fun SectionHeading(
     title: String,
     palette: ArtworkPalette,
     onShowAll: (() -> Unit)? = null,
+    horizontalPadding: Dp = PAGE_GUTTER,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = PAGE_GUTTER, end = PAGE_GUTTER, top = 10.dp, bottom = 8.dp),
+            .padding(
+                start = horizontalPadding,
+                end = horizontalPadding,
+                top = 10.dp,
+                bottom = 8.dp,
+            ),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -129,9 +129,14 @@ class DesktopPlaybackEngine(
 
     // ---- the surface the application uses -------------------------------
 
-    fun load(song: Song, playWhenReady: Boolean = true) {
+    fun load(song: Song, playWhenReady: Boolean = true, startAtMs: Long = 0L) {
         retryingSongId = null
-        loadInternal(song, playWhenReady, excludedSourceId = refusedSources[song.videoId])
+        loadInternal(
+            song,
+            playWhenReady,
+            excludedSourceId = refusedSources[song.videoId],
+            startAtMs = startAtMs.coerceAtLeast(0L),
+        )
     }
 
     /**

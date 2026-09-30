@@ -121,7 +121,15 @@ internal object DesktopPlayerHost : PlayerHost {
         .stateIn(scope, SharingStarted.Eagerly, OutputFormatUi())
 
     override val party: StateFlow<PartyUi> = DesktopListenTogether.state
-        .map { PartyUi(inParty = it.inParty, members = it.members, you = it.you, code = it.code) }
+        .map {
+            PartyUi(
+                inParty = it.inParty,
+                controlsLocked = it.controlsLocked,
+                members = it.members,
+                you = it.you,
+                code = it.code,
+            )
+        }
         .stateIn(scope, SharingStarted.Eagerly, PartyUi())
 
     override suspend fun translateLyrics(

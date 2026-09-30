@@ -1,6 +1,9 @@
 package com.music.bitchord.desktop
 
 import com.music.bitchord.desktop.DesktopPartySync.Companion.decideSeek
+import com.music.bitchord.data.listentogether.PartyTrack
+import com.music.bitchord.data.model.QueueTier
+import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -14,6 +17,17 @@ import kotlin.test.assertTrue
  * cannot fire again immediately.
  */
 class DesktopPartySyncTest {
+
+    @Test
+    fun `party queue conversion preserves autoplay boundary`() {
+        val autoplay = PartyTrack("next", "Next", "Artist", fromAutoplay = true).toDesktopSong()
+        assertEquals(QueueTier.AUTOPLAY, autoplay.queueTier)
+
+        val shared = Song("id", "Title", "Artist", null, queueTier = QueueTier.AUTOPLAY)
+            .toPartyTrack(durationMs = 123_000L)
+        assertTrue(shared.fromAutoplay)
+        assertEquals(123_000L, shared.durationMs)
+    }
 
     @Test
     fun `a new control aligns at once when it is meaningfully out`() {
