@@ -114,6 +114,8 @@ class DesktopPlaybackEngine(
 
     private sealed interface Command {
         class Start(val track: Track, val playWhenReady: Boolean) : Command
+        /** Replaces only the playing deck; a quality upgrade must not discard the prepared next deck. */
+        class ReplaceCurrent(val track: Track, val playWhenReady: Boolean) : Command
         class Upcoming(val track: Track) : Command
         class SeekTo(val millis: Long) : Command
         data object ClearUpcoming : Command
@@ -278,21 +280,28 @@ class DesktopPlaybackEngine(
             "upgrading '${song.title}' to ${better.format.summary.ifBlank { "another rendition" }}" +
                 " from ${DesktopMusicSources.sourceNameFor(better)}",
         )
-        swapStream(song, better, current.positionMs, current.isPlaying)
+        swapStream(song, better, current.positionMs)
         return true
     }
 
     /** Re-opens the current track on a different stream, carrying the playhead over. */
-    private fun swapStream(song: Song, stream: DesktopStream, positionMs: Long, wasPlaying: Boolean) {
+    private fun swapStream(song: Song, stream: DesktopStream, positionMs: Long) {
         scope.launch {
             openTrack(song, stream, positionMs).fold(
                 onSuccess = { track ->
-                    if (_state.value.song?.videoId != song.videoId) {
+                    val latest = _state.value
+                    if (latest.song?.videoId != song.videoId) {
                         track.decoder.close()
                         return@fold
                     }
-                    commands += Command.Flush
-                    commands += Command.Start(track, playWhenReady = wasPlaying)
+                    // Resolving and opening the better rendition can take a few seconds. Hand it
+                    // over at the live playhead rather than jumping back to the position at which
+                    // the upgrade was first offered.
+                    if (kotlin.math.abs(latest.positionMs - positionMs) >= UPGRADE_RESEEK_THRESHOLD_MS) {
+                        track.decoder.seek(latest.positionMs * 1_000)
+                        track.startUs = latest.positionMs * 1_000
+                    }
+                    commands += Command.ReplaceCurrent(track, playWhenReady = latest.isPlaying)
                 },
                 onFailure = { failure ->
                     DesktopTrackLog.log(
@@ -322,7 +331,7 @@ class DesktopPlaybackEngine(
                 onSuccess = { stream ->
                     if (_state.value.song?.videoId != song.videoId) return@fold
                     DesktopTrackLog.log("re-opened from ${DesktopMusicSources.sourceNameFor(stream)}")
-                    swapStream(song, stream, current.positionMs, current.isPlaying)
+                    swapStream(song, stream, current.positionMs)
                 },
                 onFailure = { failure ->
                     DesktopTrackLog.log("could not re-open '${song.title}': ${failure.message}")
@@ -857,6 +866,7 @@ class DesktopPlaybackEngine(
         while (true) {
             when (val command = commands.poll() ?: return) {
                 is Command.Start -> startTrack(command.track, command.playWhenReady)
+                is Command.ReplaceCurrent -> replaceCurrent(command.track, command.playWhenReady)
                 is Command.Upcoming -> {
                     upcoming?.decoder?.close()
                     upcoming = command.track
@@ -882,6 +892,29 @@ class DesktopPlaybackEngine(
                 }
             }
         }
+    }
+
+    /**
+     * Installs a better rendition without treating it as a new queue item.
+     *
+     * The old full [Command.Flush] path also closed [upcoming]. Analysis is keyed by song id, so
+     * Stats for nerds still said both tracks were measured even though the incoming decoder had
+     * vanished; with no incoming deck there could be neither a seekbar marker nor an Automix.
+     */
+    private fun replaceCurrent(track: Track, playWhenReady: Boolean) {
+        // An upgrade that arrives after the handoff has begun is no longer worth interrupting the
+        // audible transition. Keep the running pair intact and retire the unused decoder.
+        if (fadeRemaining > 0 || displaySwitched) {
+            track.decoder.close()
+            return
+        }
+        sink.flush()
+        framesWritten = sink.framesPlayed()
+        activePlan = null
+        transitionEcho = null
+        outgoingFilter.open()
+        incomingFilter.open()
+        startTrack(track, playWhenReady)
     }
 
     private fun startTrack(track: Track, playWhenReady: Boolean) {
@@ -1263,6 +1296,9 @@ class DesktopPlaybackEngine(
     companion object {
         /** How many times a lossy substitute is asked to be beaten before the question is closed. */
         private const val LOSSLESS_FOLLOW_UPS = 2
+
+        /** Avoid a decoder seek for sub-tick drift while an upgraded rendition is opening. */
+        private const val UPGRADE_RESEEK_THRESHOLD_MS = 250L
 
         /** Enough of a measurement on the incoming track to cue into it. */
         val MEASURED_ENOUGH_TO_ENTER_ON = setOf(
