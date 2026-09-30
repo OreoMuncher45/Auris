@@ -744,6 +744,24 @@ func (s *PartyStore) Len() int {
 	return len(s.parties)
 }
 
+// MemberCount is the number of members across every live party. Parties are
+// copied out first so no party lock is ever taken under the store lock.
+func (s *PartyStore) MemberCount() int {
+	s.mu.RLock()
+	parties := make([]*Party, 0, len(s.parties))
+	for _, p := range s.parties {
+		parties = append(parties, p)
+	}
+	s.mu.RUnlock()
+	total := 0
+	for _, p := range parties {
+		p.mu.Lock()
+		total += len(p.Members)
+		p.mu.Unlock()
+	}
+	return total
+}
+
 func (s *PartyStore) Create() (*Party, error) {
 	return s.CreateWithLimit(0)
 }

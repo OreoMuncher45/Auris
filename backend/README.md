@@ -231,6 +231,35 @@ To keep memory, bandwidth, and latency strictly bounded:
   a track completion shifts indices, the server resolves `fromIndex` from the
   track's `videoId` under the party lock, preventing misplaced drops.
 
+## Deploying to Oracle Cloud (Always Free)
+
+This is what runs `https://api.bitchord.kushagrasingh.in`: one Always Free
+`VM.Standard.E2.1.Micro` (1 OCPU, 1 GB) on Ubuntu 24.04 in ap-mumbai-1, with
+Caddy in front for HTTPS and WebSockets. Files are in `deploy/`.
+
+1. **Create the VM**: Compute -> Instances -> Create. Image *Canonical Ubuntu
+   24.04*, shape *VM.Standard.E2.1.Micro* (tagged Always Free), public subnet,
+   public IPv4 on, paste your SSH public key.
+2. **Open 80/443 in the VCN**: Networking -> VCN -> Security -> *Default
+   Security List* -> Add Ingress Rule: source `0.0.0.0/0`, TCP, destination
+   ports `80,443`.
+3. **DNS**: an `A` record for the host name pointing at the VM's public IP.
+   It has to resolve before step 4 can get a certificate.
+4. **Install** (from a copy of `backend/` on the VM):
+
+   ```sh
+   sudo DOMAIN=api.bitchord.kushagrasingh.in bash deploy/setup.sh
+   ```
+
+   It installs Go, builds the server into `/opt/bitchord-jam`, runs it as the
+   `bitchord-jam` systemd service on `:8000`, installs Caddy for the domain, and
+   opens 80/443 in the VM's own iptables. Oracle's Ubuntu images carry a REJECT
+   rule besides the security list, so both have to be opened. Re-run the same
+   command to deploy a new build.
+
+Check it with `curl https://<domain>/healthz`. Logs are in
+`journalctl -u bitchord-jam` and `journalctl -u caddy`.
+
 ## Deploying to Render
 
 The blueprint is `render.yaml`, but Render reads blueprints from the repository
