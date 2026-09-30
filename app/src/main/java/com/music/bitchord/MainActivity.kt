@@ -145,6 +145,8 @@ import com.music.bitchord.ui.screens.DiscordDialogHost
 import com.music.bitchord.ui.screens.DiscordScreen
 import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
+import com.music.bitchord.ui.screens.LibraryReplayEntry
+import com.music.bitchord.ui.screens.libraryDeviceItems
 import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SettingsScreen
@@ -914,7 +916,20 @@ private fun BitChordApp(
         }
     }
 
-    val detailListState = remember(detail?.browseId) { LazyListState() }
+    // AnimatedContent keeps the outgoing page composed during its fade. A
+    // single state remembered from only the *current* detail id is therefore
+    // handed to both the outgoing and incoming LazyColumns for that interval.
+    // Compose lazy state is one-layout state: sharing it between those lists
+    // can leave the incoming album attached to the disappearing artist/grid
+    // layout and unable to consume scroll gestures. Keep one state per page
+    // while it is on the navigation stack instead.
+    val detailListStates = remember { mutableMapOf<String, LazyListState>() }
+    val detailListState = detail?.browseId?.let { browseId ->
+        detailListStates.getOrPut(browseId) { LazyListState() }
+    } ?: remember { LazyListState() }
+    LaunchedEffect(detailStack.map { it.browseId }) {
+        detailListStates.keys.retainAll(detailStack.mapTo(HashSet()) { it.browseId })
+    }
     val detailTitleDrop = with(LocalDensity.current) { DETAIL_TITLE_DROP.toPx() }
     val detailScrolled by remember(detailListState, detailTitleDrop) {
         derivedStateOf {
@@ -2388,6 +2403,12 @@ private fun BitChordApp(
                     val held = remember(key) { mutableStateOf(live) }
                     if (live != null) held.value = live
                     val page = held.value
+                    // This state belongs to this AnimatedContent slot, not to
+                    // whichever detail happens to be at the top of the stack
+                    // while the slot is fading out.
+                    val pageDetailListState = remember(key) {
+                        detailListStates.getOrPut(key) { LazyListState() }
+                    }
                     if (key == "history") {
                         HistoryScreen(
                             state = historyState,
@@ -2630,7 +2651,7 @@ private fun BitChordApp(
                             page = page,
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
-                            listState = detailListState,
+                            listState = pageDetailListState,
                             activeShelf = detailActiveShelf,
                             onActiveShelfChange = { detailActiveShelf = it },
                             onSongClick = { songs, index ->
@@ -2716,13 +2737,17 @@ private fun BitChordApp(
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onItemClick = { item, shelfTitle ->
                                 val song = shelfSong(item)
+                                // Hoisted because ShelfItem lives in :shared, and
+                                // Kotlin will not smart-cast a public nullable
+                                // property declared in another module.
+                                val browseId = item.browseId
                                 when {
                                     song != null -> playRadio(
                                         song,
                                         QueueSource(shelfTitle, PlaybackSourceType.HOME),
                                     )
-                                    item.browseId != null -> viewModel.openDetail(
-                                        browseId = item.browseId,
+                                    browseId != null -> viewModel.openDetail(
+                                        browseId = browseId,
                                         title = item.title,
                                         subtitle = item.subtitle,
                                         thumbnailUrl = item.thumbnailUrl,
@@ -2745,10 +2770,10 @@ private fun BitChordApp(
                                 state = moodGenreShelves,
                                 listState = moodGenreListState,
                                 onItemClick = { item ->
-                                    when {
-                                        item.videoId != null -> playRadio(
+                                    item.videoId?.let { videoId ->
+                                        playRadio(
                                             Song(
-                                                videoId = item.videoId,
+                                                videoId = videoId,
                                                 title = item.title,
                                                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                                                 thumbnailUrl = item.thumbnailUrl,
@@ -2759,8 +2784,9 @@ private fun BitChordApp(
                                                 category.browseId,
                                             ),
                                         )
-                                        item.browseId != null -> viewModel.openDetail(
-                                            browseId = item.browseId,
+                                    } ?: item.browseId?.let { browseId ->
+                                        viewModel.openDetail(
+                                            browseId = browseId,
                                             title = item.title,
                                             subtitle = item.subtitle,
                                             thumbnailUrl = item.thumbnailUrl,
@@ -2902,6 +2928,7 @@ private fun BitChordApp(
                             onHistoryClear = viewModel::clearSearchHistory,
                             onTypeaheadLongPress = openSongMenu,
                             contentPadding = listPadding,
+                            topPadding = topBarContentPadding(),
                         )
                         else -> LibraryScreen(
                             signedIn = signedIn,
@@ -2915,12 +2942,16 @@ private fun BitChordApp(
                             onShelfItemLongPress = onBrowseLongPress,
                             onNewPlaylist = { creatingPlaylist = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
-                            replayCards = replayCards,
-                            replayHolder = account?.name.orEmpty(),
-                            replayMemberSince = replay.memberSince,
-                            onOpenReplay = { page ->
-                                replayLandingPage = page
-                                showReplay = true
+                            replay = {
+                                LibraryReplayEntry(
+                                    cards = replayCards,
+                                    holder = account?.name.orEmpty(),
+                                    memberSince = replay.memberSince,
+                                    onOpenReplay = { page ->
+                                        replayLandingPage = page
+                                        showReplay = true
+                                    },
+                                )
                             },
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onRetry = viewModel::loadLibrary,
@@ -2928,7 +2959,7 @@ private fun BitChordApp(
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.LIBRARY) },
                             pullState = libraryPull,
                             contentPadding = listPadding,
-                            downloadedPlaylists = downloadedPlaylists,
+                            deviceItems = libraryDeviceItems(downloadedPlaylists),
                         )
                     }
                 }
