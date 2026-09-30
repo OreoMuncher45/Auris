@@ -394,6 +394,9 @@ internal object DesktopSourceRegistry {
         playing: DesktopStream?,
         quality: String? = null,
     ): DesktopStream? {
+        // This is an explicit second look. Empty catalogue answers and failed/expired stream URLs
+        // from the first pass must not make the retry a cache hit.
+        DesktopAddonSource.clearCompletedTrackCalls()
         val playingRank = configs().firstOrNull { it.id == playing?.sourceId }?.kind?.rank
             ?: DesktopSourceKind.YOUTUBE.rank
         val better = playbackAdapters(quality).filter {
@@ -477,6 +480,12 @@ internal object DesktopSourceRegistry {
             DesktopTrackLog.log(
                 "${source.descriptor.name} offered a Dolby Atmos rendition, " +
                     "which this build has no E-AC-3 decoder for",
+            )
+            return false
+        }
+        if (stream.isDolbyAtmos && !DesktopAddonSettings.dolbyAtmosEnabled) {
+            DesktopTrackLog.log(
+                "${source.descriptor.name} offered a Dolby Atmos rendition, which is switched off",
             )
             return false
         }

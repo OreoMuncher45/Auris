@@ -131,6 +131,8 @@ import androidx.compose.material.icons.rounded.FullscreenExit
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
@@ -300,9 +302,11 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import org.jetbrains.compose.resources.Font as composeFont
 import org.jetbrains.compose.resources.painterResource
@@ -315,7 +319,7 @@ import org.jetbrains.compose.resources.painterResource
  */
 internal val DesktopPageGutter = PAGE_GUTTER
 
-internal val DesktopBackground = Color(0xFF282828)
+internal val DesktopBackground = Color(0xFF202020)
 internal val DesktopSurface = Color(0xFF0D0D0F)
 private val DesktopSurfaceRaised = Color(0xFF1C1C1E)
 internal val DesktopGlass = Color(0x661C1C1E)
@@ -389,6 +393,12 @@ private const val SCROBBLE_THRESHOLD_MS = 180_000L
 
 /** Used for tracking restart of the current song when previous button is pressed. */
 private const val BACK_RESTARTS_AFTER_MS = 10_000L
+
+/** How long the supplier waits for the server to echo an AutoPlay queue addition. */
+private const val PARTY_AUTOPLAY_ECHO_TIMEOUT_MS = 5_000L
+
+/** The phone gives one empty station response a delayed second chance. */
+private const val AUTOPLAY_EMPTY_REFRESH_DELAY_MS = 2_000L
 
 /** The phone's dark scheme, which the shared pages are drawn against. */
 internal fun desktopColorScheme() = darkColorScheme(
@@ -473,6 +483,7 @@ fun BitChordDesktopApp() {
     // Filled once the audio engine exists. Local playback helpers use this single hook so every
     // transport and queue gesture reaches Listen Together without duplicating protocol logic.
     val partySyncHolder = remember { arrayOfNulls<DesktopPartySync>(1) }
+    val partyState by DesktopListenTogether.state.collectAsState()
     var personalQueueStash by remember { mutableStateOf<DesktopQueue?>(null) }
     var personalPositionStash by remember { mutableStateOf(0L) }
     var personalPlayingStash by remember { mutableStateOf(false) }
@@ -611,6 +622,7 @@ fun BitChordDesktopApp() {
     // The three the FFmpeg engine unlocked: none of them could exist while JavaFX owned the decode,
     // because none of them can be done without the samples themselves.
     var spatialAudio by remember { mutableStateOf(persistence.boolean("spatial_audio", false)) }
+    var dolbyAtmos by remember { mutableStateOf(persistence.boolean("dolby_atmos", true)) }
     var skipSilence by remember { mutableStateOf(persistence.boolean("skip_silence", false)) }
     var outputPrecision by remember { mutableStateOf(persistence.string("output_precision", "PCM_16")) }
     // The blob backdrop the mesh replaced, kept as an opt-out.
@@ -760,12 +772,19 @@ fun BitChordDesktopApp() {
         saveQueue()
         persistence.saveHistory(history)
         playbackEngine.load(song, startPlaying)
-        partySyncHolder[0]?.onLocalIntent()
+        partySyncHolder[0]?.onLocalIntent(song.videoId)
         scope.launch { DesktopScrobbling.updateNowPlaying(song) }
+    }
+
+    fun partyTrackChangeBlocked(): Boolean {
+        if (!DesktopListenTogether.state.value.controlsLocked) return false
+        DesktopPlayerHost.showMessage("Only the party host can change playback")
+        return true
     }
 
     /** A song played on its own — from a search row, a shelf card, history. */
     fun playSong(song: Song, startPlaying: Boolean = true, source: DesktopQueueSource? = null) {
+        if (partyTrackChangeBlocked()) return
         liveQueue = DesktopQueue.of(canonicalSong(song).withSource(source))
         playCurrent(startPlaying)
     }
@@ -802,6 +821,7 @@ fun BitChordDesktopApp() {
 
     fun playSongs(songs: List<Song>, startIndex: Int = 0, source: DesktopQueueSource? = null) {
         if (songs.isEmpty()) return
+        if (partyTrackChangeBlocked()) return
         val playable = songs.map(::canonicalSong).map { it.withSource(source) }
         liveQueue = if (shuffle) {
             DesktopQueue.shuffledStartingAt(playable, startIndex)
@@ -816,6 +836,7 @@ fun BitChordDesktopApp() {
     /** Moves within the queue, dropping whatever a forward jump passed over. */
     fun playQueueIndex(target: Int) {
         if (target !in liveQueue.songs.indices) return
+        if (partyTrackChangeBlocked()) return
         liveQueue = liveQueue.jumpTo(target)
         playCurrent()
     }
@@ -886,6 +907,7 @@ fun BitChordDesktopApp() {
 
     /** Starts the station YouTube Music builds around one track. */
     fun startRadio(song: Song) {
+        if (partyTrackChangeBlocked()) return
         val seed = canonicalSong(song).copy(radioName = song.title)
         scope.launch {
             val related = DesktopAutoplay.tracksFor(listOf(seed), seed, INITIAL_RADIO_TRACKS)
@@ -897,6 +919,7 @@ fun BitChordDesktopApp() {
                 DesktopTrackLog.log("radio: nothing to build a station on for '${song.title}'")
                 return@launch
             }
+            if (partyTrackChangeBlocked()) return@launch
             if (liveQueue.current?.videoId == seed.videoId) {
                 liveQueue = DesktopQueue(listOf(liveQueue.current!!) + related, index = 0)
                 saveQueue()
@@ -977,7 +1000,11 @@ fun BitChordDesktopApp() {
 
     fun loadAutoplaySongs(playFirst: Boolean = false) {
         val current = selectedSong ?: return
-        if (!autoplay || repeatMode == DesktopRepeatMode.ALL) return
+        val party = DesktopListenTogether.state.value
+        if (!DesktopAutoplay.enabled(party, autoplay) ||
+            repeatMode == DesktopRepeatMode.ALL ||
+            (party.inParty && DesktopAutoplay.supplierId(party) != party.you?.memberId)
+        ) return
 
         if (dontRepeatSuggestions) sessionSongHistory += current
 
@@ -990,44 +1017,75 @@ fun BitChordDesktopApp() {
 
         autoplayJob?.cancel()
         autoplayJob = scope.launch {
-            DesktopTrackLog.log("autoplay: building a station from '${current.title}'")
-            val at = liveQueue.songs.size
-            DesktopAutoplay.tracksFor(
-                // What the queue holds, plus everything this session has already offered.
-                existing = if (dontRepeatSuggestions) {
-                    liveQueue.songs + sessionSongHistory
-                } else {
-                    liveQueue.songs
-                },
-                seedSong = current,
-                limit = needed.coerceAtLeast(1),
-            ).onSuccess { suggestions ->
-                if (suggestions.isEmpty()) {
-                    // Worth saying: an empty station and a station that could not be reached look
-                    // identical from the queue.
-                    DesktopTrackLog.log("autoplay: no station came back for '${current.title}'")
-                    return@onSuccess
+            var remaining = needed.coerceAtLeast(1)
+            var emptyRefreshesRemaining = 1
+            while (isActive) {
+                DesktopTrackLog.log("autoplay: building a station from '${current.title}'")
+                val at = liveQueue.songs.size
+                val suggestions = DesktopAutoplay.tracksFor(
+                    // What the queue holds, plus everything this session has already offered.
+                    existing = if (dontRepeatSuggestions) {
+                        liveQueue.songs + sessionSongHistory
+                    } else {
+                        liveQueue.songs
+                    },
+                    seedSong = current,
+                    limit = remaining,
+                ).getOrElse { failure ->
+                    DesktopTrackLog.log("autoplay: could not build a station: ${failure.message}")
+                    emptyList()
                 }
                 // The listener may have moved on while the station was being fetched; appending
                 // then would attach it to the wrong seed.
-                if (selectedSong?.videoId != current.videoId || !autoplay) return@onSuccess
+                val latestParty = DesktopListenTogether.state.value
+                if (selectedSong?.videoId != current.videoId ||
+                    !DesktopAutoplay.enabled(latestParty, autoplay) ||
+                    (latestParty.inParty && DesktopAutoplay.supplierId(latestParty) != latestParty.you?.memberId)
+                ) return@launch
+                if (suggestions.isEmpty()) {
+                    DesktopTrackLog.log("autoplay: no station came back for '${current.title}'")
+                    // Match the phone's bounded recovery: retry once after a short delay, but only
+                    // while the current track genuinely has no tail to play next.
+                    if (liveQueue.index < 0 || liveQueue.index != liveQueue.songs.lastIndex) return@launch
+                    if (emptyRefreshesRemaining-- <= 0) return@launch
+                    delay(AUTOPLAY_EMPTY_REFRESH_DELAY_MS)
+                    remaining = MAX_QUEUED_AUTOPLAY
+                    continue
+                }
                 // The station carries on from what was playing, so it keeps that queue's origin —
                 // Android holds the source on every queue item, not just the ones picked by hand.
                 val inherited = current.playbackSource?.let {
                     DesktopQueueSource(it, current.playbackSourceType ?: PlaybackSourceType.QUEUE, current.playbackSourceId)
                 }
-                liveQueue = liveQueue.append(suggestions.map { it.withSource(inherited) })
-                saveQueue()
+                val queuedSuggestions = suggestions.map { it.withSource(inherited) }
+                if (latestParty.inParty) {
+                    // Match the phone: the server owns the party queue. Do not mutate this one
+                    // device first; queueAdd is echoed back and all members apply it atomically.
+                    DesktopListenTogether.queueAdd(queuedSuggestions.map { it.toPartyTrack(0L) })
+                    val firstAdded = queuedSuggestions.first().videoId
+                    val landed = withTimeoutOrNull(PARTY_AUTOPLAY_ECHO_TIMEOUT_MS) {
+                        DesktopListenTogether.state.first { state ->
+                            state.queue.items.any { it.videoId == firstAdded }
+                        }
+                    } != null
+                    if (!landed) {
+                        autoplaySeed = null
+                        DesktopTrackLog.log("autoplay: party refused the queue top-up; retry is armed")
+                        return@launch
+                    }
+                    if (playFirst) DesktopListenTogether.next()
+                } else {
+                    liveQueue = liveQueue.append(queuedSuggestions)
+                    saveQueue()
+                    // The mix continues from where it was added rather than starting a queue of
+                    // its own.
+                    if (playFirst) playQueueIndex(at)
+                }
                 if (dontRepeatSuggestions) sessionSongHistory += suggestions
                 DesktopTrackLog.log(
                     "autoplay: queued ${suggestions.size} after '${current.title}'",
                 )
-                // The mix continues from where it was added rather than starting a queue of its
-                // own.
-                if (playFirst) playQueueIndex(at)
-            }.onFailure { failure ->
-                autoplaySeed = null
-                DesktopTrackLog.log("autoplay: could not build a station: ${failure.message}")
+                return@launch
             }
         }
     }
@@ -1048,6 +1106,13 @@ fun BitChordDesktopApp() {
         autoplayJob?.cancel()
         autoplayJob = null
         autoplaySeed = null
+        if (DesktopListenTogether.state.value.inParty) {
+            // As on the phone, the server owns the effective setting and queue while connected.
+            // Keep the personal preference for after leaving, but do not trim or top up this one
+            // device ahead of the server's state broadcast.
+            DesktopListenTogether.setAutoplay(enabled)
+            return
+        }
         if (enabled) {
             loadAutoplaySongs()
         } else {
@@ -1057,7 +1122,6 @@ fun BitChordDesktopApp() {
                 saveQueue()
             }
         }
-        if (DesktopListenTogether.state.value.inParty) DesktopListenTogether.setAutoplay(enabled)
     }
 
     fun playNext() {
@@ -1071,7 +1135,8 @@ fun BitChordDesktopApp() {
                 liveQueue = liveQueue.copy(index = 0)
                 playCurrent()
             }
-            autoplay -> loadAutoplaySongs(playFirst = true)
+            DesktopAutoplay.enabled(DesktopListenTogether.state.value, autoplay) ->
+                loadAutoplaySongs(playFirst = true)
         }
     }
 
@@ -1251,15 +1316,12 @@ fun BitChordDesktopApp() {
                     )
                 }
             },
-            applyPartyAutoplay = { enabled ->
-                if (autoplay != enabled) {
-                    autoplay = enabled
-                    persistence.saveBoolean("autoplay", enabled)
-                    autoplayJob?.cancel()
-                    autoplayJob = null
-                    autoplaySeed = null
-                    if (!enabled) liveQueue = liveQueue.withoutAutoplay()
-                }
+            applyPartyAutoplay = { _ ->
+                // The party setting overrides the personal preference only while connected. The
+                // phone deliberately does not persist it or delete queue rows on this device.
+                autoplayJob?.cancel()
+                autoplayJob = null
+                autoplaySeed = null
             },
             onEnteredParty = {
                 if (personalQueueStash == null) {
@@ -1405,6 +1467,39 @@ fun BitChordDesktopApp() {
     // run dry.
     LaunchedEffect(selectedSong?.videoId, autoplay, repeatMode) {
         loadAutoplaySongs()
+    }
+    val partyAutoplaySupplier = DesktopAutoplay.supplierId(partyState)
+    LaunchedEffect(
+        partyState.code,
+        partyState.playback.autoplayEnabled,
+        partyAutoplaySupplier,
+    ) {
+        if (partyState.inParty &&
+            partyState.playback.autoplayEnabled &&
+            partyAutoplaySupplier == partyState.you?.memberId
+        ) {
+            autoplayJob?.cancel()
+            autoplayJob = null
+            autoplaySeed = null
+            loadAutoplaySongs()
+        }
+    }
+    LaunchedEffect(liveQueue.songs.size, liveQueue.index, partyState.queue.seq) {
+        val currentId = selectedSong?.videoId
+        val shouldRefresh = DesktopAutoplay.queueNeedsRefresh(
+            enabled = DesktopAutoplay.enabled(partyState, autoplay),
+            repeatAll = repeatMode == DesktopRepeatMode.ALL,
+            currentIndex = liveQueue.index,
+            itemCount = liveQueue.songs.size,
+            loadInProgress = autoplayJob?.isActive == true,
+        )
+        // Only re-arm a seed that has already been attempted. The track-change effect above owns
+        // the initial load; this effect owns later local or server queue edits that expose a tail.
+        if (shouldRefresh && currentId != null && autoplaySeed == currentId) {
+            autoplayJob = null
+            autoplaySeed = null
+            loadAutoplaySongs()
+        }
     }
     LaunchedEffect(Unit) {
         while (currentCoroutineContext().isActive) {
@@ -2535,10 +2630,11 @@ fun BitChordDesktopApp() {
                 // The phone's page is black, not the near-black of its cards.
                 containerColor = DesktopBackground,
                 // Only Replay dresses itself; everywhere else the chrome sits on the plain surface.
-                backdrop = {
+                backdrop = { transparentBase ->
                     DesktopPageBackdrop(
                         artworkUrl = replaySummary.songs.firstOrNull()?.song?.thumbnailUrl
                             .takeIf { overlays.replay },
+                        transparentBase = transparentBase,
                     )
                 },
                 modifier = Modifier.onPreviewKeyEvent { event ->
@@ -2678,7 +2774,7 @@ fun BitChordDesktopApp() {
                             DesktopSidePanel.QUEUE -> QueueSidePanel(
                                 queue = liveQueue.songs,
                                 queueIndex = liveQueue.index,
-                                autoplayEnabled = autoplay,
+                                autoplayEnabled = DesktopAutoplay.enabled(partyState, autoplay),
                                 onJumpTo = ::playQueueIndex,
                                 onRemove = ::removeFromQueue,
                                 onMove = ::moveInQueue,
@@ -2724,7 +2820,7 @@ fun BitChordDesktopApp() {
                                 DesktopRepeatMode.ALL -> RepeatModes.ALL
                             },
                             shuffleEnabled = shuffle,
-                            autoplayEnabled = autoplay,
+                            autoplayEnabled = DesktopAutoplay.enabled(partyState, autoplay),
                             signedIn = youtubeSignedIn,
                             accountName = activeAccount?.name?.takeIf(String::isNotBlank),
                             likeStatus = when (current.videoId) {
@@ -2754,7 +2850,9 @@ fun BitChordDesktopApp() {
                                 }
                                 persistence.saveString("repeat_mode", repeatMode.name)
                             },
-                            onToggleAutoplay = { setAutoplay(!autoplay) },
+                            onToggleAutoplay = {
+                                setAutoplay(!DesktopAutoplay.enabled(DesktopListenTogether.state.value, autoplay))
+                            },
                             onJumpTo = ::playQueueIndex,
                             onRemoveFromQueue = ::removeFromQueue,
                             onMoveInQueue = ::moveInQueue,
@@ -2815,7 +2913,7 @@ fun BitChordDesktopApp() {
                                     },
                                     onUpgradeQuality = {
                                         DesktopOriginalVersion.clear(current.videoId)
-                                        playbackEngine.reloadCurrent()
+                                        playbackEngine.reloadCurrent(forceSourceRefresh = true)
                                     }.takeIf { DesktopOriginalVersion.isPinned(current.videoId) },
                                     onDismiss = { playerMenuOpen = false },
                                 )
@@ -2936,6 +3034,13 @@ fun BitChordDesktopApp() {
                                 spatialAudio = it
                                 persistence.saveBoolean("spatial_audio", it)
                             },
+                            dolbyAtmos = dolbyAtmos,
+                            onDolbyAtmosChange = {
+                                dolbyAtmos = it
+                                DesktopAddonSettings.dolbyAtmosEnabled = it
+                                persistence.saveBoolean("dolby_atmos", it)
+                                DesktopAddonSource.clearCompletedTrackCalls()
+                            },
                             skipSilence = skipSilence,
                             onSkipSilenceChange = {
                                 skipSilence = it
@@ -3006,6 +3111,11 @@ fun BitChordDesktopApp() {
                                     DesktopAddonSource.forget(config.id)
                                     DesktopModuleSource.reload()
                                 }
+                            },
+                            onMoveSource = { config, delta ->
+                                val next = moveUserSource(sourceConfigs, config.id, delta)
+                                persistence.saveSourceConfigs(next)
+                                sourceConfigs = persistence.sourceConfigs()
                             },
                             onTestSource = { candidate ->
                                 sourceStatus = sourceStatus + (candidate.id to "Checking source…")
@@ -4220,7 +4330,8 @@ private fun DesktopFrame(
      * area, so the title bar, top bar and sidebar take their tint from the page they are framing
      * instead of staying a flat slab beside it.
      */
-    backdrop: @Composable () -> Unit,
+    /** Receives true when its solid base should be left clear for the system material. */
+    backdrop: @Composable (transparentBase: Boolean) -> Unit,
     topBar: @Composable (Boolean) -> Unit,
     sidebar: @Composable () -> Unit,
     bottomBar: @Composable (Boolean) -> Unit,
@@ -4231,16 +4342,18 @@ private fun DesktopFrame(
 ) {
     // Held out here rather than inside the constraints box.
     val haze = remember { HazeState() }
-    // With a system material behind the chrome, the window is left clear everywhere but the
-    // page, the side column and whatever is laid over them: those paint their own ground, and
-    // only the sidebar and top bar let the material through.
+    // With a system material active, the window stays clear under its chrome. The app-background
+    // preference decides whether the page and side column also stay clear or retain their solid
+    // gray ground.
     val material by DesktopWindowBackdrop.active.collectAsState()
+    val appBackground by DesktopWindowBackdrop.appBackground.collectAsState()
     val glass = material != DesktopBackdrop.OFF
+    val materialBehindApp = glass && appBackground
     CompositionLocalProvider(LocalDesktopHaze provides haze) {
         Box(modifier.fillMaxSize().then(if (glass) Modifier else Modifier.background(containerColor))) {
             // Both sources of the same state: the chrome blurs the backdrop behind it, and the
             // floating bottom bar blurs the page scrolling under it.
-            if (!glass) Box(Modifier.fillMaxSize().hazeSource(haze)) { backdrop() }
+            if (!glass) Box(Modifier.fillMaxSize().hazeSource(haze)) { backdrop(false) }
             Column(Modifier.fillMaxSize()) {
                 // Above everything, and outside the box the rest of the window is drawn in, because
                 // that is what a title bar is.
@@ -4259,10 +4372,16 @@ private fun DesktopFrame(
                                     Modifier
                                         .weight(1f)
                                         .fillMaxHeight()
-                                        .then(if (glass) Modifier.background(containerColor) else Modifier),
+                                        .then(
+                                            if (glass && !materialBehindApp) {
+                                                Modifier.background(containerColor)
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
                                 ) {
                                     Box(Modifier.fillMaxSize().hazeSource(haze)) {
-                                        if (glass) backdrop()
+                                        if (glass) backdrop(materialBehindApp)
                                         content(
                                             PaddingValues(
                                                 start = 0.dp,
@@ -4280,7 +4399,13 @@ private fun DesktopFrame(
                                 Box(
                                     Modifier
                                         .fillMaxHeight()
-                                        .then(if (glass) Modifier.background(containerColor) else Modifier),
+                                        .then(
+                                            if (glass && !materialBehindApp) {
+                                                Modifier.background(containerColor)
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
                                 ) { trailing() }
                             }
                             }
@@ -4300,8 +4425,12 @@ private fun DesktopFrame(
  * ink so a page of text stays readable over it.
  */
 @Composable
-private fun DesktopPageBackdrop(artworkUrl: String?) {
-    Box(Modifier.fillMaxSize().background(DesktopBackground)) {
+private fun DesktopPageBackdrop(artworkUrl: String?, transparentBase: Boolean) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .then(if (transparentBase) Modifier else Modifier.background(DesktopBackground)),
+    ) {
         if (artworkUrl == null) return@Box
         DesktopMesh(artworkUrl)
         Box(
@@ -4853,10 +4982,27 @@ private fun DesktopLibraryGroupingContent(
     }
 }
 
-/**
- * Settings as a modal card over the page behind it, the way Music and iTunes present their own
- * preferences.
- */
+/** Mobile's section order, with desktop-only groups placed beside their closest mobile counterpart. */
+private enum class DesktopSettingsSection {
+    ACCOUNT,
+    LISTEN_TOGETHER,
+    SOURCES,
+    AUDIO_QUALITY,
+    DOWNLOADS,
+    OUTPUT_PRECISION,
+    AUDIO_OUTPUT,
+    PLAYBACK,
+    DESKTOP_PLAYBACK,
+    APPEARANCE,
+    LYRICS,
+    LOCAL_MUSIC,
+    STORAGE,
+    MISCELLANEOUS,
+    LANGUAGE,
+    ADVANCED,
+}
+
+/** Settings as a modal card over the page behind it, the way Music presents its preferences. */
 @Composable
 private fun DesktopSettingsDialog(
     autoplay: Boolean,
@@ -4908,6 +5054,8 @@ private fun DesktopSettingsDialog(
     onTrayIconChange: (Boolean) -> Unit,
     spatialAudio: Boolean,
     onSpatialAudioChange: (Boolean) -> Unit,
+    dolbyAtmos: Boolean,
+    onDolbyAtmosChange: (Boolean) -> Unit,
     skipSilence: Boolean,
     onSkipSilenceChange: (Boolean) -> Unit,
     outputPrecision: String,
@@ -4926,6 +5074,7 @@ private fun DesktopSettingsDialog(
     onSourceEnabledChange: (DesktopSourceConfig, Boolean) -> Unit,
     onSaveSource: (DesktopSourceConfig) -> Unit,
     onRemoveSource: (DesktopSourceConfig) -> Unit,
+    onMoveSource: (DesktopSourceConfig, Int) -> Unit,
     onTestSource: (DesktopSourceConfig) -> Unit,
     onOpenIntegrations: () -> Unit,
     onDismiss: () -> Unit,
@@ -5003,29 +5152,9 @@ private fun DesktopSettingsDialog(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 28.dp),
                 ) {
-            item {
+            DesktopSettingsSection.entries.forEach { section ->
+            if (section == DesktopSettingsSection.PLAYBACK) item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
-                        SettingsToggle(DesktopStrings["autoplay", "Autoplay"], DesktopStrings["d_keep_the_music_going_with_similar_songs", "Keep the music going with similar songs"], autoplay, onAutoplayChange)
-                        SettingsToggle(DesktopStrings["shuffle", "Shuffle"], DesktopStrings["d_mix_the_order_of_the_current_queue", "Mix the order of the current queue"], shuffle, onShuffleChange)
-                    SettingsRow(
-                        BitChordIcons.Repeat,
-                        DesktopStrings["d_repeat", "Repeat"],
-                        "${repeatMode.label()} · Tap to change",
-                    ) { onRepeatModeChange(repeatMode.next()) }
-                    SettingsRow(
-                        Icons.Rounded.Tune,
-                        DesktopStrings["d_playback_speed", "Playback speed"],
-                        "${"%.2f".format(playbackSpeed)}×",
-                    ) {
-                        val next = when {
-                            playbackSpeed < 0.76f -> 1.0f
-                            playbackSpeed < 1.01f -> 1.25f
-                            playbackSpeed < 1.26f -> 1.5f
-                            playbackSpeed < 1.51f -> 2.0f
-                            else -> 0.5f
-                        }
-                        onPlaybackSpeedChange(next)
-                    }
                     if (!automix) {
                         if (settingsRowVisible(DesktopStrings["crossfade", "Crossfade"])) {
                         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -5054,8 +5183,7 @@ private fun DesktopSettingsDialog(
                         automix,
                         onAutomixChange,
                     )
-                    if (automix) {
-                        if (settingsRowVisible(DesktopStrings["automix_performance", "Automix performance"], DesktopStrings["automix_performance_subtitle", "Sets how much CPU background analysis may use"])) {
+                    if (settingsRowVisible(DesktopStrings["automix_performance", "Automix performance"], DesktopStrings["automix_performance_subtitle", "Sets how much CPU background analysis may use"])) {
                         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
                             Text(DesktopStrings["automix_performance", "Automix performance"], fontWeight = FontWeight.Medium)
                             Text(
@@ -5081,7 +5209,73 @@ private fun DesktopSettingsDialog(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
+                    }
+                    val eqOn by DesktopEqualizerSettings.enabled.collectAsState()
+                    SettingsToggle(
+                        DesktopStrings["skip_silence", "Skip silence"],
+                        DesktopStrings["d_shorten_long_gaps_rather_than_playing_them_out", "Shorten long gaps rather than playing them out"],
+                        skipSilence,
+                        onSkipSilenceChange,
+                    )
+                    SettingsToggle(
+                        DesktopStrings["spatial_audio", "Spatial audio"],
+                        DesktopStrings["spatial_audio_subtitle", "Widens stereo tracks for a more immersive feel"],
+                        spatialAudio,
+                        onSpatialAudioChange,
+                    )
+                    SettingsToggle(
+                        DesktopStrings["dolby_atmos", "Dolby Atmos"],
+                        if (DesktopCodecs.supportsDolbyAtmos) {
+                            "Prefer an add-on's immersive mix and decode E-AC-3 with FFmpeg"
+                        } else {
+                            DesktopStrings["dolby_atmos_unavailable", "This device can't play Atmos, so these songs play in their usual version"]
+                        },
+                        dolbyAtmos && DesktopCodecs.supportsDolbyAtmos,
+                        { if (DesktopCodecs.supportsDolbyAtmos) onDolbyAtmosChange(it) },
+                    )
+                    SettingsNavigationRow(
+                        title = DesktopStrings["equalizer", "Equalizer"],
+                        subtitle = if (eqOn) {
+                            DesktopStrings["equalizer_subtitle", "Tone, seven bands and balance"]
+                        } else {
+                            DesktopStrings["d_off", "Off"]
+                        },
+                        onClick = onOpenEqualizer,
+                    )
+                }
+            }
+            if (section == DesktopSettingsSection.DESKTOP_PLAYBACK) item {
+                SettingsGroup(DesktopStrings["d_desktop_playback", "Desktop playback"]) {
+                    SettingsToggle(
+                        DesktopStrings["autoplay", "Autoplay"],
+                        DesktopStrings["d_keep_the_music_going_with_similar_songs", "Keep the music going with similar songs"],
+                        autoplay,
+                        onAutoplayChange,
+                    )
+                    SettingsToggle(
+                        DesktopStrings["shuffle", "Shuffle"],
+                        DesktopStrings["d_mix_the_order_of_the_current_queue", "Mix the order of the current queue"],
+                        shuffle,
+                        onShuffleChange,
+                    )
+                    SettingsRow(
+                        BitChordIcons.Repeat,
+                        DesktopStrings["d_repeat", "Repeat"],
+                        "${repeatMode.label()} · Tap to change",
+                    ) { onRepeatModeChange(repeatMode.next()) }
+                    SettingsRow(
+                        Icons.Rounded.Tune,
+                        DesktopStrings["d_playback_speed", "Playback speed"],
+                        "${"%.2f".format(playbackSpeed)}×",
+                    ) {
+                        val next = when {
+                            playbackSpeed < 0.76f -> 1.0f
+                            playbackSpeed < 1.01f -> 1.25f
+                            playbackSpeed < 1.26f -> 1.5f
+                            playbackSpeed < 1.51f -> 2.0f
+                            else -> 0.5f
                         }
+                        onPlaybackSpeedChange(next)
                     }
                     SettingsRow(
                         Icons.Rounded.Bedtime,
@@ -5092,134 +5286,9 @@ private fun DesktopSettingsDialog(
                             else -> "Pause playback after a while"
                         },
                     ) { onSleepTimerCycle() }
-                    // Windows only: on Linux the window manager owns the window's frame and there
-                    // is nothing here to offer.
-                    if (DesktopPlatform.drawsOwnWindowFrame) {
-                        val titleBar by DesktopTitleBarSetting.enabled.collectAsState()
-                        SettingsToggle(
-                            DesktopStrings["d_title_bar", "Title bar"],
-                            DesktopStrings[
-                                "d_a_slim_bar_above_the_toolbar",
-                                "A slim bar above the toolbar with the window's own buttons. " +
-                                    "Off, the window has no title bar at all.",
-                            ],
-                            titleBar,
-                            DesktopTitleBarSetting::set,
-                        )
-                    }
-                    // Windows 11 only, where DWM has the materials to offer.
-                    if (DesktopWindowBackdrop.available &&
-                        settingsRowVisible(DesktopStrings["d_window_material", "Window material"])
-                    ) {
-                        val backdropChoice by DesktopWindowBackdrop.selected.collectAsState()
-                        val backdropActive by DesktopWindowBackdrop.active.collectAsState()
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Text(DesktopStrings["d_window_material", "Window material"], fontWeight = FontWeight.Medium)
-                            Text(
-                                DesktopStrings[
-                                    "d_window_material_subtitle",
-                                    "Lets the desktop show through the sidebar and top bar",
-                                ],
-                                color = DesktopSecondary,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                DesktopBackdrop.entries.forEach { option ->
-                                    FilterChip(
-                                        colors = desktopChipColors(),
-                                        selected = backdropChoice == option,
-                                        onClick = { DesktopWindowBackdrop.set(option) },
-                                        label = { Text(option.label) },
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                when {
-                                    backdropChoice != DesktopBackdrop.OFF && backdropActive == DesktopBackdrop.OFF ->
-                                        "Needs Windows 11 version 22H2 or later"
-                                    backdropChoice == DesktopBackdrop.MICA ->
-                                        "A soft tint taken from your wallpaper"
-                                    backdropChoice == DesktopBackdrop.ACRYLIC ->
-                                        "A frosted blur of whatever is behind the window"
-                                    else -> "Solid, as the rest of the app"
-                                },
-                                color = DesktopSecondary,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                    SettingsToggle(
-                        DesktopStrings["full_screen_cover_art", "Full-screen cover art"],
-                        DesktopStrings["full_screen_cover_art_subtitle", "Runs the cover to the edges of the player instead of a square sleeve"],
-                        fullBleedArtwork,
-                        onFullBleedArtworkChange,
-                    )
-                    SettingsToggle(DesktopStrings["d_animated_canvas", "Animated canvas"], DesktopStrings["d_show_motion_artwork_when_it_is_available", "Show motion artwork when it is available"], animatedCanvas, onAnimatedCanvasChange)
-                    if (animatedCanvas) {
-                        SettingsNavigationRow(
-                            title = DesktopStrings["spotify_canvas_setup", "Spotify Canvas setup"],
-                            subtitle = if (spotifyCanvasReady) {
-                                "Connected"
-                            } else {
-                                "To use Spotify Canvas, provide your Spotify sp_dc cookie."
-                            },
-                            onClick = onOpenSpotifyCanvasSetup,
-                        )
-                    }
-                    SettingsToggle(
-                        DesktopStrings["show_nerd_stats", "Show stats for nerds"],
-                        DesktopStrings["show_nerd_stats_subtitle", "Codec, bitrate and sample rate on the player"],
-                        showNerdStats,
-                        onShowNerdStatsChange,
-                    )
-                    SettingsToggle(
-                        DesktopStrings["legacy_mesh_gradient", "Legacy mesh gradient"],
-                        DesktopStrings["d_use_the_older_blob_backdrop_behind_the_player", "Use the older blob backdrop behind the player"],
-                        legacyMeshGradient,
-                        onLegacyMeshGradientChange,
-                    )
-                    val eqOn by DesktopEqualizerSettings.enabled.collectAsState()
-                    SettingsNavigationRow(
-                        title = DesktopStrings["equalizer", "Equalizer"],
-                        subtitle = if (eqOn) {
-                            DesktopStrings["equalizer_subtitle", "Tone, seven bands and balance"]
-                        } else {
-                            DesktopStrings["d_off", "Off"]
-                        },
-                        onClick = onOpenEqualizer,
-                    )
-                    SettingsToggle(
-                        DesktopStrings["spatial_audio", "Spatial audio"],
-                        DesktopStrings["spatial_audio_subtitle", "Widens stereo tracks for a more immersive feel"],
-                        spatialAudio,
-                        onSpatialAudioChange,
-                    )
-                    SettingsToggle(
-                        DesktopStrings["skip_silence", "Skip silence"],
-                        DesktopStrings["d_shorten_long_gaps_rather_than_playing_them_out", "Shorten long gaps rather than playing them out"],
-                        skipSilence,
-                        onSkipSilenceChange,
-                    )
-                    SettingsToggle(
-                        DesktopStrings["d_tray_icon", "Tray icon"],
-                        DesktopStrings["d_show_bitchord_in_the_system_tray_with_playback_controls", "Show BitChord in the system tray, with playback controls"],
-                        trayIconEnabled,
-                        onTrayIconChange,
-                    )
-                    // Only offered where it can be honoured.
-                    if (trayIconEnabled) {
-                        SettingsToggle(
-                            DesktopStrings["d_keep_playing_when_closed", "Keep playing when closed"],
-                            DesktopStrings["d_closing_the_window_leaves_bitchord_in_the_tray_instead_o", "Closing the window leaves BitChord in the tray instead of quitting"],
-                            closeToTray,
-                            onCloseToTrayChange,
-                        )
-                    }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.LYRICS) item {
                 SettingsGroup(DesktopStrings["open_lyrics", "Lyrics"]) {
                     SettingsToggle(
                         DesktopStrings["synced_lyrics", "Synced lyrics"],
@@ -5252,7 +5321,7 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.LANGUAGE) item {
                 SettingsGroup(DesktopStrings["language", "Language"]) {
                     var languageMenuOpen by remember { mutableStateOf(false) }
                     val chosen by DesktopStrings.language.collectAsState()
@@ -5281,7 +5350,7 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.STORAGE) item {
                 SettingsGroup(DesktopStrings["storage", "Storage"]) {
                     var limitMb by remember { mutableStateOf(DesktopMediaCache.limitMb()) }
                     var cleared by remember { mutableStateOf<String?>(null) }
@@ -5329,7 +5398,7 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.LOCAL_MUSIC) item {
                 SettingsGroup(DesktopStrings["local_music", "Local Music"]) {
                     var folderLabel by remember { mutableStateOf(DesktopLocalMusic.folderLabel()) }
                     SettingsRow(
@@ -5361,7 +5430,7 @@ private fun DesktopSettingsDialog(
                     )
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.APPEARANCE) item {
                 SettingsGroup(DesktopStrings["appearance", "Appearance"]) {
                     val reduceDynamicBlur by DesktopAppearanceSettings.reduceDynamicBlur.collectAsState()
                     SettingsToggle(
@@ -5370,9 +5439,103 @@ private fun DesktopSettingsDialog(
                         reduceDynamicBlur,
                         DesktopAppearanceSettings::setReduceDynamicBlur,
                     )
+                    // Window furniture belongs beside the visual settings it changes, rather than
+                    // interrupting playback controls. These rows remain Windows-only.
+                    if (DesktopPlatform.drawsOwnWindowFrame) {
+                        val titleBar by DesktopTitleBarSetting.enabled.collectAsState()
+                        SettingsToggle(
+                            DesktopStrings["d_title_bar", "Title bar"],
+                            DesktopStrings[
+                                "d_a_slim_bar_above_the_toolbar",
+                                "A slim bar above the toolbar with the window's own buttons. " +
+                                    "Off, the window has no title bar at all.",
+                            ],
+                            titleBar,
+                            DesktopTitleBarSetting::set,
+                        )
+                    }
+                    if (DesktopWindowBackdrop.available) {
+                        val backdropChoice by DesktopWindowBackdrop.selected.collectAsState()
+                        val backdropActive by DesktopWindowBackdrop.active.collectAsState()
+                        val materialTitle = DesktopStrings["d_window_material", "Window material"]
+                        val materialSubtitle = DesktopStrings[
+                            "d_window_material_subtitle",
+                            "Sets the material for the sidebar and top bar",
+                        ]
+                        if (settingsRowVisible(materialTitle, materialSubtitle)) {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                                Text(materialTitle, fontWeight = FontWeight.Medium)
+                                Text(materialSubtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
+                                Spacer(Modifier.height(10.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    DesktopBackdrop.entries.forEach { option ->
+                                        FilterChip(
+                                            colors = desktopChipColors(),
+                                            selected = backdropChoice == option,
+                                            onClick = { DesktopWindowBackdrop.set(option) },
+                                            label = { Text(option.label) },
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    when {
+                                        backdropChoice != DesktopBackdrop.OFF && backdropActive == DesktopBackdrop.OFF ->
+                                            "Needs Windows 11 version 22H2 or later"
+                                        backdropChoice == DesktopBackdrop.MICA ->
+                                            "A soft tint taken from your wallpaper"
+                                        backdropChoice == DesktopBackdrop.ACRYLIC ->
+                                            "A frosted blur of whatever is behind the window"
+                                        else -> "Solid, as the rest of the app"
+                                    },
+                                    color = DesktopSecondary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        val appBackground by DesktopWindowBackdrop.appBackground.collectAsState()
+                        SettingsToggle(
+                            DesktopStrings["d_app_background", "App background"],
+                            DesktopStrings[
+                                "d_app_background_subtitle",
+                                "Use the window material instead of a solid gray background",
+                            ],
+                            appBackground,
+                            DesktopWindowBackdrop::setAppBackground,
+                        )
+                    }
+                    SettingsToggle(
+                        DesktopStrings["full_screen_cover_art", "Full-screen cover art"],
+                        DesktopStrings["full_screen_cover_art_subtitle", "Runs the cover to the edges of the player instead of a square sleeve"],
+                        fullBleedArtwork,
+                        onFullBleedArtworkChange,
+                    )
+                    SettingsToggle(
+                        DesktopStrings["legacy_mesh_gradient", "Legacy mesh gradient"],
+                        DesktopStrings["d_use_the_older_blob_backdrop_behind_the_player", "Use the older blob backdrop behind the player"],
+                        legacyMeshGradient,
+                        onLegacyMeshGradientChange,
+                    )
+                    SettingsToggle(
+                        DesktopStrings["d_animated_canvas", "Animated canvas"],
+                        DesktopStrings["d_show_motion_artwork_when_it_is_available", "Show motion artwork when it is available"],
+                        animatedCanvas,
+                        onAnimatedCanvasChange,
+                    )
+                    if (animatedCanvas) {
+                        SettingsNavigationRow(
+                            title = DesktopStrings["spotify_canvas_setup", "Spotify Canvas setup"],
+                            subtitle = if (spotifyCanvasReady) {
+                                "Connected"
+                            } else {
+                                "To use Spotify Canvas, provide your Spotify sp_dc cookie."
+                            },
+                            onClick = onOpenSpotifyCanvasSetup,
+                        )
+                    }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.MISCELLANEOUS) item {
                 SettingsGroup(DesktopStrings["miscellaneous", "Miscellaneous"]) {
                     SettingsToggle(
                         DesktopStrings["d_dont_repeat_songs_in_current_session", "Don\u2019t repeat songs in current session"],
@@ -5380,6 +5543,26 @@ private fun DesktopSettingsDialog(
                         dontRepeatSuggestions,
                         onDontRepeatSuggestionsChange,
                     )
+                    SettingsToggle(
+                        DesktopStrings["d_tray_icon", "Tray icon"],
+                        DesktopStrings[
+                            "d_show_bitchord_in_the_system_tray_with_playback_controls",
+                            "Show BitChord in the system tray, with playback controls",
+                        ],
+                        trayIconEnabled,
+                        onTrayIconChange,
+                    )
+                    if (trayIconEnabled) {
+                        SettingsToggle(
+                            DesktopStrings["d_keep_playing_when_closed", "Keep playing when closed"],
+                            DesktopStrings[
+                                "d_closing_the_window_leaves_bitchord_in_the_tray_instead_o",
+                                "Closing the window leaves BitChord in the tray instead of quitting",
+                            ],
+                            closeToTray,
+                            onCloseToTrayChange,
+                        )
+                    }
                     val hideVolumeBar by DesktopAppearanceSettings.hideVolumeBar.collectAsState()
                     SettingsToggle(
                         DesktopStrings["hide_volume_bar", "Hide volume bar"],
@@ -5389,7 +5572,7 @@ private fun DesktopSettingsDialog(
                     )
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.AUDIO_QUALITY) item {
                 SettingsGroup(DesktopStrings["audio_quality", "Audio quality"]) {
                     if (settingsRowVisible(DesktopStrings["audio_quality", "Audio quality"])) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -5415,7 +5598,7 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.LISTEN_TOGETHER) item {
                 SettingsGroup(DesktopStrings["listen_together", "Listen together"]) {
                     SettingsNavigationRow(
                         DesktopStrings["listen_together", "Listen together"],
@@ -5423,7 +5606,7 @@ private fun DesktopSettingsDialog(
                     ) { onOpenListenTogether() }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.AUDIO_OUTPUT) item {
                 SettingsGroup(DesktopStrings["audio_output", "Audio output"]) {
                     SettingsNavigationRow(
                         DesktopStrings["pipeline_output_device", "Output device"],
@@ -5431,7 +5614,7 @@ private fun DesktopSettingsDialog(
                     ) { onOpenAudioOutput() }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.OUTPUT_PRECISION) item {
                 SettingsGroup(DesktopStrings["d_output_precision", "Output precision"]) {
                     if (settingsRowVisible(DesktopStrings["d_output_precision", "Output precision"])) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -5458,7 +5641,7 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.DOWNLOADS) item {
                 SettingsGroup(DesktopStrings["download_channel_name", "Downloads"]) {
                     if (settingsRowVisible(DesktopStrings["download_channel_name", "Downloads"])) {
                     Row(
@@ -5477,9 +5660,12 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.SOURCES) item {
                 SettingsGroup(DesktopStrings["sources_order_header", "Sources · tried in this order"]) {
                     val sourcesHeading = DesktopStrings["sources_order_header", "Sources · tried in this order"]
+                    val userAddedIds = sourceConfigs.inSourceOrder()
+                        .filter(DesktopSourceConfig::isUserAdded)
+                        .map(DesktopSourceConfig::id)
                     sourceConfigs.inSourceOrder().forEachIndexed { index, config ->
                         if (!settingsRowVisible(sourcesHeading, config.displayName)) return@forEachIndexed
                         if (index > 0) HorizontalDivider(color = DesktopDivider)
@@ -5498,6 +5684,12 @@ private fun DesktopSettingsDialog(
                             } else {
                                 { onSourceEnabledChange(config, it) }
                             },
+                            onMoveUp = if (userAddedIds.indexOf(config.id) > 0) {
+                                { onMoveSource(config, -1) }
+                            } else null,
+                            onMoveDown = if (userAddedIds.indexOf(config.id) in 0 until userAddedIds.lastIndex) {
+                                { onMoveSource(config, 1) }
+                            } else null,
                         )
                     }
                     if (sourceConfigs.isNotEmpty()) HorizontalDivider(color = DesktopDivider)
@@ -5514,7 +5706,7 @@ private fun DesktopSettingsDialog(
                     }
                 }
             }
-            item {
+            if (section == DesktopSettingsSection.ACCOUNT) item {
                 // One row rather than the four groups this used to be. Every
                 // integration option Android has lives behind it; inline, the
                 // list was longer than the rest of Settings put together.
@@ -5526,6 +5718,17 @@ private fun DesktopSettingsDialog(
                         onOpenIntegrations,
                     )
                 }
+            }
+            if (section == DesktopSettingsSection.ADVANCED) item {
+                SettingsGroup(DesktopStrings["advanced_options", "Advanced options"]) {
+                    SettingsToggle(
+                        DesktopStrings["show_nerd_stats", "Show stats for nerds"],
+                        DesktopStrings["show_nerd_stats_subtitle", "Codec, bitrate and sample rate on the player"],
+                        showNerdStats,
+                        onShowNerdStatsChange,
+                    )
+                }
+            }
             }
             item {
                 DesktopSettingsFooter(onLicenses = { licensesOpen = true })
@@ -5539,6 +5742,7 @@ private fun DesktopSettingsDialog(
     editingSource?.let { config ->
         DesktopSourceEditorDialog(
             config = config,
+            configuredSources = sourceConfigs,
             isNew = sourceConfigs.none { it.id == config.id },
             status = sourceStatus[config.id],
             onDismiss = { editingSource = null },
@@ -5691,6 +5895,8 @@ private fun DesktopSourceSettingsRow(
     skippedByQuality: Boolean = false,
     onEdit: (() -> Unit)?,
     onToggle: ((Boolean) -> Unit)?,
+    onMoveUp: (() -> Unit)? = null,
+    onMoveDown: (() -> Unit)? = null,
 ) {
     val enabledAlpha = if (config.enabled) 1f else 0.45f
     Row(
@@ -5736,6 +5942,16 @@ private fun DesktopSourceSettingsRow(
             )
         }
         Spacer(Modifier.width(8.dp))
+        if (onMoveUp != null) {
+            IconButton(onClick = onMoveUp, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Rounded.KeyboardArrowUp, "Move source earlier")
+            }
+        }
+        if (onMoveDown != null) {
+            IconButton(onClick = onMoveDown, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Rounded.KeyboardArrowDown, "Move source later")
+            }
+        }
         if (onToggle == null) {
             Text(DesktopStrings["always_on", "Always on"], color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
         } else {
@@ -5747,6 +5963,7 @@ private fun DesktopSourceSettingsRow(
 @Composable
 private fun DesktopSourceEditorDialog(
     config: DesktopSourceConfig,
+    configuredSources: List<DesktopSourceConfig>,
     isNew: Boolean,
     status: String?,
     onDismiss: () -> Unit,
@@ -5778,8 +5995,13 @@ private fun DesktopSourceEditorDialog(
                                 baseUrl = detected.baseUrl,
                                 label = candidate.label.ifBlank { detected.manifest.displayName },
                             )
-                            message = "Addon · ${detected.manifest.displayName}"
-                            if (thenSave) onSave(named)
+                            val duplicate = configuredSources.duplicateOf(named.baseUrl, exceptId = named.id)
+                            if (duplicate != null) {
+                                message = "Already added as ${duplicate.displayName}"
+                            } else {
+                                message = "Addon · ${detected.manifest.displayName}"
+                                if (thenSave) onSave(named)
+                            }
                         }
                         is DesktopDetectedFormat.ModuleIndex -> {
                             val asIndex = candidate.copy(

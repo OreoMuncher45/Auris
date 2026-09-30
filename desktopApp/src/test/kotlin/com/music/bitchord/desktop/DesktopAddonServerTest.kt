@@ -19,6 +19,7 @@ class DesktopAddonServerTest {
 
     @Test
     fun `an addon supplies searchable tracks and a playable stream`() = runBlocking {
+        DesktopAddonSettings.dolbyAtmosEnabled = true
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         server.start()
         try {
@@ -66,6 +67,7 @@ class DesktopAddonServerTest {
             // tier actually being asked for.
             assertTrue(searchQuery.get().contains("region=in"), searchQuery.get())
             assertTrue(searchQuery.get().contains("quality=lossless"), searchQuery.get())
+            assertTrue(searchQuery.get().contains("atmos=auto"), searchQuery.get())
             assertTrue(searchQuery.get().contains("q=demo"), searchQuery.get())
 
             // Stream — metadata is read off the answer, including a bitrate stated in bits per
@@ -78,11 +80,13 @@ class DesktopAddonServerTest {
             assertEquals(96_000, stream.format.sampleRateHz)
             assertEquals(24, stream.format.bitDepth)
             assertEquals("addon-1", stream.sourceId)
+            assertEquals(245, stream.durationSec)
             assertTrue(stream.format.isLossless)
 
             // A LOW request is negotiated down to the addon's own spelling.
             DesktopAddonSource.stream(config, song, "LOW")
             assertTrue(streamQuery.get().contains("quality=low"), streamQuery.get())
+            assertTrue(streamQuery.get().contains("atmos=auto"), streamQuery.get())
 
             // And the same URL identifies as an addon before it is stored.
             val detected = DesktopSourceFormats.identify(base).getOrThrow()
@@ -190,6 +194,87 @@ class DesktopAddonServerTest {
         assertEquals("a.jpg", DesktopAddonTrack(artworkURL = "a.jpg", albumArtworkURL = "b.jpg").artwork)
         assertEquals("b.jpg", DesktopAddonTrack(albumArtworkURL = "b.jpg").artwork)
         assertNull(DesktopAddonTrack().artwork)
+    }
+
+    @Test
+    fun `atmos rows and extensionless dash streams keep their routing metadata`() = runBlocking {
+        DesktopAddonSettings.dolbyAtmosEnabled = true
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            server.json("/manifest.json", """{"id":"atmos","resources":["search","stream"]}""")
+            server.json(
+                "/search",
+                """{"tracks":[{"id":"a1","title":"Immersive","artist":"A","duration":180,
+                    "audioQuality":"LOW","audioModes":["DOLBY_ATMOS"]}]}""",
+            )
+            server.json(
+                "/stream/a1",
+                """{"url":"$base/extensionless","format":"dash","audioMode":"DOLBY_ATMOS"}""",
+            )
+            val config = DesktopSourceConfig("addon-atmos", DesktopSourceKind.ADDON, baseUrl = base)
+            val song = (DesktopAddonSource.search(config, "immersive", 5).getOrThrow().single() as SearchResult.Track).song
+
+            assertEquals(DesktopModuleSource.DOLBY, song.sourceQuality)
+            val stream = assertNotNull(DesktopAddonSource.stream(config, song, "LOSSLESS").getOrThrow())
+            assertTrue(stream.isDolbyAtmos)
+            assertEquals("eac3-joc", stream.format.codec)
+            assertEquals(DesktopAddonStream.DASH, stream.transport)
+            assertEquals(180, stream.durationSec)
+        } finally {
+            DesktopAddonSource.forget("addon-atmos")
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `a malformed stream url is rejected before ffmpeg sees it`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            server.json("/manifest.json", """{"id":"bad","resources":["search","stream"]}""")
+            server.json("/search", """{"tracks":[{"id":"b1","title":"Bad","artist":"A"}]}""")
+            server.json("/stream/b1", """{"url":"not a web address","format":"mp3"}""")
+            val config = DesktopSourceConfig("addon-bad", DesktopSourceKind.ADDON, baseUrl = base)
+            val song = (DesktopAddonSource.search(config, "bad", 5).getOrThrow().single() as SearchResult.Track).song
+
+            assertNull(DesktopAddonSource.stream(config, song, "HIGH").getOrThrow())
+        } finally {
+            DesktopAddonSource.forget("addon-bad")
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `atmos hint obeys the listener and never overrides an addon default`() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}"
+            val query = AtomicReference<String>()
+            server.json(
+                "/manifest.json",
+                """{"id":"settings","resources":["search"],
+                    "settings":[{"key":"atmos","default":"strict"}]}""",
+            )
+            server.jsonCapturing("/search", query) { """{"tracks":[]}""" }
+            DesktopAddonSettings.dolbyAtmosEnabled = true
+
+            DesktopAddonClient(base).search("x", DesktopAddonClient.TIER_LOSSLESS).getOrThrow()
+            assertTrue(query.get().contains("atmos=strict"), query.get())
+
+            DesktopAddonSettings.dolbyAtmosEnabled = false
+            val withoutDefaultBase = "$base/plain"
+            server.json("/plain/manifest.json", """{"id":"plain","resources":["search"]}""")
+            server.jsonCapturing("/plain/search", query) { """{"tracks":[]}""" }
+            DesktopAddonClient(withoutDefaultBase).search("x", DesktopAddonClient.TIER_LOSSLESS).getOrThrow()
+            assertTrue(!query.get().contains("atmos="), query.get())
+        } finally {
+            DesktopAddonSettings.dolbyAtmosEnabled = true
+            server.stop(0)
+        }
     }
 
     private fun HttpServer.json(path: String, body: String) {

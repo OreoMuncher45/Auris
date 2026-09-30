@@ -41,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,13 +72,19 @@ internal fun DesktopListenTogetherDialog(autoplayEnabled: Boolean, onDismiss: ()
     val state by DesktopListenTogether.state.collectAsState()
     val activity by DesktopListenTogether.activity.collectAsState()
     val server by DesktopListenTogether.customServerUrl.collectAsState()
+    val serverStatus by DesktopListenTogether.serverStatus.collectAsState()
     val scope = rememberCoroutineScope()
     var code by remember { mutableStateOf("") }
     var nickname by remember { mutableStateOf(DesktopListenTogether.nickname()) }
     var maxMembers by remember { mutableStateOf(5) }
+    var serverDraft by remember { mutableStateOf(server) }
     var preview by remember { mutableStateOf<PartyPreview?>(null) }
     var busy by remember { mutableStateOf(false) }
     var localError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(server) {
+        if (serverDraft == server || serverDraft.isBlank()) serverDraft = server
+    }
 
     DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 920) {
         Column(Modifier.heightIn(min = 560.dp, max = 760.dp)) {
@@ -148,11 +155,24 @@ internal fun DesktopListenTogetherDialog(autoplayEnabled: Boolean, onDismiss: ()
                     onMaxMembersChange = { maxMembers = it.coerceIn(2, 10) },
                     code = code,
                     onCodeChange = {
-                        code = it.filter(Char::isLetterOrDigit).uppercase().take(DesktopListenTogether.CODE_LENGTH)
+                        code = JamInvite.parse(it)
+                            ?: it.filter(Char::isLetterOrDigit).uppercase().take(DesktopListenTogether.CODE_LENGTH)
                         localError = null
                     },
-                    server = server,
-                    onServerChange = DesktopListenTogether::setCustomServerUrl,
+                    server = serverDraft,
+                    serverStatus = serverStatus,
+                    onServerChange = { serverDraft = it },
+                    onSaveServer = {
+                        localError = null
+                        DesktopListenTogether.normalizeServerUrl(serverDraft)
+                            .onSuccess { normalized ->
+                                DesktopListenTogether.setCustomServerUrl(normalized)
+                                    .onSuccess { serverDraft = normalized }
+                                    .onFailure { localError = it.message }
+                            }
+                            .onFailure { localError = it.message }
+                    },
+                    onRefreshServer = DesktopListenTogether::refreshServerHealth,
                     busy = busy,
                     error = localError ?: state.error,
                     onCreate = {
@@ -192,7 +212,10 @@ private fun PartyLanding(
     code: String,
     onCodeChange: (String) -> Unit,
     server: String,
+    serverStatus: DesktopListenTogether.ServerStatus,
     onServerChange: (String) -> Unit,
+    onSaveServer: () -> Unit,
+    onRefreshServer: () -> Unit,
     busy: Boolean,
     error: String?,
     onCreate: () -> Unit,
@@ -278,6 +301,24 @@ private fun PartyLanding(
                     onSearch = {},
                     placeholder = "Custom server address",
                 )
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        serverStatusLine(serverStatus),
+                        color = when (serverStatus.health) {
+                            DesktopListenTogether.Health.ONLINE -> DesktopSecondary
+                            DesktopListenTogether.Health.CHECKING -> DesktopSecondary
+                            DesktopListenTogether.Health.OFFLINE -> DesktopDestructive
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onRefreshServer) { Text("Test") }
+                    Button(
+                        onClick = onSaveServer,
+                        colors = ButtonDefaults.buttonColors(containerColor = DesktopCardInsetFill),
+                    ) { Text(if (server.isBlank()) "Use built-in" else "Save") }
+                }
             }
         }
     }
@@ -362,16 +403,23 @@ private fun PartyRoom(state: DesktopListenTogether.State, activity: List<PartyAc
 
 @Composable
 private fun RoomHero(state: DesktopListenTogether.State) {
+    val invite = DesktopListenTogether.inviteUrl(state.code.orEmpty())
     Row(Modifier.fillMaxWidth().desktopCardInset(RoundedCornerShape(16.dp)).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text("PARTY CODE", color = DesktopSecondary, style = MaterialTheme.typography.labelSmall)
             Text(state.code.orEmpty(), fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = 6.sp)
             Text(connectionLine(state), color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+            Text("Scan from a phone or copy the invite link", color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
         }
-        TextButton(onClick = { DesktopExternalLinks.copy(JamInvite.url(state.code.orEmpty())) }) {
-            Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("Copy invite")
+        DesktopQrCode(invite)
+        Spacer(Modifier.width(10.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            TextButton(onClick = { DesktopExternalLinks.copy(invite) }) {
+                Icon(Icons.Rounded.ContentCopy, null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp))
+                Text("Copy invite")
+            }
         }
     }
 }
@@ -559,4 +607,11 @@ private fun connectionLine(state: DesktopListenTogether.State): String = when {
     state.connection == DesktopListenTogether.Connection.OFFLINE -> "Offline"
     !state.clockSynced -> "Syncing clocks…"
     else -> "In sync · ${state.roundTripMs} ms"
+}
+
+private fun serverStatusLine(status: DesktopListenTogether.ServerStatus): String = when {
+    status.health == DesktopListenTogether.Health.CHECKING -> "Checking the party server…"
+    status.health == DesktopListenTogether.Health.OFFLINE -> "Party server is offline"
+    status.isFallback -> "Custom server is offline · built-in server online · ${status.latencyMs} ms"
+    else -> "Party server online · ${status.latencyMs} ms"
 }

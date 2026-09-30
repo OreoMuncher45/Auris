@@ -126,3 +126,44 @@ internal data class DesktopSourceConfig(
  */
 internal fun List<DesktopSourceConfig>.inSourceOrder(): List<DesktopSourceConfig> =
     sortedBy { it.kind.rank }
+
+/** URL identity used to reject a second config for the same addon. */
+internal fun canonicalSourceUrl(raw: String): String {
+    val trimmed = raw.trim().trimEnd('/')
+    return runCatching {
+        val uri = URI.create(trimmed)
+        val scheme = uri.scheme?.lowercase() ?: return@runCatching trimmed
+        val host = uri.host?.lowercase() ?: return@runCatching trimmed
+        val port = when {
+            uri.port < 0 -> ""
+            scheme == "http" && uri.port == 80 -> ""
+            scheme == "https" && uri.port == 443 -> ""
+            else -> ":${uri.port}"
+        }
+        val path = uri.rawPath.orEmpty().trimEnd('/').let { if (it == "/") "" else it }
+        val query = uri.rawQuery?.let { "?$it" }.orEmpty()
+        "$scheme://$host$port$path$query"
+    }.getOrDefault(trimmed)
+}
+
+internal fun List<DesktopSourceConfig>.duplicateOf(url: String, exceptId: String? = null): DesktopSourceConfig? {
+    val wanted = canonicalSourceUrl(url)
+    if (wanted.isBlank()) return null
+    return firstOrNull { it.id != exceptId && canonicalSourceUrl(it.baseUrl) == wanted }
+}
+
+/** Moves one user-added source within the priority group shared by addons and legacy indexes. */
+internal fun moveUserSource(
+    configs: List<DesktopSourceConfig>,
+    sourceId: String,
+    delta: Int,
+): List<DesktopSourceConfig> {
+    val userAdded = configs.inSourceOrder().filter(DesktopSourceConfig::isUserAdded).toMutableList()
+    val from = userAdded.indexOfFirst { it.id == sourceId }
+    if (from < 0) return configs
+    val to = (from + delta).coerceIn(0, userAdded.lastIndex)
+    if (from == to) return configs
+    val moved = userAdded.removeAt(from)
+    userAdded.add(to, moved)
+    return (userAdded + configs.filterNot(DesktopSourceConfig::isUserAdded)).inSourceOrder()
+}

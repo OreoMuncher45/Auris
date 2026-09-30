@@ -53,6 +53,10 @@ internal data class DesktopStream(
     val sourceId: String? = null,
     /** Whether the source says this is the immersive mix rather than a stereo one. */
     val isDolbyAtmos: Boolean = false,
+    /** Explicit add-on transport (`hls` or `dash`) for extensionless manifest URLs. */
+    val transport: String? = null,
+    /** Catalogue runtime, retained for recording-match and diagnostics parity with Android. */
+    val durationSec: Int? = null,
     /**
      * Whether this server will only hand the file over a window at a time — see
      * [DesktopRangeStream].

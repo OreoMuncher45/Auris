@@ -12,6 +12,33 @@ const val MAX_QUEUED_AUTOPLAY = 10
 /** The station that keeps playing when the queue runs out. */
 internal object DesktopAutoplay {
 
+    /** The same deterministic party supplier election used by the phone. */
+    fun supplierId(party: DesktopListenTogether.State): String? {
+        if (!party.inParty) return null
+        val host = party.members.firstOrNull { it.isHost && it.connected }?.memberId
+        if (party.hostOnlyControl) return host
+        return host ?: party.members.asSequence()
+            .filter { it.connected }
+            .minByOrNull { it.memberId }
+            ?.memberId
+    }
+
+    fun enabled(party: DesktopListenTogether.State, localPreference: Boolean): Boolean =
+        if (party.inParty) party.playback.autoplayEnabled else localPreference
+
+    /** Same re-arm rule as the phone when a queue edit exposes the current track as the tail. */
+    fun queueNeedsRefresh(
+        enabled: Boolean,
+        repeatAll: Boolean,
+        currentIndex: Int,
+        itemCount: Int,
+        loadInProgress: Boolean,
+    ): Boolean = enabled &&
+        !repeatAll &&
+        !loadInProgress &&
+        currentIndex >= 0 &&
+        currentIndex == itemCount - 1
+
     /** The YouTube id to seed a station on. */
     suspend fun youtubeSeedFor(song: Song): String? {
         if (DesktopMusicSources.hasYouTubeOriginal(song)) return song.videoId

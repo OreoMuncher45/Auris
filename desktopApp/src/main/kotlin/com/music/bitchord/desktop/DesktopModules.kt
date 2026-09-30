@@ -442,6 +442,7 @@ internal object DesktopModuleSource {
     private const val TRACK_PREFIX = "module:"
     private const val SEPARATOR = "::"
     internal const val LOSSLESS = "LOSSLESS"
+    internal const val DOLBY = "DOLBY"
     private const val HIGH = "HIGH"
     private const val LOW = "LOW"
     private val manager = DesktopModuleManager()
@@ -622,6 +623,7 @@ internal object DesktopModuleSource {
     internal fun qualityTier(text: String): String? {
         val value = text.uppercase(Locale.ROOT)
         return when {
+            "ATMOS" in value || "DOLBY" in value || "EAC3" in value || "E-AC-3" in value -> DOLBY
             "LOSSLESS" in value || "FLAC" in value || "ALAC" in value ||
                 "HI-RES" in value || "HIRES" in value || "24-BIT" in value -> LOSSLESS
             Regex("\\b(320|256|192)\\s*KBPS\\b").containsMatchIn(value) || "HIGH" in value -> HIGH
@@ -631,6 +633,7 @@ internal object DesktopModuleSource {
     }
 
     private fun qualityRank(value: String): Int = when (qualityTier(value)) {
+        DOLBY -> 4
         LOSSLESS -> 3
         HIGH -> 2
         LOW -> 1

@@ -23,7 +23,7 @@ else()
     target_include_directories(bitchord_window PRIVATE ${JNI_INCLUDE_DIRS})
 endif()
 
-target_link_libraries(bitchord_window PRIVATE user32 dwmapi)
+target_link_libraries(bitchord_window PRIVATE user32 dwmapi ole32 uuid)
 
 if(MINGW)
     # The desktop app loads this DLL from its private runtime directory. Gradle daemons and

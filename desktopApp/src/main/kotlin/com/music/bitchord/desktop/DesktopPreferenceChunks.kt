@@ -42,6 +42,17 @@ internal object DesktopPreferenceChunks {
         runCatching { preferences.flush() }
     }
 
+    /** Removes both legacy and chunked forms of one logical value. */
+    fun remove(preferences: Preferences, key: String) {
+        preferences.remove(key)
+        var index = 0
+        while (preferences.get("$key.$index", null) != null) {
+            preferences.remove("$key.$index")
+            index++
+        }
+        runCatching { preferences.flush() }
+    }
+
     /** Drops the characters XML cannot carry, because the backing store is XML. */
     private fun String.xmlSafe(): String {
         // XML 1.0 allows tab, newline and carriage return out of the C0 block, and nothing else

@@ -3,6 +3,7 @@ package com.music.bitchord.desktop
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext
 import org.bytedeco.ffmpeg.avcodec.AVPacket
 import org.bytedeco.ffmpeg.avformat.AVFormatContext
+import org.bytedeco.ffmpeg.avformat.AVInputFormat
 import org.bytedeco.ffmpeg.avutil.AVChannelLayout
 import org.bytedeco.ffmpeg.avutil.AVDictionary
 import org.bytedeco.ffmpeg.avutil.AVFrame
@@ -19,6 +20,7 @@ import org.bytedeco.ffmpeg.global.avcodec.avcodec_receive_frame
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_send_packet
 import org.bytedeco.ffmpeg.global.avformat.AVSEEK_FLAG_BACKWARD
 import org.bytedeco.ffmpeg.global.avformat.av_find_best_stream
+import org.bytedeco.ffmpeg.global.avformat.av_find_input_format
 import org.bytedeco.ffmpeg.global.avformat.av_read_frame
 import org.bytedeco.ffmpeg.global.avformat.av_seek_frame
 import org.bytedeco.ffmpeg.global.avformat.avformat_close_input
@@ -126,6 +128,8 @@ internal class DesktopAudioDecoder {
          * a window at a time — see [DesktopRangeStream].
          */
         windowed: Boolean = false,
+        /** Explicit demuxer for an extensionless add-on manifest. */
+        transport: String? = null,
     ): Result<Unit> = runCatching {
         av_log_set_level(AV_LOG_ERROR)
         ensureNetwork()
@@ -147,7 +151,12 @@ internal class DesktopAudioDecoder {
 
         val opened = if (windowed) windowedContext(url, headers) else AVFormatContext(null)
         // The code matters.
-        val status = avformat_open_input(opened, if (windowed) null as String? else url, null, options)
+        val inputFormat: AVInputFormat? = when (transport?.lowercase()) {
+            DesktopAddonStream.HLS -> av_find_input_format("hls")
+            DesktopAddonStream.DASH -> av_find_input_format("dash")
+            else -> null
+        }
+        val status = avformat_open_input(opened, if (windowed) null as String? else url, inputFormat, options)
         check(status >= 0) { "could not open stream (${describe(status)})" }
         format = opened
         check(avformat_find_stream_info(opened, null as AVDictionary?) >= 0) { "no stream info" }

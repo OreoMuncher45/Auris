@@ -80,6 +80,11 @@ class DesktopAddonTest {
     fun onlyWordsThatCanOnlyMeanATransportAreReadAsOne() {
         // `format` usually holds a codec or a container, and "none" is a positive statement that
         // this is a file.
+        assertEquals(DesktopAddonStream.HLS, DesktopAddonStream(manifest = "hls").transport)
+        assertEquals(DesktopAddonStream.HLS, DesktopAddonStream(mediaType = "application/vnd.apple.mpegurl").transport)
+        assertEquals(DesktopAddonStream.DASH, DesktopAddonStream(format = "dash").transport)
+        assertNull(DesktopAddonStream(format = "flac").transport)
+        assertNull(DesktopAddonStream(format = "none").transport)
     }
 
     @Test
@@ -96,6 +101,10 @@ class DesktopAddonTest {
         assertTrue(DesktopAddonStream(audioModes = listOf("DOLBY_ATMOS")).isDolbyAtmos)
         assertTrue(DesktopAddonStream(codec = "eac3").isDolbyAtmos)
         assertFalse(DesktopAddonStream(quality = "FLAC 24-bit").isDolbyAtmos)
+
+        assertTrue(DesktopAddonTrack(audioModes = listOf("DOLBY_ATMOS")).isDolbyAtmos)
+        assertTrue(DesktopAddonTrack(atmos = true).isDolbyAtmos)
+        assertFalse(DesktopAddonTrack(audioModes = listOf("STEREO")).isDolbyAtmos)
     }
 
     // ── Manifests ────────────────────────────────────────────────────────
@@ -154,7 +163,7 @@ class DesktopAddonTest {
 
         val noId = DesktopSourceFormats.detect("""{"name":"No id here"}""")
         assertTrue(noId is DesktopDetectedFormat.Unsupported)
-        assertTrue(noId.reason.contains("addon id"))
+        assertTrue(noId.reason.contains("name"))
 
         val wrongResources = DesktopSourceFormats.detect("""{"id":"x","resources":["stream"]}""")
         assertTrue(wrongResources is DesktopDetectedFormat.Unsupported)
@@ -189,6 +198,31 @@ class DesktopAddonTest {
         assertTrue(DesktopSourceConfig("c", DesktopSourceKind.CUSTOM_MODULE).isUserAdded)
         assertFalse(DesktopSourceConfig("j", DesktopSourceKind.JIOSAAVN).isUserAdded)
         assertFalse(DesktopSourceConfig("y", DesktopSourceKind.YOUTUBE).isUserAdded)
+    }
+
+    @Test
+    fun duplicateAddonAddressesAreComparedAfterCanonicalisation() {
+        val sources = listOf(
+            DesktopSourceConfig("a", DesktopSourceKind.ADDON, baseUrl = "HTTPS://Addon.Example/path/"),
+        )
+
+        assertEquals("a", sources.duplicateOf("https://addon.example/path")?.id)
+        assertNull(sources.duplicateOf("https://addon.example/path", exceptId = "a"))
+    }
+
+    @Test
+    fun userAddedSourcesCanBeReorderedWithoutMovingBuiltInsIntoTheirGroup() {
+        val sources = listOf(
+            DesktopSourceConfig("youtube", DesktopSourceKind.YOUTUBE),
+            DesktopSourceConfig("a", DesktopSourceKind.ADDON, baseUrl = "https://a.example"),
+            DesktopSourceConfig("jio", DesktopSourceKind.JIOSAAVN),
+            DesktopSourceConfig("b", DesktopSourceKind.ADDON, baseUrl = "https://b.example"),
+        )
+
+        assertEquals(
+            listOf("b", "a", "jio", "youtube"),
+            moveUserSource(sources, "b", -1).map { it.id },
+        )
     }
 
     private fun jsonOf(raw: String) = DesktopAddonClient.json.parseToJsonElement(raw)

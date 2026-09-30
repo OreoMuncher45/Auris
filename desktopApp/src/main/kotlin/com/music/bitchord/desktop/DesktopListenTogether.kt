@@ -2,6 +2,7 @@ package com.music.bitchord.desktop
 
 import com.music.bitchord.data.listentogether.ApiError
 import com.music.bitchord.data.listentogether.JoinRequest
+import com.music.bitchord.data.listentogether.JamInvite
 import com.music.bitchord.data.listentogether.PartyActivity
 import com.music.bitchord.data.listentogether.PartyMember
 import com.music.bitchord.data.listentogether.PartyMembership
@@ -15,7 +16,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
@@ -46,6 +49,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -54,6 +59,12 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.security.MessageDigest
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.PortUnreachableException
+import java.net.SocketTimeoutException
+import java.net.URI
+import java.net.UnknownHostException
 import java.util.UUID
 
 /**
@@ -67,6 +78,13 @@ import java.util.UUID
 internal object DesktopListenTogether {
 
     enum class Connection { OFFLINE, CONNECTING, LIVE }
+    enum class Health { CHECKING, ONLINE, OFFLINE }
+
+    data class ServerStatus(
+        val health: Health = Health.CHECKING,
+        val latencyMs: Long = 0,
+        val isFallback: Boolean = false,
+    )
 
     data class State(
         val code: String? = null,
@@ -89,12 +107,23 @@ internal object DesktopListenTogether {
     }
 
     /** A refusal from the server, carrying the machine-readable half. */
-    class PartyException(val code: String, message: String) : Exception(message)
+    class PartyException(
+        val code: String,
+        message: String,
+        val statusCode: Int? = null,
+    ) : Exception(message)
 
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
         isLenient = true
+    }
+
+    /** Where the party server lives, injected at build time like the other endpoints. */
+    private val DEFAULT_SERVER: String by lazy {
+        normalizeServerUrl(System.getProperty("bitchord.listentogether.server").orEmpty())
+            .getOrNull()
+            .orEmpty()
     }
 
     private val http = HttpClient(CIO) {
@@ -119,12 +148,18 @@ internal object DesktopListenTogether {
     private val _customServer = MutableStateFlow(DesktopPersistence().string(KEY_SERVER))
     val customServerUrl: StateFlow<String> = _customServer.asStateFlow()
 
+    private val _serverStatus = MutableStateFlow(ServerStatus())
+    val serverStatus: StateFlow<ServerStatus> = _serverStatus.asStateFlow()
+
     /** Whether there is an address to talk to at all. */
-    val hasServer: Boolean get() = httpBase().isNotBlank()
+    val hasServer: Boolean get() = DEFAULT_SERVER.isNotBlank() || _customServer.value.isNotBlank()
 
     private var socketJob: Job? = null
+    private var healthJob: Job? = null
     private var session: DefaultClientWebSocketSession? = null
     private var token: String? = null
+    @Volatile private var effectiveIdleServerBase: String = DEFAULT_SERVER
+    @Volatile private var activePartyServerBase: String? = null
 
     init {
         // A process cannot resume the old socket safely, and leaving its token around occupies a
@@ -132,22 +167,72 @@ internal object DesktopListenTogether {
         // during init; desktop does the same before offering a new room.
         val staleCode = persistence.string(KEY_CODE)
         val staleToken = persistence.string(KEY_TOKEN)
+        val staleServer = persistence.string(KEY_ACTIVE_SERVER).ifBlank { defaultHttpBase() }
         persistence.saveString(KEY_CODE, "")
         persistence.saveString(KEY_TOKEN, "")
+        persistence.saveString(KEY_ACTIVE_SERVER, "")
         if (staleCode.isNotBlank() && staleToken.isNotBlank()) {
             scope.launch {
                 runCatching {
-                    http.post("${httpBase()}/api/parties/$staleCode/leave") {
+                    http.post("$staleServer/api/parties/$staleCode/leave") {
                         header("Authorization", "Bearer $staleToken")
                     }
                 }
             }
         }
+        refreshServerHealth()
     }
 
-    fun setCustomServerUrl(value: String) {
-        persistence.saveString(KEY_SERVER, value.trim())
-        _customServer.value = value.trim()
+    fun setCustomServerUrl(value: String): Result<Unit> = runCatching {
+        check(!_state.value.inParty) { "Leave the current party before changing servers." }
+        val normalized = normalizeServerUrl(value).getOrThrow()
+        persistence.saveString(KEY_SERVER, normalized)
+        _customServer.value = normalized
+        refreshServerHealth()
+    }
+
+    /** Canonicalises a user-entered server without ever exposing the build's default address. */
+    fun normalizeServerUrl(value: String): Result<String> = runCatching {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return@runCatching ""
+        if (trimmed.any(Char::isWhitespace)) throw PartyException("bad_server", "Remove spaces from the server address.")
+        val candidate = if ("://" in trimmed) trimmed else "https://$trimmed"
+        val uri = runCatching { URI(candidate) }.getOrElse {
+            throw PartyException("bad_server", "Enter a valid party server address.")
+        }
+        val rawHost = uri.host
+        if (uri.scheme?.lowercase() !in setOf("http", "https") || rawHost.isNullOrBlank()) {
+            throw PartyException("bad_server", "Use an http or https party server address.")
+        }
+        if (candidate.contains('?') || candidate.contains('#') || uri.userInfo != null) {
+            throw PartyException("bad_server", "The server address can't include credentials, a query, or a fragment.")
+        }
+        if (uri.port != -1 && uri.port !in 1..65535) {
+            throw PartyException("bad_server", "The server address has an invalid port.")
+        }
+        val path = uri.rawPath.orEmpty().trimEnd('/')
+        if (path.split('/').any { it == "." || it == ".." }) {
+            throw PartyException("bad_server", "The server address has an invalid path.")
+        }
+        val host = rawHost.lowercase()
+        if (host != "localhost" && ':' !in host && '.' !in host) {
+            throw PartyException("bad_server", "Enter a complete party server hostname.")
+        }
+        if (':' !in host && host != "localhost") {
+            val validLabel = Regex("^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+            if (host.split('.').any { it.isEmpty() || it.length > 63 || !validLabel.matches(it) }) {
+                throw PartyException("bad_server", "Enter a valid party server hostname.")
+            }
+        }
+        URI(uri.scheme.lowercase(), null, host, uri.port, path.ifBlank { null }, null, null)
+            .toASCIIString()
+            .trimEnd('/')
+    }
+
+    fun refreshServerHealth() {
+        healthJob?.cancel()
+        _serverStatus.value = ServerStatus(Health.CHECKING)
+        healthJob = scope.launch { resolveIdleServer(forceProbe = true) }
     }
 
     fun nickname(): String = persistence.string(KEY_NICKNAME)
@@ -156,6 +241,16 @@ internal object DesktopListenTogether {
 
     fun myAvatarUrl(): String? = identity()?.avatar
 
+    /** Public invite for the server that actually owns the current membership. */
+    fun inviteUrl(code: String): String {
+        val server = activePartyServerBase
+        return if (server.isNullOrBlank() || server == DEFAULT_SERVER) {
+            JamInvite.url(code)
+        } else {
+            "$server/invite/${code.uppercase()}"
+        }
+    }
+
     /** Whether this device can join at all — a party is joined as an account, not anonymously. */
     fun canJoin(): Boolean = identity() != null
 
@@ -163,9 +258,9 @@ internal object DesktopListenTogether {
         nickname: String = nickname(),
         maxMembers: Int = 5,
         autoplayEnabled: Boolean = false,
-    ): Result<String> = enter(nickname) { who ->
+    ): Result<String> = enter(nickname) { who, server ->
         post(
-            "${httpBase()}/api/parties",
+            "$server/api/parties",
             JoinRequest(
                 who.userId,
                 who.deviceId,
@@ -182,65 +277,91 @@ internal object DesktopListenTogether {
         if (trimmed.length != CODE_LENGTH) {
             return Result.failure(PartyException("bad_code", "A party code is six letters or digits."))
         }
-        return enter(nickname) { who ->
-            post(
-                "${httpBase()}/api/parties/$trimmed/join",
-                JoinRequest(who.userId, who.deviceId, who.name, who.avatar),
-            )
-        }
+        return runCatching { refuseIfRecentlyKicked(trimmed) }.fold(
+            onSuccess = {
+                enter(nickname) { who, server ->
+                    post(
+                        "$server/api/parties/$trimmed/join",
+                        JoinRequest(who.userId, who.deviceId, who.name, who.avatar),
+                    )
+                }
+            },
+            onFailure = { Result.failure(it) },
+        )
     }
 
-    private suspend fun enter(nickname: String, request: suspend (Identity) -> PartyMembership): Result<String> =
-        withContext(Dispatchers.IO) {
-            val who = identity(nickname)
-                ?: return@withContext Result.failure(
-                    PartyException("not_signed_in", "Sign in to listen together."),
-                )
-            if (httpBase().isBlank()) {
-                return@withContext Result.failure(
-                    PartyException("no_server", "Set the party server address first."),
-                )
-            }
-            runCatching { request(who) }
-                .onSuccess { membership ->
-                    token = membership.token
-                    persistence.saveString(KEY_CODE, membership.code)
-                    persistence.saveString(KEY_TOKEN, membership.token)
-                    clock.reset()
-                    _state.value = State(
-                        code = membership.code,
-                        you = membership.you,
-                        members = membership.party.members,
-                        maxMembers = membership.party.maxMembers,
-                        hostOnlyControl = membership.party.hostOnlyControl,
-                        playback = membership.party.playback,
-                        queue = membership.party.queue,
-                        connection = Connection.CONNECTING,
-                    )
-                    connect()
-                }
-                .onFailure { failure ->
-                    DesktopTrackLog.log("listen together: could not enter a party: ${redact(failure.message)}")
-                    _state.update { it.copy(error = failure.displayMessage()) }
-                }
-                .map { it.code }
+    private suspend fun enter(
+        nickname: String,
+        request: suspend (Identity, String) -> PartyMembership,
+    ): Result<String> = withContext(Dispatchers.IO) {
+        val who = identity(nickname)
+            ?: return@withContext Result.failure(
+                PartyException("not_signed_in", "Sign in to listen together."),
+            )
+        if (!hasServer) {
+            return@withContext Result.failure(
+                PartyException("no_server", "Set the party server address first."),
+            )
         }
+        val primary = resolveIdleServer()
+        val first = runCatching { request(who, primary) }
+        val attempt = if (
+            first.isFailure &&
+            primary != DEFAULT_SERVER &&
+            DEFAULT_SERVER.isNotBlank() &&
+            first.exceptionOrNull()?.let(::isEligibleForFallback) == true
+        ) {
+            runCatching { request(who, DEFAULT_SERVER) }
+                .onSuccess {
+                    effectiveIdleServerBase = DEFAULT_SERVER
+                    _serverStatus.value = ServerStatus(Health.ONLINE, isFallback = true)
+                }
+        } else {
+            first
+        }
+
+        attempt.onSuccess { membership ->
+            activePartyServerBase = if (first.isSuccess) primary else DEFAULT_SERVER
+            token = membership.token
+            persistence.saveString(KEY_CODE, membership.code)
+            persistence.saveString(KEY_TOKEN, membership.token)
+            persistence.saveString(KEY_ACTIVE_SERVER, activePartyServerBase.orEmpty())
+            clock.reset()
+            _state.value = State(
+                code = membership.code,
+                you = membership.you,
+                members = membership.party.members,
+                maxMembers = membership.party.maxMembers,
+                hostOnlyControl = membership.party.hostOnlyControl,
+                playback = membership.party.playback,
+                queue = membership.party.queue,
+                connection = Connection.CONNECTING,
+            )
+            connect()
+        }.onFailure { failure ->
+            DesktopTrackLog.log("listen together: could not enter a party: ${redact(failure.message)}")
+            _state.update { it.copy(error = failure.displayMessage()) }
+        }.map { it.code }
+    }
 
     suspend fun leaveParty() = withContext(Dispatchers.IO) {
         val code = _state.value.code
         val held = token
+        val server = activePartyServerBase ?: effectiveIdleServerBase
         socketJob?.cancel()
         socketJob = null
         session = null
         clock.reset()
         token = null
+        activePartyServerBase = null
         persistence.saveString(KEY_CODE, "")
         persistence.saveString(KEY_TOKEN, "")
+        persistence.saveString(KEY_ACTIVE_SERVER, "")
         _activity.value = emptyList()
         _state.value = State()
-        if (code != null && held != null) {
+        if (code != null && held != null && server.isNotBlank()) {
             runCatching {
-                http.post("${httpBase()}/api/parties/$code/leave") {
+                http.post("$server/api/parties/$code/leave") {
                     header("Authorization", "Bearer $held")
                 }
             }
@@ -347,8 +468,9 @@ internal object DesktopListenTogether {
             val held = token ?: return
             try {
                 _state.update { it.copy(connection = Connection.CONNECTING) }
+                val server = activePartyServerBase ?: return
                 http.webSocket(
-                    urlString = "${wsBase()}/ws/parties/$code",
+                    urlString = "${wsBase(server)}/ws/parties/$code",
                     request = { header("Authorization", "Bearer $held") },
                 ) {
                     session = this
@@ -501,6 +623,9 @@ internal object DesktopListenTogether {
             }
 
             "bye" -> {
+                if (frame["reason"]?.jsonPrimitive?.content == "kicked") {
+                    _state.value.code?.let(::recordKick)
+                }
                 scope.launch { leaveParty() }
             }
         }
@@ -564,10 +689,19 @@ internal object DesktopListenTogether {
             )
         }
         runCatching {
-            val base = httpBase()
+            refuseIfRecentlyKicked(cleaned)
+            val base = resolveIdleServer()
             if (base.isBlank()) throw PartyException("no_server", "Set the party server address first.")
             val response = http.get("$base/api/parties/$cleaned/preview")
-            if (!response.status.isSuccess()) throw response.toPartyException()
+            if (!response.status.isSuccess()) {
+                val problem = response.toPartyException()
+                // Older self-hosted servers did not expose previews. The confirmation step still
+                // works there; it simply cannot show members until the join completes.
+                if (problem.statusCode == 404 && problem.code == "http_404") {
+                    return@runCatching PartyPreview(code = cleaned)
+                }
+                throw problem
+            }
             response.body<PartyPreview>()
         }.onFailure { failure ->
             DesktopTrackLog.log("listen together: preview failed: ${redact(failure.message)}")
@@ -582,18 +716,117 @@ internal object DesktopListenTogether {
         val parsed = runCatching { json.decodeFromString(ApiError.serializer(), body) }.getOrNull()
         return PartyException(
             code = parsed?.code.orEmpty().ifBlank { "http_${status.value}" },
-            message = parsed?.message?.takeIf { it.isNotBlank() } ?: UNREACHABLE,
+            message = parsed?.message?.takeIf { it.isNotBlank() }
+                ?: if (status.value == 422) "This account can't be used to jam."
+                else "The party server said ${status.value}.",
+            statusCode = status.value,
         )
     }
 
-    private fun httpBase(): String {
-        val raw = _customServer.value.trim().trimEnd('/').ifBlank { DEFAULT_SERVER }
-        if (raw.isBlank()) return ""
-        return if (raw.startsWith("http://") || raw.startsWith("https://")) raw else "https://$raw"
+    private suspend fun resolveIdleServer(forceProbe: Boolean = false): String {
+        if (!forceProbe && _serverStatus.value.health == Health.ONLINE) return effectiveIdleServerBase
+        val custom = normalizeServerUrl(_customServer.value).getOrNull().orEmpty()
+        if (custom.isNotBlank() && custom != DEFAULT_SERVER) {
+            val customProbe = probeHealth(custom, CUSTOM_SERVER_TIMEOUT_MS)
+            if (customProbe.first) {
+                effectiveIdleServerBase = custom
+                _serverStatus.value = ServerStatus(Health.ONLINE, customProbe.second)
+                return custom
+            }
+            if (DEFAULT_SERVER.isNotBlank()) {
+                val fallback = probeHealth(DEFAULT_SERVER, DEFAULT_SERVER_TIMEOUT_MS)
+                effectiveIdleServerBase = DEFAULT_SERVER
+                _serverStatus.value = if (fallback.first) {
+                    ServerStatus(Health.ONLINE, fallback.second, isFallback = true)
+                } else {
+                    ServerStatus(Health.OFFLINE)
+                }
+                return DEFAULT_SERVER
+            }
+            effectiveIdleServerBase = custom
+            _serverStatus.value = ServerStatus(Health.OFFLINE)
+            return custom
+        }
+
+        effectiveIdleServerBase = DEFAULT_SERVER
+        if (DEFAULT_SERVER.isBlank()) {
+            _serverStatus.value = ServerStatus(Health.OFFLINE)
+            return ""
+        }
+        val probe = probeHealth(DEFAULT_SERVER, DEFAULT_SERVER_TIMEOUT_MS)
+        _serverStatus.value = if (probe.first) {
+            ServerStatus(Health.ONLINE, probe.second)
+        } else {
+            ServerStatus(Health.OFFLINE)
+        }
+        return DEFAULT_SERVER
     }
 
-    private fun wsBase(): String = httpBase().replaceFirst("https://", "wss://")
+    private suspend fun probeHealth(server: String, timeoutMs: Long): Pair<Boolean, Long> {
+        val started = clock.nowMs()
+        val online = runCatching {
+            val response = http.get("$server/healthz") {
+                timeout { requestTimeoutMillis = timeoutMs }
+            }
+            response.status.isSuccess() && response.bodyAsText().contains(HEALTH_OK)
+        }.getOrElse { failure ->
+            DesktopTrackLog.log("listen together: health check failed: ${redact(failure.message)}")
+            false
+        }
+        return online to if (online) (clock.nowMs() - started).coerceAtLeast(0L) else 0L
+    }
+
+    private fun isEligibleForFallback(error: Throwable): Boolean = when (error) {
+        is UnknownHostException,
+        is ConnectException,
+        is NoRouteToHostException,
+        is PortUnreachableException,
+        is SocketTimeoutException,
+        is HttpRequestTimeoutException -> true
+        is PartyException -> (error.statusCode ?: 0) in 500..599
+        else -> error.cause?.takeIf { it !== error }?.let(::isEligibleForFallback) == true
+    }
+
+    private fun defaultHttpBase(): String = normalizeServerUrl(DEFAULT_SERVER).getOrNull().orEmpty()
+
+    private fun wsBase(server: String): String = server.replaceFirst("https://", "wss://")
         .replaceFirst("http://", "ws://")
+
+    private fun recentKicks(): Map<String, Long> {
+        val encoded = persistence.string(KEY_KICKED)
+        if (encoded.isBlank()) return emptyMap()
+        val stored = runCatching {
+            json.decodeFromString(MapSerializer(String.serializer(), Long.serializer()), encoded)
+        }.getOrDefault(emptyMap())
+        val live = stored.filterValues { it > System.currentTimeMillis() }
+        if (live.size != stored.size) writeKicks(live)
+        return live
+    }
+
+    private fun writeKicks(entries: Map<String, Long>) {
+        persistence.saveString(
+            KEY_KICKED,
+            if (entries.isEmpty()) "" else json.encodeToString(
+                MapSerializer(String.serializer(), Long.serializer()),
+                entries,
+            ),
+        )
+    }
+
+    private fun recordKick(code: String) {
+        val normalized = cleanCode(code)
+        if (normalized.isBlank()) return
+        writeKicks(recentKicks() + (normalized to System.currentTimeMillis() + KICK_BLOCK_MS))
+    }
+
+    private fun refuseIfRecentlyKicked(code: String) {
+        if (cleanCode(code) in recentKicks()) {
+            throw PartyException(
+                "recently_kicked",
+                "Couldn't let you in — you've recently been removed from this party.",
+            )
+        }
+    }
 
     /**
      * Keeps the server's address out of the log.
@@ -624,15 +857,17 @@ internal object DesktopListenTogether {
     private const val KEY_TOKEN = "listen_together_token"
     private const val KEY_DEVICE = "listen_together_device"
     private const val KEY_NICKNAME = "listen_together_nickname"
+    private const val KEY_ACTIVE_SERVER = "listen_together_active_server"
+    private const val KEY_KICKED = "listen_together_kicked_until"
     private const val SERVER_PLACEHOLDER = "<party server>"
     private const val UNREACHABLE = "Couldn't reach the party server."
     private const val PING_INTERVAL_MS = 15_000L
     private const val REPORT_INTERVAL_MS = 10_000L
+    private const val CUSTOM_SERVER_TIMEOUT_MS = 6_000L
+    private const val DEFAULT_SERVER_TIMEOUT_MS = 15_000L
+    private const val KICK_BLOCK_MS = 24L * 60 * 60 * 1000
+    private const val HEALTH_OK = "\"ok\":true"
     const val CODE_LENGTH = 6
-
-    /** Where the party server lives, injected at build time like the other endpoints. */
-    private val DEFAULT_SERVER: String =
-        System.getProperty("bitchord.listentogether.server").orEmpty()
 
     private val ABSOLUTE_URL = Regex("""(?:https?|wss?)://[^\s,;)\]}'"]+""", RegexOption.IGNORE_CASE)
 }

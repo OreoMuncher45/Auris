@@ -3,7 +3,7 @@ package com.music.bitchord.desktop
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/** The system material behind the window's own chrome — the sidebar, the top bar, the title bar. */
+/** The system material behind the window. */
 internal enum class DesktopBackdrop(
     /** What [DesktopWindowsFrame.setBackdrop] takes: DWM's DWMSBT_* value, or 0 for none. */
     val nativeKind: Int,
@@ -15,12 +15,11 @@ internal enum class DesktopBackdrop(
 }
 
 /**
- * Windows 11's Mica and Acrylic, drawn by DWM behind the sidebar and top bar.
+ * Windows 11's Mica and Acrylic, drawn by DWM behind the window.
  *
- * Only the chrome lets it through: the page, the lyrics and queue column and the player stay
- * opaque, and are painted over it. The window itself is created transparent whenever the material
- * is possible at all — transparency is fixed when the window is made — so switching between the
- * three here is live, with no restart.
+ * The window itself is created transparent whenever the material is possible at all — transparency
+ * is fixed when the window is made — so switching between the three here is live, with no restart.
+ * Compose decides whether the material also reaches the app background via [appBackground].
  */
 internal object DesktopWindowBackdrop {
 
@@ -42,6 +41,13 @@ internal object DesktopWindowBackdrop {
     /** What Settings shows and writes. */
     val selected: StateFlow<DesktopBackdrop> = _selected
 
+    private val _appBackground = MutableStateFlow(
+        DesktopPersistence().boolean(KEY_APP_BACKGROUND, true),
+    )
+
+    /** Whether the selected material replaces the app's solid gray page background too. */
+    val appBackground: StateFlow<Boolean> = _appBackground
+
     private val _active = MutableStateFlow(DesktopBackdrop.OFF)
 
     /**
@@ -57,6 +63,11 @@ internal object DesktopWindowBackdrop {
         apply()
     }
 
+    fun setAppBackground(value: Boolean) {
+        DesktopPersistence().saveBoolean(KEY_APP_BACKGROUND, value)
+        _appBackground.value = value
+    }
+
     /** Asks DWM for the selected material; called once the native frame is in place, and on every change. */
     fun apply() {
         if (!available) return
@@ -67,4 +78,6 @@ internal object DesktopWindowBackdrop {
             DesktopTrackLog.log("window backdrop: Windows declined ${wanted.label}")
         }
     }
+
+    internal const val KEY_APP_BACKGROUND = "window_backdrop_app_background"
 }

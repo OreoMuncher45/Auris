@@ -207,6 +207,7 @@ class DesktopPlaybackEngine(
                 // end.
                 requested = DesktopPcmFormat(44_100, 2, bytesPerSample = 4, isFloat = true),
                 windowed = stream.windowedReads,
+                transport = stream.transport,
             ).map {
                 if (startAtMs > 0) decoder.seek(startAtMs * 1_000)
                 Track(song, decoder, stream, startAtMs * 1_000)
@@ -307,9 +308,10 @@ class DesktopPlaybackEngine(
     }
 
     /** Re-opens the current track, keeping the playhead. */
-    fun reloadCurrent() {
+    fun reloadCurrent(forceSourceRefresh: Boolean = false) {
         val current = _state.value
         val song = current.song ?: return
+        if (forceSourceRefresh) DesktopAddonSource.clearCompletedTrackCalls()
         upgradeJob?.cancel()
         DesktopTrackLog.log(
             "re-opening '${song.title}' — pinned to the original: " +
@@ -891,16 +893,21 @@ class DesktopPlaybackEngine(
 
         val decoded = track.decoder.outputFormat
         // Only renegotiate when the device would actually have to change.
-        if (
+        val output = if (
             !sink.isOpen ||
             !sink.isUsingSelection(DesktopAudioDevices.selected.value) ||
             sink.format.sampleRate != decoded.sampleRate ||
             sink.format.channels != decoded.channels
         ) {
             sink.open(decoded.copy(bytesPerSample = precisionBytes(), isFloat = preferFloat))
-                .onFailure { failure ->
-                    _state.update { it.copy(error = "No audio output: ${failure.message}") }
-                }
+        } else {
+            Result.success(sink.format)
+        }
+        output.onFailure { failure ->
+            paused = true
+            DesktopTrackLog.log("audio output failed: ${failure.message}")
+            _state.update { it.copy(isPlaying = false, error = "No audio output: ${failure.message}") }
+            return
         }
         sink.gain = volume
         framesWritten = sink.framesPlayed()

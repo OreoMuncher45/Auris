@@ -166,6 +166,8 @@ internal class DesktopTrackAnalyzer(
             url = stream.url,
             headers = stream.headers,
             requested = DesktopPcmFormat(rate.toInt(), channels = 1, bytesPerSample = 4, isFloat = true),
+            windowed = stream.windowedReads,
+            transport = stream.transport,
         )
         if (opened.isFailure) {
             decoder.close()

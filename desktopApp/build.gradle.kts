@@ -57,6 +57,7 @@ plugins {
 dependencies {
     // Already on the classpath through the NewPipe extractor.
     implementation("org.jsoup:jsoup:1.22.2")
+    implementation("com.google.zxing:core:3.5.3")
 
     implementation(project(":shared"))
     implementation(project(":sharedUi"))
@@ -349,6 +350,15 @@ tasks.named<ProcessResources>("processResources") {
     }
 }
 
+// Kotlin 2.4 no longer contributes this JVM target's compiler output to Gradle's plain `jar`
+// task in this project. Compose's dev runner and the portable launcher both use that jar, so add
+// the output explicitly instead of producing a resources-only application archive.
+tasks.named<Jar>("jar") {
+    val kotlinClasses = tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin")
+    dependsOn(kotlinClasses)
+    from(kotlinClasses.flatMap { it.destinationDirectory })
+}
+
 /** A Windows build that can be assembled here, since an installer cannot be. */
 val windowsPortableDir = layout.buildDirectory.dir("windows-portable")
 
@@ -414,6 +424,9 @@ val windowsPortableAssemble by tasks.registering {
             ZipFile(jar).use { zip -> zip.getEntry(entry) != null }
         }
         val problems = buildList {
+            if (!holds("com/music/bitchord/desktop/MainKt.class")) {
+                add("the BitChord desktop entry point is missing")
+            }
             if (!holds("androidx/compose/runtime/Composer.class")) {
                 add("the Compose runtime is missing")
             }

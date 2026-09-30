@@ -55,6 +55,7 @@ internal class DesktopPartySync(
 
     private val jobs = mutableListOf<Job>()
     private var startJob: Job? = null
+    private var publishJob: Job? = null
 
     private var loadingVideoId: String? = null
     private var alignedSeq = -1L
@@ -64,6 +65,8 @@ internal class DesktopPartySync(
     private var locallyPaused = false
     private var lastPartyCode: String? = null
     private var appliedAutoplay: Boolean? = null
+    /** A track selection whose decoder is still resolving. */
+    private var pendingIntentVideoId: String? = null
 
     /**
      * Until when inbound reconciliation is held off.
@@ -105,6 +108,8 @@ internal class DesktopPartySync(
         jobs.clear()
         startJob?.cancel()
         startJob = null
+        publishJob?.cancel()
+        publishJob = null
         loadingVideoId = null
         alignedSeq = -1L
         driftStrikes = 0
@@ -112,14 +117,44 @@ internal class DesktopPartySync(
         locallyPaused = false
         lastPartyCode = null
         appliedAutoplay = null
+        pendingIntentVideoId = null
     }
 
     /** Something the listener asked for here, which the party should be told about. */
-    fun onLocalIntent() {
+    fun onLocalIntent(expectedVideoId: String? = null) {
         val party = DesktopListenTogether.state.value
         if (!party.inParty || party.controlsLocked) return
-        quietUntilMs = nowMs() + INTENT_QUIET_MS
-        publish()
+        // Queue/transport gestures can arrive while a preceding song selection is still loading.
+        // Keep waiting for that selection rather than letting the later gesture cancel its guard.
+        val waitForVideoId = expectedVideoId
+            ?: engine.state.value.takeIf { it.isLoading }?.song?.videoId
+        pendingIntentVideoId = waitForVideoId
+        // A song selection first updates the visible state, then resolves a stream on a worker.
+        // Keep reconciliation out of the way until that new track is actually playable; otherwise
+        // the old party state can arrive during the resolve and pause/replace the new selection.
+        quietUntilMs = if (waitForVideoId != null) Long.MAX_VALUE else nowMs() + INTENT_QUIET_MS
+        publishJob?.cancel()
+        publishJob = scope.launch {
+            delay(PUBLISH_DEBOUNCE_MS)
+            if (waitForVideoId != null) {
+                repeat(PUBLISH_WAIT_ATTEMPTS) {
+                    val playback = engine.state.value
+                    if (playback.song?.videoId == waitForVideoId && !playback.isLoading) {
+                        pendingIntentVideoId = null
+                        quietUntilMs = nowMs() + INTENT_QUIET_MS
+                        publish()
+                        return@launch
+                    }
+                    delay(PUBLISH_WAIT_STEP_MS)
+                }
+                // The requested stream failed or was superseded. Do not publish the stale player
+                // state; the regular party reconciliation will recover it.
+                pendingIntentVideoId = null
+                quietUntilMs = nowMs()
+                return@launch
+            }
+            publish()
+        }
     }
 
     /** In a host-locked party, play/pause affects only this computer. */
@@ -151,7 +186,11 @@ internal class DesktopPartySync(
         if (nowMs() < quietUntilMs) return
         if (party.queue.seq != appliedQueueSeq) {
             appliedQueueSeq = party.queue.seq
-            applyPartyQueue(party.queue)
+            // A newly created party starts empty. The phone deliberately leaves the host's player
+            // untouched here, then seeds the server below from that existing queue. Applying the
+            // empty server queue first would erase the very queue—including AutoPlay—we need to
+            // publish.
+            if (party.queue.items.isNotEmpty()) applyPartyQueue(party.queue)
         }
         val target = party.playback
         if (target.autoplayEnabled != appliedAutoplay) {
@@ -235,16 +274,22 @@ internal class DesktopPartySync(
         val party = DesktopListenTogether.state.value
         if (!party.inParty) return
         val playback = engine.state.value
+        // Unlike ExoPlayer, the desktop state cannot represent "play when ready" while a stream
+        // is still resolving: it temporarily reads as paused. Wait for the decoder so creating a
+        // party during a load cannot seed a false pause or an incomplete current track.
+        if (playback.isLoading) return
         val song = playback.song ?: return
         if (song.localPath != null || song.localUri != null) return
         val track = song.toPartyTrack(playback.durationMs)
         val position = playback.positionMs.coerceAtLeast(0L)
 
         val (songs, index) = localQueue()
-        val shareable = songs.filter { it.localPath == null && it.localUri == null }
-            .take(MAX_PARTY_QUEUE)
-            .map { queued -> queued.toPartyTrack(if (queued.videoId == song.videoId) playback.durationMs else 0L) }
-        val shareIndex = shareable.indexOfFirst { it.videoId == song.videoId }
+        val (shareable, shareIndex) = queueForPartyPublish(
+            songs = songs,
+            currentIndex = index,
+            currentVideoId = song.videoId,
+            currentDurationMs = playback.durationMs,
+        )
         if (shareable.map(PartyTrack::videoId) != party.queue.items.map(PartyTrack::videoId) ||
             (shareIndex >= 0 && shareIndex != party.queue.index)
         ) {
@@ -326,8 +371,48 @@ internal class DesktopPartySync(
         const val ALIGN_TOLERANCE_MS = 120L
         const val SEEK_REPORT_FLOOR_MS = 1_000L
         const val INTENT_QUIET_MS = 2_500L
+        const val PUBLISH_DEBOUNCE_MS = 120L
+        const val PUBLISH_WAIT_STEP_MS = 100L
+        const val PUBLISH_WAIT_ATTEMPTS = 100
         const val RECONCILE_INTERVAL_MS = 700L
-        const val MAX_PARTY_QUEUE = 101
+        const val MAX_PARTY_UPCOMING_QUEUE = 25
+
+        /** The same queue projection Android publishes to a party. */
+        internal fun queueForPartyPublish(
+            songs: List<Song>,
+            currentIndex: Int,
+            currentVideoId: String,
+            currentDurationMs: Long,
+        ): Pair<List<PartyTrack>, Int> {
+            val raw = songs.withIndex()
+                .filter { (_, song) -> song.localPath == null && song.localUri == null }
+            val rawCurrent = raw.indexOfFirst { (originalIndex, song) ->
+                originalIndex == currentIndex && song.videoId == currentVideoId
+            }.takeIf { it >= 0 } ?: raw.indexOfFirst { it.value.videoId == currentVideoId }
+
+            val withoutContextTail = if (rawCurrent >= 0) {
+                raw.take(rawCurrent + 1) + raw.drop(rawCurrent + 1)
+                    .filter { it.value.queueTier != QueueTier.CONTEXT }
+            } else {
+                raw.filter { it.value.queueTier != QueueTier.CONTEXT }
+            }
+            val projectedCurrent = withoutContextTail.indexOfFirst { (originalIndex, song) ->
+                originalIndex == currentIndex && song.videoId == currentVideoId
+            }.takeIf { it >= 0 }
+                ?: withoutContextTail.indexOfFirst { it.value.videoId == currentVideoId }
+            val endExclusive = if (projectedCurrent >= 0) {
+                (projectedCurrent + 1 + MAX_PARTY_UPCOMING_QUEUE)
+                    .coerceAtMost(withoutContextTail.size)
+            } else {
+                (1 + MAX_PARTY_UPCOMING_QUEUE).coerceAtMost(withoutContextTail.size)
+            }
+            val tracks = withoutContextTail.take(endExclusive).map { (_, queued) ->
+                queued.toPartyTrack(
+                    if (queued.videoId == currentVideoId) currentDurationMs else 0L,
+                )
+            }
+            return tracks to tracks.indexOfFirst { it.videoId == currentVideoId }
+        }
     }
 }
 
