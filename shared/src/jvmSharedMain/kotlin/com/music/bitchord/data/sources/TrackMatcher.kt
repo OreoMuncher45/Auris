@@ -99,7 +99,7 @@ object TrackMatcher {
         val want = artistNames(wanted)
         val have = artistNames(got)
         return want.isNotEmpty() && have.isNotEmpty() &&
-            want.any { w -> have.any { h -> sameArtist(w, h) } }
+                want.any { w -> have.any { h -> sameArtist(w, h) } }
     }
 
     // ── Judging ─────────────────────────────────────────────────────────────
@@ -114,7 +114,8 @@ object TrackMatcher {
      * Scoring them all and taking the top lets the runtime and the fuller
      * artist credit break that tie instead.
      */
-    fun best(candidates: List<Song>, target: Target): Song? = ranked(candidates, target).firstOrNull()
+    fun best(candidates: List<Song>, target: Target): Song? =
+        ranked(candidates, target).firstOrNull()
 
     /**
      * The catalogue counterpart for a music-video upload selected explicitly
@@ -143,7 +144,8 @@ object TrackMatcher {
                 if (wanted.core != got.core || wanted.versions != got.versions) return@mapNotNull null
                 val artist = artistScore(target.artist, candidate.artist) ?: return@mapNotNull null
                 val duration = target.durationSec?.let { expected ->
-                    secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) } ?: -120
+                    secondsOf(candidate.durationText)?.let { actual -> -abs(expected - actual) }
+                        ?: -120
                 } ?: 0
                 candidate to (artist * 1_000 + duration)
             }
@@ -189,8 +191,15 @@ object TrackMatcher {
     fun score(candidate: Song, target: Target): Int? {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
-        if (wanted.core.isEmpty() || got.core.isEmpty()) return null
-        if (wanted.core != got.core) return null
+
+        if (wanted.core.isBlank() || got.core.isBlank()) return null
+
+        val isTitleMatch = when {
+            wanted.core == got.core -> true
+            wanted.core.length <= 3 || got.core.length <= 3 -> false
+            else -> wanted.core.contains(got.core) || got.core.contains(wanted.core)
+        }
+        if (!isTitleMatch) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
         // the album cut.
@@ -211,36 +220,36 @@ object TrackMatcher {
             allowVideoDrift = creditedArtist != null,
         ) ?: return null
         val artist = creditedArtist
-            // The credits don't merely differ in spelling, they name different
-            // people — and sometimes that is because they are describing the
-            // same recording from different ends of it. Film catalogues are
-            // full of this: YouTube Music files "Jhak Maar Ke" under Pritam,
-            // who *wrote* it, while every store files it under Neeraj
-            // Shridhar, who *sang* it. Neither is wrong and nothing in either
-            // credit hints at the other, so a matcher that insists on an
-            // overlap refuses the correct track every time.
-            //
-            // What breaks the tie is length. Two recordings that share an
-            // exact title and agree on their runtime to the second are the
-            // same master; a cover, a remix or a re-recording essentially
-            // never lands there — of the four candidates for that track, the
-            // remix ran 241s and the acoustic cover 66s against the 233s being
-            // played. So an exact runtime is allowed to stand in for a shared
-            // credit, and *only* an exact one: with no runtime on either side
-            // there is nothing corroborating anything, and the strict refusal
-            // stands. The match still scores below a genuine credit match, so
-            // it never wins where a properly-credited copy exists.
-            // A music video's runtime includes visuals and therefore cannot
-            // vouch for a catalogue row credited to completely different
-            // people. This exact exception is what admitted the 3:30 Lovely
-            // track for Yo Yo Honey Singh's 3:31 "Brown Rang" video.
+        // The credits don't merely differ in spelling, they name different
+        // people — and sometimes that is because they are describing the
+        // same recording from different ends of it. Film catalogues are
+        // full of this: YouTube Music files "Jhak Maar Ke" under Pritam,
+        // who *wrote* it, while every store files it under Neeraj
+        // Shridhar, who *sang* it. Neither is wrong and nothing in either
+        // credit hints at the other, so a matcher that insists on an
+        // overlap refuses the correct track every time.
+        //
+        // What breaks the tie is length. Two recordings that share an
+        // exact title and agree on their runtime to the second are the
+        // same master; a cover, a remix or a re-recording essentially
+        // never lands there — of the four candidates for that track, the
+        // remix ran 241s and the acoustic cover 66s against the 233s being
+        // played. So an exact runtime is allowed to stand in for a shared
+        // credit, and *only* an exact one: with no runtime on either side
+        // there is nothing corroborating anything, and the strict refusal
+        // stands. The match still scores below a genuine credit match, so
+        // it never wins where a properly-credited copy exists.
+        // A music video's runtime includes visuals and therefore cannot
+        // vouch for a catalogue row credited to completely different
+        // people. This exact exception is what admitted the 3:30 Lovely
+        // track for Yo Yo Honey Singh's 3:31 "Brown Rang" video.
             ?: CREDITS_DISAGREE.takeIf {
                 !target.isVideo && withinSeconds(candidate, target, CREDIT_OVERRIDE_SEC)
             }
             ?: return null
         val explicit = explicitScore(target.isExplicit, candidate.isExplicit) ?: return null
         return BASE + artist + duration + albumScore(target.album, candidate.albumName) + explicit +
-            contextScore(wanted, got)
+                contextScore(wanted, got)
     }
 
     /**
@@ -371,6 +380,19 @@ object TrackMatcher {
         // chooses to print it.
         text = text.replace(FEATURING, " ")
 
+        // CJK languages do not use spaces between
+        // words. Standard word splitting and non-alphanumeric filtering fragment
+        // these titles into empty or broken strings, so CJK titles keep their
+        // raw character sequence intact (stripping only punctuation and whitespace).
+        val containsCJK = text.any {
+            Character.UnicodeBlock.of(it) in setOf(
+                Character.UnicodeBlock.HIRAGANA,
+                Character.UnicodeBlock.KATAKANA,
+                Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
+                Character.UnicodeBlock.HANGUL_SYLLABLES
+            )
+        }
+
         var words = text.split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
@@ -381,9 +403,15 @@ object TrackMatcher {
             words = words.dropLast(1)
         }
 
+        val coreString = if (containsCJK) {
+            text.replace(Regex("""[\s\p{Punct}・～〜ー-]+"""), "")
+        } else {
+            words.joinToString("")
+        }
+
         return TitleParts(
             words = words,
-            core = words.joinToString(""),
+            core = coreString,
             versions = versions,
             context = context,
         )
@@ -421,7 +449,8 @@ object TrackMatcher {
     /** Whether [text] is nothing but (part of) [artist] — the "Artist - Title" upload shape. */
     private fun isArtistName(text: String, artist: String): Boolean {
         if (artist.isBlank()) return false
-        val words = text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
+        val words =
+            text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
         val credited = artist.lowercase(Locale.ROOT).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
@@ -613,7 +642,7 @@ object TrackMatcher {
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
     private val WORD_SPLIT = Regex("""[\s.·]+""")
-    private val NON_ALNUM = Regex("""[^a-z0-9]""")
+    private val NON_ALNUM = Regex("""[^\p{L}\p{Nd}]""")
     private val ARTIST_SEPARATORS =
         Regex("""\s*(?:[,&/;·|]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""")
 
