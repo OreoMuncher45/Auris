@@ -213,6 +213,7 @@ fun SettingsScreen(
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
     val preferUsbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
+    val loudnessOffOnSpeaker by AppSettings.loudnessOffOnSpeaker.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
     val playingFormat by NerdStats.current.collectAsStateWithLifecycle()
     val playingDolbyAtmos = playingFormat?.isDolbyAtmos == true
@@ -599,6 +600,14 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setLoudnessNormalization(!loudnessNormalization) },
+                )
+            }
+            val loudnessSpeakerTitle = stringResource(R.string.loudness_off_on_speaker)
+            row(loudnessSpeakerTitle, "loudness", "speaker", "normalize") {
+                SettingsSubRow(
+                    title = loudnessSpeakerTitle,
+                    checked = loudnessOffOnSpeaker,
+                    onCheckedChange = AppSettings::setLoudnessOffOnSpeaker,
                 )
             }
             // Automix decides its own length from each pair of tracks —

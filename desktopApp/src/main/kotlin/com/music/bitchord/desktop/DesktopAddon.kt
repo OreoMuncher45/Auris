@@ -409,7 +409,7 @@ internal class DesktopAddonClient(rawBaseUrl: String) {
         private const val MAX_RETRIES = 2
         private const val BACKOFF_BASE_MS = 500L
         private const val BACKOFF_CAP_MS = 8_000L
-        private const val USER_AGENT = "BitChord"
+        internal val USER_AGENT = "BitChord/v${System.getProperty("bitchord.version") ?: "1.7.1"}"
         private const val PROBE_QUERY = "music"
 
         private val LOSSLESS_WORDS = listOf("lossless", "flac", "hifi", "hi-res", "hires", "max", "best")
@@ -823,7 +823,7 @@ internal object DesktopSourceFormats {
     private suspend fun fetch(url: String): Result<String> = runCatching {
         val response = http.get(url) {
             header("Accept", "application/json")
-            header("User-Agent", "BitChord")
+            header("User-Agent", DesktopAddonClient.USER_AGENT)
         }
         val code = response.status.value
         when {

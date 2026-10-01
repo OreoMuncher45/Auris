@@ -894,7 +894,7 @@ object Downloads {
             }
         }
 
-        val route = routeFor(track, quality)
+        val route = routeFor(context, track, quality)
         Log.d(TAG, "downloading ${song.videoId} as .${route.extension} (${route.describe}, ${quality.label})")
         Prepared(song.videoId, track, route = route, alreadyAt = null)
     }
@@ -1089,7 +1089,7 @@ object Downloads {
      *   than to the middle of this one. [Downloader.fetch] resolves again after
      *   a mid-download refusal and has to ask for the same rung it started on.
      */
-    private suspend fun routeFor(track: Song, quality: DownloadQuality): Route {
+    private suspend fun routeFor(context: Context, track: Song, quality: DownloadQuality): Route {
         fromSources(track, quality)?.let { (stream, storable) ->
             // A manifest is an index, not audio. Whichever kind it is, fetching
             // it as a file writes the index into something named `.flac` —
@@ -1100,10 +1100,31 @@ object Downloads {
             val dash = OfflineDash.handles(stream.url)
             val hls = stream.url.substringBefore('?').endsWith(".m3u8", ignoreCase = true)
             val packaged = hls || dash
-            // A package is only useful inside BitChord. When the user
-            // explicitly exports files for another player, decline it here and
-            // let the ordinary portable-file fallback resolve instead.
-            if (packaged && AppSettings.exportDownloads.value) return@let
+            // A manifest's segments are joined back into one ordinary file —
+            // see [ManifestFile] — exported or not, so a lossless download is
+            // a `.flac` wherever it lands. Exports used to decline manifests
+            // instead, which meant YouTube: Tidal serves every lossless tier
+            // as a manifest, so an exporting user heard FLAC and saved 131kbps
+            // AAC. Only a codec the assembler can't file falls through to the
+            // package (in-app) or YouTube (export) below.
+            if (packaged && storable.extension in ManifestFile.EXTENSIONS) {
+                return Route(
+                    extension = storable.extension,
+                    mimeType = storable.mimeType,
+                    describe = "${stream.format.summary} (assembled from ${if (dash) "DASH" else "HLS"})",
+                    downloadFormat = stream.format.downloadBadge(),
+                    write = { sink, onProgress ->
+                        ManifestFile.write(
+                            context.cacheDir, stream.url, stream.headers, dash,
+                            storable.extension, sink, onProgress,
+                        )
+                    },
+                )
+            }
+            if (packaged && AppSettings.exportDownloads.value) {
+                Log.d(TAG, "can't export a .${storable.extension} manifest; taking YouTube for ${track.videoId}")
+                return@let
+            }
             return Route(
                 // DASH is saved *as* HLS — see [OfflineDash] for why — so both
                 // kinds land as the same package and are named for what was

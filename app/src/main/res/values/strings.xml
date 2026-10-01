@@ -930,6 +930,7 @@
     <string name="loudness_normalization">Loudness normalization</string>
 
     <string name="loudness_normalization_subtitle">Levels every track to the same loudness</string>
+    <string name="loudness_off_on_speaker">Disable on Phone Speaker</string>
 
     <string name="loudness_target">Target loudness</string>
 

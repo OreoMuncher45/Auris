@@ -223,8 +223,11 @@ object MediaTagger {
         val original = readAll(context, uri) ?: return
         val tagged = runCatching {
             when (extension) {
+                // Indexed first: a fragmented file saved without a `sidx`
+                // plays but cannot seek. Returns [original] when it has
+                // nothing to add, so the identity check below still holds.
                 "m4a" -> Mp4Tagger.tag(
-                    original,
+                    Mp4Sidx.ensure(original),
                     track.title,
                     track.artist,
                     track.albumName,

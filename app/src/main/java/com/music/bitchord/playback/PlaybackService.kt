@@ -5765,6 +5765,17 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
+            // Same route the player's output caption reads, so "on speaker"
+            // means the same thing here as there.
+            combine(
+                AppSettings.loudnessOffOnSpeaker,
+                AudioOutputStatus.current.map { it.routeKind == AudioRouting.Kind.PHONE }.distinctUntilChanged(),
+            ) { off, onSpeaker -> off && onSpeaker }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { setupLoudness(player?.currentMediaItem?.mediaId) }
+        }
+        scope.launch {
             // Explicit <Any, _>: these flows have mixed element types, and
             // letting the reified vararg combine() infer T lands on an
             // intersection type. Nothing is read out of the array — the
@@ -5845,6 +5856,9 @@ class PlaybackService : MediaLibraryService() {
 
     private fun loudnessGainMb(mediaId: String?): Int? {
         if (!AppSettings.loudnessNormalization.value) return null
+        if (AppSettings.loudnessOffOnSpeaker.value &&
+            AudioOutputStatus.current.value.routeKind == AudioRouting.Kind.PHONE
+        ) return null
         val id = mediaId?.takeIf { it.isNotBlank() } ?: return null
         val loudnessDb = StreamResolver.loudnessDbFor(id) ?: return null
         return (-loudnessDb * 100.0).roundToInt().coerceIn(MIN_LOUDNESS_GAIN_MB, MAX_LOUDNESS_GAIN_MB)
