@@ -730,6 +730,8 @@ fun BitChordDesktopApp() {
     }
     var openedCollection by remember { mutableStateOf<DesktopCollection?>(null) }
     var collectionLoadingMore by remember { mutableStateOf(false) }
+    var collectionError by remember { mutableStateOf<String?>(null) }
+    var collectionReloads by remember { mutableStateOf(0) }
     // The artist page is its own destination rather than a collection with a different header.
     var openedArtist by remember { mutableStateOf<DesktopArtistTarget?>(null) }
     var artistState by remember { mutableStateOf<UiState<ArtistPage>>(UiState.Loading) }
@@ -940,14 +942,58 @@ fun BitChordDesktopApp() {
         openedArtist = null
         overlays.replay = false
         overlays.settingsPage = null
+        collectionError = null
         openedCollection = collection
     }
 
-    fun openAlbum(browseId: String) {
-        scope.launch {
-            DesktopSearchClient.browse(browseId).onSuccess { showCollection(it) }
+    /**
+     * Opens an album or playlist by id straight away, with a loader where the tracks go, the way an
+     * artist's page opens — rather than leaving the click with nothing to show until YouTube answers.
+     * [fallback] is what the card that was clicked already knew.
+     */
+    fun openCollection(browseId: String, fallback: BrowseItem? = null) {
+        val current = openedCollection
+        if (current?.browseId == browseId && !current.loading) {
+            showCollection(current)
+            return
         }
+        showCollection(
+            DesktopCollection(
+                browseId = browseId,
+                title = fallback?.title.orEmpty(),
+                subtitle = fallback?.subtitle.orEmpty(),
+                thumbnailUrl = fallback?.thumbnailUrl,
+                type = fallback?.type?.takeIf { it != BrowseType.OTHER } ?: browseTypeOf(browseId),
+                songs = emptyList(),
+                loading = true,
+            ),
+        )
+        collectionReloads++
     }
+
+    // Keyed on the id, so a second page opened before the first answered cancels the first rather
+    // than racing it; and a loading page restored by Back fetches again.
+    LaunchedEffect(openedCollection?.browseId, openedCollection?.loading, collectionReloads) {
+        val pending = openedCollection?.takeIf { it.loading } ?: return@LaunchedEffect
+        collectionError = null
+        DesktopSearchClient.browse(
+            browseId = pending.browseId,
+            fallback = BrowseItem(
+                browseId = pending.browseId,
+                title = pending.title,
+                subtitle = pending.subtitle,
+                thumbnailUrl = pending.thumbnailUrl,
+                type = pending.type,
+            ),
+        ).fold(
+            onSuccess = { loaded ->
+                if (openedCollection?.browseId == pending.browseId) openedCollection = loaded
+            },
+            onFailure = { collectionError = it.message ?: "Could not open ${pending.title.ifBlank { "this page" }}" },
+        )
+    }
+
+    fun openAlbum(browseId: String) = openCollection(browseId)
 
     /** Copies the track's YouTube Music link. */
     fun shareSong(song: Song) {
@@ -1802,9 +1848,7 @@ fun BitChordDesktopApp() {
         if (item.type == BrowseType.ARTIST) {
             openArtist(item.browseId, item.title)
         } else {
-            scope.launch {
-                DesktopSearchClient.browse(item.browseId, item).onSuccess { showCollection(it) }
-            }
+            openCollection(item.browseId, item)
         }
     }
 
@@ -1819,20 +1863,16 @@ fun BitChordDesktopApp() {
             // An artist is a page of its own, not a list of tracks with a photograph on top.
             browseTypeOf(browseId.orEmpty()) == BrowseType.ARTIST ->
                 openArtist(browseId!!, item.title)
-            browseId != null -> {
-                scope.launch {
-                    DesktopSearchClient.browse(
-                        browseId = browseId,
-                        fallback = BrowseItem(
-                            browseId = browseId,
-                            title = item.title,
-                            subtitle = item.subtitle,
-                            thumbnailUrl = item.thumbnailUrl,
-                            type = BrowseType.OTHER,
-                        ),
-                    ).onSuccess(::showCollection)
-                }
-            }
+            browseId != null -> openCollection(
+                browseId = browseId,
+                fallback = BrowseItem(
+                    browseId = browseId,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                    type = BrowseType.OTHER,
+                ),
+            )
         }
     }
 
@@ -2486,6 +2526,7 @@ fun BitChordDesktopApp() {
         destination = entry.destination
         overlays.replay = entry.replay
         overlays.settingsPage = entry.settings
+        collectionError = null
         openedCollection = entry.collection
         libraryShowAll = entry.showAll
         if (entry.mood != selectedMoodGenre) {
@@ -3467,6 +3508,17 @@ fun BitChordDesktopApp() {
                             onToggleSubscription = if (youtubeSignedIn) ::toggleSubscription else null,
                             contentPadding = contentPadding,
                         )
+                        openedCollection?.loading == true -> DesktopPageScaffold(contentPadding) {
+                            Box(Modifier.fillMaxSize()) {
+                                val error = collectionError
+                                if (error != null) {
+                                    DesktopErrorPage(error) { collectionReloads++ }
+                                } else {
+                                    val title = openedCollection?.title.orEmpty()
+                                    DesktopLoadingPage(if (title.isBlank()) "Loading…" else "Loading $title…")
+                                }
+                            }
+                        }
                         openedCollection != null -> DesktopCollectionPage(
                             collection = openedCollection!!,
                             loadingMore = collectionLoadingMore,
@@ -6311,14 +6363,13 @@ private fun DesktopCollectionPage(
                     )
                 }
             }
-            item {
-                DesktopCollectionTableHeader(hasRemove = onRemoveFromPlaylist != null)
-            }
-            items(shownSongs, key = { (index, song) -> "${song.videoId}-$index" }) { (index, song) ->
+            itemsIndexed(shownSongs, key = { _, (index, song) -> "${song.videoId}-$index" }) { position, (index, song) ->
                 DesktopCollectionSongRow(
+                    // Striped by place on screen, not track number, so a filtered list still
+                    // alternates.
+                    striped = position % 2 == 1,
                     song = song,
                     collectionType = collection.type,
-                    collectionTitle = collection.title,
                     liked = song.videoId in likedIds,
                     onClick = { _ -> onPlaySongs(songs, index) },
                     onToggleLike = onToggleLike,
@@ -6353,36 +6404,16 @@ private fun DesktopCollectionPage(
 }
 
 /**
- * The width of a collection row's action cluster, and of the header spacer that has to line up with
- * it.
+ * The width of a collection row's action cluster, fixed so the duration column lines up down the
+ * table whichever rows can be removed.
  */
 private fun collectionActionsWidth(hasRemove: Boolean): Dp =
-    if (hasRemove) 170.dp else 136.dp
-
-@Composable
-private fun DesktopCollectionTableHeader(hasRemove: Boolean) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Spacer(Modifier.width(32.dp))
-        Spacer(Modifier.width(44.dp))
-        Spacer(Modifier.width(12.dp))
-        Text(DesktopStrings["d_song", "SONG"], Modifier.weight(0.42f), color = DesktopSecondary, style = MaterialTheme.typography.labelSmall)
-        Text(DesktopStrings["widget_preview_artist", "ARTIST"].uppercase(), Modifier.weight(0.20f), color = DesktopSecondary, style = MaterialTheme.typography.labelSmall)
-        Text(DesktopStrings["album", "ALBUM"].uppercase(), Modifier.weight(0.25f), color = DesktopSecondary, style = MaterialTheme.typography.labelSmall)
-        Text(DesktopStrings["d_time", "TIME"], Modifier.width(58.dp), color = DesktopSecondary, style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.End)
-        Spacer(Modifier.width(collectionActionsWidth(hasRemove)))
-    }
-}
+    if (hasRemove) 136.dp else 102.dp
 
 @Composable
 private fun DesktopCollectionSongRow(
     song: Song,
     collectionType: BrowseType,
-    collectionTitle: String,
     liked: Boolean,
     onClick: (Song) -> Unit,
     onToggleLike: ((Song) -> Unit)?,
@@ -6391,6 +6422,8 @@ private fun DesktopCollectionSongRow(
     downloaded: Boolean,
     downloadInProgress: Boolean,
     number: Int,
+    /** Every other row is shaded, so a wide row can be followed across to its buttons. */
+    striped: Boolean,
     /** Takes this row out of the playlist being read. */
     onRemove: ((Song) -> Unit)? = null,
 ) {
@@ -6398,12 +6431,20 @@ private fun DesktopCollectionSongRow(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
+            .background(if (striped) Color.White.copy(alpha = 0.04f) else Color.Transparent)
             .clickable { onClick(song) }
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val nowPlaying = song.isNowPlaying()
-        Text(number.toString(), Modifier.width(32.dp), color = DesktopSecondary, textAlign = TextAlign.Center)
+        Text(
+            number.toString(),
+            Modifier.width(28.dp),
+            color = DesktopSecondary,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelSmall,
+        )
+        Spacer(Modifier.width(12.dp))
         // No sleeve on an album's rows.
         if (collectionType != BrowseType.ALBUM) {
             DesktopArtwork(song.thumbnailUrl, Modifier.size(44.dp).clip(RoundedCornerShape(6.dp)), px = ROW_ART_PX)
@@ -6424,13 +6465,16 @@ private fun DesktopCollectionSongRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Text(
-            song.albumName ?: if (collectionType == BrowseType.ALBUM) collectionTitle else "—",
-            Modifier.weight(0.25f).padding(horizontal = 8.dp),
-            color = DesktopSecondary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // Every row of an album is on that album; the column would only repeat the page's title.
+        if (collectionType != BrowseType.ALBUM) {
+            Text(
+                song.albumName ?: "—",
+                Modifier.weight(0.25f).padding(horizontal = 8.dp),
+                color = DesktopSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         Text(
             song.durationText ?: "—",
             Modifier.width(58.dp),
@@ -6481,12 +6525,8 @@ private fun DesktopCollectionSongRow(
                     Icon(BitChordIcons.Plus, DesktopStrings["add_to_playlist", "Add to playlist"], tint = DesktopSecondary, modifier = Modifier.size(18.dp))
                 }
             }
-            IconButton(onClick = { onClick(song) }, modifier = Modifier.size(34.dp)) {
-                Icon(BitChordIcons.Play, DesktopStrings["play", "Play"], tint = DesktopAccent, modifier = Modifier.size(19.dp))
-            }
         }
     }
-    HorizontalDivider(Modifier.padding(start = 88.dp), color = DesktopDivider)
 }
 
 
@@ -6808,7 +6848,14 @@ private fun DesktopSongRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (number != null) {
-            Text("$number", Modifier.width(28.dp), color = DesktopSecondary, textAlign = TextAlign.Center)
+            Text(
+                "$number",
+                Modifier.width(28.dp),
+                color = DesktopSecondary,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Spacer(Modifier.width(12.dp))
         }
         DesktopArtwork(
             song.thumbnailUrl,
@@ -6868,9 +6915,8 @@ private fun DesktopSongRow(
             }
         }
         // The same menu every other surface opens, so a row on a list page offers what a row on
-        // the player does rather than only a play button.
+        // the player does; the row itself plays.
         menu?.invoke(song)
-        IconButton(onClick = { onClick(song) }) { Icon(BitChordIcons.Play, DesktopStrings["play", "Play"], tint = DesktopAccent) }
     }
 }
 

@@ -168,6 +168,11 @@ data class DesktopCollection(
      * does not say, or when it is not a playlist at all.
      */
     val owned: Boolean? = null,
+    /**
+     * A page opened before its tracks have arrived: the id and whatever the card that opened it
+     * knew, drawn as a loader until the browse answers.
+     */
+    val loading: Boolean = false,
 ) {
     /** The raw id an edit is addressed to; the browse id carries a `VL` prefix. */
     val playlistId: String get() = browseId.removePrefix("VL")
