@@ -41,6 +41,31 @@ internal data class DesktopQueue(
 
     fun previous(): DesktopQueue = if (hasPrevious) copy(index = index - 1) else this
 
+    /**
+     * The track that follows [currentId] — what Next would play, and so what a crossfade has to
+     * blend into. Null when nothing does, or when [currentId] is not in the queue at all.
+     */
+    fun followingFor(currentId: String, repeatAll: Boolean): Song? {
+        val at = if (current?.videoId == currentId) index else songs.indexOfFirst { it.videoId == currentId }
+        if (at < 0) return null
+        return songs.getOrNull(at + 1) ?: if (repeatAll) songs.firstOrNull() else null
+    }
+
+    /**
+     * The queue once a crossfade has handed playback to [songId]: one step on, as Next would have
+     * taken it, wrapping only where repeat-all's crossfade did.
+     */
+    fun afterHandoffTo(songId: String): DesktopQueue = when {
+        songs.getOrNull(index + 1)?.videoId == songId -> next()
+        // Already there: Next or a queue pick got in ahead of the handoff's callback.
+        current?.videoId == songId -> this
+        !hasNext && songs.firstOrNull()?.videoId == songId -> copy(index = 0)
+        else -> songs.indices
+            .firstOrNull { it > index && songs[it].videoId == songId }
+            ?.let { copy(index = it).trimmed() }
+            ?: this
+    }
+
     /** Adds tracks at the end — where AutoPlay's own additions go. */
     /** Slots one track into the running order at [position]. */
     fun insert(position: Int, song: Song): DesktopQueue = copy(

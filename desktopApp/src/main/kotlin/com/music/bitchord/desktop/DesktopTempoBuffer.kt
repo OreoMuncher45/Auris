@@ -28,6 +28,16 @@ internal class DesktopTempoBuffer(channels: Int, sampleRate: Int) {
         append(rendered, processor.outputCount)
     }
 
+    /**
+     * Queues whatever the stretcher is still holding, unstretched, so the deck can go back to
+     * reading its decoder directly once [available] runs out — seamlessly, because the held audio
+     * is exactly what comes before the decoder's next block.
+     */
+    fun finish() {
+        val rest = processor.drain()
+        append(rest, processor.outputCount)
+    }
+
     /** Returns up to [wanted] queued samples. The returned array is reused. */
     fun take(wanted: Int): FloatArray {
         val count = minOf(wanted, queuedCount)

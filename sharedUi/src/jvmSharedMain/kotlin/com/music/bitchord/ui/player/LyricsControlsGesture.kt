@@ -7,6 +7,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.pointerInput
 
@@ -35,6 +36,13 @@ private const val TAP_SLOP_FACTOR = 2.5f
  * The dead zone that costs only exists while [enabled] — that is, only while
  * the controls are away and a tap has something to do. With them on screen this
  * detector is absent entirely and the list scrolls off its own slop as usual.
+ *
+ * A mouse is the exception. It has no wobble to absorb and nothing to scroll by
+ * dragging, and on the desktop the click on a line *is* the way to jump to it —
+ * intercepted, every click in the lower half while the controls were away did
+ * nothing visible, and lines only started seeking once the scrubber had been
+ * used. So a mouse click goes to the line, and only a click no row claimed
+ * brings the controls back.
  */
 @Composable
 internal fun Modifier.revealLyricsControlsOnTap(
@@ -48,6 +56,19 @@ internal fun Modifier.revealLyricsControlsOnTap(
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             if (down.position.y < size.height / 2f) return@awaitEachGesture
+            if (down.type == PointerType.Mouse) {
+                var claimed = down.isConsumed
+                do {
+                    val event = awaitPointerEvent(PointerEventPass.Final)
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    claimed = claimed || change.isConsumed
+                    if (!change.pressed) {
+                        if (!claimed) currentOnReveal.value()
+                        break
+                    }
+                } while (true)
+                return@awaitEachGesture
+            }
             var dragged = false
             do {
                 val event = awaitPointerEvent(PointerEventPass.Initial)

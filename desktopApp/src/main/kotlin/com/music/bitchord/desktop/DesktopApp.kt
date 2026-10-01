@@ -1271,13 +1271,28 @@ fun BitChordDesktopApp() {
                 if (DesktopSleepTimer.afterTrack.value) {
                     DesktopSleepTimer.cancel()
                 } else if (repeatMode == DesktopRepeatMode.ONE) {
-                    selectedSong?.let { startSong(it, true) }
+                    // Replayed in place. [startSong] makes the track a queue of one, which threw
+                    // the rest of the queue away the first time it repeated.
+                    val song = selectedSong
+                    if (song != null &&
+                        liveQueue.current?.videoId == song.videoId &&
+                        !DesktopListenTogether.state.value.inParty
+                    ) {
+                        playCurrent()
+                    } else {
+                        song?.let { startSong(it, true) }
+                    }
                 } else {
                     playNext()
                 }
             },
             onCrossfaded = { song ->
                 scope.launch {
+                    // The queue moves with the audio. Only the selection used to, which left the
+                    // queue on the track that had just finished — so Next "advanced" onto the song
+                    // already playing, and every later skip landed one behind.
+                    liveQueue = liveQueue.afterHandoffTo(song.videoId)
+                    saveQueue()
                     selectedSong = song
                     history = (listOf(song) + history.filterNot { it.videoId == song.videoId }).take(50)
                     persistence.saveHistory(history)
@@ -1450,17 +1465,17 @@ fun BitChordDesktopApp() {
         playbackEngine.setSkipSilence(skipSilence)
         playbackEngine.setOutputPrecision(outputPrecision)
     }
-    LaunchedEffect(automix, crossfadeSeconds, audioQuality, selectedSong?.videoId, queue, shuffle, repeatMode) {
+    LaunchedEffect(automix, crossfadeSeconds, audioQuality, selectedSong?.videoId, queue, liveQueue.index, shuffle, repeatMode) {
         playbackEngine.setAutomixEnabled(automix)
         playbackEngine.setCrossfadeSeconds(crossfadeSeconds)
-        val currentIndex = queue.indexOfFirst { it.videoId == selectedSong?.videoId }
-        val next = selectedSong?.let {
-            if (shuffle) {
-                queue.filterIndexed { index, _ -> index != currentIndex }.firstOrNull()
-            } else {
-                queue.drop(currentIndex + 1).firstOrNull()
-            } ?: if (repeatMode == DesktopRepeatMode.ALL) queue.firstOrNull() else null
-        }
+        // Exactly what Next would play, so a crossfade can never blend into anything else. Shuffle
+        // is already the queue's order; picking "the first track that is not this one" under it
+        // blended into a song from history whenever the current one was not at the top.
+        // Repeat-one prepares nothing: the track ends and [onEnded] starts it again, rather than
+        // blending into the next one.
+        val next = selectedSong
+            ?.takeIf { repeatMode != DesktopRepeatMode.ONE }
+            ?.let { liveQueue.followingFor(it.videoId, repeatAll = repeatMode == DesktopRepeatMode.ALL) }
         playbackEngine.prepareNext(next)
     }
     // Topped up on every track change, the way Android does it, rather than only once the queue has
@@ -2116,7 +2131,13 @@ fun BitChordDesktopApp() {
                 DesktopWindowVisibility.show()
                 overlays.settings = true
             },
-            onQuit = { exitProcess(0) },
+            onQuit = {
+                // Native work first: the audio thread and the media controls are inside FFmpeg,
+                // WASAPI and WinRT, and exitProcess would unload those libraries under them.
+                playbackEngine.shutdown()
+                DesktopWindowsMedia.stop()
+                exitProcess(0)
+            },
         )
     }
     LaunchedEffect(selectedSong, playback.isPlaying) {

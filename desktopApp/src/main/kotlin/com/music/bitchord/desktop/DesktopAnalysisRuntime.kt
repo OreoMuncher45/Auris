@@ -72,9 +72,6 @@ internal object DesktopAnalysisRuntime {
     /** The absolute path of a model, unpacked on first use. */
     fun modelPath(asset: String): String = unpack("/models/$asset", asset).toString()
 
-    /** The app icon as a file, for shell surfaces that take a path rather than pixels. */
-    fun iconPath(): String = unpack("/icons/AppIcon.png", "AppIcon.png").toString()
-
     /**
      * Copies a classpath resource to [name] under [home], skipping the copy when the file already
      * there is the same size and no older than the resource.

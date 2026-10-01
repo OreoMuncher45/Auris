@@ -207,4 +207,34 @@ class DesktopQueueTest {
         assertEquals(listOf("c"), queue.upcoming.map { it.videoId })
         assertEquals(emptyList(), DesktopQueue(songs("a"), index = 0).upcoming)
     }
+    @Test
+    fun aCrossfadeHandoffMovesTheQueueOnSoNextIsTheTrackAfter() {
+        val queue = DesktopQueue.startingAt(songs("a", "b", "c", "d"), startIndex = 0)
+
+        val handed = queue.afterHandoffTo("b")
+
+        assertEquals("b", handed.current?.videoId)
+        assertEquals("c", handed.next().current?.videoId)
+        // A callback arriving after Next already moved there leaves it alone.
+        assertEquals(handed, handed.afterHandoffTo("b"))
+    }
+
+    @Test
+    fun aRepeatAllHandoffWrapsToTheTop() {
+        val queue = DesktopQueue.startingAt(songs("a", "b", "c"), startIndex = 2)
+
+        assertEquals("a", queue.followingFor("c", repeatAll = true)?.videoId)
+        assertEquals(null, queue.followingFor("c", repeatAll = false))
+        assertEquals(0, queue.afterHandoffTo("a").index)
+    }
+
+    @Test
+    fun theTrackPreparedToBlendIntoIsTheOneNextPlaysEvenWhenShuffled() {
+        val queue = DesktopQueue.shuffledStartingAt(songs("a", "b", "c", "d", "e"), startIndex = 0)
+            .next().next()
+
+        val following = queue.followingFor(queue.current!!.videoId, repeatAll = false)
+
+        assertEquals(queue.next().current?.videoId, following?.videoId)
+    }
 }

@@ -19,6 +19,8 @@ internal object DesktopWindowsMedia {
 
     private val started = AtomicBoolean(false)
 
+    private val shutdownHookAdded = AtomicBoolean(false)
+
     @Volatile
     private var controller: Controller? = null
 
@@ -43,13 +45,16 @@ internal object DesktopWindowsMedia {
         // decided in one place and can be checked without Windows.
         this.controller = controller
         if (!available || !started.compareAndSet(false, true)) return
-        // Before the controls exist: the shell reads the name off the window they hang from.
-        runCatching {
-            nativeSetIdentity(APP_USER_MODEL_ID, "BitChord", runCatching { DesktopAnalysisRuntime.iconPath() }.getOrDefault(""))
-        }.onFailure { DesktopTrackLog.log("Windows media controls have no app identity: ${it.message}") }
         if (!nativeStart()) {
             started.set(false)
             DesktopTrackLog.log("Windows media controls could not be created")
+            return
+        }
+        // Quitting from the tray is exitProcess, which never reaches the window's onDispose. The
+        // library's pump thread was then still running when the DLL unloaded, and destroying a
+        // joinable std::thread aborts the process — every quit ended in a native crash.
+        if (shutdownHookAdded.compareAndSet(false, true)) {
+            Runtime.getRuntime().addShutdownHook(Thread(::stop, "bitchord-smtc-stop"))
         }
     }
 
@@ -89,7 +94,6 @@ internal object DesktopWindowsMedia {
         }
     }
 
-    private external fun nativeSetIdentity(id: String, name: String, iconPath: String)
     private external fun nativeStart(): Boolean
     private external fun nativeStop()
     private external fun nativeUpdate(
@@ -103,9 +107,6 @@ internal object DesktopWindowsMedia {
     )
 
     private const val LIBRARY = "bitchord_smtc"
-
-    /** Only the hidden SMTC window carries it, so the main window's taskbar grouping is untouched. */
-    private const val APP_USER_MODEL_ID = "BitChord.Desktop"
 
     private const val BUTTON_PLAY = 0
     private const val BUTTON_PAUSE = 1

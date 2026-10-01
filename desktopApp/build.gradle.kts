@@ -343,11 +343,6 @@ tasks.named<ProcessResources>("processResources") {
         include("*.dll")
         into("native")
     }
-    // The icon Windows shows on the media card, which reads it from a file path.
-    from(project.file("packaging/icons")) {
-        include("AppIcon.png")
-        into("icons")
-    }
     // The Automix models, taken from the Android module rather than copied into this one.
     from(rootProject.file("app/src/main/assets")) {
         include("*.onnx")

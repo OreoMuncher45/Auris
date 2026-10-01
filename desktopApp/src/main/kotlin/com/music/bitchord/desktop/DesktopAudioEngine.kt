@@ -92,7 +92,7 @@ class DesktopPlaybackEngine(
     /** Owned by the audio thread once handed over; never touched from outside. */
     private class Track(
         val song: Song,
-        val decoder: DesktopAudioDecoder,
+        val decoder: DesktopDecodeAhead,
         val stream: DesktopStream,
         /**
          * Where in this track its first rendered sample sits.
@@ -110,6 +110,21 @@ class DesktopPlaybackEngine(
         var tempoEaseEveryFrames = 0L
         var tempoEaseNextFrame = Long.MAX_VALUE
         var tempoOutputFrames = 0L
+        /** The stretch has eased out and [tempo] is only playing off what it still held. */
+        var tempoDrained = false
+        /** Brings this track to the output stream's rate, when the two differ; see [readSource]. */
+        var converter: DesktopRateConverter? = null
+
+        /** Back to the decoder at the listener's speed, dropping any beatmatch stretch. */
+        fun dropTempo() {
+            // The converter's history is from before whatever moved the decoder.
+            converter = null
+            tempo = null
+            tempoRate = 1.0
+            tempoEaseStep = 0.0
+            tempoEaseNextFrame = Long.MAX_VALUE
+            tempoDrained = false
+        }
     }
 
     private sealed interface Command {
@@ -212,7 +227,16 @@ class DesktopPlaybackEngine(
                 transport = stream.transport,
             ).map {
                 if (startAtMs > 0) decoder.seek(startAtMs * 1_000)
-                Track(song, decoder, stream, startAtMs * 1_000)
+                // From here the decoder belongs to its own read-ahead thread: the audio thread only
+                // ever takes what has already been decoded, so a slow network read is not a gap.
+                val ahead = DesktopDecodeAhead(
+                    source = decoder,
+                    outputFormat = decoder.outputFormat,
+                    durationUs = decoder.durationUs,
+                    measuredFormat = decoder.measuredFormat,
+                    name = "BitChord-Decode ${song.title.take(24)}",
+                )
+                Track(song, ahead, stream, startAtMs * 1_000)
             }.onFailure { decoder.close() }
         }
 
@@ -358,6 +382,11 @@ class DesktopPlaybackEngine(
     }
 
     fun seekTo(positionMs: Long) {
+        // TEMP seek diagnostics: who asked, so a seek undone by a second one shows up.
+        DesktopTrackLog.log(
+            "seek requested: ${positionMs}ms (at ${_state.value.positionMs}ms) from " +
+                Throwable().stackTrace.drop(1).take(6).joinToString(" < ") { "${it.fileName}:${it.lineNumber}" },
+        )
         commands += Command.SeekTo(positionMs.coerceAtLeast(0))
     }
 
@@ -424,6 +453,18 @@ class DesktopPlaybackEngine(
         upgradeJob?.cancel()
         thread.interrupt()
         scope.cancel()
+    }
+
+    /**
+     * [release], then waits for the audio thread to close its decoders and the output stream.
+     *
+     * For quitting. exitProcess tears native libraries down underneath any thread still inside
+     * them, and the audio thread is always inside FFmpeg or WASAPI — quitting from the tray
+     * mid-song ended in a native crash rather than a clean exit.
+     */
+    fun shutdown(timeoutMs: Long = 2_000) {
+        release()
+        runCatching { thread.join(timeoutMs) }
     }
 
     private fun clearUpcoming() {
@@ -633,37 +674,53 @@ class DesktopPlaybackEngine(
 
     /** Reads the playing deck, preserving a tempo buffer inherited from its incoming handoff. */
     private fun readCurrent(track: Track): FloatArray? {
+        // An eased-out stretch whose held audio has all been played: back on the decoder itself.
+        // Left in place, the stretcher went on windowing the track at 1x until it ended — never
+        // quite transparent, and heard as the tempo and the pitch never coming back.
+        if (track.tempoDrained && track.tempo?.available == 0) {
+            track.tempo = null
+            track.tempoDrained = false
+        }
         val tempo = track.tempo ?: run {
-            val block = track.decoder.readSamples()
-            currentReadCount = if (block == null) 0 else track.decoder.sampleCount
+            val block = readSource(track)
+            currentReadCount = if (block == null) 0 else sourceReadCount
             return block
         }
         while (tempo.available == 0) {
-            val source = track.decoder.readSamples() ?: run {
+            val source = readSource(track) ?: run {
                 currentReadCount = 0
                 return null
             }
             tempo.speed = track.tempoRate.toFloat()
-            tempo.push(source, track.decoder.sampleCount)
+            tempo.push(source, sourceReadCount)
         }
         val block = tempo.take(DEFAULT_TEMPO_OUTPUT_SAMPLES)
         currentReadCount = tempo.outputCount
         advanceTempoEase(track, currentReadCount / sink.format.channels.coerceAtLeast(1))
+        if (track.tempoRate <= 1.0 && !track.tempoDrained) {
+            // Nothing more is pushed from here; what the stretcher holds is queued unstretched and
+            // the decoder takes over once it has played.
+            tempo.finish()
+            track.tempoDrained = true
+        }
         return block
     }
 
     /** Supplies exactly one outgoing block of the incoming deck, retaining any stretched surplus. */
     private fun readIncoming(track: Track, wanted: Int): FloatArray? {
-        val tempo = track.tempo
-        if (tempo == null) {
-            val block = track.decoder.readSamples()
-            incomingReadCount = minOf(if (block == null) 0 else track.decoder.sampleCount, wanted)
-            return block
-        }
+        // Always through a buffer, even unstretched. Read raw, the incoming deck gave one decoder
+        // block per outgoing block whatever its size: a shorter one (Opus hands over 20ms at a
+        // time) left the rest of the mix block silent, and a longer one had its end cut off — the
+        // crackle all through an Automix blend. At 1x the buffer is a plain FIFO, and once the
+        // track is promoted [readCurrent] drains it and goes back to the decoder.
+        val tempo = track.tempo ?: DesktopTempoBuffer(
+            sink.format.channels.coerceAtLeast(1),
+            sink.format.sampleRate,
+        ).also { track.tempo = it }
         while (tempo.available < wanted) {
-            val source = track.decoder.readSamples() ?: break
+            val source = readSource(track) ?: break
             tempo.speed = track.tempoRate.toFloat()
-            tempo.push(source, track.decoder.sampleCount)
+            tempo.push(source, sourceReadCount)
         }
         if (tempo.available == 0) {
             incomingReadCount = 0
@@ -672,6 +729,38 @@ class DesktopPlaybackEngine(
         val block = tempo.take(wanted)
         incomingReadCount = tempo.outputCount
         return block
+    }
+
+    /** How much of the array [readSource] returned is this block. */
+    private var sourceReadCount = 0
+
+    /**
+     * The next block of [track], at the output stream's rate.
+     *
+     * The stream is opened at the rate of the track that started it, and a decoder hands over its
+     * file's own rate. Mixed in unconverted — the incoming track of every Automix blend whose rate
+     * differed — 48 kHz audio on a 44.1 kHz stream plays 8% slow and a semitone and a half flat,
+     * and stayed that way for the rest of the track, until Next reopened the stream at its rate.
+     * Android never meets it: each of its players has its own output.
+     */
+    private fun readSource(track: Track): FloatArray? {
+        val block = track.decoder.readSamples() ?: return null
+        val count = track.decoder.sampleCount
+        val from = track.decoder.outputFormat.sampleRate
+        val to = sink.format.sampleRate
+        if (from <= 0 || to <= 0 || from == to) {
+            track.converter = null
+            sourceReadCount = count
+            return block
+        }
+        val converter = track.converter?.takeIf { it.fromRate == from && it.toRate == to }
+            ?: DesktopRateConverter(from, to, sink.format.channels.coerceAtLeast(1)).also {
+                DesktopTrackLog.log("converting '${track.song.title}' from $from Hz to the stream's $to Hz")
+                track.converter = it
+            }
+        val converted = converter.process(block, count)
+        sourceReadCount = converter.outputCount
+        return converted
     }
 
     /** Eases a promoted beatmatch stretch back by at most 0.75% on each beat. */
@@ -1013,7 +1102,13 @@ class DesktopPlaybackEngine(
         // the blend is finished on the spot and the seek lands on that one.
         if (displaySwitched && upcoming != null) promoteUpcoming()
         val track = current ?: return
-        track.decoder.seek(millis * 1_000)
+        val landed = track.decoder.seek(millis * 1_000)
+        // TEMP seek diagnostics.
+        DesktopTrackLog.log("seek performed: ${millis}ms on '${track.song.title}' ${if (landed) "ok" else "FAILED"}")
+        // The stretcher still holds audio from before the seek, which would play first; and a
+        // listener who has moved the playhead is past the handoff, so the ease ends here — as it
+        // does on Android.
+        track.dropTempo()
         sink.flush()
         framesWritten = sink.framesPlayed()
         speedProcessor?.reset()

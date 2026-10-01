@@ -77,7 +77,7 @@ internal data class DesktopPcmFormat(
 }
 
 /** Audio decoding, by way of FFmpeg. */
-internal class DesktopAudioDecoder {
+internal class DesktopAudioDecoder : DesktopSampleSource {
 
     private var format: AVFormatContext? = null
     private var codec: AVCodecContext? = null
@@ -298,7 +298,7 @@ internal class DesktopAudioDecoder {
     }
 
     /** The next block as interleaved floats, or null at the end of the stream. */
-    fun readSamples(): FloatArray? {
+    override fun readSamples(): FloatArray? {
         val block = read() ?: return null
         val count = block.size / 4
         if (samples.size < count) samples = FloatArray(count)
@@ -316,7 +316,7 @@ internal class DesktopAudioDecoder {
     }
 
     /** How much of the array [readSamples] returned is actually this block. */
-    var sampleCount: Int = 0
+    override var sampleCount: Int = 0
         private set
 
     /** Feeds the decoder one more packet. */
@@ -367,7 +367,7 @@ internal class DesktopAudioDecoder {
     }
 
     /** Jumps to [micros], leaving the decoder with nothing stale in it. */
-    fun seek(micros: Long): Boolean {
+    override fun seek(micros: Long): Boolean {
         val container = format ?: return false
         val context = codec ?: return false
         val target = (micros / 1_000_000.0 / streamTimeBase).toLong()
@@ -378,7 +378,7 @@ internal class DesktopAudioDecoder {
         return true
     }
 
-    fun close() {
+    override fun close() {
         frame?.let { av_frame_free(it) }
         packet?.let { av_packet_free(it) }
         resampler?.let { swr_free(it) }

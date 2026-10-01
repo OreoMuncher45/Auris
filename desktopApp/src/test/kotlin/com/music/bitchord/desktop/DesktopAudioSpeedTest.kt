@@ -102,6 +102,48 @@ class DesktopAudioSpeedTest {
         )
     }
 
+    @Test
+    fun `back at unity after a stretch, music passes through as a straight copy`() {
+        // What a beatmatched Automix handoff leaves the incoming track on: stretched for the blend,
+        // eased back to 1x, and still running through the windows.
+        val stretch = DesktopAudioSpeed(channels, rate).apply { speed = 1.04f }
+        val input = music(seconds = 4f)
+        val half = input.size / 2 / channels * channels
+        stretch.process(input.copyOfRange(0, half), half)
+        stretch.speed = 1f
+        val out = stretch.process(input.copyOfRange(half, input.size), input.size - half)
+        val count = stretch.outputCount
+        assertTrue(count > rate * channels, "too little output at 1x: $count")
+
+        // A transparent 1x is a copy of the input at one fixed shift. Find the shift from the
+        // start of the 1x output and hold every later frame to it.
+        val frames = count / channels
+        val probeAt = frames / 4
+        val shift = (0 until input.size / channels - 256).minByOrNull { start ->
+            var error = 0f
+            for (frame in 0 until 256) error += abs(input[(start + frame) * channels] - out[(probeAt + frame) * channels])
+            error
+        }!!
+        var worst = 0f
+        for (frame in probeAt until frames) {
+            val at = (shift + frame - probeAt) * channels
+            if (at >= input.size) break
+            worst = maxOf(worst, abs(input[at] - out[frame * channels]))
+        }
+        assertTrue(worst < 1e-3f, "1x output wanders off the input by up to $worst")
+    }
+
+    /** Several unrelated partials and a beat: enough for a wrong join to show. */
+    private fun music(seconds: Float): FloatArray {
+        val frames = (rate * seconds).toInt()
+        return FloatArray(frames * channels) { index ->
+            val t = (index / channels).toDouble() / rate
+            val beat = kotlin.math.exp(-((t * 2.1) % 1.0) * 9.0)
+            (0.25 * sin(2 * PI * 110.0 * t) + 0.2 * sin(2 * PI * 293.7 * t) * beat +
+                0.15 * sin(2 * PI * 523.3 * t + 1.3) + 0.1 * sin(2 * PI * 1187.0 * t) * (1 - beat)).toFloat()
+        }
+    }
+
     /** Zero crossings per second on the left channel, which for a sine is its frequency. */
     private fun assertPitch(samples: FloatArray, count: Int, expected: Double) {
         var crossings = 0

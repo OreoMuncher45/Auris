@@ -17,7 +17,6 @@
 #include <roapi.h>
 #include <winstring.h>
 #include <systemmediatransportcontrolsinterop.h>
-#include "smtc_identity.h"
 // MinGW's windows.foundation.h specialises IReference for both BYTE and boolean,
 // which are the same unsigned char there, and refuses to compile. Nothing here
 // uses either; skipping the BYTE one is enough.
@@ -298,7 +297,6 @@ void pump() {
         0, L"BitChordSmtcWindow", L"BitChord", WS_OVERLAPPED,
         0, 0, 0, 0, nullptr, nullptr, description.hInstance, nullptr);
 
-    smtc_identity::apply(g_window);
     if (g_window != nullptr && create_controls()) {
         g_running = true;
         g_finished = true;
@@ -345,12 +343,6 @@ Java_com_music_bitchord_desktop_DesktopWindowsMedia_nativeStart(JNIEnv*, jobject
         Sleep(5);
     }
     return g_running ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsMedia_nativeSetIdentity(
-    JNIEnv* env, jobject, jstring id, jstring name, jstring icon) {
-    smtc_identity::remember(widen(env, id), widen(env, name), widen(env, icon));
 }
 
 JNIEXPORT void JNICALL
