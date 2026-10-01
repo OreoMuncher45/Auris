@@ -83,6 +83,18 @@ private val subPixelSampling = FilterMipmap(FilterMode.LINEAR, MipmapMode.NONE)
  * make by less than a pixel vertically. A layer only while there is a fraction
  * worth moving: a word at rest, or exactly on a pixel, costs what it did.
  */
+/**
+ * False, and it has to be: a list here is scrolled by the wheel, and a wheel
+ * tick is not a drag. Were this true, scrolling the rows of a drawer would push
+ * the drawer itself down — a mouse-wheel gesture is [androidx.compose.ui.input
+ * .nestedscroll.NestedScrollSource.UserInput] exactly like a finger is, and
+ * nothing in the chain can tell them apart — until the drag crossed the dismiss
+ * threshold and closed it, taking the reader's scroll with it. The drawer still
+ * has its own gesture here: a drag with the button held, which is also the only
+ * one a desktop user expects to move a sheet.
+ */
+internal actual val drawerFollowsListScroll: Boolean get() = false
+
 internal actual fun DrawScope.clipShiftedDown(
     left: Float,
     top: Float,

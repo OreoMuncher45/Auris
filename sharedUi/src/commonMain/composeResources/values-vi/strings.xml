@@ -15,11 +15,11 @@
     <string name="autoplay_on">Bật tự động phát</string>
     <string name="autoplay_queue_description">Nhạc tương tự, được chọn để phát tiếp theo</string>
     <string name="bit_depth">%1$d-bit</string>
+    <string name="cancel">Hủy</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Đổi</string>
     <string name="channel_count">%1$d kênh</string>
     <string name="choose_lyrics_provider">Chọn nguồn lời bài hát</string>
     <string name="clear">Xóa</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Không thể chuyển lời bài hát này sang chữ Latinh</string>
     <string name="lyrics_romanized">Phiên âm Latinh</string>
     <string name="lyrics_saved_with_download">Lời bài hát được lưu kèm bản tải này</string>
+    <string name="lyrics_share_pick_limit">Thẻ đã đầy</string>
     <string name="lyrics_translated_to">Translated to %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Tìm kiếm hàng triệu bài hát trên YouTube Music.</string>
     <string name="search_hint">Nghệ sĩ, bài hát, lời bài hát và hơn thế nữa</string>
     <string name="selected">Đã chọn</string>
+    <string name="share">Chia sẻ</string>
     <string name="shelf_artists_on_the_rise">Nghệ sĩ đang lên</string>
     <string name="shelf_chart">Bảng xếp hạng</string>
     <string name="shelf_charts">Bảng xếp hạng</string>

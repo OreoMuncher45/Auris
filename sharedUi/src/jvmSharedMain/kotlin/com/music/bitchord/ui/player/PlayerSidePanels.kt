@@ -79,7 +79,7 @@ fun LyricsSidePanel(
                     lyricsLoadingText
                 },
                 status = lyricsTranslation.status,
-                onChangeProvider = { showLyricsProviders = true },
+                onStatusClick = { showLyricsProviders = true },
                 romanizationToggle = {
                     RomanizationToggleButton(
                         state = lyricsTranslation.romanizationState,

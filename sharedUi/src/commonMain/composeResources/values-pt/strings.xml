@@ -15,11 +15,11 @@
     <string name="autoplay_on">Reprodução Automática ativada</string>
     <string name="autoplay_queue_description">Música semelhante, selecionada para tocar a seguir</string>
     <string name="bit_depth">%1$d-bit</string>
+    <string name="cancel">Cancelar</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Alterar</string>
     <string name="channel_count">%1$d canais</string>
     <string name="choose_lyrics_provider">Escolher provedor de letras</string>
     <string name="clear">Limpar</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">A romanização não está disponível para esta letra</string>
     <string name="lyrics_romanized">Pronúncia romanizada</string>
     <string name="lyrics_saved_with_download">Letras salvas com este download</string>
+    <string name="lyrics_share_pick_limit">O cartão está cheio</string>
     <string name="lyrics_translated_to">Traduzida para %1$s</string>
     <string name="lyrics_translation_unavailable">A tradução não está disponível agora</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Pesquise milhões de músicas no YouTube Music.</string>
     <string name="search_hint">Artistas, músicas, letras e mais</string>
     <string name="selected">Selecionado</string>
+    <string name="share">Compartilhar</string>
     <string name="shelf_artists_on_the_rise">Artistas em ascensão</string>
     <string name="shelf_chart">Parada</string>
     <string name="shelf_charts">Paradas</string>

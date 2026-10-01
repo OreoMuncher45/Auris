@@ -15,11 +15,11 @@
     <string name="autoplay_on">Autoodtwarzanie włączone</string>
     <string name="autoplay_queue_description">Podobna muzyka, wybrana do odtworzenia w następnej kolejności</string>
     <string name="bit_depth">%1$d-bit</string>
+    <string name="cancel">Anuluj</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Zmień</string>
     <string name="channel_count">%1$d kan</string>
     <string name="choose_lyrics_provider">Wybierz źródło tekstów</string>
     <string name="clear">Wyczyść</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Latynizacja jest niedostępna dla tego tekstu</string>
     <string name="lyrics_romanized">Wymowa w alfabecie łacińskim</string>
     <string name="lyrics_saved_with_download">Teksty zapisane wraz z tym pobieraniem</string>
+    <string name="lyrics_share_pick_limit">Karta jest pełna</string>
     <string name="lyrics_translated_to">Przetłumaczono na %1$s</string>
     <string name="lyrics_translation_unavailable">Tłumaczenie jest teraz niedostępne</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Szukaj milionów utworów na YouTube Music.</string>
     <string name="search_hint">Artyści, Piosenki, Teksty i więcej</string>
     <string name="selected">Wybrano</string>
+    <string name="share">Udostępnij</string>
     <string name="shelf_artists_on_the_rise">Wschodzący artyści</string>
     <string name="shelf_chart">Listy przebojów</string>
     <string name="shelf_charts">Listy przebojów</string>

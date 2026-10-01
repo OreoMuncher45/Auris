@@ -95,6 +95,19 @@ interface PlayerHost {
     /** The device picker the output drawer's Cast row opens, in the pipeline dialog's card. */
     @Composable
     fun CastDialog(hazeState: HazeState, onDismiss: () -> Unit) = Unit
+
+    /**
+     * Whether lines can be put on a share card here. False hides the pick mode
+     * altogether rather than offering a mode with nowhere to put its result.
+     */
+    val lyricsShareAvailable: Boolean get() = false
+
+    /**
+     * The picked lines, drawn as a picture this platform can write out and send.
+     * Absent, and so never called, where [lyricsShareAvailable] is false.
+     */
+    @Composable
+    fun LyricsShareSheet(hazeState: HazeState, request: LyricsShareRequest, onDismiss: () -> Unit) = Unit
 }
 
 private val NoCast = MutableStateFlow(CastUi())

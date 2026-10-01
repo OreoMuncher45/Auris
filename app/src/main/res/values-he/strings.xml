@@ -461,6 +461,8 @@
     <string name="hour_pm">%1$d PM</string>
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">אתה מאזין בעיקר סביב %1$s.</string>
+    <string name="lyrics_share_title">שיתוף המילים</string>
+    <string name="lyrics_share_description">השורות שבחרת, על כרטיס עם העטיפה.</string>
     <string name="listening_shape">דפוס ההאזנה שלך</string>
     <string name="member_since">חבר מאז</string>
     <string name="member_since_value">חבר מאז %1$s</string>
@@ -500,7 +502,9 @@
     <string name="replay_songs_start">בסך הכל, </string>
     <string name="replay_summary_start">לסגנון ההאזנה שלך הייתה אווירה </string>
     <string name="saved">נשמר</string>
+    <string name="saved_bang">נשמר!</string>
     <string name="share_my_replay">שתף את ה-Replay שלי</string>
+    <string name="share_your_lyrics">שליחת כרטיס המילים</string>
     <string name="share_your_replay">שתף את ה-Replay שלך</string>
     <string name="tap_share_for_picture">הקש שתף כדי ליצור תמונה</string>
     <string name="top_album">אלבום מוביל</string>
@@ -510,6 +514,7 @@
     <string name="when_you_listen_most">מתי אתה מאזין הכי הרבה</string>
     <string name="your_biggest_day">היום הגדול ביותר שלך: %1$s</string>
     <string name="your_listening_experience">חווית ההאזנה שלך</string>
+    <string name="your_lyrics_card">כרטיס המילים שלך</string>
     <string name="your_replay">ה-Replay שלך</string>
     <string name="all_audio_folders">כל תיקיות האודיו</string>
     <string name="local_music_folder">תיקיית מוזיקה מקומית</string>
@@ -862,6 +867,7 @@
     <string name="prefer_usb_dac">העדף USB DAC</string>
     <string name="loudness_normalization">נרמול עוצמה</string>
     <string name="loudness_normalization_subtitle">מביא כל רצועה לאותה עוצמה נשמעת</string>
+    <string name="loudness_off_on_speaker">השבתה ברמקול הטלפון</string>
     <string name="loudness_target">עוצמת יעד</string>
     <string name="loudness_target_subtitle">שקט יותר מתאים לאוזניות; חזק יותר לרכב או לרמקול הטלפון</string>
     <string name="loudness_target_value">%1$s LUFS</string>

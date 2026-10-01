@@ -15,11 +15,11 @@
     <string name="autoplay_on">הפעלה אוטומטית מופעלת</string>
     <string name="autoplay_queue_description">מוזיקה דומה, נבחרה להתנגן בהמשך</string>
     <string name="bit_depth">%1$d-ביט</string>
+    <string name="cancel">ביטול</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">שינוי</string>
     <string name="channel_count">%1$d ערוצים</string>
     <string name="choose_lyrics_provider">בחירת ספק מילים</string>
     <string name="clear">ניקוי</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">תעתיק לטיני לא זמין למילים האלה</string>
     <string name="lyrics_romanized">הגייה בתעתיק לטיני</string>
     <string name="lyrics_saved_with_download">מילים נשמרו יחד עם ההורדה הזו</string>
+    <string name="lyrics_share_pick_limit">הכרטיס מלא</string>
     <string name="lyrics_translated_to">תורגם ל%1$s</string>
     <string name="lyrics_translation_unavailable">התרגום אינו זמין כרגע</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">חפשו מיליוני שירים ב-YouTube Music.</string>
     <string name="search_hint">אמנים, שירים, מילות שיר ועוד</string>
     <string name="selected">נבחר</string>
+    <string name="share">שתף</string>
     <string name="shelf_artists_on_the_rise">אמנים בצמיחה</string>
     <string name="shelf_chart">מצעד</string>
     <string name="shelf_charts">מצעדים</string>

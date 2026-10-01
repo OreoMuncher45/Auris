@@ -29,6 +29,20 @@ internal expect fun appLanguageTag(): String
 internal expect fun PlayerBackHandler(enabled: Boolean, onBack: () -> Unit)
 
 /**
+ * Whether a scroll that runs out inside a [PlayerDrawer] should drag the drawer
+ * with it.
+ *
+ * True only where scrolling *is* dragging. On the phone a finger both scrolls
+ * the list and moves the drawer, so a pull down past the top of the list has to
+ * carry the drawer — the way a sheet with a list in it behaves. On the desktop
+ * the list is scrolled by the wheel, which is not a drag at all, and by the time
+ * it arrives as a nested scroll the two are indistinguishable: a drawer that
+ * took its leftover would slide out from under a reader who was only scrolling.
+ * There it keeps to its own gesture, a held drag.
+ */
+internal expect val drawerFollowsListScroll: Boolean
+
+/**
  * Draws [block] clipped to the rectangle given, moved down by [dy] pixels.
  *
  * On the phone this is a plain clip and translate. Skia on the desktop places

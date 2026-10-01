@@ -15,11 +15,11 @@
     <string name="autoplay_on">AutoPlay açık</string>
     <string name="autoplay_queue_description">Sonra çalmak üzere seçilen benzer müzikler</string>
     <string name="bit_depth">%1$d bit</string>
+    <string name="cancel">İptal</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Değiştir</string>
     <string name="channel_count">%1$d kanal</string>
     <string name="choose_lyrics_provider">Söz sağlayıcısını seç</string>
     <string name="clear">Temizle</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Bu sözler için Latin harflerine çevirme kullanılamıyor</string>
     <string name="lyrics_romanized">Latin harfleriyle okunuş</string>
     <string name="lyrics_saved_with_download">Sözler bu indirmeyle kaydedildi</string>
+    <string name="lyrics_share_pick_limit">Kart dolu</string>
     <string name="lyrics_translated_to">%1$s diline çevrildi</string>
     <string name="lyrics_translation_unavailable">Çeviri şu anda kullanılamıyor</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">YouTube Music\'te milyonlarca şarkı arayın.</string>
     <string name="search_hint">Sanatçılar, Şarkılar, Sözler ve Daha Fazlası</string>
     <string name="selected">Seçildi</string>
+    <string name="share">Paylaş</string>
     <string name="shelf_artists_on_the_rise">Yükselen sanatçılar</string>
     <string name="shelf_chart">Liste</string>
     <string name="shelf_charts">Listeler</string>

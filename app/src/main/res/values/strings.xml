@@ -653,6 +653,8 @@
     <string name="hour_pm">%1$d PM</string>
     <string name="hours_minutes_short">%1$dh %2$dm</string>
     <string name="listen_most_around">You listen most around %1$s.</string>
+    <string name="lyrics_share_title">Share lyrics</string>
+    <string name="lyrics_share_description">The lines you picked, laid out on a card with the cover.</string>
     <string name="listening_shape">Your listening pattern</string>
     <string name="member_since">Member since</string>
     <string name="member_since_value">Member since %1$s</string>
@@ -692,7 +694,9 @@
     <string name="replay_songs_start">In total, </string>
     <string name="replay_summary_start">Your listening had a </string>
     <string name="saved">Saved</string>
+    <string name="saved_bang">Saved!</string>
     <string name="share_my_replay">Share my Replay</string>
+    <string name="share_your_lyrics">Send your lyrics card</string>
     <string name="share_your_replay">Share your Replay</string>
     <string name="tap_share_for_picture">Tap Share to create a picture</string>
     <string name="top_album">Top album</string>
@@ -702,6 +706,7 @@
     <string name="when_you_listen_most">When you listen most</string>
     <string name="your_biggest_day">Your biggest day: %1$s</string>
     <string name="your_listening_experience">Your listening experience</string>
+    <string name="your_lyrics_card">Your lyrics card</string>
     <string name="your_replay">Your Replay</string>
     <plurals name="replay_artist_count">
         <item quantity="one">%1$s artist</item>

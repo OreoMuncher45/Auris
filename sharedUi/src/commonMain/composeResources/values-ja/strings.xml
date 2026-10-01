@@ -15,11 +15,11 @@
     <string name="autoplay_on">AutoPlay: オン</string>
     <string name="autoplay_queue_description">次に再生される、似た曲</string>
     <string name="bit_depth">%1$dビット</string>
+    <string name="cancel">キャンセル</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">変更</string>
     <string name="channel_count">%1$dch</string>
     <string name="choose_lyrics_provider">歌詞の提供元を選択</string>
     <string name="clear">消去</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">この歌詞はローマ字化できません</string>
     <string name="lyrics_romanized">ローマ字読み</string>
     <string name="lyrics_saved_with_download">このダウンロードに歌詞を保存済み</string>
+    <string name="lyrics_share_pick_limit">カードがいっぱいです</string>
     <string name="lyrics_translated_to">%1$sに翻訳済み</string>
     <string name="lyrics_translation_unavailable">現在、翻訳を利用できません</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">YouTube Musicで何百万もの曲を検索できます。</string>
     <string name="search_hint">アーティスト、曲、歌詞など</string>
     <string name="selected">選択済み</string>
+    <string name="share">共有</string>
     <string name="shelf_artists_on_the_rise">注目のアーティスト</string>
     <string name="shelf_chart">チャート</string>
     <string name="shelf_charts">チャート</string>

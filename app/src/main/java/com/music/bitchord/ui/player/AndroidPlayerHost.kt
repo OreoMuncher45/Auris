@@ -171,6 +171,18 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
             onDismiss = onDismiss,
             isPlaying = isPlaying,
         )
+
+    // The phone is the platform that can turn picked lyrics into a picture: a
+    // bitmap, a canvas, the gallery and the chooser are all Android's here. The
+    // desktop has no answer to it, so it never sees the pick mode at all.
+    override val lyricsShareAvailable: Boolean get() = true
+
+    @Composable
+    override fun LyricsShareSheet(
+        hazeState: HazeState,
+        request: LyricsShareRequest,
+        onDismiss: () -> Unit,
+    ) = AndroidLyricsShareSheet(hazeState = hazeState, request = request, onDismiss = onDismiss)
 }
 
 private fun AudioOutputStatus.Snapshot.toOutputFormat(): OutputFormatUi {

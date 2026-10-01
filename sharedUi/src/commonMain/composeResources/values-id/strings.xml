@@ -15,11 +15,11 @@
     <string name="autoplay_on">AutoPlay aktif</string>
     <string name="autoplay_queue_description">Musik serupa, dipilih untuk diputar berikutnya</string>
     <string name="bit_depth">%1$d-bit</string>
+    <string name="cancel">Batal</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Ganti</string>
     <string name="channel_count">%1$d kanal</string>
     <string name="choose_lyrics_provider">Pilih penyedia lirik</string>
     <string name="clear">Hapus</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Romanisasi tidak tersedia untuk lirik ini</string>
     <string name="lyrics_romanized">Pelafalan romanisasi</string>
     <string name="lyrics_saved_with_download">Lirik disimpan bersama unduhan ini</string>
+    <string name="lyrics_share_pick_limit">Kartu sudah penuh</string>
     <string name="lyrics_translated_to">Diterjemahkan ke %1$s</string>
     <string name="lyrics_translation_unavailable">Terjemahan tidak tersedia saat ini</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Cari jutaan lagu di YouTube Music.</string>
     <string name="search_hint">Artis, Lagu, Lirik, dan Lainnya</string>
     <string name="selected">Dipilih</string>
+    <string name="share">Bagikan</string>
     <string name="shelf_artists_on_the_rise">Artis pendatang baru</string>
     <string name="shelf_chart">Tangga lagu</string>
     <string name="shelf_charts">Tangga lagu</string>
