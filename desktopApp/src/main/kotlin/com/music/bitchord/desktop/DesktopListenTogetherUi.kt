@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -87,9 +86,9 @@ internal fun DesktopListenTogetherDialog(autoplayEnabled: Boolean, onDismiss: ()
     }
 
     DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 920) {
-        Column(Modifier.heightIn(min = 560.dp, max = 760.dp)) {
+        Column(desktopPanelBody(cardMax = 760.dp, cardMin = 560.dp, fill = true)) {
             Row(
-                Modifier.fillMaxWidth().padding(start = 28.dp, end = 18.dp, top = 22.dp, bottom = 16.dp),
+                Modifier.fillMaxWidth().padding(start = panelInset(28.dp), end = panelInset(18.dp), top = 22.dp, bottom = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
@@ -105,9 +104,12 @@ internal fun DesktopListenTogetherDialog(autoplayEnabled: Boolean, onDismiss: ()
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
-                IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "Close") }
+                // A page is left by the window's back, as every other page is.
+                if (!LocalDesktopPanelIsPage.current) {
+                    IconButton(onClick = onDismiss) { Icon(Icons.Rounded.Close, "Close") }
+                }
             }
-            HorizontalDivider(color = DesktopCardEdge)
+            if (!LocalDesktopPanelIsPage.current) HorizontalDivider(color = DesktopCardEdge)
 
             when {
                 state.inParty -> PartyRoom(
@@ -346,7 +348,7 @@ private fun JoinConfirmation(
     onJoin: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().padding(36.dp),
+        Modifier.fillMaxSize().padding(horizontal = panelInset(36.dp), vertical = 36.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -381,7 +383,7 @@ private fun JoinConfirmation(
 
 @Composable
 private fun PartyRoom(state: DesktopListenTogether.State, activity: List<PartyActivity>, busy: Boolean, onLeave: () -> Unit) {
-    Row(Modifier.fillMaxSize().padding(24.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+    Row(Modifier.fillMaxSize().padding(horizontal = panelInset(24.dp), vertical = 24.dp), horizontalArrangement = Arrangement.spacedBy(18.dp)) {
         LazyColumn(Modifier.weight(1.15f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item { RoomHero(state) }
             item { NowPlayingCard(state) }
@@ -455,7 +457,7 @@ private fun QueueCard(state: DesktopListenTogether.State) {
         val upcoming = state.queue.items.drop((state.queue.index + 1).coerceAtLeast(0)).take(5)
         if (upcoming.isEmpty()) Text("The shared queue is empty", color = DesktopSecondary)
         upcoming.forEachIndexed { index, track ->
-            if (index > 0) HorizontalDivider(color = DesktopCardEdge)
+            if (index > 0 && !LocalDesktopPanelIsPage.current) HorizontalDivider(color = DesktopCardEdge)
             Row(Modifier.fillMaxWidth().padding(vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("${index + 1}", color = DesktopSecondary, modifier = Modifier.width(28.dp))
                 Column(Modifier.weight(1f)) {
@@ -476,7 +478,7 @@ private fun MembersCard(state: DesktopListenTogether.State) {
         }
         Spacer(Modifier.height(8.dp))
         state.members.forEachIndexed { index, member ->
-            if (index > 0) HorizontalDivider(color = DesktopCardEdge)
+            if (index > 0 && !LocalDesktopPanelIsPage.current) HorizontalDivider(color = DesktopCardEdge)
             MemberRow(member, member.memberId == state.you?.memberId, state.you?.isHost == true && !member.isHost) {
                 DesktopListenTogether.kick(member.memberId)
             }
@@ -498,7 +500,11 @@ private fun HostControls(state: DesktopListenTogether.State) {
             }
             Switch(state.hostOnlyControl, onCheckedChange = DesktopListenTogether::setHostOnlyControl)
         }
-        HorizontalDivider(color = DesktopCardEdge, modifier = Modifier.padding(vertical = 10.dp))
+        if (LocalDesktopPanelIsPage.current) {
+            Spacer(Modifier.height(20.dp))
+        } else {
+            HorizontalDivider(color = DesktopCardEdge, modifier = Modifier.padding(vertical = 10.dp))
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Party size")

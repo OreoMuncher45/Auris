@@ -30,15 +30,16 @@ internal class DesktopOverlays {
     var rename by mutableStateOf(false)
     var delete by mutableStateOf(false)
     var nowPlaying by mutableStateOf(false)
-    var settings by mutableStateOf(false)
-    var spotifyCanvasSetup by mutableStateOf(false)
-    var lyricsSources by mutableStateOf(false)
-    var translationLanguage by mutableStateOf(false)
-    var equalizer by mutableStateOf(false)
+
+    /**
+     * Which page of Settings fills the page area, or none. A place like any other: it goes into
+     * the back history, so back from a sub-page lands on Settings and back from Settings on
+     * wherever it was opened from.
+     */
+    var settingsPage by mutableStateOf<DesktopSettingsPage?>(null)
     var lastfmLogin by mutableStateOf(false)
     var listenBrainzToken by mutableStateOf(false)
     var discordToken by mutableStateOf(false)
-    var integrations by mutableStateOf(false)
     var accounts by mutableStateOf(false)
     var signIn by mutableStateOf(false)
 
@@ -49,4 +50,20 @@ internal class DesktopOverlays {
     fun toggleSidePanel(panel: DesktopSidePanel) {
         sidePanel = if (sidePanel == panel) null else panel
     }
+}
+
+/**
+ * Settings and the pages its rows lead to. Only the screens are here; the short prompts behind them
+ * — a sign-in, a token, a source's address — stay cards over the page, as Android's alerts do.
+ */
+internal enum class DesktopSettingsPage {
+    MAIN,
+    EQUALIZER,
+    AUDIO_OUTPUT,
+    LISTEN_TOGETHER,
+    LYRICS_SOURCES,
+    TRANSLATION_LANGUAGE,
+    SPOTIFY_CANVAS,
+    INTEGRATIONS,
+    LICENSES,
 }

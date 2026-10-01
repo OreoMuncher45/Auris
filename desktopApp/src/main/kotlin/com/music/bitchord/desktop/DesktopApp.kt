@@ -939,6 +939,7 @@ fun BitChordDesktopApp() {
     fun showCollection(collection: DesktopCollection) {
         openedArtist = null
         overlays.replay = false
+        overlays.settingsPage = null
         openedCollection = collection
     }
 
@@ -1711,6 +1712,7 @@ fun BitChordDesktopApp() {
         if (openedArtist == target && artistState is UiState.Success) return
         openedCollection = null
         overlays.replay = false
+        overlays.settingsPage = null
         openedArtist = target
         artistState = UiState.Loading
         artistReloads++
@@ -1875,6 +1877,7 @@ fun BitChordDesktopApp() {
 
     fun search() {
         if (query.isBlank() || searchLoading) return
+        overlays.settingsPage = null
         destination = DesktopDestination.SEARCH
         searchTyping = false
         searchSuggestions = emptyList()
@@ -1961,10 +1964,24 @@ fun BitChordDesktopApp() {
         openedArtist = null
         openedCollection = null
         overlays.replay = false
+        overlays.settingsPage = null
         selectedMoodGenre = null
         libraryShowAll = null
         if (next == DesktopDestination.SEARCH) searchFocusRequested = true
         destination = next
+    }
+
+    // Settings' search and scroll outlive a visit to one of its pages, and start over each time
+    // Settings itself is opened.
+    var settingsSession by remember { mutableStateOf(0) }
+    var settingsQuery by remember(settingsSession) { mutableStateOf("") }
+    val settingsListState = remember(settingsSession) { LazyListState() }
+
+    /** Settings in place of the page — from the sidebar, the account switcher or the tray. */
+    fun openSettings() {
+        overlays.nowPlaying = false
+        if (overlays.settingsPage == null) settingsSession++
+        overlays.settingsPage = DesktopSettingsPage.MAIN
     }
 
     /**
@@ -2145,7 +2162,7 @@ fun BitChordDesktopApp() {
             },
             onOpenSettings = {
                 DesktopWindowVisibility.show()
-                overlays.settings = true
+                openSettings()
             },
             onQuit = {
                 // Native work first: the audio thread and the media controls are inside FFmpeg,
@@ -2438,6 +2455,7 @@ fun BitChordDesktopApp() {
         mood = selectedMoodGenre,
         showAll = libraryShowAll,
         replay = overlays.replay,
+        settings = overlays.settingsPage,
     )
 
     // Every move between places is a visit, however it was made — the sidebar, a card, a search
@@ -2467,6 +2485,7 @@ fun BitChordDesktopApp() {
         navRestoring[0] = true
         destination = entry.destination
         overlays.replay = entry.replay
+        overlays.settingsPage = entry.settings
         openedCollection = entry.collection
         libraryShowAll = entry.showAll
         if (entry.mood != selectedMoodGenre) {
@@ -2709,6 +2728,13 @@ fun BitChordDesktopApp() {
                                 overlays.sidePanel = null
                                 true
                             }
+                            // A page of Settings steps back the way the back button does, unless
+                            // one of its prompts is up over it.
+                            overlays.settingsPage != null &&
+                                !overlays.lastfmLogin && !overlays.listenBrainzToken && !overlays.discordToken -> {
+                                goBack()
+                                true
+                            }
                             else -> false
                         }
                         else -> false
@@ -2758,20 +2784,22 @@ fun BitChordDesktopApp() {
                 sidebar = {
                     DesktopSidebar(
                         destination = destination,
-                        settingsOpen = overlays.settings,
+                        settingsOpen = overlays.settingsPage != null,
                         accountPlaylists = sidebarAccountPlaylists,
                         localPlaylists = playlists,
                         openedCollectionId = openedCollection?.browseId,
                         query = query,
                         onQueryChange = { text ->
                             editQuery(text)
-                            if (destination != DesktopDestination.SEARCH) selectDestination(DesktopDestination.SEARCH)
+                            if (destination != DesktopDestination.SEARCH || overlays.settingsPage != null) {
+                                selectDestination(DesktopDestination.SEARCH)
+                            }
                         },
                         onSearch = ::search,
                         onDestinationSelected = ::selectDestination,
                         onOpenAccountPlaylist = { openShelfItem(it, PLAYLISTS_SHELF) },
                         onOpenLocalPlaylist = ::openPlaylist,
-                        onOpenSettings = { overlays.settings = true },
+                        onOpenSettings = ::openSettings,
                         focusSearch = searchFocusRequested,
                         onSearchFocused = { searchFocusRequested = false },
                     )
@@ -2977,204 +3005,6 @@ fun BitChordDesktopApp() {
                             )
                         }
                     }
-                    if (overlays.settings) {
-                        DesktopSettingsDialog(
-                            autoplay = autoplay,
-                            onAutoplayChange = ::setAutoplay,
-                            automix = automix,
-                            onAutomixChange = {
-                                automix = it
-                                persistence.saveBoolean("automix", it)
-                            },
-                            automixPerformance = automixPerformance,
-                            onAutomixPerformanceChange = {
-                                automixPerformance = it
-                                persistence.saveString("automix_performance", it.name)
-                            },
-                            shuffle = shuffle,
-                            onShuffleChange = ::setShuffle,
-                            repeatMode = repeatMode,
-                            onRepeatModeChange = {
-                                repeatMode = it
-                                persistence.saveString("repeat_mode", it.name)
-                            },
-                            playbackSpeed = playbackSpeed,
-                            onPlaybackSpeedChange = {
-                                playbackSpeed = it
-                                persistence.saveString("playback_speed", it.toString())
-                            },
-                            crossfadeSeconds = crossfadeSeconds,
-                            onCrossfadeSecondsChange = {
-                                crossfadeSeconds = it
-                                persistence.saveString("crossfade_seconds", it.toString())
-                            },
-                            animatedCanvas = animatedCanvas,
-                            showNerdStats = showNerdStats,
-                            fullBleedArtwork = fullBleedArtwork,
-                            onAnimatedCanvasChange = {
-                                animatedCanvas = it
-                                persistence.saveBoolean("animated_canvas", it)
-                            },
-                            spotifyCanvasReady = spotifyCanvasCookie.isNotBlank(),
-                            onOpenSpotifyCanvasSetup = { overlays.spotifyCanvasSetup = true },
-                            dontRepeatSuggestions = dontRepeatSuggestions,
-                            onDontRepeatSuggestionsChange = {
-                                dontRepeatSuggestions = it
-                                persistence.saveBoolean(KEY_DONT_REPEAT_SUGGESTIONS, it)
-                            },
-                            onChooseLocalMusicFolder = { onChosen ->
-                                DesktopLocalMusic.chooseFolder()?.let { chosen ->
-                                    DesktopLocalMusic.setFolder(chosen)
-                                    onChosen()
-                                    localMusicRevision++
-                                }
-                            },
-                            onLocalMusicFolderChanged = { localMusicRevision++ },
-                            filterNonMusicAudio = filterNonMusicAudio,
-                            onFilterNonMusicAudioChange = {
-                                filterNonMusicAudio = it
-                                persistence.saveBoolean(DesktopLocalMusic.KEY_FILTER_NON_MUSIC_AUDIO, it)
-                                // The scan's result changes with it, so it has to be taken again.
-                                localMusicRevision++
-                            },
-                            syncedLyrics = syncedLyrics,
-                            onSyncedLyricsChange = {
-                                syncedLyrics = it
-                                persistence.saveBoolean(DesktopLyricsClient.KEY_SYNCED_LYRICS, it)
-                            },
-                            lyricsBlur = lyricsBlur,
-                            onLyricsBlurChange = {
-                                lyricsBlur = it
-                                persistence.saveBoolean(DesktopLyricsClient.KEY_LYRICS_BLUR, it)
-                            },
-                            enabledLyricsSources = DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn),
-                            onOpenLyricsSources = { overlays.lyricsSources = true },
-                            onOpenTranslationLanguage = { overlays.translationLanguage = true },
-                            onOpenEqualizer = { overlays.equalizer = true },
-                            onOpenAudioOutput = { overlays.audioOutput = true },
-                            onOpenListenTogether = { overlays.listenTogether = true },
-                            onShowNerdStatsChange = {
-                                showNerdStats = it
-                                persistence.saveBoolean("show_nerd_stats", it)
-                            },
-                            onFullBleedArtworkChange = {
-                                fullBleedArtwork = it
-                                persistence.saveBoolean("full_bleed_artwork", it)
-                            },
-                            legacyMeshGradient = legacyMeshGradient,
-                            onLegacyMeshGradientChange = {
-                                legacyMeshGradient = it
-                                persistence.saveBoolean("legacy_mesh_gradient", it)
-                            },
-                            spatialAudio = spatialAudio,
-                            onSpatialAudioChange = {
-                                spatialAudio = it
-                                persistence.saveBoolean("spatial_audio", it)
-                            },
-                            dolbyAtmos = dolbyAtmos,
-                            onDolbyAtmosChange = {
-                                dolbyAtmos = it
-                                DesktopAddonSettings.dolbyAtmosEnabled = it
-                                persistence.saveBoolean("dolby_atmos", it)
-                                DesktopAddonSource.clearCompletedTrackCalls()
-                            },
-                            skipSilence = skipSilence,
-                            onSkipSilenceChange = {
-                                skipSilence = it
-                                persistence.saveBoolean("skip_silence", it)
-                            },
-                            outputPrecision = outputPrecision,
-                            onOutputPrecisionChange = {
-                                outputPrecision = it
-                                persistence.saveString("output_precision", it)
-                            },
-                            outputSummary = playbackEngine.outputSummary(),
-                            trayIconEnabled = trayIconEnabled,
-                            closeToTray = closeToTray,
-                            onCloseToTrayChange = {
-                                closeToTray = it
-                                persistence.saveBoolean("close_to_tray", it)
-                            },
-                            onTrayIconChange = {
-                                trayIconEnabled = it
-                                persistence.saveBoolean("tray_icon", it)
-                            },
-                            downloadQuality = downloadQuality,
-                            onDownloadQualityChange = {
-                                downloadQuality = it
-                                persistence.saveString("download_quality", it)
-                            },
-                            audioQuality = audioQuality,
-                            onAudioQualityChange = {
-                                audioQuality = it
-                                persistence.saveAudioQuality(it)
-                            },
-                            sleepTimerMinutes = sleepTimerMinutes,
-                            sleepAfterTrack = sleepAfterTrack,
-                            sleepRemainingMs = sleepRemainingMs,
-                            onSleepTimerCycle = ::cycleSleepTimer,
-                            sourceConfigs = sourceConfigs,
-                            sourceStatus = sourceStatus,
-                            onSourceEnabledChange = { config, enabled ->
-                                val next = sourceConfigs.map {
-                                    if (it.id == config.id && it.kind != DesktopSourceKind.YOUTUBE) {
-                                        it.copy(enabled = enabled)
-                                    } else {
-                                        it
-                                    }
-                                }
-                                persistence.saveSourceConfigs(next)
-                                sourceConfigs = persistence.sourceConfigs()
-                                DesktopModuleSource.reload()
-                            },
-                            onSaveSource = { saved ->
-                                // Replaced by id, so any number of addons can be configured.
-                                val without = sourceConfigs.filterNot {
-                                    it.id == saved.id ||
-                                        (saved.kind == DesktopSourceKind.CUSTOM_MODULE &&
-                                            it.kind == DesktopSourceKind.CUSTOM_MODULE)
-                                }
-                                persistence.saveSourceConfigs((without + saved).inSourceOrder())
-                                sourceConfigs = persistence.sourceConfigs()
-                                // Whatever was held for this entry describes a server that may no
-                                // longer be the one selected.
-                                DesktopAddonSource.forget(saved.id)
-                                DesktopModuleSource.reload()
-                            },
-                            onRemoveSource = { config ->
-                                if (config.isUserAdded) {
-                                    persistence.saveSourceConfigs(sourceConfigs.filterNot { it.id == config.id })
-                                    sourceConfigs = persistence.sourceConfigs()
-                                    DesktopAddonSource.forget(config.id)
-                                    DesktopModuleSource.reload()
-                                }
-                            },
-                            onMoveSource = { config, delta ->
-                                val next = moveUserSource(sourceConfigs, config.id, delta)
-                                persistence.saveSourceConfigs(next)
-                                sourceConfigs = persistence.sourceConfigs()
-                            },
-                            onTestSource = { candidate ->
-                                sourceStatus = sourceStatus + (candidate.id to "Checking source…")
-                                scope.launch {
-                                    val health = if (candidate.kind == DesktopSourceKind.ADDON) {
-                                        DesktopAddonSource.health(candidate)
-                                    } else {
-                                        DesktopModuleSource.health(candidate)
-                                    }
-                                    health.fold(
-                                        onSuccess = { sourceStatus = sourceStatus + (candidate.id to it) },
-                                        onFailure = {
-                                            sourceStatus = sourceStatus +
-                                                (candidate.id to (it.message ?: "Source unavailable"))
-                                        },
-                                    )
-                                }
-                            },
-                            onOpenIntegrations = { overlays.integrations = true },
-                            onDismiss = { overlays.settings = false },
-                        )
-                    }
                     if (overlays.accounts) {
                         DesktopAccountSelector(
                             accounts = accounts,
@@ -3197,7 +3027,7 @@ fun BitChordDesktopApp() {
                                     activeProfileId = DesktopAccounts.activeProfileId()
                                 }
                             },
-                            onOpenSettings = { overlays.accounts = false; overlays.settings = true },
+                            onOpenSettings = { overlays.accounts = false; openSettings() },
                             onDismiss = { overlays.accounts = false },
                         )
                     }
@@ -3290,55 +3120,6 @@ fun BitChordDesktopApp() {
                     if (overlays.downloadManager) {
                         DesktopDownloadManagerDialog(onDismiss = { overlays.downloadManager = false })
                     }
-                    if (overlays.spotifyCanvasSetup) {
-                        DesktopSpotifyCanvasDialog(
-                            onDismiss = { overlays.spotifyCanvasSetup = false },
-                            onSaved = { spotifyCanvasCookie = it },
-                        )
-                    }
-                    if (overlays.equalizer) {
-                        DesktopEqualizerDialog(onDismiss = { overlays.equalizer = false })
-                    }
-                    if (overlays.translationLanguage) {
-                        DesktopTranslationLanguageDialog(onDismiss = { overlays.translationLanguage = false })
-                    }
-                    if (overlays.lyricsSources) {
-                        DesktopLyricsSourcesDialog(
-                            order = lyricsOrder,
-                            enabled = lyricsOn,
-                            prioritizeSyllables = prioritizeSyllables,
-                            onReorder = {
-                                lyricsOrder = it
-                                persistence.saveLyricsSourceOrder(it)
-                            },
-                            onToggle = { name ->
-                                lyricsOn = if (name in lyricsOn) lyricsOn - name else lyricsOn + name
-                                persistence.saveLyricsEnabledSources(lyricsOn)
-                            },
-                            onPrioritizeSyllables = {
-                                prioritizeSyllables = it
-                                persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, it)
-                            },
-                            onReset = {
-                                lyricsOrder = DesktopLyricsClient.sources.map { it.name }
-                                lyricsOn = lyricsOrder.toSet()
-                                prioritizeSyllables = false
-                                persistence.saveLyricsSourceOrder(lyricsOrder)
-                                persistence.saveLyricsEnabledSources(lyricsOn)
-                                persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, false)
-                            },
-                            onDismiss = { overlays.lyricsSources = false },
-                        )
-                    }
-                    if (overlays.integrations) {
-                        DesktopIntegrationsDialog(
-                            song = playback.song,
-                            onOpenLastfm = { overlays.lastfmLogin = true },
-                            onOpenListenBrainz = { overlays.listenBrainzToken = true },
-                            onOpenDiscordToken = { overlays.discordToken = true },
-                            onDismiss = { overlays.integrations = false },
-                        )
-                    }
                     if (overlays.lastfmLogin) {
                         DesktopLastfmLoginDialog(onDismiss = { overlays.lastfmLogin = false })
                     }
@@ -3403,6 +3184,260 @@ fun BitChordDesktopApp() {
                         },
                 ) {
                     when {
+                        // Settings and its pages stand in for the page, held to the width the
+                        // Settings card had. Its prompts are still cards, over the page.
+                        overlays.settingsPage != null -> Box(
+                            Modifier.fillMaxSize().padding(bottom = contentPadding.calculateBottomPadding()),
+                        ) {
+                            CompositionLocalProvider(LocalDesktopPanelIsPage provides true) {
+                            when (overlays.settingsPage!!) {
+                                DesktopSettingsPage.MAIN -> DesktopSettingsScreen(
+                                    query = settingsQuery,
+                                    onQueryChange = { settingsQuery = it },
+                                    listState = settingsListState,
+                                    autoplay = autoplay,
+                                    onAutoplayChange = ::setAutoplay,
+                                    automix = automix,
+                                    onAutomixChange = {
+                                        automix = it
+                                        persistence.saveBoolean("automix", it)
+                                    },
+                                    automixPerformance = automixPerformance,
+                                    onAutomixPerformanceChange = {
+                                        automixPerformance = it
+                                        persistence.saveString("automix_performance", it.name)
+                                    },
+                                    shuffle = shuffle,
+                                    onShuffleChange = ::setShuffle,
+                                    repeatMode = repeatMode,
+                                    onRepeatModeChange = {
+                                        repeatMode = it
+                                        persistence.saveString("repeat_mode", it.name)
+                                    },
+                                    playbackSpeed = playbackSpeed,
+                                    onPlaybackSpeedChange = {
+                                        playbackSpeed = it
+                                        persistence.saveString("playback_speed", it.toString())
+                                    },
+                                    crossfadeSeconds = crossfadeSeconds,
+                                    onCrossfadeSecondsChange = {
+                                        crossfadeSeconds = it
+                                        persistence.saveString("crossfade_seconds", it.toString())
+                                    },
+                                    animatedCanvas = animatedCanvas,
+                                    showNerdStats = showNerdStats,
+                                    fullBleedArtwork = fullBleedArtwork,
+                                    onAnimatedCanvasChange = {
+                                        animatedCanvas = it
+                                        persistence.saveBoolean("animated_canvas", it)
+                                    },
+                                    spotifyCanvasReady = spotifyCanvasCookie.isNotBlank(),
+                                    onOpenSpotifyCanvasSetup = { overlays.settingsPage = DesktopSettingsPage.SPOTIFY_CANVAS },
+                                    dontRepeatSuggestions = dontRepeatSuggestions,
+                                    onDontRepeatSuggestionsChange = {
+                                        dontRepeatSuggestions = it
+                                        persistence.saveBoolean(KEY_DONT_REPEAT_SUGGESTIONS, it)
+                                    },
+                                    onChooseLocalMusicFolder = { onChosen ->
+                                        DesktopLocalMusic.chooseFolder()?.let { chosen ->
+                                            DesktopLocalMusic.setFolder(chosen)
+                                            onChosen()
+                                            localMusicRevision++
+                                        }
+                                    },
+                                    onLocalMusicFolderChanged = { localMusicRevision++ },
+                                    filterNonMusicAudio = filterNonMusicAudio,
+                                    onFilterNonMusicAudioChange = {
+                                        filterNonMusicAudio = it
+                                        persistence.saveBoolean(DesktopLocalMusic.KEY_FILTER_NON_MUSIC_AUDIO, it)
+                                        // The scan's result changes with it, so it has to be taken again.
+                                        localMusicRevision++
+                                    },
+                                    syncedLyrics = syncedLyrics,
+                                    onSyncedLyricsChange = {
+                                        syncedLyrics = it
+                                        persistence.saveBoolean(DesktopLyricsClient.KEY_SYNCED_LYRICS, it)
+                                    },
+                                    lyricsBlur = lyricsBlur,
+                                    onLyricsBlurChange = {
+                                        lyricsBlur = it
+                                        persistence.saveBoolean(DesktopLyricsClient.KEY_LYRICS_BLUR, it)
+                                    },
+                                    enabledLyricsSources = DesktopLyricsClient.enabledSources(lyricsOrder, lyricsOn),
+                                    onOpenLyricsSources = { overlays.settingsPage = DesktopSettingsPage.LYRICS_SOURCES },
+                                    onOpenTranslationLanguage = { overlays.settingsPage = DesktopSettingsPage.TRANSLATION_LANGUAGE },
+                                    onOpenEqualizer = { overlays.settingsPage = DesktopSettingsPage.EQUALIZER },
+                                    onOpenAudioOutput = { overlays.settingsPage = DesktopSettingsPage.AUDIO_OUTPUT },
+                                    onOpenListenTogether = { overlays.settingsPage = DesktopSettingsPage.LISTEN_TOGETHER },
+                                    onShowNerdStatsChange = {
+                                        showNerdStats = it
+                                        persistence.saveBoolean("show_nerd_stats", it)
+                                    },
+                                    onFullBleedArtworkChange = {
+                                        fullBleedArtwork = it
+                                        persistence.saveBoolean("full_bleed_artwork", it)
+                                    },
+                                    legacyMeshGradient = legacyMeshGradient,
+                                    onLegacyMeshGradientChange = {
+                                        legacyMeshGradient = it
+                                        persistence.saveBoolean("legacy_mesh_gradient", it)
+                                    },
+                                    spatialAudio = spatialAudio,
+                                    onSpatialAudioChange = {
+                                        spatialAudio = it
+                                        persistence.saveBoolean("spatial_audio", it)
+                                    },
+                                    dolbyAtmos = dolbyAtmos,
+                                    onDolbyAtmosChange = {
+                                        dolbyAtmos = it
+                                        DesktopAddonSettings.dolbyAtmosEnabled = it
+                                        persistence.saveBoolean("dolby_atmos", it)
+                                        DesktopAddonSource.clearCompletedTrackCalls()
+                                    },
+                                    skipSilence = skipSilence,
+                                    onSkipSilenceChange = {
+                                        skipSilence = it
+                                        persistence.saveBoolean("skip_silence", it)
+                                    },
+                                    outputPrecision = outputPrecision,
+                                    onOutputPrecisionChange = {
+                                        outputPrecision = it
+                                        persistence.saveString("output_precision", it)
+                                    },
+                                    outputSummary = playbackEngine.outputSummary(),
+                                    trayIconEnabled = trayIconEnabled,
+                                    closeToTray = closeToTray,
+                                    onCloseToTrayChange = {
+                                        closeToTray = it
+                                        persistence.saveBoolean("close_to_tray", it)
+                                    },
+                                    onTrayIconChange = {
+                                        trayIconEnabled = it
+                                        persistence.saveBoolean("tray_icon", it)
+                                    },
+                                    downloadQuality = downloadQuality,
+                                    onDownloadQualityChange = {
+                                        downloadQuality = it
+                                        persistence.saveString("download_quality", it)
+                                    },
+                                    audioQuality = audioQuality,
+                                    onAudioQualityChange = {
+                                        audioQuality = it
+                                        persistence.saveAudioQuality(it)
+                                    },
+                                    sleepTimerMinutes = sleepTimerMinutes,
+                                    sleepAfterTrack = sleepAfterTrack,
+                                    sleepRemainingMs = sleepRemainingMs,
+                                    onSleepTimerCycle = ::cycleSleepTimer,
+                                    sourceConfigs = sourceConfigs,
+                                    sourceStatus = sourceStatus,
+                                    onSourceEnabledChange = { config, enabled ->
+                                        val next = sourceConfigs.map {
+                                            if (it.id == config.id && it.kind != DesktopSourceKind.YOUTUBE) {
+                                                it.copy(enabled = enabled)
+                                            } else {
+                                                it
+                                            }
+                                        }
+                                        persistence.saveSourceConfigs(next)
+                                        sourceConfigs = persistence.sourceConfigs()
+                                        DesktopModuleSource.reload()
+                                    },
+                                    onSaveSource = { saved ->
+                                        // Replaced by id, so any number of addons can be configured.
+                                        val without = sourceConfigs.filterNot {
+                                            it.id == saved.id ||
+                                                (saved.kind == DesktopSourceKind.CUSTOM_MODULE &&
+                                                    it.kind == DesktopSourceKind.CUSTOM_MODULE)
+                                        }
+                                        persistence.saveSourceConfigs((without + saved).inSourceOrder())
+                                        sourceConfigs = persistence.sourceConfigs()
+                                        // Whatever was held for this entry describes a server that may no
+                                        // longer be the one selected.
+                                        DesktopAddonSource.forget(saved.id)
+                                        DesktopModuleSource.reload()
+                                    },
+                                    onRemoveSource = { config ->
+                                        if (config.isUserAdded) {
+                                            persistence.saveSourceConfigs(sourceConfigs.filterNot { it.id == config.id })
+                                            sourceConfigs = persistence.sourceConfigs()
+                                            DesktopAddonSource.forget(config.id)
+                                            DesktopModuleSource.reload()
+                                        }
+                                    },
+                                    onMoveSource = { config, delta ->
+                                        val next = moveUserSource(sourceConfigs, config.id, delta)
+                                        persistence.saveSourceConfigs(next)
+                                        sourceConfigs = persistence.sourceConfigs()
+                                    },
+                                    onTestSource = { candidate ->
+                                        sourceStatus = sourceStatus + (candidate.id to "Checking source…")
+                                        scope.launch {
+                                            val health = if (candidate.kind == DesktopSourceKind.ADDON) {
+                                                DesktopAddonSource.health(candidate)
+                                            } else {
+                                                DesktopModuleSource.health(candidate)
+                                            }
+                                            health.fold(
+                                                onSuccess = { sourceStatus = sourceStatus + (candidate.id to it) },
+                                                onFailure = {
+                                                    sourceStatus = sourceStatus +
+                                                        (candidate.id to (it.message ?: "Source unavailable"))
+                                                },
+                                            )
+                                        }
+                                    },
+                                    onOpenIntegrations = { overlays.settingsPage = DesktopSettingsPage.INTEGRATIONS },
+                                    onOpenLicenses = { overlays.settingsPage = DesktopSettingsPage.LICENSES },
+                                )
+                                DesktopSettingsPage.EQUALIZER -> DesktopEqualizerDialog(onDismiss = ::goBack)
+                                DesktopSettingsPage.AUDIO_OUTPUT -> DesktopAudioOutputDialog(onDismiss = ::goBack)
+                                DesktopSettingsPage.LISTEN_TOGETHER -> DesktopListenTogetherDialog(
+                                    autoplayEnabled = autoplay,
+                                    onDismiss = ::goBack,
+                                )
+                                DesktopSettingsPage.LYRICS_SOURCES -> DesktopLyricsSourcesDialog(
+                                    order = lyricsOrder,
+                                    enabled = lyricsOn,
+                                    prioritizeSyllables = prioritizeSyllables,
+                                    onReorder = {
+                                        lyricsOrder = it
+                                        persistence.saveLyricsSourceOrder(it)
+                                    },
+                                    onToggle = { name ->
+                                        lyricsOn = if (name in lyricsOn) lyricsOn - name else lyricsOn + name
+                                        persistence.saveLyricsEnabledSources(lyricsOn)
+                                    },
+                                    onPrioritizeSyllables = {
+                                        prioritizeSyllables = it
+                                        persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, it)
+                                    },
+                                    onReset = {
+                                        lyricsOrder = DesktopLyricsClient.sources.map { it.name }
+                                        lyricsOn = lyricsOrder.toSet()
+                                        prioritizeSyllables = false
+                                        persistence.saveLyricsSourceOrder(lyricsOrder)
+                                        persistence.saveLyricsEnabledSources(lyricsOn)
+                                        persistence.saveBoolean(DesktopLyricsClient.KEY_PRIORITIZE_SYLLABLES, false)
+                                    },
+                                    onDismiss = ::goBack,
+                                )
+                                DesktopSettingsPage.TRANSLATION_LANGUAGE -> DesktopTranslationLanguageDialog(onDismiss = ::goBack)
+                                DesktopSettingsPage.SPOTIFY_CANVAS -> DesktopSpotifyCanvasDialog(
+                                    onDismiss = ::goBack,
+                                    onSaved = { spotifyCanvasCookie = it },
+                                )
+                                DesktopSettingsPage.INTEGRATIONS -> DesktopIntegrationsDialog(
+                                    song = playback.song,
+                                    onOpenLastfm = { overlays.lastfmLogin = true },
+                                    onOpenListenBrainz = { overlays.listenBrainzToken = true },
+                                    onOpenDiscordToken = { overlays.discordToken = true },
+                                    onDismiss = ::goBack,
+                                )
+                                DesktopSettingsPage.LICENSES -> DesktopLicensesPage(onDismiss = ::goBack)
+                            }
+                            }
+                        }
                         overlays.replay -> DesktopReplayPage(
                             summary = replaySummary,
                             period = replayPeriod,
@@ -4746,10 +4781,11 @@ private data class DesktopNavEntry(
     val mood: MoodGenre?,
     val showAll: HomeShelf?,
     val replay: Boolean,
+    val settings: DesktopSettingsPage?,
 ) {
     /** What makes two entries the same place: an album that paged in more tracks has not moved. */
     val key: List<Any?>
-        get() = listOf(destination, artist?.browseId, collection?.browseId, mood?.browseId, mood?.params, showAll?.title, replay)
+        get() = listOf(destination, artist?.browseId, collection?.browseId, mood?.browseId, mood?.params, showAll?.title, replay, settings)
 }
 
 /** Deep enough for any way back anyone takes; the oldest fall off. */
@@ -5039,9 +5075,16 @@ private enum class DesktopSettingsSection {
     ADVANCED,
 }
 
-/** Settings as a modal card over the page behind it, the way Music presents its preferences. */
+/**
+ * Settings as a page of inset groups, the way Android presents it, held to the width the old card
+ * had so the rows do not stretch across a wide window. Its query and scroll belong to the caller,
+ * so they are where they were when back returns from one of the pages it opens.
+ */
 @Composable
-private fun DesktopSettingsDialog(
+private fun DesktopSettingsScreen(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    listState: LazyListState,
     autoplay: Boolean,
     onAutoplayChange: (Boolean) -> Unit,
     automix: Boolean,
@@ -5114,10 +5157,9 @@ private fun DesktopSettingsDialog(
     onMoveSource: (DesktopSourceConfig, Int) -> Unit,
     onTestSource: (DesktopSourceConfig) -> Unit,
     onOpenIntegrations: () -> Unit,
-    onDismiss: () -> Unit,
+    onOpenLicenses: () -> Unit,
 ) {
     var editingSource by remember { mutableStateOf<DesktopSourceConfig?>(null) }
-    var licensesOpen by remember { mutableStateOf(false) }
     val sourceProbeKey = sourceConfigs
         .filter { it.kind.needsServer && it.isComplete }
         .joinToString { "${it.id}@${it.baseUrl}" }
@@ -5126,75 +5168,39 @@ private fun DesktopSettingsDialog(
             .filter { it.kind.needsServer && it.isComplete }
             .forEach(onTestSource)
     }
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(DesktopScrim)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        // Android presents Settings as a full page of inset groups. Desktop keeps the modal
-        // affordance, but gives that page enough width and height to breathe instead of squeezing
-        // it into a utility dialog.
-        Box(
-            Modifier
-                .widthIn(min = 700.dp, max = 840.dp)
-                .fillMaxWidth(0.88f)
-                .fillMaxHeight(0.92f)
-                .desktopCard(RoundedCornerShape(22.dp))
-                // Swallows the click so pressing inside the card does not dismiss it through the
-                // scrim underneath.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                ),
-        ) {
+    DesktopSettingsPageFrame {
             Column(Modifier.fillMaxSize()) {
+                val settingsQuery = query
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 28.dp, end = 16.dp, top = 20.dp, bottom = 12.dp),
+                    Modifier.fillMaxWidth().padding(top = 20.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            DesktopStrings["settings", "Settings"],
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            "Playback, sound, appearance and account",
-                            color = DesktopSecondary,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Rounded.Close, DesktopStrings["close", "Close"])
-                    }
+                    Text(
+                        DesktopStrings["settings", "Settings"],
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    DesktopSearchField(
+                        query = settingsQuery,
+                        onQueryChange = onQueryChange,
+                        onSearch = {},
+                        placeholder = DesktopStrings["settings_search_hint", "Search settings"],
+                        modifier = Modifier.padding(start = 24.dp).width(280.dp),
+                    )
                 }
-                var settingsQuery by remember { mutableStateOf("") }
-                DesktopSearchField(
-                    query = settingsQuery,
-                    onQueryChange = { settingsQuery = it },
-                    onSearch = {},
-                    placeholder = DesktopStrings["settings_search_hint", "Search settings"],
-                    modifier = Modifier.padding(start = 28.dp, end = 28.dp, bottom = 16.dp),
-                )
-                HorizontalDivider(color = DesktopCardEdge)
                 CompositionLocalProvider(LocalSettingsQuery provides settingsQuery.trim()) {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(start = 28.dp, end = 28.dp, top = 12.dp, bottom = 28.dp),
+                    state = listState,
+                    contentPadding = PaddingValues(top = 12.dp, bottom = 28.dp),
                 ) {
             DesktopSettingsSection.entries.forEach { section ->
             if (section == DesktopSettingsSection.PLAYBACK) item {
                     SettingsGroup(DesktopStrings["playback", "Playback"]) {
                     if (!automix) {
                         if (settingsRowVisible(DesktopStrings["crossfade", "Crossfade"])) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
                             Text(DesktopStrings["crossfade", "Crossfade"], style = MaterialTheme.typography.bodyLarge)
                             Text(
                                 if (crossfadeSeconds == 0) "Off" else "${crossfadeSeconds}s",
@@ -5221,7 +5227,7 @@ private fun DesktopSettingsDialog(
                         onAutomixChange,
                     )
                     if (settingsRowVisible(DesktopStrings["automix_performance", "Automix performance"], DesktopStrings["automix_performance_subtitle", "Sets how much CPU background analysis may use"])) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                             Text(DesktopStrings["automix_performance", "Automix performance"], fontWeight = FontWeight.Medium)
                             Text(
                                 DesktopStrings["automix_performance_subtitle", "Sets how much CPU background analysis may use"],
@@ -5392,7 +5398,7 @@ private fun DesktopSettingsDialog(
                     var limitMb by remember { mutableStateOf(DesktopMediaCache.limitMb()) }
                     var cleared by remember { mutableStateOf<String?>(null) }
                     if (settingsRowVisible(DesktopStrings["song_cache_limit", "Song cache limit"])) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
                         Text(DesktopStrings["song_cache_limit", "Song cache limit"], style = MaterialTheme.typography.bodyLarge)
                         Text(
                             if (limitMb > DesktopMediaCache.WARNING_MB) {
@@ -5500,7 +5506,7 @@ private fun DesktopSettingsDialog(
                             "Sets the material for the sidebar and top bar",
                         ]
                         if (settingsRowVisible(materialTitle, materialSubtitle)) {
-                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                                 Text(materialTitle, fontWeight = FontWeight.Medium)
                                 Text(materialSubtitle, color = DesktopSecondary, style = MaterialTheme.typography.bodySmall)
                                 Spacer(Modifier.height(10.dp))
@@ -5612,7 +5618,7 @@ private fun DesktopSettingsDialog(
             if (section == DesktopSettingsSection.AUDIO_QUALITY) item {
                 SettingsGroup(DesktopStrings["audio_quality", "Audio quality"]) {
                     if (settingsRowVisible(DesktopStrings["audio_quality", "Audio quality"])) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             DesktopAudioQuality.entries.forEach { rung ->
                                 FilterChip(
@@ -5654,7 +5660,7 @@ private fun DesktopSettingsDialog(
             if (section == DesktopSettingsSection.OUTPUT_PRECISION) item {
                 SettingsGroup(DesktopStrings["d_output_precision", "Output precision"]) {
                     if (settingsRowVisible(DesktopStrings["d_output_precision", "Output precision"])) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf("PCM_16" to "16-bit PCM", "FLOAT_32" to "32-bit float").forEach { (value, label) ->
                                 FilterChip(
@@ -5682,7 +5688,7 @@ private fun DesktopSettingsDialog(
                 SettingsGroup(DesktopStrings["download_channel_name", "Downloads"]) {
                     if (settingsRowVisible(DesktopStrings["download_channel_name", "Downloads"])) {
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        Modifier.fillMaxWidth().padding(vertical = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         listOf("STANDARD" to "Standard", "HIGH" to "High", "LOSSLESS" to "Lossless").forEach { (value, label) ->
@@ -5705,7 +5711,6 @@ private fun DesktopSettingsDialog(
                         .map(DesktopSourceConfig::id)
                     sourceConfigs.inSourceOrder().forEachIndexed { index, config ->
                         if (!settingsRowVisible(sourcesHeading, config.displayName)) return@forEachIndexed
-                        if (index > 0) HorizontalDivider(color = DesktopDivider)
                         DesktopSourceSettingsRow(
                             position = index + 1,
                             config = config,
@@ -5729,7 +5734,6 @@ private fun DesktopSettingsDialog(
                             } else null,
                         )
                     }
-                    if (sourceConfigs.isNotEmpty()) HorizontalDivider(color = DesktopDivider)
                     // One entry point, and it creates an addon.
                     SettingsRow(
                         BitChordIcons.Plus,
@@ -5768,12 +5772,11 @@ private fun DesktopSettingsDialog(
             }
             }
             item {
-                DesktopSettingsFooter(onLicenses = { licensesOpen = true })
+                DesktopSettingsFooter(onLicenses = onOpenLicenses)
             }
         }
         }
             }
-        }
     }
 
     editingSource?.let { config ->
@@ -5793,10 +5796,6 @@ private fun DesktopSettingsDialog(
             },
             onTest = onTestSource,
         )
-    }
-
-    if (licensesOpen) {
-        DesktopLicensesDialog(onDismiss = { licensesOpen = false })
     }
 }
 
@@ -5834,92 +5833,67 @@ private fun DesktopSettingsFooter(onLicenses: () -> Unit) {
     )
 }
 
-/** Everything this build is assembled from, and the terms each part came under. */
+/** Everything this build is assembled from, and the terms each part came under. A page of Settings. */
 @Composable
-private fun DesktopLicensesDialog(onDismiss: () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f))
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier
-                .widthIn(max = 620.dp)
-                .fillMaxHeight(0.82f)
-                .clip(RoundedCornerShape(20.dp))
-                .background(DesktopGlassStrong)
-                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(20.dp))
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                ),
+private fun DesktopLicensesPage(onDismiss: () -> Unit) {
+    DesktopSettingsPageFrame {
+        Text(
+            DesktopStrings["d_third_party_licenses", "Third-party licenses"],
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 20.dp, bottom = 4.dp),
+        )
+        Text(
+            DesktopStrings["d_bitchord_is_free_software_and_so_is_everything_it_is_bui", "BitChord is free software, and so is everything it is built on."],
+            color = DesktopSecondary,
+            style = MaterialTheme.typography.bodySmall,
+        )
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text(
-                DesktopStrings["d_third_party_licenses", "Third-party licenses"],
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.padding(start = 22.dp, top = 22.dp, end = 22.dp, bottom = 4.dp),
-            )
-            Text(
-                DesktopStrings["d_bitchord_is_free_software_and_so_is_everything_it_is_bui", "BitChord is free software, and so is everything it is built on."],
-                color = DesktopSecondary,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 22.dp),
-            )
-            LazyColumn(
-                modifier = Modifier.weight(1f).padding(horizontal = 22.dp),
-                contentPadding = PaddingValues(vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                DesktopLicenses.groups.forEach { group ->
-                    item(key = group.title) {
-                        SettingsGroup(group.title) {
-                            group.entries.forEach { entry ->
-                                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(entry.name, fontWeight = FontWeight.Medium)
-                                        Spacer(Modifier.width(10.dp))
-                                        Text(
-                                            entry.license,
-                                            color = DesktopAccent,
-                                            style = MaterialTheme.typography.labelMedium,
-                                        )
-                                    }
-                                    if (entry.note.isNotBlank()) {
-                                        Text(
-                                            entry.note,
-                                            color = DesktopSecondary,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                    }
+            DesktopLicenses.groups.forEach { group ->
+                item(key = group.title) {
+                    SettingsGroup(group.title) {
+                        group.entries.forEach { entry ->
+                            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(entry.name, fontWeight = FontWeight.Medium)
+                                    Spacer(Modifier.width(10.dp))
                                     Text(
-                                        entry.url,
-                                        color = DesktopSecondary.copy(alpha = 0.7f),
+                                        entry.license,
+                                        color = DesktopAccent,
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                }
+                                if (entry.note.isNotBlank()) {
+                                    Text(
+                                        entry.note,
+                                        color = DesktopSecondary,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
+                                Text(
+                                    entry.url,
+                                    color = DesktopSecondary.copy(alpha = 0.7f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                             }
                         }
                     }
                 }
             }
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Button(
-                    onClick = onDismiss,
-                    shape = RoundedCornerShape(50),
-                    colors = ButtonDefaults.buttonColors(containerColor = DesktopAccent, contentColor = Color.Black),
-                ) { Text(DesktopStrings["done", "Done"]) }
-            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 18.dp),
+            horizontalArrangement = Arrangement.End,
+        ) {
+            Button(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(50),
+                colors = ButtonDefaults.buttonColors(containerColor = DesktopAccent, contentColor = Color.Black),
+            ) { Text(DesktopStrings["done", "Done"]) }
         }
     }
 }
@@ -5939,8 +5913,8 @@ private fun DesktopSourceSettingsRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(enabled = onEdit != null) { onEdit?.invoke() }
-            .padding(horizontal = 16.dp, vertical = 11.dp),
+            .desktopRowClickable(enabled = onEdit != null) { onEdit?.invoke() }
+            .padding(vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -6995,10 +6969,11 @@ private fun SettingsGroup(title: String, content: @Composable () -> Unit) {
                 title.uppercase(),
                 color = DesktopSecondary,
                 style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 8.dp),
+                // In line with the rows' own text, now that no card sets them in.
+                modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
             )
         }
-        Column(if (visible) Modifier.desktopCardInset(RoundedCornerShape(16.dp)) else Modifier) {
+        Column {
             CompositionLocalProvider(
                 LocalSettingsQuery provides if (wholeGroup) "" else query,
                 LocalSettingsMatches provides matched,
@@ -7036,15 +7011,11 @@ private fun settingsRowVisible(title: String, subtitle: String = ""): Boolean {
 @Composable
 private fun SettingsNavigationRow(title: String, subtitle: String, onClick: () -> Unit) {
     if (!settingsRowVisible(title, subtitle)) return
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (hovered) DesktopRowHover else Color.Transparent)
-            .hoverable(interaction)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .desktopRowClickable(onClick = onClick)
+            .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -7106,15 +7077,11 @@ internal fun DesktopBareSlider(
 @Composable
 private fun SettingsToggle(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
     if (!settingsRowVisible(title, subtitle)) return
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (hovered) DesktopRowHover else Color.Transparent)
-            .hoverable(interaction)
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 18.dp, vertical = 13.dp),
+            .desktopRowClickable { onCheckedChange(!checked) }
+            .padding(vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -7134,15 +7101,11 @@ private fun SettingsRow(
     onClick: (() -> Unit)? = null,
 ) {
     if (!settingsRowVisible(title, subtitle)) return
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (hovered && onClick != null) DesktopRowHover else Color.Transparent)
-            .hoverable(interaction)
-            .clickable(enabled = onClick != null, onClick = { onClick?.invoke() })
-            .padding(horizontal = 18.dp, vertical = 14.dp),
+            .desktopRowClickable(enabled = onClick != null) { onClick?.invoke() }
+            .padding(vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(

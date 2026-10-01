@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,7 +61,7 @@ internal fun DesktopTranslationLanguageDialog(onDismiss: () -> Unit) {
     }
 
     DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 420) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = panelInset(20.dp), vertical = 18.dp)) {
             Text(
                 DesktopStrings["translation_language", "Translation language"],
                 style = MaterialTheme.typography.titleLarge,
@@ -75,7 +74,7 @@ internal fun DesktopTranslationLanguageDialog(onDismiss: () -> Unit) {
             )
         }
 
-        Box(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Box(Modifier.fillMaxWidth().padding(horizontal = panelInset(20.dp))) {
             DesktopSearchField(
                 query = filter,
                 onQueryChange = { filter = it },
@@ -85,7 +84,7 @@ internal fun DesktopTranslationLanguageDialog(onDismiss: () -> Unit) {
         }
 
         LazyColumn(
-            Modifier.fillMaxWidth().heightIn(max = 340.dp).padding(top = 12.dp),
+            Modifier.fillMaxWidth().then(desktopPanelBody(cardMax = 340.dp)).padding(top = 12.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             item {
@@ -106,7 +105,7 @@ internal fun DesktopTranslationLanguageDialog(onDismiss: () -> Unit) {
             }
         }
 
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = panelInset(20.dp), vertical = 14.dp)) {
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onDismiss) { Text(DesktopStrings["done", "Done"], color = Color.White) }
         }
@@ -118,9 +117,13 @@ private fun LanguageRow(name: String, detail: String, selected: Boolean, onClick
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .background(if (selected) Color.White.copy(alpha = 0.06f) else Color.Transparent)
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .desktopRowClickable(onClick = onClick)
+            // On a page the row's text sits on the gutter, where a band would have no edge to it;
+            // the tick says which is chosen.
+            .background(
+                if (selected && !LocalDesktopPanelIsPage.current) Color.White.copy(alpha = 0.06f) else Color.Transparent,
+            )
+            .padding(horizontal = panelInset(20.dp), vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

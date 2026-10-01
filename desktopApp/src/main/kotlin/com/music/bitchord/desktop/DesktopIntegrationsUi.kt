@@ -139,7 +139,7 @@ internal fun DesktopSpotifyCanvasDialog(onDismiss: () -> Unit, onSaved: (String)
                     "3. Copy the value of the sp_dc cookie.\n" +
                     "4. Paste it below.",
             ],
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 4.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = panelInset(22.dp), vertical = 4.dp),
             style = MaterialTheme.typography.bodySmall,
             color = DesktopSecondary,
         )
@@ -153,7 +153,7 @@ internal fun DesktopSpotifyCanvasDialog(onDismiss: () -> Unit, onSaved: (String)
             modifier = Modifier.focusRequester(focus),
         )
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+            Modifier.fillMaxWidth().padding(horizontal = panelInset(22.dp)),
             horizontalArrangement = Arrangement.Start,
         ) {
             TextButton(onClick = { DesktopExternalLinks.open("https://open.spotify.com/") }) {
@@ -202,7 +202,7 @@ internal fun DesktopListenBrainzTokenDialog(onDismiss: () -> Unit) {
             modifier = Modifier.focusRequester(focus),
         )
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 22.dp),
+            Modifier.fillMaxWidth().padding(horizontal = panelInset(22.dp)),
             horizontalArrangement = Arrangement.Start,
         ) {
             TextButton(onClick = { DesktopExternalLinks.open("https://listenbrainz.org/settings/") }) {
@@ -222,8 +222,8 @@ internal fun DesktopListenBrainzTokenDialog(onDismiss: () -> Unit) {
 @Composable
 private fun DialogHeading(title: String, message: String, isError: Boolean = false) {
     Column(
-        Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        Modifier.fillMaxWidth().padding(horizontal = panelInset(22.dp), vertical = 18.dp),
+        horizontalAlignment = if (LocalDesktopPanelIsPage.current) Alignment.Start else Alignment.CenterHorizontally,
     ) {
         Text(
             title,
@@ -236,7 +236,7 @@ private fun DialogHeading(title: String, message: String, isError: Boolean = fal
             modifier = Modifier.padding(top = 5.dp),
             style = MaterialTheme.typography.bodySmall,
             color = if (isError) DesktopDestructive else DesktopSecondary,
-            textAlign = TextAlign.Center,
+            textAlign = if (LocalDesktopPanelIsPage.current) TextAlign.Start else TextAlign.Center,
         )
     }
 }
@@ -256,7 +256,7 @@ private fun DialogField(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp)
+            .padding(horizontal = panelInset(22.dp))
             .clip(RoundedCornerShape(11.dp))
             .background(Color.White.copy(alpha = if (enabled) 0.08f else 0.04f))
             .padding(horizontal = 12.dp, vertical = 12.dp),
@@ -299,7 +299,7 @@ private fun DialogActions(
     onDismiss: () -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().padding(horizontal = panelInset(16.dp), vertical = 12.dp),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -396,7 +396,7 @@ internal fun DesktopTextValueDialog(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
-    DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 400) {
+    DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 400, popup = true) {
         DialogHeading(title = title, message = message)
         DialogField(
             value = value,
