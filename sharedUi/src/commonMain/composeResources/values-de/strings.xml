@@ -15,11 +15,11 @@
     <string name="autoplay_on">AutoPlay an</string>
     <string name="autoplay_queue_description">Ähnliche Musik, ausgewählt, um als Nächstes zu spielen</string>
     <string name="bit_depth">%1$d-Bit</string>
+    <string name="cancel">Abbrechen</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Ändern</string>
     <string name="channel_count">%1$d Kan.</string>
     <string name="choose_lyrics_provider">Songtext-Anbieter wählen</string>
     <string name="clear">Löschen</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Für diesen Songtext ist keine Romanisierung verfügbar</string>
     <string name="lyrics_romanized">Romanisierte Aussprache</string>
     <string name="lyrics_saved_with_download">Songtexte mit diesem Download gespeichert</string>
+    <string name="lyrics_share_pick_limit">Karte ist voll</string>
     <string name="lyrics_translated_to">Ins %1$s übersetzt</string>
     <string name="lyrics_translation_unavailable">Die Übersetzung ist derzeit nicht verfügbar</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Durchsuche Millionen Songs auf YouTube Music.</string>
     <string name="search_hint">Künstler, Songs, Songtexte und mehr</string>
     <string name="selected">Ausgewählt</string>
+    <string name="share">Teilen</string>
     <string name="shelf_artists_on_the_rise">Aufstrebende Künstler</string>
     <string name="shelf_chart">Charts</string>
     <string name="shelf_charts">Charts</string>

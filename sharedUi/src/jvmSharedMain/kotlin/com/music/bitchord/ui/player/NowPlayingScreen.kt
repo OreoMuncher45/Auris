@@ -803,6 +803,20 @@ fun NowPlayingScreen(
         loadingText = lyricsLoadingText,
         haptics = haptics,
     )
+    // The drawer holding the finished card, set the moment Share is confirmed.
+    // Nothing is drawn here: the picture is a bitmap and a canvas, which is the
+    // phone's to make, so the request is handed down and the sheet comes back
+    // through [PlayerHost.LyricsShareSheet].
+    var lyricsShare by remember { mutableStateOf<LyricsShareRequest?>(null) }
+    val lyricsShareEnabled = lyricsShareAvailable
+    val lyricPicker = rememberLyricsPicker(
+        song = song,
+        lines = lyrics,
+        subLines = lyricsTranslation.subLines,
+        artworkUrl = remoteArt,
+        haptics = haptics,
+        onCard = { lyricsShare = it },
+    )
     // Nothing here resets [lyricsOpen] on a track change, deliberately. The
     // panel is a place, not a property of the track: someone reading along who
     // skips — or who simply lets the queue run on — means to carry on reading,
@@ -862,6 +876,17 @@ fun NowPlayingScreen(
     PlayerBackHandler(enabled = showCast) { showCast = false }
 
     PlayerBackHandler(enabled = lyricsOffsetOpen, onBack = onDismissLyricsOffset)
+
+    // Both of these sit ahead of [lyricsOpen]'s own handler — see the note on
+    // the queue above — because both are drawn *over* the panel rather than
+    // instead of it: back should take away whichever of them is up and leave the
+    // lyrics underneath exactly where the reader left them.
+    PlayerBackHandler(enabled = lyricsShare != null) { lyricsShare = null }
+
+    // Backing out of a pick drops the pick, not the panel: somebody who changed
+    // their mind lands on the same verses they started from rather than having
+    // to open the whole panel again.
+    PlayerBackHandler(enabled = lyricPicker.picking) { lyricPicker.cancel() }
 
     // 0 = full sleeve, 1 = queue. Everything that moves reads off this.
     //
@@ -1379,6 +1404,13 @@ fun NowPlayingScreen(
                 onDismiss = onDismissLyricsOffset,
             )
         }
+        lyricsShare?.let { request ->
+            PlayerPlatform.host.LyricsShareSheet(
+                hazeState = playerHaze,
+                request = request,
+                onDismiss = { lyricsShare = null },
+            )
+        }
     }
 
     // A landscape window — a tablet, or a phone on its side — takes an entirely
@@ -1574,7 +1606,16 @@ fun NowPlayingScreen(
                             lyricsLoadingText
                         },
                         status = lyricsTranslation.status,
-                        onChangeProvider = { showLyricsProviders = true },
+                        onStatusClick = { showLyricsProviders = true },
+                        picking = lyricPicker.picking,
+                        pickBar = {
+                            LyricsPickBar(
+                                shareEnabled = lyricPicker.picks.isNotEmpty() &&
+                                    !lyricPicker.overBudget,
+                                onCancel = lyricPicker.cancel,
+                                onShare = lyricPicker.share,
+                            )
+                        },
                         romanizationToggle = {
                             RomanizationToggleButton(
                                 state = lyricsTranslation.romanizationState,
@@ -1616,6 +1657,11 @@ fun NowPlayingScreen(
                                     onRevealControls = {},
                                     onHideControls = {},
                                     translationProgress = particleProgress,
+                                    canPick = lyricsShareEnabled,
+                                    picking = lyricPicker.picking,
+                                    picked = lyricPicker.picks,
+                                    onPickLine = lyricPicker.pick,
+                                    onTogglePick = lyricPicker.toggle,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -1846,7 +1892,8 @@ fun NowPlayingScreen(
         // A subview replaces that hero with an artwork-derived mesh, so it gets
         // only a modest floor rather than an opaque status-bar surface.
         val playerSubviewOpen = lyricsOpen || queueOpen || lyricsOffsetOpen ||
-            showAudioPipeline || showCast || showAudioOutput || showLyricsProviders
+            showAudioPipeline || showCast || showAudioOutput || showLyricsProviders ||
+            lyricsShare != null
         val topGradientAlpha = if (playerSubviewOpen) {
             maxOf(artworkStatusScrimAlpha, SUBVIEW_STATUS_SCRIM_MIN_ALPHA)
         } else {
@@ -2719,6 +2766,11 @@ fun NowPlayingScreen(
                                     onHideControls = { lyricsControlsOpen = false },
                                     translationProgress = particleProgress,
                                     onScrollingChange = { lyricsScrolling = it },
+                                    canPick = lyricsShareEnabled,
+                                    picking = lyricPicker.picking,
+                                    picked = lyricPicker.picks,
+                                    onPickLine = lyricPicker.pick,
+                                    onTogglePick = lyricPicker.toggle,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -2742,7 +2794,7 @@ fun NowPlayingScreen(
                         animationSpec = tween(if (translateShown) 220 else 160),
                         label = "translateFade",
                     )
-                    if (translateFade > 0.01f) {
+                    if (translateFade > 0.01f && !lyricPicker.picking) {
                         Box(
                             modifier = Modifier
                                 .align(Alignment.BottomStart)
@@ -2769,6 +2821,19 @@ fun NowPlayingScreen(
                                 onClick = lyricsTranslation.toggleTranslation,
                             )
                         }
+                    }
+                    // The bar arrives and leaves without a transition of its own:
+                    // it is an instruction over the words, and one that has to
+                    // be legible the instant it is on. Anything that animated
+                    // would be over the reader's first pick anyway.
+                    if (lyricPicker.picking) {
+                        LyricsPickBar(
+                            shareEnabled = lyricPicker.picks.isNotEmpty() &&
+                                !lyricPicker.overBudget,
+                            onCancel = lyricPicker.cancel,
+                            onShare = lyricPicker.share,
+                            modifier = Modifier.align(Alignment.BottomCenter),
+                        )
                     }
                 }
 
@@ -2831,7 +2896,12 @@ fun NowPlayingScreen(
             // which is what keeps this row of controls in the same place on
             // every screen instead of being shoved off the bottom of a tall one.
             SlidingPlayerDeck(
-                visible = (!lyricsOpen || lyricsControlsOpen) &&
+                // A pick owns the screen: the transport is hidden for as long
+                // as it is on, and a scroll that would reveal it is refused
+                // (see [LyricsPanel]'s bottom-half tap), so nothing brings the
+                // player back under somebody choosing lines.
+                visible = !lyricPicker.picking &&
+                    (!lyricsOpen || lyricsControlsOpen) &&
                     (!queueOpen || queueControlsOpen) &&
                     (!spotifyCanvasPresentation || spotifyCanvasControlsOpen || mixing),
                 reveal = playerDeckReveal,
@@ -2895,7 +2965,7 @@ fun NowPlayingScreen(
             if (lyricsOpen) {
                 LyricsStatusWithChange(
                     status = lyricsTranslation.status,
-                    onChange = { showLyricsProviders = true },
+                    onStatusClick = { showLyricsProviders = true },
                     modifier = Modifier
                         .fillMaxWidth()
                         .offset(y = 6.dp)

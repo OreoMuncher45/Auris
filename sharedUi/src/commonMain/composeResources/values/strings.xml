@@ -15,11 +15,11 @@
     <string name="autoplay_on">AutoPlay on</string>
     <string name="autoplay_queue_description">Similar music, selected to play next</string>
     <string name="bit_depth">%1$d-bit</string>
+    <string name="cancel">Cancel</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Change</string>
     <string name="channel_count">%1$d ch</string>
     <string name="choose_lyrics_provider">Choose lyrics provider</string>
     <string name="clear">Clear</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Romanization is unavailable for these lyrics</string>
     <string name="lyrics_romanized">Romanized pronunciation</string>
     <string name="lyrics_saved_with_download">Lyrics saved with this download</string>
+    <string name="lyrics_share_pick_limit">Card is full</string>
     <string name="lyrics_translated_to">Translated to %1$s</string>
     <string name="lyrics_translation_unavailable">Translation is unavailable right now</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Search millions of songs on YouTube Music.</string>
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
     <string name="selected">Selected</string>
+    <string name="share">Share</string>
     <string name="shelf_artists_on_the_rise">Artists on the rise</string>
     <string name="shelf_chart">Chart</string>
     <string name="shelf_charts">Charts</string>

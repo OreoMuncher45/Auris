@@ -459,7 +459,11 @@ internal fun LandscapeLyricsPane(
     /** Shown in place of the sheet while there are no lines to draw. */
     placeholder: String,
     status: String,
-    onChangeProvider: () -> Unit,
+    onStatusClick: () -> Unit,
+    /** Whether lines are being picked, which is what the bar stands in for. */
+    picking: Boolean = false,
+    /** The pick bar itself, drawn in place of the row below. */
+    pickBar: @Composable () -> Unit = {},
     romanizationToggle: @Composable () -> Unit,
     translationToggle: @Composable () -> Unit,
     modifier: Modifier = Modifier,
@@ -487,6 +491,13 @@ internal fun LandscapeLyricsPane(
                 )
             }
         }
+        // While a pick is open the row below gives way to the bar: the two
+        // toggles in it would redraw the very lines the pick is indexing, and
+        // the status line is the one thing the bar's own Cancel and Share sit
+        // where.
+        if (picking) {
+            Box(Modifier.fillMaxWidth()) { pickBar() }
+        } else {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -502,9 +513,13 @@ internal fun LandscapeLyricsPane(
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                LyricsStatusWithChange(status = status, onChange = onChangeProvider)
+                LyricsStatusWithChange(
+                    status = status,
+                    onStatusClick = onStatusClick,
+                )
             }
             Box(Modifier.size(34.dp)) { if (hasLyrics) translationToggle() }
+        }
         }
     }
 }

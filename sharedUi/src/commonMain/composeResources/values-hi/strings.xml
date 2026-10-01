@@ -15,11 +15,11 @@
     <string name="autoplay_on">ऑटोप्ले चालू</string>
     <string name="autoplay_queue_description">मिलता-जुलता संगीत, आगे चलाने के लिए चुना गया</string>
     <string name="bit_depth">%1$d-बिट</string>
+    <string name="cancel">रद्द करें</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">बदलें</string>
     <string name="channel_count">%1$d ch</string>
     <string name="choose_lyrics_provider">लिरिक्स प्रदाता चुनें</string>
     <string name="clear">साफ़ करें</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">इन लिरिक्स के लिए रोमन रूप उपलब्ध नहीं है</string>
     <string name="lyrics_romanized">रोमन उच्चारण</string>
     <string name="lyrics_saved_with_download">इस डाउनलोड के साथ लिरिक्स सेव किए गए</string>
+    <string name="lyrics_share_pick_limit">कार्ड भर चुका है</string>
     <string name="lyrics_translated_to">%1$s में अनुवादित</string>
     <string name="lyrics_translation_unavailable">अनुवाद अभी उपलब्ध नहीं है</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">YouTube Music पर लाखों गाने खोजें।</string>
     <string name="search_hint">कलाकार, गाने, लिरिक्स और बहुत कुछ</string>
     <string name="selected">चयनित</string>
+    <string name="share">शेयर करें</string>
     <string name="shelf_artists_on_the_rise">उभरते कलाकार</string>
     <string name="shelf_chart">चार्ट</string>
     <string name="shelf_charts">चार्ट्स</string>

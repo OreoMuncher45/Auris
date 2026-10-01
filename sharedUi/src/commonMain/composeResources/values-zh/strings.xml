@@ -15,11 +15,11 @@
     <string name="autoplay_on">AutoPlay 已开启</string>
     <string name="autoplay_queue_description">相似音乐，已选定接下来播放</string>
     <string name="bit_depth">%1$d 位</string>
+    <string name="cancel">取消</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">更改</string>
     <string name="channel_count">%1$d 声道</string>
     <string name="choose_lyrics_provider">选择歌词来源</string>
     <string name="clear">清除</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">这些歌词无法转换为罗马音</string>
     <string name="lyrics_romanized">罗马音发音</string>
     <string name="lyrics_saved_with_download">歌词已随此次下载保存</string>
+    <string name="lyrics_share_pick_limit">卡片已满</string>
     <string name="lyrics_translated_to">已翻译为%1$s</string>
     <string name="lyrics_translation_unavailable">翻译目前不可用</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">在 YouTube Music 上搜索数百万首歌曲。</string>
     <string name="search_hint">艺人、歌曲、歌词等</string>
     <string name="selected">已选择</string>
+    <string name="share">分享</string>
     <string name="shelf_artists_on_the_rise">新星艺人</string>
     <string name="shelf_chart">排行榜</string>
     <string name="shelf_charts">排行榜</string>

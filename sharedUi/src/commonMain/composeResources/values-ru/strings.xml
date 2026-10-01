@@ -15,11 +15,11 @@
     <string name="autoplay_on">Автовоспроизведение включено</string>
     <string name="autoplay_queue_description">Похожая музыка, выбранная для воспроизведения следующей</string>
     <string name="bit_depth">%1$d-бит</string>
+    <string name="cancel">Отмена</string>
     <string name="cast">Cast</string>
     <string name="cast_casting">Casting</string>
     <string name="cast_connecting">Connecting…</string>
     <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
-    <string name="change_lyrics_provider">Изменить</string>
     <string name="channel_count">%1$d кан.</string>
     <string name="choose_lyrics_provider">Выбрать источник текстов</string>
     <string name="clear">Очистить</string>
@@ -90,6 +90,7 @@
     <string name="lyrics_romanization_unavailable">Транслитерация недоступна для этого текста</string>
     <string name="lyrics_romanized">Произношение латиницей</string>
     <string name="lyrics_saved_with_download">Текст сохранён вместе с этой загрузкой</string>
+    <string name="lyrics_share_pick_limit">Карточка заполнена</string>
     <string name="lyrics_translated_to">Переведено на %1$s</string>
     <string name="lyrics_translation_unavailable">Перевод сейчас недоступен</string>
     <string name="medium_quality">Medium Quality</string>
@@ -158,6 +159,7 @@
     <string name="search_empty">Ищите миллионы песен на YouTube Music.</string>
     <string name="search_hint">Исполнители, песни, тексты и многое другое</string>
     <string name="selected">Выбрано</string>
+    <string name="share">Поделиться</string>
     <string name="shelf_artists_on_the_rise">Набирающие популярность</string>
     <string name="shelf_chart">Чарты</string>
     <string name="shelf_charts">Чарты</string>

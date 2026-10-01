@@ -19,9 +19,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -414,11 +416,22 @@ private data class TranslationParticle(
     val delay: Float,
 )
 
-/** Source/status caption with the provider chooser kept visually inline. */
+/**
+ * Source/status caption, with the provider chooser hung off the caption itself.
+ *
+ * The provider's name is the one line here that names something the reader can
+ * act on — it is a choice, not a fact — so it is the line that opens the
+ * chooser, underlined the way the other actions are.
+ *
+ * The link is absent where it has nothing to open: a line that only says the
+ * lookup is still running is a fact, and one that says there are no lyrics is a
+ * finding rather than a choice.
+ */
 @Composable
 internal fun LyricsStatusWithChange(
     status: String,
-    onChange: () -> Unit,
+    /** Present when [status] names something the reader can switch away from. */
+    onStatusClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
@@ -430,24 +443,24 @@ internal fun LyricsStatusWithChange(
             text = status,
             style = MaterialTheme.typography.titleMedium,
             color = Color.White.copy(alpha = 0.55f),
+            textDecoration = if (onStatusClick != null) TextDecoration.Underline else null,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = stringResource(Res.string.change_lyrics_provider),
-            style = MaterialTheme.typography.titleMedium,
-            color = Color.White.copy(alpha = 0.72f),
-            textDecoration = TextDecoration.Underline,
-            maxLines = 1,
-            modifier = Modifier.clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-            ) {
-                haptics.play(Haptic.Select)
-                onChange()
-            },
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .then(
+                    if (onStatusClick != null) {
+                        Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            haptics.play(Haptic.Select)
+                            onStatusClick()
+                        }
+                    } else {
+                        Modifier
+                    },
+                ),
         )
     }
 }
@@ -1388,6 +1401,7 @@ internal fun rememberPlayerControlsOnScroll(
  * Scrolling by hand clears the blur and suspends the auto-follow, so you can
  * read ahead; a couple of seconds after you stop it snaps back to the song.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun LyricsPanel(
     lines: List<LyricLine>,
@@ -1411,6 +1425,16 @@ internal fun LyricsPanel(
     /** Reports whether the lyric list is mid-scroll, so the player above it
      * can stand down its own swipe gestures for as long as it is. */
     onScrollingChange: (Boolean) -> Unit = {},
+    /** Whether this platform can turn picked lines into a card at all. */
+    canPick: Boolean = false,
+    /** Whether the reader is choosing lines to put on a share card. */
+    picking: Boolean = false,
+    /** Which lines are chosen, as indices into [lines]. */
+    picked: Set<Int> = emptySet(),
+    /** Long-press on a line: start picking, or fold that line into the pick. */
+    onPickLine: (Int) -> Unit = {},
+    /** Tap while picking: add or drop that line. */
+    onTogglePick: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val panelPlaying = isPlaying && active
@@ -1462,9 +1486,15 @@ internal fun LyricsPanel(
         derivedStateOf { listState.layoutInfo.viewportSize.height }
     }
     val keepScroll = remember(listState) { keepScrollInList(listState) }
-    var browsing by remember { mutableStateOf(false) }
+    var browsingByDrag by remember { mutableStateOf(false) }
+    // While picking lines, the panel must not auto-scroll — the reader needs
+    // the list to stay put so they can tap the lines they want.
+    val browsing = browsingByDrag || picking
     val onBottomHalfTap: () -> Unit = {
-        if (!listState.isScrollInProgress) {
+        // A pick has the whole panel to itself: the controls that a tap down
+        // there would pull back in are the player's transport, and it must not
+        // surface under somebody who is choosing lines.
+        if (!picking && !listState.isScrollInProgress) {
             onRevealControls()
         }
     }
@@ -1481,10 +1511,10 @@ internal fun LyricsPanel(
             if (interaction is DragInteraction.Start) {
                 // Suspends the panel's own following, and nothing more. Which
                 // way the drag is going is what decides the controls now — see
-                // [controlsOnScroll] — and hiding them here as well meant a
+                // [controlsOnScroll] — and hiding here as well meant a
                 // scroll *up*, the gesture that is supposed to bring them back,
                 // put them away first and then returned them.
-                browsing = true
+                browsingByDrag = true
             }
         }
     }
@@ -1502,7 +1532,7 @@ internal fun LyricsPanel(
     // hiding the controls by itself: this list scrolls on its own every time a
     // line lands, and that is not somebody reading on.
     val controlsOnScroll = rememberPlayerControlsOnScroll(
-        onReveal = onRevealControls,
+        onReveal = { if (!picking) onRevealControls() },
         onHide = onHideControls,
     )
 
@@ -1514,17 +1544,17 @@ internal fun LyricsPanel(
     }
     // Paused, there is no song to follow back to, so a hand scroll should sit
     // wherever it was left rather than snapping back on these timers.
-    LaunchedEffect(browsing, activeOnScreen, listState.isScrollInProgress, panelPlaying) {
-        if (panelPlaying && browsing && activeOnScreen && !listState.isScrollInProgress) {
+    LaunchedEffect(browsingByDrag, activeOnScreen, listState.isScrollInProgress, panelPlaying) {
+        if (panelPlaying && browsingByDrag && activeOnScreen && !listState.isScrollInProgress) {
             delay(600)
-            browsing = false
+            browsingByDrag = false
         }
     }
 
-    LaunchedEffect(browsing, listState.isScrollInProgress, panelPlaying) {
-        if (panelPlaying && browsing && !listState.isScrollInProgress) {
+    LaunchedEffect(browsingByDrag, listState.isScrollInProgress, panelPlaying) {
+        if (panelPlaying && browsingByDrag && !listState.isScrollInProgress) {
             delay(5_000)
-            browsing = false
+            browsingByDrag = false
         }
     }
 
@@ -1614,8 +1644,11 @@ internal fun LyricsPanel(
             .bleedHorizontally(PLAYER_GUTTER)
             .nestedScroll(controlsOnScroll)
             .nestedScroll(keepScroll)
-            // Browsing leaves taps to each lyric row's seek action throughout the list.
-            .revealLyricsControlsOnTap(!controlsOpen, onBottomHalfTap)
+            // Browsing leaves taps to each lyric row's seek action throughout
+            // the list — and picking leaves them nothing at all: the gesture
+            // below takes taps at the initial pass, so while a pick is open it
+            // would swallow every choice before the row ever saw it.
+            .revealLyricsControlsOnTap(!controlsOpen && !picking, onBottomHalfTap)
             .fadingEdges(),
         // Each row carries GLOW_ROOM of its own inset for the halo, so the
         // list hands that much back — otherwise the lines would sit a glow's
@@ -1724,7 +1757,10 @@ internal fun LyricsPanel(
                     modifier = Modifier
                         .blur(blur, BlurredEdgeTreatment.Unbounded)
                         .clip(RoundedCornerShape(10.dp))
-                        .clickable(enabled = isSynced) { onSeekToLine(line.timeMs) }
+                        // A gap is nothing to pick, so it only ever seeks — and
+                        // not even that while a pick is open, where a stray tap
+                        // in the silence would jump the song.
+                        .clickable(enabled = isSynced && !picking) { onSeekToLine(line.timeMs) }
                         // Matches the inset every sung line carries, so the
                         // rhythm of the list doesn't break at a break.
                         .padding(GLOW_ROOM)
@@ -1863,11 +1899,53 @@ internal fun LyricsPanel(
                     }
                     .blur(blur, BlurredEdgeTreatment.Unbounded)
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable(
-                        enabled = isSynced,
-                        interactionSource = interaction,
-                        indication = LocalIndication.current,
-                    ) { onSeekToLine(line.timeMs) }
+                    // The chosen lines are marked on the row itself rather
+                    // than with a mark beside it: a lane down the side would
+                    // have to be reserved for every line whether or not
+                    // anybody was picking, and this panel is words from edge
+                    // to edge. Everything else dims a little instead, so what
+                    // is picked is read against what isn't.
+                    .background(
+                        when {
+                            index in picked -> Color.White.copy(alpha = 0.16f)
+                            picking -> Color.White.copy(alpha = 0.05f)
+                            else -> Color.Transparent
+                        },
+                    )
+                    // A combined click because long-press is the way in: a list
+                    // of words gives no sign that pressing one does anything
+                    // beyond seeking, so the gesture has to be discoverable
+                    // from the header's link as well. Enabled only when there
+                    // is something to do — seek when the source stamps its
+                    // lines, choose while picking — so an unsynced row still
+                    // passes taps through to the panel behind it.
+                    .then(
+                        if (canPick) {
+                            Modifier.combinedClickable(
+                                enabled = picking || isSynced,
+                                interactionSource = interaction,
+                                indication = LocalIndication.current,
+                                onLongClick = { onPickLine(index) },
+                                onClick = {
+                                    if (picking) {
+                                        onTogglePick(index)
+                                    } else {
+                                        onSeekToLine(line.timeMs)
+                                    }
+                                },
+                            )
+                        } else {
+                            // Where a card cannot be made there is nothing to
+                            // pick, and a long press that did nothing would be
+                            // the only sign of it — so the row keeps the plain
+                            // tap it has always had.
+                            Modifier.clickable(
+                                enabled = isSynced,
+                                interactionSource = interaction,
+                                indication = LocalIndication.current,
+                            ) { onSeekToLine(line.timeMs) }
+                        },
+                    )
                 // Lead and answering vocal are one row: they are one line of
                 // the song, they scale and dim together, and tapping either
                 // seeks to the same place.
