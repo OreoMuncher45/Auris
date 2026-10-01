@@ -62,6 +62,7 @@ import com.music.bitchord.data.model.HEADER_ART_PX
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import java.util.Locale
 import com.music.bitchord.data.model.artworkAt
@@ -69,8 +70,10 @@ import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
+import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.SignInBanner
 import com.music.bitchord.ui.components.feedMoreSkeleton
 import com.music.bitchord.ui.components.feedSkeleton
@@ -83,6 +86,12 @@ import com.music.bitchord.ui.player.MeshPalette
 
 private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
+
+private fun ShelfItem.matchesCurrentlyPlaying(song: Song?): Boolean {
+    song ?: return false
+    if (videoId == null) return false
+    return videoId == song.videoId || (title == song.title && subtitle == song.artist)
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,6 +127,8 @@ fun HomeScreen(
      * there every shelf is the ordinary row.
      */
     leadHero: Boolean = true,
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
 
@@ -173,6 +184,8 @@ fun HomeScreen(
                         shelves = state.data,
                         onItemClick = onItemClick,
                         onItemLongPress = onItemLongPress,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
                         recentsViewType = recentsViewType,
                         onRecentsViewTypeToggle = {
@@ -219,6 +232,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     shelves: List<HomeShelf>,
     onItemClick: (ShelfItem, String) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
+    currentSong: Song?,
+    isPlaying: Boolean,
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
@@ -231,13 +246,27 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     shelf = shelf,
                     onItemClick = openItem,
                     onItemLongPress = onItemLongPress,
+                    currentSong = currentSong,
+                    isPlaying = isPlaying,
                     viewType = recentsViewType,
                     onViewTypeToggle = onRecentsViewTypeToggle,
                 )
             } else if (index == 0 && firstIsHero) {
-                HeroShelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
+                HeroShelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                    currentSong = currentSong,
+                    isPlaying = isPlaying,
+                )
             } else {
-                Shelf(shelf = shelf, onItemClick = openItem, onItemLongPress = onItemLongPress)
+                Shelf(
+                    shelf = shelf,
+                    onItemClick = openItem,
+                    onItemLongPress = onItemLongPress,
+                    currentSong = currentSong,
+                    isPlaying = isPlaying,
+                )
             }
         }
     }
@@ -249,6 +278,8 @@ private fun RecentShelf(
     shelf: HomeShelf,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
+    currentSong: Song?,
+    isPlaying: Boolean,
     viewType: LibraryViewType,
     onViewTypeToggle: () -> Unit,
 ) {
@@ -273,6 +304,8 @@ private fun RecentShelf(
                                     item = item,
                                     onClick = { onItemClick(item) },
                                     onLongPress = onItemLongPress?.let { { it(item) } },
+                                    isCurrent = item.matchesCurrentlyPlaying(currentSong),
+                                    isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
                                 )
                             }
                         }
@@ -292,6 +325,8 @@ private fun RecentShelf(
                             onClick = { onItemClick(item) },
                             onLongPress = onItemLongPress?.let { { it(item) } },
                             modifier = Modifier.width(cardWidth),
+                            isCurrent = item.matchesCurrentlyPlaying(currentSong),
+                            isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
                         )
                     }
                 }
@@ -364,6 +399,8 @@ private fun RecentTrackRow(
     item: ShelfItem,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)?,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
 ) {
     CompactTrackRow(
         title = item.title,
@@ -371,6 +408,8 @@ private fun RecentTrackRow(
         thumbnailUrl = item.thumbnailUrl,
         onClick = onClick,
         onLongPress = onLongPress,
+        isCurrent = isCurrent,
+        isPlaying = isPlaying,
     )
 }
 
@@ -386,6 +425,8 @@ fun CompactTrackRow(
     thumbnailUrl: String?,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)?,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -395,22 +436,25 @@ fun CompactTrackRow(
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = thumbnailUrl.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .thumbnailBorder(RoundedCornerShape(7.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        Box(Modifier.size(48.dp)) {
+            AsyncImage(
+                model = thumbnailUrl.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .thumbnailBorder(RoundedCornerShape(7.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+            if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+        }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -663,6 +707,8 @@ private fun HeroShelf(
     shelf: HomeShelf,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
@@ -683,6 +729,8 @@ private fun HeroShelf(
                         onClick = { onItemClick(item) },
                         onLongPress = onItemLongPress?.let { { it(item) } },
                         modifier = Modifier.width(cardWidth),
+                        isCurrent = item.matchesCurrentlyPlaying(currentSong),
+                        isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
                     )
                 }
             }
@@ -698,6 +746,8 @@ private fun HeroCard(
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
 ) {
     Box(
         modifier = modifier
@@ -714,6 +764,7 @@ private fun HeroCard(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
         )
+        if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -728,7 +779,7 @@ private fun HeroCard(
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
+                color = if (isCurrent) PlayingAccent else Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -760,6 +811,8 @@ internal fun Shelf(
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)? = null,
     leadingCard: (@Composable () -> Unit)? = null,
+    currentSong: Song? = null,
+    isPlaying: Boolean = false,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
         SectionHeader(shelf.title, shelf.subtitle)
@@ -773,6 +826,8 @@ internal fun Shelf(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = onItemLongPress?.let { { it(item) } },
+                    isCurrent = item.matchesCurrentlyPlaying(currentSong),
+                    isPlaying = item.matchesCurrentlyPlaying(currentSong) && isPlaying,
                 )
             }
         }
@@ -867,6 +922,8 @@ internal fun ShelfCard(
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
     /** Set on a Library playlist card that's in [AppSettings.pinnedPlaylists][com.music.bitchord.data.settings.AppSettings.pinnedPlaylists]. */
     isPinned: Boolean = false,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
 ) {
     Column(
         modifier = modifier
@@ -913,17 +970,22 @@ internal fun ShelfCard(
                 icon = Icons.Rounded.Storage,
             )
             else -> {
-                AsyncImage(
-                    model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
-                    contentDescription = null,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(1f)
                         .clip(RoundedCornerShape(12.dp))
                         .thumbnailBorder(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.surfaceVariant),
-                )
+                ) {
+                    AsyncImage(
+                        model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+                }
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -943,7 +1005,7 @@ internal fun ShelfCard(
             Text(
                 text = item.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
