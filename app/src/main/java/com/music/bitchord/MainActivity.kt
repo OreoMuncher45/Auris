@@ -2438,6 +2438,8 @@ private fun BitChordApp(
                         HistoryScreen(
                             state = historyState,
                             listState = historyListState,
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
                             onSongClick = { songs, index ->
                                 playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
                             },
@@ -2759,6 +2761,8 @@ private fun BitChordApp(
                         TAB_HOME -> HomeScreen(
                             state = homeState,
                             listState = homeListState,
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
                             title = stringResource(R.string.listen_now),
                             signedIn = signedIn,
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
@@ -2837,6 +2841,8 @@ private fun BitChordApp(
                             query = query,
                             onQueryChange = viewModel::onQueryChange,
                             filter = filter,
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
                             onFilterChange = viewModel::onFilterChange,
                             results = results,
                             loadingMore = searchLoadingMore,
