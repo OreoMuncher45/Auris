@@ -134,15 +134,20 @@ internal object DesktopSourceRegistry {
      * The sources a *stream* may come from: enabled, complete, and permitted by the ceiling in
      * force.
      */
-    private fun playbackAdapters(quality: String?): List<SourceAdapter> {
+    private fun playbackAdapters(quality: String?, forDownload: Boolean = false): List<SourceAdapter> {
         val ceiling = ceiling(quality)
-        return adapters().filter { ceiling.permits(it.config.kind) }
+        return adapters(forDownload).filter { ceiling.permits(it.config.kind) }
     }
 
-    private fun adapters(): List<SourceAdapter> =
+    /**
+     * For a download, minus any addon whose manifest says `allowDownloads: 0`, so the next source
+     * in line serves the file.
+     */
+    private fun adapters(forDownload: Boolean = false): List<SourceAdapter> =
         configs()
             .inSourceOrder()
             .filter { it.enabled && it.isComplete }
+            .filterNot { forDownload && it.kind == DesktopSourceKind.ADDON && !DesktopAddonSource.allowsDownloads(it) }
             .map { config ->
                 when (config.kind) {
                     DesktopSourceKind.ADDON -> AddonAdapter(config)
@@ -168,8 +173,10 @@ internal object DesktopSourceRegistry {
         song: Song,
         quality: String?,
         excludedSourceId: String? = null,
+        /** A download: addons that said `allowDownloads: 0` are left out, see [adapters]. */
+        forDownload: Boolean = false,
     ): Result<DesktopStream> = runCatching {
-        val available = playbackAdapters(quality)
+        val available = playbackAdapters(quality, forDownload)
         val moduleReference = DesktopModuleSource.parseTrack(song.videoId)
         val addonReference = DesktopAddonSource.parseTrack(song.videoId)
         val owned = when {
@@ -182,7 +189,12 @@ internal object DesktopSourceRegistry {
             else -> null
         }
 
-        if (addonReference != null || moduleReference != null || song.videoId.startsWith("jiosaavn:")) {
+        // A row from an addon that is out of the walk only for policy — a download from one whose
+        // manifest says `allowDownloads: 0` — is looked up elsewhere, like any other track, rather
+        // than refused the way a disabled source's row is.
+        val heldBack = addonReference != null && owned == null &&
+            configs().any { it.id == addonReference.sourceId && it.enabled && it.isComplete }
+        if (!heldBack && (addonReference != null || moduleReference != null || song.videoId.startsWith("jiosaavn:"))) {
             if (owned == null) error("The source for this track is disabled or no longer configured")
             // This path has nothing to race.
             DesktopTrackLog.log(
@@ -241,7 +253,9 @@ internal object DesktopSourceRegistry {
                     "No enabled music source is configured"
                 },
             )
-        youtube.resolve(song, quality).fold(
+        // A held-back addon row carries that addon's id, which means nothing to YouTube.
+        val target = if (heldBack) youtube.match(song) ?: error("No other source has a copy of this track") else song
+        youtube.resolve(target, quality).fold(
             onSuccess = { it ?: error("${youtube.descriptor.name} did not return an audio stream") },
             onFailure = { throw it },
         )

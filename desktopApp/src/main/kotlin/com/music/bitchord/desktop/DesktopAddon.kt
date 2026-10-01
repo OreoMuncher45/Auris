@@ -42,7 +42,14 @@ internal data class DesktopAddonManifest(
      * The settings schema the addon declares, read for its *defaults* rather than to build a form.
      */
     @SerialName("settings") val settings: List<DesktopAddonSetting> = emptyList(),
+    /**
+     * `allowDownloads` — `0` keeps the addon to playback only. Absent means allowed. (Android also
+     * reads `checkValidLossless`; the desktop app deliberately does not.)
+     */
+    @SerialName("allowDownloads") val allowDownloads: JsonElement? = null,
 ) {
+    val downloadsAllowed: Boolean get() = allowDownloads.asFlag() ?: true
+
     fun declares(resource: String): Boolean = resources.any { it.equals(resource, ignoreCase = true) }
 
     /** Whether this addon is worth asking anything. */
@@ -208,6 +215,22 @@ private val ATMOS_HINT = Regex("""atmos|dolby|eac3[_-]?joc|e-?ac-?3|ec-?3""", Re
 internal object DesktopAddonSettings {
     @Volatile
     var dolbyAtmosEnabled: Boolean = DesktopPersistence().boolean("dolby_atmos", true)
+}
+
+/**
+ * A manifest switch however the addon wrote it — `1`/`0`, `true`/`false`, or either as a string —
+ * or null for "use the default", so a typo cannot flip a policy the wrong way. Same rule as
+ * Android's `AddonModels.asFlag`.
+ */
+internal fun JsonElement?.asFlag(): Boolean? {
+    val primitive = this as? JsonPrimitive ?: return null
+    if (primitive is JsonNull) return null
+    primitive.booleanOrNull?.let { return it }
+    return when (primitive.content.trim().lowercase()) {
+        "1", "true", "yes", "on" -> true
+        "0", "false", "no", "off" -> false
+        else -> primitive.content.toDoubleOrNull()?.let { it != 0.0 }
+    }
 }
 
 private fun JsonElement.asQueryValue(): String? {
@@ -496,12 +519,39 @@ internal object DesktopAddonSource {
     /** Drops completed catalogue and stream answers but preserves requests already in flight. */
     fun clearCompletedTrackCalls() = clients.values.forEach(DesktopAddonClient::clearCompletedTrackCalls)
 
+    // ── Manifest policy ─────────────────────────────────────────────────
+
+    /**
+     * What each addon's manifest said about `allowDownloads` this session. Read ahead of the
+     * stored config, which only catches up when the value actually changes.
+     */
+    private val learned = ConcurrentHashMap<String, Boolean>()
+
+    fun allowsDownloads(config: DesktopSourceConfig): Boolean = learned[config.id] ?: config.allowDownloads
+
+    /** Picks up a changed `allowDownloads` from the manifest — the client's cached copy, which the request reads anyway. */
+    private suspend fun refreshPolicy(config: DesktopSourceConfig) {
+        client(config).manifest().getOrNull()?.let { record(config, it) }
+    }
+
+    private fun record(config: DesktopSourceConfig, manifest: DesktopAddonManifest) {
+        val allowed = manifest.downloadsAllowed
+        if (learned.put(config.id, allowed) == allowed || config.allowDownloads == allowed) return
+        val persistence = DesktopPersistence()
+        val stored = persistence.sourceConfigs()
+        // An unsaved candidate from the editor has nothing to update.
+        if (stored.none { it.id == config.id }) return
+        DesktopTrackLog.log("${config.displayName}: manifest now says allowDownloads=$allowed")
+        persistence.saveSourceConfigs(stored.map { if (it.id == config.id) it.copy(allowDownloads = allowed) else it })
+    }
+
     /** Whether this addon can be used, and what to say about it. */
     suspend fun health(config: DesktopSourceConfig): Result<String> {
         if (config.baseUrl.isBlank()) return Result.failure(DesktopAddonException("An addon URL is required"))
         val addon = client(config)
         return addon.manifest().fold(
             onSuccess = { manifest ->
+                record(config, manifest)
                 Result.success(
                     listOfNotNull(
                         manifest.displayName.takeIf { it.isNotBlank() },
@@ -529,6 +579,7 @@ internal object DesktopAddonSource {
         limit: Int,
     ): Result<List<SearchResult>> = runCatching {
         if (query.isBlank()) return@runCatching emptyList()
+        refreshPolicy(config)
         val tracks = client(config)
             .search(query, DesktopAddonClient.TIER_LOSSLESS)
             .getOrElse { return@runCatching emptyList() }
@@ -580,6 +631,7 @@ internal object DesktopAddonSource {
     ): Result<DesktopStream?> = runCatching {
         val reference = parseTrack(song.videoId)
             ?: return@runCatching null
+        refreshPolicy(config)
         val tier = tierFor(quality)
         val outcome = client(config).stream(reference.trackId, tier)
         val answer = outcome.getOrNull()

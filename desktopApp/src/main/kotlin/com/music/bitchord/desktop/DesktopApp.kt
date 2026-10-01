@@ -5934,6 +5934,10 @@ private fun DesktopSourceSettingsRow(
                     !config.isComplete -> "Setup required"
                     config.kind.needsServer -> "Checking…"
                     else -> config.kind.detail
+                } + if (!config.allowDownloads) {
+                    " · " + DesktopStrings["source_downloads_off", "Streaming only"]
+                } else {
+                    ""
                 },
                 color = if (skippedByQuality) DesktopAccent else DesktopSecondary,
                 style = MaterialTheme.typography.bodySmall,
@@ -5994,6 +5998,7 @@ private fun DesktopSourceEditorDialog(
                                 kind = DesktopSourceKind.ADDON,
                                 baseUrl = detected.baseUrl,
                                 label = candidate.label.ifBlank { detected.manifest.displayName },
+                                allowDownloads = detected.manifest.downloadsAllowed,
                             )
                             val duplicate = configuredSources.duplicateOf(named.baseUrl, exceptId = named.id)
                             if (duplicate != null) {

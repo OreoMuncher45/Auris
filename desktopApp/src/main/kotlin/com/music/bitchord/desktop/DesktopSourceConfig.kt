@@ -103,6 +103,8 @@ internal data class DesktopSourceConfig(
     val label: String = "",
     val baseUrl: String = "",
     val enabled: Boolean = true,
+    /** The addon manifest's `allowDownloads`, as last read. */
+    val allowDownloads: Boolean = true,
 ) {
     val displayName: String
         get() = label.ifBlank {

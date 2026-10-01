@@ -27,7 +27,7 @@ object DesktopDownloadManager {
         if (job != null) activeJobs[song.videoId] = job
         return try {
             require(song.localPath == null) { "This track is already local" }
-            val stream = DesktopMusicSources.resolve(song, quality).getOrThrow()
+            val stream = DesktopMusicSources.resolve(song, quality, forDownload = true).getOrThrow()
             val directory = Path.of(System.getProperty("user.home"), "Music", "BitChord")
             Files.createDirectories(directory)
             val safeName = buildString {
@@ -35,10 +35,30 @@ object DesktopDownloadManager {
                 append(" - ")
                 append(song.title)
             }.replace(ILLEGAL_FILENAME, "_").trim().take(180).ifBlank { song.videoId }
-            val extension = stream.format.fileExtension()
+            // A manifest is an index of the audio, not the audio: fetched as a file it saved a few
+            // KB of XML as `.flac`. Its segments are fMP4, so it can only become FLAC or M4A.
+            val manifest = DesktopManifestDownload.isManifest(stream)
+            val extension = stream.format.fileExtension().let { if (manifest && it != "flac") "m4a" else it }
             val target = directory.resolve("$safeName.$extension")
             val temporary = directory.resolve(".$safeName.$extension.part")
             if (Files.isRegularFile(target) && Files.size(target) > 0L) {
+                return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
+            }
+
+            if (manifest) {
+                // Segments are fetched and joined whole, so there is no partial file to resume.
+                Files.deleteIfExists(temporary)
+                Files.newOutputStream(temporary).buffered().use { output ->
+                    DesktopManifestDownload.save(
+                        stream,
+                        extension,
+                        output,
+                        tempDir = java.io.File(System.getProperty("java.io.tmpdir")),
+                        userAgent = DOWNLOAD_USER_AGENT,
+                    ) { done, total -> onProgress(done, total) }
+                }
+                check(Files.size(temporary) > 0L) { "Download failed: nothing was sent" }
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
                 return Result.success(song.copy(localUri = target.toUri().toString(), localPath = target.toString()))
             }
 
