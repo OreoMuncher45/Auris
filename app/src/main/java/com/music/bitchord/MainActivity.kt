@@ -96,6 +96,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -191,7 +192,10 @@ import com.music.bitchord.ui.components.BrowseTarget
 import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
+import com.music.bitchord.ui.components.LongPressOrigin
+import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
+import com.music.bitchord.ui.components.SongContextMenu
 import androidx.media3.session.MediaController
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.rememberMediaController
@@ -512,9 +516,17 @@ private fun BitChordApp(
      * question has to be answered by whoever opened the menu.
      */
     var menuFromPlayer by remember { mutableStateOf(false) }
+    /**
+     * Where the row that opened the track menu was held, in window
+     * coordinates, or null when it was opened any other way. Non-null lifts
+     * the row into [SongContextMenu]; null keeps the bottom sheet — which is
+     * what the ⋮ on the very same row still opens.
+     */
+    var songMenuOrigin by remember { mutableStateOf<Rect?>(null) }
     /** Holding a row anywhere but the player — the menu without the player's rows. */
     val openSongMenu: (Song) -> Unit = { song ->
         menuFromPlayer = false
+        songMenuOrigin = LongPressOrigin.consume()
         songActions = song
     }
     // Whether the player's album/artist lookup (below, for the current track)
@@ -2128,6 +2140,7 @@ private fun BitChordApp(
             // ids have been resolved.
             onOpenMenu = {
                 menuFromPlayer = true
+                songMenuOrigin = null
                 songActions = song
             },
             onOpenAlbum = { id ->
@@ -2416,7 +2429,7 @@ private fun BitChordApp(
                             onSongClick = { songs, index ->
                                 playFrom(songs, index, QueueSource(historyLabel, PlaybackSourceType.HISTORY))
                             },
-                            onSongLongPress = { songActions = it },
+                            onSongLongPress = openSongMenu,
                             onSongSwipe = onSongSwipe,
                             onRetry = viewModel::loadHistory,
                             contentPadding = listPadding,
@@ -3410,7 +3423,10 @@ private fun BitChordApp(
 
         // ---- Album / playlist detail ----
         // ---- Long-press track actions ----
-        songActions?.let { song ->
+        // One body for both presentations of the track menu: the sheet the ⋮
+        // and the player open, and the popup a held row lifts into. Every
+        // callback below is the same in either; only the frame differs.
+        val songMenuBody: @Composable (Song, SongActionsPresentation) -> Unit = { song, presentation ->
             // Set by whoever opened it — see [menuFromPlayer]. It cannot be
             // read off the player's own visibility any more, because on a
             // tablet the player is visible whatever the menu was opened from.
@@ -3538,6 +3554,173 @@ private fun BitChordApp(
             // carries the per-entry id a removal is expressed in.
             val editable = viewModel.editablePlaylist(detail?.browseId)
                 ?.takeIf { !fromPlayer && song.setVideoId != null }
+            SongActionsSheet(
+                song = song,
+                presentation = presentation,
+                signedIn = signedIn,
+                likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
+                onPlayNext = { playNext(song); songActions = null },
+                onAddToQueue = { addToQueue(song); songActions = null },
+                onStartRadio = { startRadio(song); songActions = null },
+                // Stays open: the row it replaces itself with is the
+                // progress, and closing the sheet would hide the only
+                // answer to "did that work?".
+                onDownload = { downloadSong(song) },
+                // The other direction: a device file going up to the
+                // server. Closed first, unlike a download — progress and
+                // the summary notice live outside the sheet.
+                onUploadToWebDav =
+                    if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
+                        com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
+                    ) {
+                        {
+                            songActions = null
+                            uploadToWebDav(listOf(song))
+                        }
+                    } else {
+                        null
+                    },
+                // The sheet stays up for a rating: it shows the new state
+                // in place, and people often thumb a song and then queue it.
+                onToggleLike = { viewModel.toggleLike(song.videoId) },
+                onToggleDislike = {
+                    val previousStatus = viewModel.toggleDislike(song.videoId)
+                    if (
+                        previousStatus != null &&
+                        shouldSkipAfterDislike(
+                            previousStatus = previousStatus,
+                            targetVideoId = song.videoId,
+                            currentVideoId = player.song?.videoId,
+                        )
+                    ) {
+                        controller?.seekToNextMediaItem()
+                    }
+                },
+                onAddToPlaylist = {
+                    songActions = null
+                    viewModel.loadPlaylists()
+                    playlistTarget = song
+                },
+                onRemoveFromPlaylist = editable?.let {
+                    {
+                        songActions = null
+                        viewModel.removeFromPlaylist(it.browseId, song)
+                    }
+                },
+                onOpenAlbum = { id ->
+                    openPage(
+                        id,
+                        song.albumName ?: song.title,
+                        song.artist,
+                        BrowseType.ALBUM,
+                    )
+                },
+                onOpenArtist = { id ->
+                    openPage(id, song.artist, context.getString(R.string.artist), BrowseType.ARTIST)
+                },
+                // Only the player's copy of a track is ever missing these
+                // and backfilling — a row opened from a list already has
+                // whatever ids it's ever going to have.
+                resolvingLinks = fromPlayer && linksLoading,
+                showSleepTimer = fromPlayer,
+                // Offered for every playing track with a YouTube upload
+                // behind it, not only for one an upgrade visibly swapped:
+                // a source ranked above YouTube can be playing its own
+                // idea of the song from the first second, and a wrong
+                // match sounds like a wrong match whether or not anything
+                // announced itself. See [Song.hasYouTubeOriginal].
+                onRollbackToOriginal = if (fromPlayer &&
+                    song.hasYouTubeOriginal() &&
+                    // Nothing to revert *from*: the listener is hearing a
+                    // file they saved, not a stream anything chose.
+                    song.localUri == null &&
+                    // Already there, and the menu says so with the row
+                    // below instead.
+                    song.videoId !in pinnedToOriginal &&
+                    // And the same for a track that got back here without
+                    // the listener asking: an upgrade that failed to prove
+                    // itself is reverted automatically and pins nothing, so
+                    // this row was being offered for a track already on
+                    // YouTube's own stream, where it does nothing.
+                    !playingYouTubesOwn(song.videoId, controller) &&
+                    controller?.currentMediaItem?.mediaId == song.videoId
+                ) {
+                    {
+                        controller?.revertToOriginal()
+                        songActions = null
+                    }
+                } else {
+                    null
+                },
+                // The way back, and for a pinned track the only one: it is
+                // held off the automatic search on purpose, so nothing but
+                // this will ever offer it a better copy again. Also shown
+                // for a track whose upgrade failed and was reverted, which
+                // is likewise sitting on YouTube's own stream with nothing
+                // due to look at it again — [QualityUpgrade.refuseUpgrades]
+                // takes a broken track off the automatic path for the rest
+                // of the session, and `askByHand` is what clears that.
+                onUpgradeQuality = if (fromPlayer &&
+                    (
+                        song.videoId in pinnedToOriginal ||
+                            playingYouTubesOwn(song.videoId, controller)
+                        ) &&
+                    // A track playing off a file the listener saved is not
+                    // playing a stream anything could upgrade — the pin on
+                    // it is only waiting for the day it is streamed again.
+                    song.localUri == null &&
+                    controller?.currentMediaItem?.mediaId == song.videoId
+                ) {
+                    {
+                        controller.upgradeQuality()
+                        songActions = null
+                    }
+                } else {
+                    null
+                },
+                upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
+                onToggleAudioVersion = onToggleVersion,
+                isAudioVersion = menuIsAudioVersion,
+                // Hidden outright when there's no real YouTube id behind
+                // this row to build a link from — SongActionsSheet already
+                // drops it for a local file via `isOffline`, this catches
+                // the rest.
+                onShare = share.takeIf { song.videoId.isNotBlank() },
+                onCopyLog = if (fromPlayer) {
+                    {
+                        songActions = null
+                        scope.launch {
+                            val text = TrackLog.forTrack(song, NerdStats.current.value)
+                            clipboard.setText(AnnotatedString(text))
+                            // The line count, not just "copied": it is the
+                            // one thing the system's own paste confirmation
+                            // doesn't say, and an empty log is a real
+                            // outcome worth seeing rather than a silent one.
+                            Toast.makeText(
+                                context,
+                                context.resources.getQuantityString(
+                                    R.plurals.log_copied_line_count,
+                                    text.lineSequence().count(),
+                                    text.lineSequence().count(),
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                    }
+                } else {
+                    null
+                },
+                onLyricsOffset = if (fromPlayer) {
+                    {
+                        songActions = null
+                        showLyricsOffset = true
+                    }
+                } else {
+                    null
+                },
+            )
+        }
+        songActions?.takeIf { songMenuOrigin == null }?.let { song ->
             ModalBottomSheet(
                 onDismissRequest = { songActions = null },
                 // The sheet paints itself in the track's own colours, corners
@@ -3545,171 +3728,29 @@ private fun BitChordApp(
                 containerColor = Color.Transparent,
                 dragHandle = null,
             ) {
-                SongActionsSheet(
-                    song = song,
-                    signedIn = signedIn,
-                    likeStatus = likeStatuses[song.videoId] ?: LikeStatus.INDIFFERENT,
-                    onPlayNext = { playNext(song); songActions = null },
-                    onAddToQueue = { addToQueue(song); songActions = null },
-                    onStartRadio = { startRadio(song); songActions = null },
-                    // Stays open: the row it replaces itself with is the
-                    // progress, and closing the sheet would hide the only
-                    // answer to "did that work?".
-                    onDownload = { downloadSong(song) },
-                    // The other direction: a device file going up to the
-                    // server. Closed first, unlike a download — progress and
-                    // the summary notice live outside the sheet.
-                    onUploadToWebDav =
-                        if (com.music.bitchord.data.webdav.WebDavConfig.isConfigured(webdavUrl) &&
-                            com.music.bitchord.data.webdav.WebDavUploads.isUploadable(song)
-                        ) {
-                            {
-                                songActions = null
-                                uploadToWebDav(listOf(song))
-                            }
-                        } else {
-                            null
-                        },
-                    // The sheet stays up for a rating: it shows the new state
-                    // in place, and people often thumb a song and then queue it.
-                    onToggleLike = { viewModel.toggleLike(song.videoId) },
-                    onToggleDislike = {
-                        val previousStatus = viewModel.toggleDislike(song.videoId)
-                        if (
-                            previousStatus != null &&
-                            shouldSkipAfterDislike(
-                                previousStatus = previousStatus,
-                                targetVideoId = song.videoId,
-                                currentVideoId = player.song?.videoId,
-                            )
-                        ) {
-                            controller?.seekToNextMediaItem()
-                        }
-                    },
-                    onAddToPlaylist = {
-                        songActions = null
-                        viewModel.loadPlaylists()
-                        playlistTarget = song
-                    },
-                    onRemoveFromPlaylist = editable?.let {
-                        {
-                            songActions = null
-                            viewModel.removeFromPlaylist(it.browseId, song)
-                        }
-                    },
-                    onOpenAlbum = { id ->
-                        openPage(
-                            id,
-                            song.albumName ?: song.title,
-                            song.artist,
-                            BrowseType.ALBUM,
-                        )
-                    },
-                    onOpenArtist = { id ->
-                        openPage(id, song.artist, context.getString(R.string.artist), BrowseType.ARTIST)
-                    },
-                    // Only the player's copy of a track is ever missing these
-                    // and backfilling — a row opened from a list already has
-                    // whatever ids it's ever going to have.
-                    resolvingLinks = fromPlayer && linksLoading,
-                    showSleepTimer = fromPlayer,
-                    // Offered for every playing track with a YouTube upload
-                    // behind it, not only for one an upgrade visibly swapped:
-                    // a source ranked above YouTube can be playing its own
-                    // idea of the song from the first second, and a wrong
-                    // match sounds like a wrong match whether or not anything
-                    // announced itself. See [Song.hasYouTubeOriginal].
-                    onRollbackToOriginal = if (fromPlayer &&
-                        song.hasYouTubeOriginal() &&
-                        // Nothing to revert *from*: the listener is hearing a
-                        // file they saved, not a stream anything chose.
-                        song.localUri == null &&
-                        // Already there, and the menu says so with the row
-                        // below instead.
-                        song.videoId !in pinnedToOriginal &&
-                        // And the same for a track that got back here without
-                        // the listener asking: an upgrade that failed to prove
-                        // itself is reverted automatically and pins nothing, so
-                        // this row was being offered for a track already on
-                        // YouTube's own stream, where it does nothing.
-                        !playingYouTubesOwn(song.videoId, controller) &&
-                        controller?.currentMediaItem?.mediaId == song.videoId
-                    ) {
-                        {
-                            controller?.revertToOriginal()
-                            songActions = null
-                        }
-                    } else {
-                        null
-                    },
-                    // The way back, and for a pinned track the only one: it is
-                    // held off the automatic search on purpose, so nothing but
-                    // this will ever offer it a better copy again. Also shown
-                    // for a track whose upgrade failed and was reverted, which
-                    // is likewise sitting on YouTube's own stream with nothing
-                    // due to look at it again — [QualityUpgrade.refuseUpgrades]
-                    // takes a broken track off the automatic path for the rest
-                    // of the session, and `askByHand` is what clears that.
-                    onUpgradeQuality = if (fromPlayer &&
-                        (
-                            song.videoId in pinnedToOriginal ||
-                                playingYouTubesOwn(song.videoId, controller)
-                            ) &&
-                        // A track playing off a file the listener saved is not
-                        // playing a stream anything could upgrade — the pin on
-                        // it is only waiting for the day it is streamed again.
-                        song.localUri == null &&
-                        controller?.currentMediaItem?.mediaId == song.videoId
-                    ) {
-                        {
-                            controller.upgradeQuality()
-                            songActions = null
-                        }
-                    } else {
-                        null
-                    },
-                    upgradeQualityInProgress = fromPlayer && song.videoId in qualityUpgradesInFlight,
-                    onToggleAudioVersion = onToggleVersion,
-                    isAudioVersion = menuIsAudioVersion,
-                    // Hidden outright when there's no real YouTube id behind
-                    // this row to build a link from — SongActionsSheet already
-                    // drops it for a local file via `isOffline`, this catches
-                    // the rest.
-                    onShare = share.takeIf { song.videoId.isNotBlank() },
-                    onCopyLog = if (fromPlayer) {
-                        {
-                            songActions = null
-                            scope.launch {
-                                val text = TrackLog.forTrack(song, NerdStats.current.value)
-                                clipboard.setText(AnnotatedString(text))
-                                // The line count, not just "copied": it is the
-                                // one thing the system's own paste confirmation
-                                // doesn't say, and an empty log is a real
-                                // outcome worth seeing rather than a silent one.
-                                Toast.makeText(
-                                    context,
-                                    context.resources.getQuantityString(
-                                        R.plurals.log_copied_line_count,
-                                        text.lineSequence().count(),
-                                        text.lineSequence().count(),
-                                    ),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
-                    } else {
-                        null
-                    },
-                    onLyricsOffset = if (fromPlayer) {
-                        {
-                            songActions = null
-                            showLyricsOffset = true
-                        }
-                    } else {
-                        null
-                    },
-                )
+                songMenuBody(song, SongActionsPresentation.Sheet)
             }
+        }
+        // Drawn over everything, tab bar and mini player included, and kept
+        // composed through its own exit — so it is not gated on songActions.
+        SongContextMenu(
+            song = songActions,
+            origin = songMenuOrigin,
+            hazeState = hazeState,
+            onDismiss = { songActions = null },
+            onOpenAlbum = { song ->
+                song.albumId?.let { id ->
+                    songActions = null
+                    viewModel.openDetail(id, song.albumName ?: song.title, song.artist, song.thumbnailUrl, BrowseType.ALBUM)
+                }
+            },
+        ) { song ->
+            songMenuBody(song, SongActionsPresentation.Menu)
+        }
+        // A closed menu forgets where it was held, so whatever opens it next
+        // — the ⋮, the player — starts from the sheet.
+        LaunchedEffect(songActions == null) {
+            if (songActions == null) songMenuOrigin = null
         }
 
         // ---- Download manager ----
