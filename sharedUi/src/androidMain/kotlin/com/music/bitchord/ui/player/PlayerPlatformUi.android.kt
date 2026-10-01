@@ -101,6 +101,13 @@ private object OverlayBack {
     }
 }
 
+/**
+ * A touch drag is the only thing that can move this platform's drawer, and a
+ * drag is also how the list inside it scrolls — so a finger that runs out of
+ * list has to take the drawer with it. See [PlayerDrawer].
+ */
+internal actual val drawerFollowsListScroll: Boolean get() = true
+
 internal actual fun DrawScope.clipShiftedDown(
     left: Float,
     top: Float,
