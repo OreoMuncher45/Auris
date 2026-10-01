@@ -15,6 +15,10 @@
     <string name="autoplay_on">AutoPlay attivo</string>
     <string name="autoplay_queue_description">Musica simile, selezionata per la riproduzione successiva</string>
     <string name="bit_depth">%1$d bit</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">Cambia</string>
     <string name="channel_count">%1$d canali</string>
     <string name="choose_lyrics_provider">Scegli la fonte dei testi</string>

@@ -617,6 +617,7 @@ fun NowPlayingScreen(
     // the bottom navigation pill.
     val playerHaze = remember { HazeState() }
     var showAudioPipeline by remember { mutableStateOf(false) }
+    var showCast by remember { mutableStateOf(false) }
     var showAudioOutput by remember { mutableStateOf(false) }
     var showLyricsProviders by remember { mutableStateOf(false) }
     // Gated on the Bluetooth permission the first time — see [rememberOutputPicker].
@@ -857,6 +858,8 @@ fun NowPlayingScreen(
     PlayerBackHandler(enabled = showListenTogetherMembers) { showListenTogetherMembers = false }
 
     PlayerBackHandler(enabled = showAudioPipeline) { showAudioPipeline = false }
+
+    PlayerBackHandler(enabled = showCast) { showCast = false }
 
     PlayerBackHandler(enabled = lyricsOffsetOpen, onBack = onDismissLyricsOffset)
 
@@ -1244,8 +1247,8 @@ fun NowPlayingScreen(
     // screen, the landscape one on the sleeve alone — the right column there is
     // full of horizontal sliders and a lyric list that should not be one stray
     // sideways drag away from changing the song.
-    val skipSwipeGesture = Modifier.pointerInput(showAudioPipeline, panelScrolling, controlsLocked) {
-        if (showAudioPipeline || panelScrolling) return@pointerInput
+    val skipSwipeGesture = Modifier.pointerInput(showAudioPipeline, showCast, panelScrolling, controlsLocked) {
+        if (showAudioPipeline || showCast || panelScrolling) return@pointerInput
         var total = 0f
         detectHorizontalDragGestures(
             onDragStart = { total = 0f },
@@ -1335,6 +1338,7 @@ fun NowPlayingScreen(
                 accountName = accountName,
                 onDismiss = { showAudioOutput = false },
                 onOpenPipeline = { showAudioPipeline = true },
+                onOpenCast = { showCast = true },
             )
         }
         if (showLyricsProviders) {
@@ -1351,6 +1355,12 @@ fun NowPlayingScreen(
                 hazeState = playerHaze,
                 isPlaying = isPlaying,
                 onDismiss = { showAudioPipeline = false },
+            )
+        }
+        if (showCast) {
+            PlayerPlatform.host.CastDialog(
+                hazeState = playerHaze,
+                onDismiss = { showCast = false },
             )
         }
         if (showListenTogetherMembers) {
@@ -1648,15 +1658,20 @@ fun NowPlayingScreen(
         // retained layers' alpha changes when a panel opens, so the full-cover
         // blur is neither rebuilt nor switched in on a hard frame boundary.
         // The tablet has no mirrored main-player treatment to crossfade from.
+        // Legacy mesh is the whole backdrop on every page, so the lyrics and
+        // queue panels must not crossfade the blurred artwork over it.
+        val legacyMeshBackdrop = !tabletArtworkBackdrop && !spotifyCanvasPresentation &&
+            legacyMesh && !canvasFirstPortrait
         val fullArtworkBackdropAlpha by animateFloatAsState(
             targetValue = if (
+                !legacyMeshBackdrop &&
                 (tabletArtworkBackdrop || lyricsOpen || queueOpen) &&
                 (tabletArtworkBackdrop || fullArtworkBlurImage != null)
             ) 1f else 0f,
             animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
             label = "fullArtworkBackdropCrossfade",
         )
-        if (!tabletArtworkBackdrop && !spotifyCanvasPresentation && legacyMesh && !canvasFirstPortrait) {
+        if (legacyMeshBackdrop) {
             // v1.5's backdrop, restored verbatim: no seam, because the blobs
             // are not anchored to anything on screen — they fill the player and
             // the artwork simply sits on top of them. Keyed on the track, so
@@ -1831,7 +1846,7 @@ fun NowPlayingScreen(
         // A subview replaces that hero with an artwork-derived mesh, so it gets
         // only a modest floor rather than an opaque status-bar surface.
         val playerSubviewOpen = lyricsOpen || queueOpen || lyricsOffsetOpen ||
-            showAudioPipeline || showAudioOutput || showLyricsProviders
+            showAudioPipeline || showCast || showAudioOutput || showLyricsProviders
         val topGradientAlpha = if (playerSubviewOpen) {
             maxOf(artworkStatusScrimAlpha, SUBVIEW_STATUS_SCRIM_MIN_ALPHA)
         } else {
@@ -2058,8 +2073,8 @@ fun NowPlayingScreen(
                     // half second lying across a list the finger was already
                     // scrolling.
                     .onGloballyPositioned { dismissBandSpace = it }
-                    .pointerInput(showAudioPipeline, panelScrolling) {
-                        if (showAudioPipeline || panelScrolling) return@pointerInput
+                    .pointerInput(showAudioPipeline, showCast, panelScrolling) {
+                        if (showAudioPipeline || showCast || panelScrolling) return@pointerInput
                         awaitEachGesture {
                             // Unconsumed on purpose, as the blanket version was:
                             // the collapsed sleeve's own clickable — the way back

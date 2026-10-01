@@ -19,6 +19,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <systemmediatransportcontrolsinterop.h>
+#include "smtc_identity.h"
 
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Media.h>
@@ -163,6 +164,8 @@ void pump() {
         return;
     }
 
+    smtc_identity::apply(g_window);
+
     try {
         auto interop = get_activation_factory<SystemMediaTransportControls, ISystemMediaTransportControlsInterop>();
         check_hresult(interop->GetForWindow(
@@ -235,6 +238,12 @@ Java_com_music_bitchord_desktop_DesktopWindowsMedia_nativeStart(JNIEnv*, jobject
         Sleep(5);
     }
     return g_running ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_com_music_bitchord_desktop_DesktopWindowsMedia_nativeSetIdentity(
+    JNIEnv* env, jobject, jstring id, jstring name, jstring icon) {
+    smtc_identity::remember(widen(env, id), widen(env, name), widen(env, icon));
 }
 
 JNIEXPORT void JNICALL

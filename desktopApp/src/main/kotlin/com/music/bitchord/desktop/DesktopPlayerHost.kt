@@ -85,7 +85,8 @@ internal object DesktopPlayerHost : PlayerHost {
     @Composable
     override fun rememberAudioOutputs(): List<AudioOutputDevice> {
         val selected by DesktopAudioDevices.selected.collectAsState()
-        val devices = remember { DesktopAudioDevices.available() }
+        val changes by DesktopAudioDevices.changes.collectAsState()
+        val devices = remember(changes) { DesktopAudioDevices.available() }
         return remember(selected, devices) {
             val ids = listOf(DesktopAudioDevices.SYSTEM_DEFAULT) + devices.map { it.id }
             listed = ids

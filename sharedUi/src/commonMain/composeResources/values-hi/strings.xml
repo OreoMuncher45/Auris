@@ -15,6 +15,10 @@
     <string name="autoplay_on">ऑटोप्ले चालू</string>
     <string name="autoplay_queue_description">मिलता-जुलता संगीत, आगे चलाने के लिए चुना गया</string>
     <string name="bit_depth">%1$d-बिट</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">बदलें</string>
     <string name="channel_count">%1$d ch</string>
     <string name="choose_lyrics_provider">लिरिक्स प्रदाता चुनें</string>

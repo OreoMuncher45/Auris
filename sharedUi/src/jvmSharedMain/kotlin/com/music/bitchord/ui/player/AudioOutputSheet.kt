@@ -19,6 +19,8 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.Cast
+import androidx.compose.material.icons.rounded.CastConnected
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
@@ -81,9 +83,11 @@ internal fun AudioOutputSheet(
     accountName: String?,
     onDismiss: () -> Unit,
     onOpenPipeline: () -> Unit,
+    onOpenCast: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val outputs = rememberAudioOutputs()
+    val cast by PlayerPlatform.host.castState.collectAsStateWithLifecycle()
 
     PlayerDrawer(
         hazeState = hazeState,
@@ -106,6 +110,10 @@ internal fun AudioOutputSheet(
                     onSelect = { PlayerPlatform.host.selectAudioOutput(device.id) },
                 )
             }
+            // One more place to send the music, listed with the others. The
+            // receivers behind it are chosen in a popup of their own — there
+            // can be any number of them, and they come and go while it is open.
+            if (cast.supported) CastRow(cast = cast, onClick = onOpenCast)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -169,6 +177,79 @@ private fun AudioPipelineRow(onClick: () -> Unit) {
             Spacer(Modifier.height(2.dp))
             Text(
                 text = subtitle,
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.55f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.35f),
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+/**
+ * Opens the receiver picker. Lit like the playing output while the music is on
+ * a receiver, with that receiver's name in place of the generic title — at that
+ * point it *is* the output, and the rows above it are the way back.
+ */
+@Composable
+private fun CastRow(cast: CastUi, onClick: () -> Unit) {
+    val haptics = rememberHaptics()
+    val casting = cast.connectedName != null
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(ROW_SHAPE)
+            .background(Color.White.copy(alpha = if (casting) 0.10f else 0.05f))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+            ) {
+                haptics.play(Haptic.Select)
+                onClick()
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = if (casting) 0.16f else 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (casting) Icons.Rounded.CastConnected else Icons.Rounded.Cast,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = if (casting) 1f else 0.7f),
+                modifier = Modifier.size(21.dp),
+            )
+        }
+        Spacer(Modifier.width(13.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = cast.connectedName ?: stringResource(Res.string.cast),
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = if (casting) FontWeight.SemiBold else FontWeight.Normal,
+                ),
+                color = Color.White.copy(alpha = if (casting) 1f else 0.85f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = stringResource(
+                    when {
+                        cast.connecting -> Res.string.cast_connecting
+                        casting -> Res.string.cast_casting
+                        else -> Res.string.cast_row_subtitle
+                    },
+                ),
                 style = MaterialTheme.typography.labelMedium,
                 color = Color.White.copy(alpha = 0.55f),
                 maxLines = 1,

@@ -81,10 +81,34 @@ if(WIN32)
     set_target_properties(bitchord_analysis PROPERTIES PREFIX "")
 endif()
 
-# The Windows media controls, which are WinRT and so buildable only by MSVC —
-# MinGW has no C++/WinRT. A Linux cross-build therefore produces the analyser
-# and no SMTC; the Windows CI job, which builds on Windows, produces both.
-if(MSVC)
+# The Windows media controls, which are WinRT. MSVC builds them with C++/WinRT;
+# MinGW has no C++/WinRT, so it builds smtc_abi.cpp — the same exports written
+# against the raw ABI headers — whenever its headers carry the Media namespace.
+include(CheckIncludeFileCXX)
+if(MINGW)
+    check_include_file_cxx(systemmediatransportcontrolsinterop.h BITCHORD_HAVE_SMTC_INTEROP)
+    # The same guard smtc_abi.cpp defines: MinGW's windows.foundation.h does not compile without it.
+    set(CMAKE_REQUIRED_DEFINITIONS -D____FIReference_1_BYTE_INTERFACE_DEFINED__)
+    check_include_file_cxx(windows.media.h BITCHORD_HAVE_WINRT_MEDIA)
+    unset(CMAKE_REQUIRED_DEFINITIONS)
+endif()
+if(MINGW AND BITCHORD_HAVE_SMTC_INTEROP AND BITCHORD_HAVE_WINRT_MEDIA)
+    add_library(bitchord_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_abi.cpp)
+    set_target_properties(bitchord_smtc PROPERTIES PREFIX "")
+    if(DEFINED ENV{JAVA_HOME})
+        target_include_directories(bitchord_smtc PRIVATE $ENV{JAVA_HOME}/include $ENV{JAVA_HOME}/include/win32)
+    else()
+        find_package(JNI REQUIRED)
+        target_include_directories(bitchord_smtc PRIVATE ${JNI_INCLUDE_DIRS})
+    endif()
+    if(NOT CMAKE_HOST_WIN32)
+        target_include_directories(bitchord_smtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
+    endif()
+    target_compile_options(bitchord_smtc PRIVATE -O2)
+    target_link_libraries(bitchord_smtc PRIVATE runtimeobject ole32 user32 shell32 shlwapi uuid)
+    # Loaded from the app's private runtime directory, where MinGW's own DLLs are not.
+    target_link_options(bitchord_smtc PRIVATE -static -static-libgcc -static-libstdc++)
+elseif(MSVC)
     add_library(bitchord_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_jni.cpp)
     # C++20 rather than the 17 the analyser uses: under 17, C++/WinRT reaches for
     # <experimental/coroutine>, and current MSVC refuses to compile that header
@@ -97,5 +121,5 @@ if(MSVC)
         target_include_directories(bitchord_smtc PRIVATE ${JNI_INCLUDE_DIRS})
     endif()
     # The WinRT umbrella import library.
-    target_link_libraries(bitchord_smtc PRIVATE windowsapp gdi32)
+    target_link_libraries(bitchord_smtc PRIVATE windowsapp gdi32 shell32 shlwapi ole32)
 endif()

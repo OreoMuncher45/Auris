@@ -9,6 +9,7 @@ import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.audiofx.AudioEffect
 import android.net.Uri
+import android.widget.Toast
 import android.os.Bundle
 import android.os.Handler
 import android.os.SystemClock
@@ -19,6 +20,8 @@ import com.music.bitchord.playback.audio.usb.DirectUsbProbeResult
 import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.DeviceInfo
+import androidx.media3.common.FlagSet
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -71,6 +74,10 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.DspChain
+import com.music.bitchord.playback.cast.CastController
+import com.music.bitchord.playback.cast.CastPlayback
+import com.music.bitchord.playback.cast.CastSink
+import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import com.music.bitchord.playback.dsd.DsdExtractorsFactory
 import com.music.bitchord.playback.audio.DirectAudioProbe
@@ -98,6 +105,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicLong
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.LikeState
@@ -678,6 +686,25 @@ class PlaybackService : MediaLibraryService() {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     /**
+     * The stream resolver the player's own data source runs, kept so a Cast
+     * receiver can be handed the URL it would have produced — see
+     * [resolveForCast]. Null until [onCreate] has built it.
+     */
+    private var streamResolver: ResolvingDataSource.Resolver? = null
+
+    /**
+     * What plays on a Cast receiver, when the music is on one. The phone's
+     * player keeps the queue and is held paused; this is what the session
+     * player answers with in the meantime. See [CastPlayback].
+     */
+    private val castPlayback = CastPlayback(
+        scope = scope,
+        localPlayer = { player },
+        resolve = ::resolveForCast,
+        say = { message -> Toast.makeText(applicationContext, message, Toast.LENGTH_SHORT).show() },
+    )
+
+    /**
      * Binds playback to a Listen Together party, when there is one.
      *
      * Here rather than in the UI because a party has to outlive the app
@@ -857,6 +884,11 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // Something started the phone's own player while a receiver is the
+            // speaker — an internal path, since the session player's door
+            // already sends a listener's play to the receiver. The phone goes
+            // quiet again and the receiver is asked instead.
+            if (playWhenReady) player?.let(castPlayback::onLocalStartedPlaying)
             publishWidgetState(playing = playWhenReady)
             // The only place the *reason* can be read. A party has to tell a
             // pause the listener asked for from one another app imposed, and
@@ -903,6 +935,11 @@ class PlaybackService : MediaLibraryService() {
                 swappingMediaId = null
                 return
             }
+
+            // A receiver, if it is the speaker, is put on whatever became
+            // current — or it is the one that moved, and this is the phone
+            // catching up, which [CastPlayback] tells apart by track.
+            castPlayback.onLocalTransition(mediaItem, reason)
 
             // No crossfade case to allow for here any more. A blended advance
             // never reaches this callback — the incoming track starts as the
@@ -989,6 +1026,7 @@ class PlaybackService : MediaLibraryService() {
         override fun onRepeatModeChanged(repeatMode: Int) {
             val previous = lastRepeatMode
             lastRepeatMode = repeatMode
+            castPlayback.onLocalRepeatChanged(repeatMode)
             // Repeat-one makes the "next" track this one again.
             player?.let { activeLoudness().nextMediaId = nextMediaIdOf(it) }
             // Repeat-all loops the queue as it stands; AutoPlay's tracks are the
@@ -1026,6 +1064,7 @@ class PlaybackService : MediaLibraryService() {
             // stage switches to that track on its own at the boundary.
             activeLoudness().nextMediaId = nextMediaIdOf(exoPlayer)
             if (reason == Player.TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED) {
+                castPlayback.onLocalQueueChanged()
                 saveQueueSnapshot(exoPlayer)
                 refreshCustomLayouts()
                 // Queue edits can remove AutoPlay's whole tail while leaving
@@ -1491,6 +1530,8 @@ class PlaybackService : MediaLibraryService() {
             }
         }
 
+        this.streamResolver = streamResolver
+
         // No user agent on the factory: the right one depends on which client
         // minted the URL, so it is set per request below. Setting it here as
         // well would not override that — OkHttpDataSource *appends* the
@@ -1620,19 +1661,44 @@ class PlaybackService : MediaLibraryService() {
 
         mediaSession = MediaLibrarySession.Builder(
             this,
-            SessionPlayer(
-                exoPlayer,
-                controller,
-                onUserIntent = { partySync?.onLocalIntent() },
-            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
-            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
-            ) { lastPublishedSubtitle },
+            newSessionPlayer(exoPlayer, controller),
             MediaLibraryCallback(),
         )
             .setId(SESSION_ID)
             .setSessionActivity(sessionActivity())
             .build()
         refreshCustomLayouts()
+
+        // Last, so a receiver that outlived the app is adopted by a service
+        // whose queue is already restored.
+        CastController.ensureStarted(this)
+        CastController.attach(castPlayback)
+    }
+
+    private fun newSessionPlayer(player: Player, crossfade: CrossfadeController) = SessionPlayer(
+        player,
+        crossfade,
+        onUserIntent = { partySync?.onLocalIntent() },
+        deferPlayToParty = { partySync?.shouldDeferPlay() == true },
+        lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
+        cast = castPlayback,
+    ) { lastPublishedSubtitle }
+
+    /**
+     * The stream a Cast receiver can open for [item], or null when there is none
+     * it can: a file on this phone, or a source that needs headers the
+     * receiver cannot send. Runs the same resolver the player's own data source
+     * does, so the receiver is handed the URL the phone would have played.
+     */
+    private suspend fun resolveForCast(item: MediaItem): CastStream? = withContext(Dispatchers.IO) {
+        val uri = item.localConfiguration?.uri ?: return@withContext null
+        val resolver = streamResolver ?: return@withContext null
+        val resolved = resolver.resolveDataSpec(DataSpec(uri)).uri
+        if (resolved.scheme != "http" && resolved.scheme != "https") {
+            null
+        } else {
+            CastStream(resolved.toString(), CastPlayback.mimeTypeOf(resolved))
+        }
     }
 
     private fun createCrossfadeController() = CrossfadeController(
@@ -2213,13 +2279,7 @@ class PlaybackService : MediaLibraryService() {
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
 
-        mediaSession?.player = SessionPlayer(
-            incoming,
-            requireNotNull(crossfade),
-            onUserIntent = { partySync?.onLocalIntent() },
-            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
-            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
-        ) { lastPublishedSubtitle }
+        mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
         incoming.volume = 1f
         outgoing.stop()
@@ -2608,13 +2668,7 @@ class PlaybackService : MediaLibraryService() {
         incoming.addListener(playbackListener)
         incoming.addAnalyticsListener(formatListener)
 
-        mediaSession?.player = SessionPlayer(
-            incoming,
-            requireNotNull(crossfade),
-            onUserIntent = { partySync?.onLocalIntent() },
-            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
-            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
-        ) { lastPublishedSubtitle }
+        mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
         // The queue moving on used to arrive here as an item transition on the
         // one player that owned the queue. It cannot any more — the incoming
@@ -5645,13 +5699,7 @@ class PlaybackService : MediaLibraryService() {
         val newCrossfade = createCrossfadeController()
         crossfade = newCrossfade
         newCrossfade.start()
-        mediaSession?.player = SessionPlayer(
-            newActive,
-            newCrossfade,
-            onUserIntent = { partySync?.onLocalIntent() },
-            deferPlayToParty = { partySync?.shouldDeferPlay() == true },
-            lockedTransport = { playing -> partySync?.onLockedTransport(playing) == true },
-        ) { lastPublishedSubtitle }
+        mediaSession?.player = newSessionPlayer(newActive, newCrossfade)
         applyOutputRoute()
         if (items.isNotEmpty()) newActive.prepare()
         newActive.playWhenReady = playWhenReady
@@ -6242,6 +6290,10 @@ class PlaybackService : MediaLibraryService() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         if (AppSettings.stopOnTaskRemoved.value) {
+            // A receiver left playing with nothing on the phone to drive it
+            // would run out its few queued tracks and stop on its own anyway;
+            // better to say so now than leave the TV on a casting screen.
+            if (castPlayback.active) CastController.disconnect(resumeHere = false)
             // Both, or a swipe-away mid-crossfade leaves the outgoing track
             // playing on its own out of a service that is on its way out.
             eachPlayer { it.stop() }
@@ -6251,6 +6303,11 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        // Let go of the receiver's player but leave its session alone: a
+        // service that idles out while casting is not the listener choosing to
+        // stop, and the next one picks the session up where it was.
+        CastController.detach(castPlayback)
+        castPlayback.release()
         closeAudioEffectSession()
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
@@ -6475,8 +6532,184 @@ class PlaybackService : MediaLibraryService() {
         private val deferPlayToParty: () -> Boolean,
         /** @see PartySync.onLockedTransport */
         private val lockedTransport: (Boolean) -> Boolean,
+        /** What plays on a Cast receiver, whose clock this reports while it is the speaker. */
+        private val cast: CastPlayback,
         private val getSubtitle: () -> String?,
-    ) : ForwardingPlayer(player) {
+    ) : ForwardingPlayer(player), CastSink {
+
+        // The listeners registered through this wrapper, kept so the receiver's
+        // changes can be announced to them. The phone's own player never
+        // announces them — it is paused, and as far as it knows nothing is
+        // happening.
+        private val listeners = CopyOnWriteArraySet<Player.Listener>()
+        private var reportedPlayWhenReady = false
+        private var reportedPlaybackState = Player.STATE_IDLE
+        private var reportedIsPlaying = false
+
+        init {
+            cast.sink = this
+        }
+
+        private companion object {
+            val CAST_DEVICE: DeviceInfo = DeviceInfo.Builder(DeviceInfo.PLAYBACK_TYPE_REMOTE)
+                .setMinVolume(0)
+                .setMaxVolume(100)
+                .build()
+
+            /** A hardware key press, as a share of the receiver's range. */
+            const val VOLUME_STEP = 0.05f
+        }
+
+        override fun addListener(listener: Player.Listener) {
+            listeners += listener
+            super.addListener(listener)
+        }
+
+        override fun removeListener(listener: Player.Listener) {
+            listeners -= listener
+            super.removeListener(listener)
+        }
+
+        // While a receiver is the speaker the phone's player is paused and its
+        // clock is stale, so everything that describes playback is the
+        // receiver's. The queue, the metadata and the commands stay the
+        // phone's.
+        override fun getPlayWhenReady() = if (cast.active) cast.playWhenReady else super.getPlayWhenReady()
+
+        override fun isPlaying() = if (cast.active) cast.isPlaying else super.isPlaying()
+
+        override fun getPlaybackState() = if (cast.active) cast.playbackState else super.getPlaybackState()
+
+        override fun getCurrentPosition() = if (cast.active) cast.positionMs else super.getCurrentPosition()
+
+        override fun getContentPosition() = if (cast.active) cast.positionMs else super.getContentPosition()
+
+        override fun getBufferedPosition() = if (cast.active) cast.positionMs else super.getBufferedPosition()
+
+        override fun getContentBufferedPosition() =
+            if (cast.active) cast.positionMs else super.getContentBufferedPosition()
+
+        override fun getDuration(): Long =
+            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else super.getDuration()
+
+        override fun getContentDuration(): Long =
+            if (cast.active && cast.durationMs != C.TIME_UNSET) cast.durationMs else super.getContentDuration()
+
+        // The receiver is a remote output with a volume of its own, which is
+        // what makes the hardware keys move it instead of the phone's.
+        override fun getDeviceInfo(): DeviceInfo = if (cast.active) CAST_DEVICE else super.getDeviceInfo()
+
+        override fun getDeviceVolume(): Int = if (cast.active) cast.deviceVolume else super.getDeviceVolume()
+
+        override fun isDeviceMuted(): Boolean = if (cast.active) false else super.isDeviceMuted()
+
+        override fun setDeviceVolume(volume: Int, flags: Int) {
+            if (cast.active) CastController.setVolume(volume / 100f) else super.setDeviceVolume(volume, flags)
+        }
+
+        @Suppress("DEPRECATION")
+        override fun setDeviceVolume(volume: Int) {
+            if (cast.active) CastController.setVolume(volume / 100f) else super.setDeviceVolume(volume)
+        }
+
+        override fun increaseDeviceVolume(flags: Int) {
+            if (cast.active) nudgeReceiverVolume(+VOLUME_STEP) else super.increaseDeviceVolume(flags)
+        }
+
+        @Suppress("DEPRECATION")
+        override fun increaseDeviceVolume() {
+            if (cast.active) nudgeReceiverVolume(+VOLUME_STEP) else super.increaseDeviceVolume()
+        }
+
+        override fun decreaseDeviceVolume(flags: Int) {
+            if (cast.active) nudgeReceiverVolume(-VOLUME_STEP) else super.decreaseDeviceVolume(flags)
+        }
+
+        @Suppress("DEPRECATION")
+        override fun decreaseDeviceVolume() {
+            if (cast.active) nudgeReceiverVolume(-VOLUME_STEP) else super.decreaseDeviceVolume()
+        }
+
+        override fun setDeviceMuted(muted: Boolean, flags: Int) {
+            if (!cast.active) super.setDeviceMuted(muted, flags)
+        }
+
+        @Suppress("DEPRECATION")
+        override fun setDeviceMuted(muted: Boolean) {
+            if (!cast.active) super.setDeviceMuted(muted)
+        }
+
+        private fun nudgeReceiverVolume(delta: Float) =
+            CastController.setVolume(CastController.volume.value + delta)
+
+        override fun onRemotePlaybackChanged() {
+            val flags = FlagSet.Builder()
+            val playWhenReady = getPlayWhenReady()
+            val state = getPlaybackState()
+            val playing = isPlaying()
+            if (playWhenReady != reportedPlayWhenReady) {
+                reportedPlayWhenReady = playWhenReady
+                flags.add(Player.EVENT_PLAY_WHEN_READY_CHANGED)
+                listeners.forEach {
+                    it.onPlayWhenReadyChanged(playWhenReady, Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE)
+                }
+            }
+            if (state != reportedPlaybackState) {
+                reportedPlaybackState = state
+                flags.add(Player.EVENT_PLAYBACK_STATE_CHANGED)
+                listeners.forEach { it.onPlaybackStateChanged(state) }
+            }
+            if (playing != reportedIsPlaying) {
+                reportedIsPlaying = playing
+                flags.add(Player.EVENT_IS_PLAYING_CHANGED)
+                listeners.forEach { it.onIsPlayingChanged(playing) }
+            }
+            // Always: a controller extrapolates the position from the last one
+            // it was given, and has to be re-anchored whenever the receiver
+            // has been seeked, stalled or resumed.
+            flags.add(Player.EVENT_POSITION_DISCONTINUITY)
+            val position = Player.PositionInfo(
+                null,
+                currentMediaItemIndex,
+                currentMediaItem,
+                null,
+                currentPeriodIndex,
+                currentPosition,
+                contentPosition,
+                C.INDEX_UNSET,
+                C.INDEX_UNSET,
+            )
+            listeners.forEach {
+                it.onPositionDiscontinuity(position, position, Player.DISCONTINUITY_REASON_INTERNAL)
+            }
+            val events = Player.Events(flags.build())
+            listeners.forEach { it.onEvents(this, events) }
+        }
+
+        override fun onRemoteRouteChanged() {
+            val info = getDeviceInfo()
+            listeners.forEach { it.onDeviceInfoChanged(info) }
+            val events = Player.Events(FlagSet.Builder().add(Player.EVENT_DEVICE_INFO_CHANGED).build())
+            listeners.forEach { it.onEvents(this, events) }
+            onRemoteVolumeChanged()
+        }
+
+        override fun onRemoteVolumeChanged() {
+            val volume = getDeviceVolume()
+            val muted = isDeviceMuted()
+            listeners.forEach { it.onDeviceVolumeChanged(volume, muted) }
+            val events = Player.Events(FlagSet.Builder().add(Player.EVENT_DEVICE_VOLUME_CHANGED).build())
+            listeners.forEach { it.onEvents(this, events) }
+        }
+
+        /** Back, on a receiver: restart past the first seconds, else the previous track. */
+        private fun castPrevious() {
+            if (cast.positionMs > wrappedPlayer.maxSeekToPreviousPosition || !wrappedPlayer.hasPreviousMediaItem()) {
+                cast.seekTo(0L)
+            } else {
+                wrappedPlayer.seekToPreviousMediaItem()
+            }
+        }
 
         /**
          * Whether this device is a listener in a party its host has taken
@@ -6504,12 +6737,20 @@ class PlaybackService : MediaLibraryService() {
             // itself on the party's instant, and starts it anyway if the party
             // never answers. Outside a party this is an ordinary play().
             if (deferPlayToParty()) return
+            if (cast.active) {
+                cast.play()
+                return
+            }
             super.play()
         }
 
         override fun pause() {
             if (lockedTransport(false)) return
             onUserIntent()
+            if (cast.active) {
+                cast.pause()
+                return
+            }
             super.pause()
         }
 
@@ -6526,6 +6767,10 @@ class PlaybackService : MediaLibraryService() {
             if (lockedTransport(playWhenReady)) return
             onUserIntent()
             if (playWhenReady && deferPlayToParty()) return
+            if (cast.active) {
+                if (playWhenReady) cast.play() else cast.pause()
+                return
+            }
             super.setPlayWhenReady(playWhenReady)
         }
 
@@ -6535,30 +6780,50 @@ class PlaybackService : MediaLibraryService() {
         override fun seekTo(positionMs: Long) {
             if (locked()) return
             onUserIntent()
+            if (cast.active) {
+                cast.seekTo(positionMs)
+                return
+            }
             super.seekTo(positionMs)
         }
 
         override fun seekBack() {
             if (locked()) return
             onUserIntent()
+            if (cast.active) {
+                cast.seekTo(cast.positionMs - seekBackIncrement)
+                return
+            }
             super.seekBack()
         }
 
         override fun seekForward() {
             if (locked()) return
             onUserIntent()
+            if (cast.active) {
+                cast.seekTo(cast.positionMs + seekForwardIncrement)
+                return
+            }
             super.seekForward()
         }
 
         override fun seekToPrevious() {
             if (locked()) return
             onUserIntent()
+            if (cast.active) {
+                castPrevious()
+                return
+            }
             super.seekToPrevious()
         }
 
         override fun seekToDefaultPosition() {
             if (locked()) return
             onUserIntent()
+            if (cast.active) {
+                cast.seekTo(0L)
+                return
+            }
             super.seekToDefaultPosition()
         }
 
@@ -6658,6 +6923,12 @@ class PlaybackService : MediaLibraryService() {
             onUserIntent()
             crossfade.onSkipRequested()
             if (mediaItemIndex !in 0 until wrappedPlayer.mediaItemCount) return
+            // The track already on the receiver: a position in it is the
+            // receiver's to seek, not the paused phone's.
+            if (cast.active && mediaItemIndex == wrappedPlayer.currentMediaItemIndex) {
+                cast.seekTo(positionMs)
+                return
+            }
             val skipped = skippedByQueueJump(currentMediaItemIndex, mediaItemIndex)
             if (skipped == null) {
                 wrappedPlayer.seekTo(mediaItemIndex, positionMs)
@@ -6703,6 +6974,10 @@ class PlaybackService : MediaLibraryService() {
             if (locked()) return
             onUserIntent()
             crossfade.onSkipRequested()
+            if (cast.active) {
+                castPrevious()
+                return
+            }
             wrappedPlayer.seekToPrevious()
         }
 

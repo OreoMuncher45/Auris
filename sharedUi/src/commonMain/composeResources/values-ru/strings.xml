@@ -15,6 +15,10 @@
     <string name="autoplay_on">Автовоспроизведение включено</string>
     <string name="autoplay_queue_description">Похожая музыка, выбранная для воспроизведения следующей</string>
     <string name="bit_depth">%1$d-бит</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">Изменить</string>
     <string name="channel_count">%1$d кан.</string>
     <string name="choose_lyrics_provider">Выбрать источник текстов</string>

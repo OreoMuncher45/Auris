@@ -388,6 +388,14 @@ dependencies {
     // the app for a saving that does not matter in a self-distributed APK.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
 
+    // ---- Casting: Google Cast sender + the route discovery it sits on ----
+    // The framework and the router only. media3-cast is left out on purpose:
+    // its CastPlayer hands the receiver whatever URI a MediaItem carries, and
+    // ours are `bitchord://` addresses that only the service's resolver can
+    // turn into a real stream — see [com.music.bitchord.playback.cast.CastPlayback].
+    implementation("com.google.android.gms:play-services-cast-framework:22.2.0")
+    implementation("androidx.mediarouter:mediarouter:1.8.1")
+
     testImplementation("junit:junit:4.13.2")
     // A real HTTP server for the addon tests. The addon protocol is entirely
     // "what does this app send, and what does it do with what comes back", and

@@ -15,6 +15,10 @@
     <string name="autoplay_on">Bật tự động phát</string>
     <string name="autoplay_queue_description">Nhạc tương tự, được chọn để phát tiếp theo</string>
     <string name="bit_depth">%1$d-bit</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">Đổi</string>
     <string name="channel_count">%1$d kênh</string>
     <string name="choose_lyrics_provider">Chọn nguồn lời bài hát</string>

@@ -9,7 +9,9 @@ import android.os.Looper
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.listentogether.ListenTogether
@@ -20,6 +22,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.cast.CastController
 import dev.chrisbanes.haze.HazeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.util.Locale
@@ -90,15 +94,26 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
 
     // Lazy, all three: the player is not the first thing the process does, and
     // none of these objects should be woken for a launch that never opens it.
-    override val volume: SystemVolume by lazy { MusicStreamVolume(app) }
+    override val volume: SystemVolume by lazy { CastAwareVolume(MusicStreamVolume(app), scope) }
 
     @Composable
-    override fun rememberAudioOutputs(): List<AudioOutputDevice> = rememberAndroidAudioOutputs()
+    override fun rememberAudioOutputs(): List<AudioOutputDevice> {
+        val outputs = rememberAndroidAudioOutputs()
+        val cast by CastController.state.collectAsStateWithLifecycle()
+        // While a receiver is the speaker no output of this phone is the one
+        // playing, so none of them is lit; the Cast row is.
+        return if (cast.casting) outputs.map { it.copy(isActive = false) } else outputs
+    }
 
     @Composable
     override fun rememberOutputPicker(onOpen: () -> Unit): () -> Unit = rememberAndroidOutputPicker(onOpen)
 
-    override fun selectAudioOutput(id: Int?) = AudioRouting.select(id)
+    override fun selectAudioOutput(id: Int?) {
+        // Picking an output of this phone is picking this phone: the receiver
+        // is let go of, and the music carries on here if it was playing.
+        if (CastController.state.value.casting) CastController.disconnect(resumeHere = true)
+        AudioRouting.select(id)
+    }
 
     override val outputFormat: StateFlow<OutputFormatUi> by lazy {
         AudioOutputStatus.current
@@ -138,6 +153,17 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         main.post { Toast.makeText(app, message, Toast.LENGTH_SHORT).show() }
     }
 
+    override val castState: StateFlow<CastUi> by lazy {
+        CastController.ensureStarted(app)
+        CastController.state
+            .map { CastUi(supported = it.supported, connectedName = it.connectedName, connecting = it.connecting) }
+            .stateIn(scope, SharingStarted.Eagerly, CastUi())
+    }
+
+    @Composable
+    override fun CastDialog(hazeState: HazeState, onDismiss: () -> Unit) =
+        com.music.bitchord.ui.components.CastDialog(hazeState = hazeState, onDismiss = onDismiss)
+
     @Composable
     override fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) =
         com.music.bitchord.ui.components.AudioPipelineDialog(
@@ -173,6 +199,29 @@ private fun ListenTogether.State.toPartyUi() = PartyUi(
     you = you,
     code = code,
 )
+
+/**
+ * The volume bar's level: the receiver's while the music is on one, the music
+ * stream's otherwise. The two are different numbers on different devices, and
+ * the bar must never show one while moving the other.
+ */
+private class CastAwareVolume(
+    private val system: SystemVolume,
+    scope: CoroutineScope,
+) : SystemVolume {
+    override val level: StateFlow<Float> = combine(
+        system.level,
+        CastController.volume,
+        CastController.state.map { it.casting },
+    ) { phone, receiver, casting -> if (casting) receiver else phone }
+        .stateIn(scope, SharingStarted.Eagerly, system.level.value)
+
+    override fun set(level: Float) {
+        if (CastController.state.value.casting) CastController.setVolume(level) else system.set(level)
+    }
+
+    override fun refresh() = system.refresh()
+}
 
 /**
  * The music stream's volume. Hardware keys and the system panel change it

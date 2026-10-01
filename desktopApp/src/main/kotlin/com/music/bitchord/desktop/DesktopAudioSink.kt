@@ -47,7 +47,9 @@ internal class DesktopAudioSink {
                 line = null
                 windowsOutput = true
                 windowsBufferBytes = native.getOrThrow()
-                openedOn = DesktopWindowsAudio.deviceName()
+                // Read live from the native side instead: it moves the stream itself when the
+                // Windows default changes or a chosen device is unplugged.
+                openedOn = null
                 openedForSelection = selectedDevice
                 format = requested
                 diagnosticBlocks = 0
@@ -134,7 +136,7 @@ internal class DesktopAudioSink {
     val deviceName: String?
         get() = runCatching {
             if (windowsOutput) {
-                openedOn ?: DesktopWindowsAudio.deviceName()
+                DesktopWindowsAudio.deviceName()
             } else {
                 line?.let { openedOn ?: AudioSystem.getMixer(null).mixerInfo?.name?.takeIf(String::isNotBlank) }
             }

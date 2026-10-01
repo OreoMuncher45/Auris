@@ -15,6 +15,7 @@ import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.MixBlend
 import com.music.bitchord.data.settings.TransitionWindow
 import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -87,7 +88,25 @@ interface PlayerHost {
     /** The full signal-chain readout, opened from the output drawer. */
     @Composable
     fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit)
+
+    /** Casting to a network receiver. Absent, and so never drawn, where the platform has none. */
+    val castState: StateFlow<CastUi> get() = NoCast
+
+    /** The device picker the output drawer's Cast row opens, in the pipeline dialog's card. */
+    @Composable
+    fun CastDialog(hazeState: HazeState, onDismiss: () -> Unit) = Unit
 }
+
+private val NoCast = MutableStateFlow(CastUi())
+
+/** What the output drawer needs to know about casting to draw its row. */
+data class CastUi(
+    /** Whether this device can cast at all. False hides the row. */
+    val supported: Boolean = false,
+    /** The receiver the music is on now, or null when it is on this device. */
+    val connectedName: String? = null,
+    val connecting: Boolean = false,
+)
 
 /** Where the installed [PlayerHost] lives. */
 object PlayerPlatform {

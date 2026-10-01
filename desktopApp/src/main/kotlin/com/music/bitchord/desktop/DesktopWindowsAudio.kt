@@ -58,6 +58,21 @@ internal object DesktopWindowsAudio {
     fun deviceName(): String? =
         if (available) nativeDeviceName().takeIf(String::isNotBlank) else null
 
+    /**
+     * The active render endpoints, keyed by their endpoint id; null when the native library is
+     * missing, so the caller can fall back to Java Sound's mixers.
+     */
+    fun devices(): List<DesktopAudioDevice>? {
+        if (!available) return null
+        return runCatching {
+            nativeDevices().toList().chunked(2).map { (id, name) -> DesktopAudioDevice(id, name.ifBlank { id }, "") }
+        }.getOrNull()
+    }
+
+    /** Called from the native side when an endpoint is added, removed, enabled or disabled. */
+    @JvmStatic
+    fun onDevicesChanged() = DesktopAudioDevices.systemChanged()
+
     @JvmStatic private external fun nativeOpen(
         device: String,
         sampleRate: Int,
@@ -66,6 +81,7 @@ internal object DesktopWindowsAudio {
         floatingPoint: Boolean,
     ): Int
 
+    @JvmStatic private external fun nativeDevices(): Array<String>
     @JvmStatic private external fun nativeWrite(samples: FloatArray, count: Int, gain: Float): Int
     @JvmStatic private external fun nativeFramesPlayed(): Long
     @JvmStatic private external fun nativePause()

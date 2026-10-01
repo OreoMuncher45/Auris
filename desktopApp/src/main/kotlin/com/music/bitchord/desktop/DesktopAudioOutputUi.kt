@@ -35,7 +35,8 @@ import com.music.bitchord.ui.icons.BitChordIcons
 @Composable
 internal fun DesktopAudioOutputDialog(onDismiss: () -> Unit) {
     val selected by DesktopAudioDevices.selected.collectAsState()
-    val devices = remember { DesktopAudioDevices.available() }
+    val changes by DesktopAudioDevices.changes.collectAsState()
+    val devices = remember(changes) { DesktopAudioDevices.available() }
     DesktopDialogPanel(onDismiss = onDismiss, maxWidth = 440) {
         Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(

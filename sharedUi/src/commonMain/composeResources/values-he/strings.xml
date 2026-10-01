@@ -15,6 +15,10 @@
     <string name="autoplay_on">הפעלה אוטומטית מופעלת</string>
     <string name="autoplay_queue_description">מוזיקה דומה, נבחרה להתנגן בהמשך</string>
     <string name="bit_depth">%1$d-ביט</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">שינוי</string>
     <string name="channel_count">%1$d ערוצים</string>
     <string name="choose_lyrics_provider">בחירת ספק מילים</string>

@@ -15,6 +15,10 @@
     <string name="autoplay_on">AutoPlay: オン</string>
     <string name="autoplay_queue_description">次に再生される、似た曲</string>
     <string name="bit_depth">%1$dビット</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">変更</string>
     <string name="channel_count">%1$dch</string>
     <string name="choose_lyrics_provider">歌詞の提供元を選択</string>

@@ -15,6 +15,10 @@
     <string name="autoplay_on">เปิด AutoPlay</string>
     <string name="autoplay_queue_description">เพลงที่คล้ายกัน เลือกไว้ให้เล่นต่อไป</string>
     <string name="bit_depth">%1$d บิต</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
     <string name="change_lyrics_provider">เปลี่ยน</string>
     <string name="channel_count">%1$d ช่อง</string>
     <string name="choose_lyrics_provider">เลือกผู้ให้บริการเนื้อเพลง</string>
