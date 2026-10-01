@@ -444,6 +444,13 @@ object AudioCache {
      * from one of them — is [OTHER]: cached while it plays, so seeking and
      * Automix's analysis work exactly as before, then dropped by
      * [dropForeignEntries].
+     *
+     * The origin alone is not what the Cached songs folder shows. An entry is
+     * listed only once the player has actually played the track from it
+     * ([META_PLAYED]) — not for Automix's own YouTube Opus copy
+     * ([META_ANALYSIS]), which is a separate download made for analysis even
+     * while the track plays from JioSaavn or an addon, and not for read-ahead
+     * of a track the queue never reached.
      */
     enum class Origin { YOUTUBE, JIOSAAVN, OTHER }
 
@@ -472,6 +479,13 @@ object AudioCache {
      * being written.
      */
     private val notedSongs = ConcurrentHashMap<String, Song>()
+
+    /**
+     * Tracks that have become current this session — the ones playback has
+     * really played. Read by [recordServed] for entries whose first bytes
+     * arrive after the track became current.
+     */
+    private val playedIds = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Remembers [songs]' metadata for the cache entries they are about to
@@ -507,6 +521,37 @@ object AudioCache {
     }
 
     /**
+     * The track [song] just became current, playing from [uri]: marks the
+     * entry the player reads it from as played — see [Origin].
+     *
+     * The key comes from the same [keyFactory] the player's [CacheDataSource]
+     * uses, so it names exactly the rendition playback is reading, never a
+     * sibling copy something else wrote. A track replayed entirely from disk
+     * never reaches [recordServed], so this is also what keeps such a replay
+     * counted. If the entry doesn't exist yet, [recordServed] marks it as its
+     * first bytes arrive.
+     */
+    fun notePlayed(song: Song, uri: Uri?) {
+        if (song.localUri != null || song.videoId.isBlank()) return
+        if (playedIds.size > MAX_NOTED_SONGS) playedIds.clear()
+        playedIds += song.videoId
+        noteSongs(listOf(song))
+        if (!::cache.isInitialized || uri?.scheme != "bitchord") return
+        scope.launch {
+            val key = keyFactory.buildCacheKey(DataSpec(uri))
+            runCatching {
+                val meta = cache.getContentMetadata(key)
+                if (meta.get(META_ORIGIN, null as String?) == null) return@runCatching
+                if (meta.get(META_PLAYED, null as String?) != null) return@runCatching
+                cache.applyContentMetadataMutations(
+                    key,
+                    ContentMetadataMutations().set(META_PLAYED, "1"),
+                )
+            }
+        }
+    }
+
+    /**
      * Tags the cache entry [spec] is filling with who is serving it.
      *
      * Called from the player's resolving data source, the one place where the
@@ -526,18 +571,31 @@ object AudioCache {
         val key = spec.key ?: keyFactory.buildCacheKey(spec)
         val origin = originOf(spec.uri, mediaId, servedUrl)
         val song = notedSongs[mediaId]
+        // Automix's analysis-only read: its own YouTube Opus download, made
+        // whatever the track is actually playing from. Never playback.
+        val analysis = AutomixAnalysisSource.requestsYouTubeOpus(
+            spec.uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
+        )
         runCatching {
             val meta = cache.getContentMetadata(key)
+            fun has(name: String) = meta.get(name, null as String?) != null
+            val usedByPlayback = has(META_PLAYBACK) || !analysis
+            val played = has(META_PLAYED) || (!analysis && mediaId in playedIds)
             val tagged = meta.get(META_ORIGIN, null as String?) == origin.name &&
-                meta.get(META_MEDIA_ID, null as String?) == mediaId
+                meta.get(META_MEDIA_ID, null as String?) == mediaId &&
+                has(META_PLAYBACK) == usedByPlayback &&
+                (usedByPlayback || has(META_ANALYSIS)) &&
+                has(META_PLAYED) == played
             // Every re-open — a seek, a continuation fetch — passes through
             // here. Only write when something would actually change.
-            if (tagged && (song == null || meta.get(META_TITLE, null as String?) != null)) return
+            if (tagged && (song == null || has(META_TITLE))) return
             cache.applyContentMetadataMutations(
                 key,
                 ContentMetadataMutations().also { mutations ->
                     mutations.set(META_ORIGIN, origin.name)
                     mutations.set(META_MEDIA_ID, mediaId)
+                    if (usedByPlayback) mutations.set(META_PLAYBACK, "1") else mutations.set(META_ANALYSIS, "1")
+                    if (played) mutations.set(META_PLAYED, "1")
                     describe(mutations, song, spec.uri)
                 },
             )
@@ -585,8 +643,9 @@ object AudioCache {
     }
 
     /**
-     * Every track the cache holds YouTube or JioSaavn audio for, most recently
-     * used first — what the Cached songs folder lists.
+     * Every track the player has played from YouTube or JioSaavn audio that is
+     * still on disk, most recently used first — what the Cached songs folder
+     * lists. Only the entries playback read from count; see [Origin].
      *
      * A track owns up to several entries (see [keyFactory]); they are folded
      * into one row. Spans are checked against the disk rather than trusted:
@@ -603,6 +662,7 @@ object AudioCache {
                 ?.let { runCatching { Origin.valueOf(it) }.getOrNull() }
                 ?: continue
             if (origin == Origin.OTHER) continue
+            if (meta.get(META_PLAYED, null as String?) == null) continue
             val mediaId = meta.get(META_MEDIA_ID, null as String?) ?: continue
             val spans = cache.getCachedSpans(key).filter { it.isCached && it.file?.exists() == true }
             val bytes = spans.sumOf { it.length }
@@ -641,13 +701,16 @@ object AudioCache {
     }
 
     /**
-     * Drops every entry an addon or module filled ([Origin.OTHER]) except the
-     * ones belonging to [keep] — the track playing and the one queued after
-     * it, whose bytes are still being read, seeked through and analysed.
+     * Drops every entry an addon or module filled ([Origin.OTHER]), and every
+     * copy Automix downloaded for analysis alone that playback never read,
+     * except the ones belonging to [keep] — the tracks around the playhead,
+     * whose bytes are still being read, seeked through and analysed.
      *
-     * This is what "only YouTube and JioSaavn are cached" means in practice:
-     * the bytes an addon serves pass through the cache so playback behaves the
-     * same as ever, and leave it once the track does.
+     * This is what "only the YouTube and JioSaavn audio that played is cached"
+     * means in practice: the bytes an addon serves pass through the cache so
+     * playback behaves the same as ever, and leave it once the track does.
+     * Analysis results are kept in their own store, so the analysis-only
+     * audio has done its job by then.
      */
     fun dropForeignEntries(keep: Set<String>) {
         if (!::cache.isInitialized) return
@@ -655,7 +718,11 @@ object AudioCache {
             var dropped = 0
             cache.keys.toList().forEach { key ->
                 val meta = runCatching { cache.getContentMetadata(key) }.getOrNull() ?: return@forEach
-                if (meta.get(META_ORIGIN, null as String?) != Origin.OTHER.name) return@forEach
+                val foreign = meta.get(META_ORIGIN, null as String?) == Origin.OTHER.name
+                val analysisOnly = meta.get(META_ANALYSIS, null as String?) != null &&
+                    meta.get(META_PLAYBACK, null as String?) == null &&
+                    meta.get(META_PLAYED, null as String?) == null
+                if (!foreign && !analysisOnly) return@forEach
                 val mediaId = meta.get(META_MEDIA_ID, null as String?)
                 if (mediaId != null && mediaId in keep) return@forEach
                 runCatching { cache.removeResource(key) }
@@ -667,9 +734,9 @@ object AudioCache {
                             renditionKeys.remove(id)
                         }
                     }
-                    .onFailure { TrackLog.d(TAG, "addon cache entry $key still in use: ${it.message}") }
+                    .onFailure { TrackLog.d(TAG, "unkept cache entry $key still in use: ${it.message}") }
             }
-            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon cache entries")
+            if (dropped > 0) TrackLog.d(TAG, "dropped $dropped addon / analysis-only cache entries")
         }
     }
 
@@ -696,6 +763,15 @@ object AudioCache {
     private const val META_ALBUM = "bc_album"
     private const val META_DURATION = "bc_duration"
     private const val META_ART = "bc_art"
+
+    /** Set once a non-analysis request — the player or its read-ahead — has read this entry. */
+    private const val META_PLAYBACK = "bc_playback"
+
+    /** Set on an entry Automix's analysis-only YouTube Opus fetch filled. */
+    private const val META_ANALYSIS = "bc_analysis"
+
+    /** Set once the player has played the track from this entry. */
+    private const val META_PLAYED = "bc_played"
     private const val MAX_NOTED_SONGS = 256
 
     private const val CACHE_STATE_PREFS = "audio_cache_state"
