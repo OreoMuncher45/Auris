@@ -867,6 +867,7 @@
     <string name="prefer_usb_dac">העדף USB DAC</string>
     <string name="loudness_normalization">נרמול עוצמה</string>
     <string name="loudness_normalization_subtitle">מביא כל רצועה לאותה עוצמה נשמעת</string>
+    <string name="loudness_off_on_speaker">השבתה ברמקול הטלפון</string>
     <string name="loudness_target">עוצמת יעד</string>
     <string name="loudness_target_subtitle">שקט יותר מתאים לאוזניות; חזק יותר לרכב או לרמקול הטלפון</string>
     <string name="loudness_target_value">%1$s LUFS</string>

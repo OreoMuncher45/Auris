@@ -863,6 +863,7 @@
     <string name="prefer_usb_dac">Préférer le DAC USB</string>
     <string name="loudness_normalization">Normalisation du volume</string>
     <string name="loudness_normalization_subtitle">Ramène chaque titre à la même intensité sonore</string>
+    <string name="loudness_off_on_speaker">Desactiver sur le haut-parleur du telephone</string>
     <string name="loudness_target">Intensité cible</string>
     <string name="loudness_target_subtitle">Plus bas pour un casque ; plus fort pour la voiture ou le haut-parleur du téléphone</string>
     <string name="loudness_target_value">%1$s LUFS</string>

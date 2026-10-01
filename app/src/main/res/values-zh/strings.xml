@@ -842,6 +842,7 @@
     <string name="prefer_usb_dac">首选 USB DAC</string>
     <string name="loudness_normalization">响度标准化</string>
     <string name="loudness_normalization_subtitle">将每首曲目调整到相同响度</string>
+    <string name="loudness_off_on_speaker">在手机扬声器上停用</string>
     <string name="loudness_target">目标响度</string>
     <string name="loudness_target_subtitle">较低适合耳机；较高适合车载或手机扬声器</string>
     <string name="loudness_target_value">%1$s LUFS</string>

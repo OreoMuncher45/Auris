@@ -898,6 +898,7 @@
     <string name="prefer_usb_dac">Preferuj USB DAC</string>
     <string name="loudness_normalization">Normalizacja głośności</string>
     <string name="loudness_normalization_subtitle">Wyrównuje głośność wszystkich utworów</string>
+    <string name="loudness_off_on_speaker">Wyłącz na głośniku telefonu</string>
     <string name="loudness_target">Docelowa głośność</string>
     <string name="loudness_target_subtitle">Ciszej pasuje do słuchawek; głośniej do samochodu lub głośnika telefonu</string>
     <string name="loudness_target_value">%1$s LUFS</string>

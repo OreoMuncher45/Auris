@@ -831,6 +831,7 @@
     <string name="prefer_usb_dac">Preferir DAC USB</string>
     <string name="loudness_normalization">Normalización de volumen</string>
     <string name="loudness_normalization_subtitle">Iguala la sonoridad de todas las pistas</string>
+    <string name="loudness_off_on_speaker">Desactivar en el altavoz del telefono</string>
     <string name="loudness_target">Sonoridad objetivo</string>
     <string name="loudness_target_subtitle">Más bajo va mejor con auriculares; más alto, en el coche o el altavoz del teléfono</string>
     <string name="loudness_target_value">%1$s LUFS</string>

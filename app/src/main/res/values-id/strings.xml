@@ -842,6 +842,7 @@
     <string name="prefer_usb_dac">Pilih DAC USB</string>
     <string name="loudness_normalization">Normalisasi kenyaringan</string>
     <string name="loudness_normalization_subtitle">Menyamakan kenyaringan setiap lagu</string>
+    <string name="loudness_off_on_speaker">Nonaktifkan di speaker ponsel</string>
     <string name="loudness_target">Target kenyaringan</string>
     <string name="loudness_target_subtitle">Lebih pelan cocok untuk headphone; lebih keras cocok untuk mobil atau speaker ponsel</string>
     <string name="loudness_target_value">%1$s LUFS</string>

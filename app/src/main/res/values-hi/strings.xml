@@ -862,6 +862,7 @@
     <string name="prefer_usb_dac">USB DAC को प्राथमिकता दें</string>
     <string name="loudness_normalization">लाउडनेस नॉर्मलाइज़ेशन</string>
     <string name="loudness_normalization_subtitle">हर ट्रैक को एक जैसी लाउडनेस पर लाता है</string>
+    <string name="loudness_off_on_speaker">फ़ोन स्पीकर पर बंद करें</string>
     <string name="loudness_target">लक्ष्य लाउडनेस</string>
     <string name="loudness_target_subtitle">कम हेडफ़ोन के लिए ठीक है; ज़्यादा कार या फ़ोन स्पीकर के लिए</string>
     <string name="loudness_target_value">%1$s LUFS</string>

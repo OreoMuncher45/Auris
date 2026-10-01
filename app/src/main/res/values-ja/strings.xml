@@ -779,6 +779,7 @@
     <string name="prefer_usb_dac">USB DAC を優先</string>
     <string name="loudness_normalization">音量の正規化</string>
     <string name="loudness_normalization_subtitle">すべての曲を同じラウドネスにそろえます</string>
+    <string name="loudness_off_on_speaker">バイトフォンで無効化</string>
     <string name="loudness_target">目標ラウドネス</string>
     <string name="loudness_target_subtitle">小さめはヘッドホン向け、大きめは車やスマホのスピーカー向けです</string>
     <string name="loudness_target_value">%1$s LUFS</string>

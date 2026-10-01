@@ -1058,6 +1058,7 @@
     <string name="prefer_usb_dac">Prefer USB DAC</string>
     <string name="loudness_normalization">ปรับระดับความดังให้เท่ากัน</string>
     <string name="loudness_normalization_subtitle">ปรับทุกแทร็กให้ดังเท่ากัน</string>
+    <string name="loudness_off_on_speaker">ปิดบนลำโพงโทรศัพท์</string>
     <string name="loudness_target">ความดังเป้าหมาย</string>
     <string name="loudness_target_subtitle">เบาลงเหมาะกับหูฟัง ดังขึ้นเหมาะกับในรถหรือลำโพงโทรศัพท์</string>
     <string name="loudness_target_value">%1$s LUFS</string>

@@ -843,6 +843,7 @@
     <string name="prefer_usb_dac">USB DAC tercih et</string>
     <string name="loudness_normalization">Ses yüksekliği normalleştirme</string>
     <string name="loudness_normalization_subtitle">Her parçayı aynı ses yüksekliğine getirir</string>
+    <string name="loudness_off_on_speaker">Telefon hoparlöründe kapat</string>
     <string name="loudness_target">Hedef ses yüksekliği</string>
     <string name="loudness_target_subtitle">Daha düşük kulaklığa, daha yüksek araba veya telefon hoparlörüne uygundur</string>
     <string name="loudness_target_value">%1$s LUFS</string>

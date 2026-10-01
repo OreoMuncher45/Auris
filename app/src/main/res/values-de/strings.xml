@@ -862,6 +862,7 @@
     <string name="prefer_usb_dac">USB-DAC bevorzugen</string>
     <string name="loudness_normalization">Lautstärkenormalisierung</string>
     <string name="loudness_normalization_subtitle">Bringt jeden Titel auf dieselbe Lautheit</string>
+    <string name="loudness_off_on_speaker">Auf dem Handylautsprecher deaktivieren</string>
     <string name="loudness_target">Ziel-Lautheit</string>
     <string name="loudness_target_subtitle">Leiser passt zu Kopfhörern, lauter zum Auto oder Handylautsprecher</string>
     <string name="loudness_target_value">%1$s LUFS</string>
