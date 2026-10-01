@@ -7,6 +7,16 @@ import kotlinx.coroutines.flow.update
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * Architectural provenance of audio pipeline telemetry statistics.
+ */
+enum class TelemetryProvenance {
+    AUTHORITATIVE,
+    MEASURED,
+    DERIVED,
+    UNKNOWN,
+}
+
+/**
  * What the audio decoder is actually being fed, for "stats for nerds".
  *
  * Every figure here is measured rather than inferred, and every label derived
@@ -45,6 +55,10 @@ object NerdStats {
          * "DSF" or "DFF" for DSD, which reaches the decoder as plain PCM.
          */
         val container: String? = null,
+        /** Provenance of the displayed source/encoded bitrate. */
+        val bitrateProvenance: TelemetryProvenance = TelemetryProvenance.UNKNOWN,
+        /** True PCM throughput (sampleRate * bitDepth * channels / 1000). Never conflated with encoded bitrate. */
+        val pcmDataRateKbps: Int? = null,
     ) {
         /**
          * Whether what arrived is measurably worse than what was promised.
@@ -173,6 +187,9 @@ object NerdStats {
 
     fun isDolbyAtmosMime(mimeType: String?): Boolean =
         mimeType != null && (mimeType.endsWith("eac3-joc") || mimeType.endsWith("eac3"))
+
+    fun isRawPcm(mimeType: String?): Boolean =
+        mimeType != null && (mimeType == "audio/raw" || mimeType.endsWith("wav", ignoreCase = true) || mimeType == "audio/x-wav")
 
     /**
      * The upper bound in kbps for a low-bitrate / data-saver lossy stream.
@@ -317,6 +334,10 @@ object NerdStats {
         val key = mediaId ?: return null
         return declared[key]
             ?: SourceTrackKeys.parse(key)?.second?.let { declared[it] }
+    }
+
+    fun onTrackTransition() {
+        current.value = null
     }
 
     /**
