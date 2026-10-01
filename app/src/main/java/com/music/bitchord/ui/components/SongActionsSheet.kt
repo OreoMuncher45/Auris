@@ -190,8 +190,8 @@ fun SongActionsSheet(
      * Where the rows are drawn. [SongActionsPresentation.Sheet] is the tinted
      * bottom sheet with its own track header; [SongActionsPresentation.Menu]
      * is only the rows, compact and in the theme's own colours, for the
-     * popup a held row lifts into — see [SongContextMenu], which draws the
-     * track itself above them.
+     * popup a held row lifts into — see [HeldContextMenu], which draws the
+     * held row itself above them.
      */
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {

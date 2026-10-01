@@ -96,7 +96,6 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -195,7 +194,8 @@ import com.music.bitchord.ui.components.PlaylistPickerSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
-import com.music.bitchord.ui.components.SongContextMenu
+import com.music.bitchord.ui.components.HeldContextMenu
+import com.music.bitchord.ui.components.HeldItem
 import androidx.media3.session.MediaController
 import com.music.bitchord.playback.QualityUpgrade
 import com.music.bitchord.playback.rememberMediaController
@@ -517,12 +517,12 @@ private fun BitChordApp(
      */
     var menuFromPlayer by remember { mutableStateOf(false) }
     /**
-     * Where the row that opened the track menu was held, in window
-     * coordinates, or null when it was opened any other way. Non-null lifts
-     * the row into [SongContextMenu]; null keeps the bottom sheet — which is
-     * what the ⋮ on the very same row still opens.
+     * The row or card that was held to open the track menu, or null when it
+     * was opened any other way. Non-null lifts that item into
+     * [HeldContextMenu]; null keeps the bottom sheet — which is what the ⋮ on
+     * the very same row still opens.
      */
-    var songMenuOrigin by remember { mutableStateOf<Rect?>(null) }
+    var songMenuOrigin by remember { mutableStateOf<HeldItem?>(null) }
     /** Holding a row anywhere but the player — the menu without the player's rows. */
     val openSongMenu: (Song) -> Unit = { song ->
         menuFromPlayer = false
@@ -545,6 +545,16 @@ private fun BitChordApp(
     // three tabs, the search rows, the artist page's carousels, the release
     // page's own overflow — because only one of them can be held at a time.
     var browseActions by remember { mutableStateOf<BrowseTarget?>(null) }
+    /** The card held to open [browseActions] — see [songMenuOrigin]. */
+    var browseMenuOrigin by remember { mutableStateOf<HeldItem?>(null) }
+    /** Rename asked for from the popup, which hands it on to the sheet's form. */
+    var browseRenameInSheet by remember { mutableStateOf(false) }
+    /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
+    val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
+        browseMenuOrigin = LongPressOrigin.consume()
+        browseRenameInSheet = false
+        browseActions = target
+    }
     val autoplay by AppSettings.autoplay.collectAsStateWithLifecycle()
     val partyState by ListenTogether.state.collectAsStateWithLifecycle()
     // The same answer the playback service acts on, rather than a second one
@@ -1638,13 +1648,15 @@ private fun BitChordApp(
         val id = item.browseId
         val type = id?.let { viewModel.browseTypeOf(it) }
         if (id != null && type != BrowseType.ARTIST) {
-            browseActions = BrowseTarget(
-                browseId = id,
-                title = item.title,
-                subtitle = item.subtitle,
-                thumbnailUrl = item.thumbnailUrl,
-                type = type ?: BrowseType.OTHER,
-                downloadId = downloadIdFor(id),
+            openBrowseMenu(
+                BrowseTarget(
+                    browseId = id,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                    type = type ?: BrowseType.OTHER,
+                    downloadId = downloadIdFor(id),
+                ),
             )
         }
     }
@@ -2633,15 +2645,17 @@ private fun BitChordApp(
                                 val downloadId = downloadCollections.firstOrNull {
                                     it.title == label && it.songs == grouped
                                 }?.id
-                                browseActions = BrowseTarget(
-                                    browseId = null,
-                                    title = label,
-                                    subtitle = grouped.firstOrNull()?.artist.orEmpty()
-                                        .takeUnless { it == label }
-                                        .orEmpty(),
-                                    thumbnailUrl = grouped.firstOrNull()?.thumbnailUrl,
-                                    songs = grouped,
-                                    downloadId = downloadId,
+                                openBrowseMenu(
+                                    BrowseTarget(
+                                        browseId = null,
+                                        title = label,
+                                        subtitle = grouped.firstOrNull()?.artist.orEmpty()
+                                            .takeUnless { it == label }
+                                            .orEmpty(),
+                                        thumbnailUrl = grouped.firstOrNull()?.thumbnailUrl,
+                                        songs = grouped,
+                                        downloadId = downloadId,
+                                    ),
                                 )
                             },
                             contentPadding = listPadding,
@@ -2893,13 +2907,15 @@ private fun BitChordApp(
                                 // A search row does say what it is, so its own type is
                                 // better than what the browse id can be read to mean.
                                 if (item.type != BrowseType.ARTIST) {
-                                    browseActions = BrowseTarget(
-                                        browseId = item.browseId,
-                                        title = item.title,
-                                        subtitle = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                        type = item.type,
-                                        downloadId = downloadIdFor(item.browseId),
+                                    openBrowseMenu(
+                                        BrowseTarget(
+                                            browseId = item.browseId,
+                                            title = item.title,
+                                            subtitle = item.subtitle,
+                                            thumbnailUrl = item.thumbnailUrl,
+                                            type = item.type,
+                                            downloadId = downloadIdFor(item.browseId),
+                                        ),
                                     )
                                 }
                             },
@@ -3733,12 +3749,13 @@ private fun BitChordApp(
         }
         // Drawn over everything, tab bar and mini player included, and kept
         // composed through its own exit — so it is not gated on songActions.
-        SongContextMenu(
-            song = songActions,
-            origin = songMenuOrigin,
+        HeldContextMenu(
+            item = songActions,
+            held = songMenuOrigin,
             hazeState = hazeState,
             onDismiss = { songActions = null },
-            onOpenAlbum = { song ->
+            // Tapping the lifted track opens its album, as Apple Music's does.
+            onPreviewClick = { song ->
                 song.albumId?.let { id ->
                     songActions = null
                     viewModel.openDetail(id, song.albumName ?: song.title, song.artist, song.thumbnailUrl, BrowseType.ALBUM)
@@ -3816,7 +3833,8 @@ private fun BitChordApp(
         // Opened by holding a card on any tab, or from the release page's own
         // overflow. What a track's long-press menu is to one song, this is to
         // the whole release — the queue rows above all.
-        browseActions?.let { target ->
+        // One body for the sheet and the popup alike — see songMenuBody.
+        val browseMenuBody: @Composable (BrowseTarget, SongActionsPresentation) -> Unit = { target, presentation ->
             // Every row here closes the menu first: the tracks may still have to
             // be fetched, and leaving the sheet up over a request nothing on it
             // reports on reads as a tap that didn't land.
@@ -3851,119 +3869,156 @@ private fun BitChordApp(
             val remote = target.browseId?.startsWith("local:") == false
             val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
             val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
+            BrowseActionsSheet(
+                // The live answer, not the one the target was built with.
+                target = target.copy(playlist = playlist),
+                presentation = presentation,
+                onRenameInSheet = {
+                    browseRenameInSheet = true
+                    browseMenuOrigin = null
+                },
+                startRenaming = browseRenameInSheet,
+                onPlayNext = act(playSongsNext),
+                onAddToQueue = act(addSongsToQueue),
+                onPlay = act { songs -> play(songs, 0) }.takeIf { target.fromCard },
+                onShuffle = act { songs ->
+                    // As on a release page: shuffle goes on before the queue
+                    // is built, so it is built shuffled rather than played
+                    // out of order.
+                    QueueShuffle.enableForNextQueue()
+                    play(songs, songs.indices.random())
+                }.takeIf { target.fromCard },
+                onOpen = target.browseId
+                    ?.takeIf { target.fromCard }
+                    ?.let { id ->
+                        {
+                            browseActions = null
+                            viewModel.openDetail(
+                                browseId = id,
+                                title = target.title,
+                                subtitle = target.subtitle,
+                                thumbnailUrl = target.thumbnailUrl,
+                                type = target.type,
+                            )
+                        }
+                    },
+                // The one place a whole release is asked for, from a card and
+                // from the release's own page alike — its header spends that
+                // spot on the search now. Nothing on this device needs
+                // fetching to be on it, so a local page is the exception.
+                // What the target carries that the tracks don't is the
+                // release's own name and cover, which is exactly what the
+                // record wants.
+                onDownloadAll = act { songs ->
+                    startDownload(
+                        songs,
+                        target.browseId
+                            ?.takeIf { target.type != BrowseType.ARTIST }
+                            ?.let { id ->
+                                DownloadTarget(
+                                    id = id,
+                                    title = target.title,
+                                    subtitle = target.subtitle,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    playlist = target.type == BrowseType.PLAYLIST,
+                                )
+                            },
+                    )
+                }.takeIf { remote },
+                // The same link a share off YouTube Music's own overflow
+                // gives — built from the browse id rather than fetched,
+                // since nothing about it depends on the tracks or the
+                // account. Left off an artist card (Share there is a
+                // channel link, not a release, and nobody asked for it)
+                // and off anything with no real browse id behind it.
+                onShare = target.browseId
+                    ?.takeIf { remote && (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST) }
+                    ?.let { id ->
+                        {
+                            val url = if (target.type == BrowseType.PLAYLIST) {
+                                "https://music.youtube.com/playlist?list=${id.removePrefix("VL")}"
+                            } else {
+                                "https://music.youtube.com/browse/$id"
+                            }
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, url)
+                            }
+                            context.startActivity(Intent.createChooser(sendIntent, target.title))
+                            browseActions = null
+                        }
+                    },
+                isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
+                onTogglePin = pinnableId?.let { id ->
+                    {
+                        val nowPinned = AppSettings.togglePinnedPlaylist(id)
+                        if (!nowPinned && id !in pinnedPlaylists) {
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    R.string.pinned_playlist_limit,
+                                    AppSettings.MAX_PINNED_PLAYLISTS,
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        }
+                        browseActions = null
+                    }
+                },
+                onRename = playlist?.let { p ->
+                    { name: String ->
+                        browseActions = null
+                        viewModel.renamePlaylist(p, name)
+                    }
+                },
+                onDelete = playlist?.let { p ->
+                    {
+                        browseActions = null
+                        viewModel.deletePlaylist(p)
+                    }
+                },
+                onDeleteDownload = target.downloadId?.let { id ->
+                    {
+                        browseActions = null
+                        scope.launch { Downloads.deleteCollection(context, id) }
+                    }
+                },
+            )
+        }
+        browseActions?.takeIf { browseMenuOrigin == null }?.let { target ->
             ModalBottomSheet(
                 onDismissRequest = { browseActions = null },
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
-                BrowseActionsSheet(
-                    // The live answer, not the one the target was built with.
-                    target = target.copy(playlist = playlist),
-                    onPlayNext = act(playSongsNext),
-                    onAddToQueue = act(addSongsToQueue),
-                    onPlay = act { songs -> play(songs, 0) }.takeIf { target.fromCard },
-                    onShuffle = act { songs ->
-                        // As on a release page: shuffle goes on before the queue
-                        // is built, so it is built shuffled rather than played
-                        // out of order.
-                        QueueShuffle.enableForNextQueue()
-                        play(songs, songs.indices.random())
-                    }.takeIf { target.fromCard },
-                    onOpen = target.browseId
-                        ?.takeIf { target.fromCard }
-                        ?.let { id ->
-                            {
-                                browseActions = null
-                                viewModel.openDetail(
-                                    browseId = id,
-                                    title = target.title,
-                                    subtitle = target.subtitle,
-                                    thumbnailUrl = target.thumbnailUrl,
-                                    type = target.type,
-                                )
-                            }
-                        },
-                    // The one place a whole release is asked for, from a card and
-                    // from the release's own page alike — its header spends that
-                    // spot on the search now. Nothing on this device needs
-                    // fetching to be on it, so a local page is the exception.
-                    // What the target carries that the tracks don't is the
-                    // release's own name and cover, which is exactly what the
-                    // record wants.
-                    onDownloadAll = act { songs ->
-                        startDownload(
-                            songs,
-                            target.browseId
-                                ?.takeIf { target.type != BrowseType.ARTIST }
-                                ?.let { id ->
-                                    DownloadTarget(
-                                        id = id,
-                                        title = target.title,
-                                        subtitle = target.subtitle,
-                                        thumbnailUrl = target.thumbnailUrl,
-                                        playlist = target.type == BrowseType.PLAYLIST,
-                                    )
-                                },
-                        )
-                    }.takeIf { remote },
-                    // The same link a share off YouTube Music's own overflow
-                    // gives — built from the browse id rather than fetched,
-                    // since nothing about it depends on the tracks or the
-                    // account. Left off an artist card (Share there is a
-                    // channel link, not a release, and nobody asked for it)
-                    // and off anything with no real browse id behind it.
-                    onShare = target.browseId
-                        ?.takeIf { remote && (target.type == BrowseType.ALBUM || target.type == BrowseType.PLAYLIST) }
-                        ?.let { id ->
-                            {
-                                val url = if (target.type == BrowseType.PLAYLIST) {
-                                    "https://music.youtube.com/playlist?list=${id.removePrefix("VL")}"
-                                } else {
-                                    "https://music.youtube.com/browse/$id"
-                                }
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, url)
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, target.title))
-                                browseActions = null
-                            }
-                        },
-                    isPinned = pinnableId != null && pinnableId in pinnedPlaylists,
-                    onTogglePin = pinnableId?.let { id ->
-                        {
-                            val nowPinned = AppSettings.togglePinnedPlaylist(id)
-                            if (!nowPinned && id !in pinnedPlaylists) {
-                                Toast.makeText(
-                                    context,
-                                    context.getString(
-                                        R.string.pinned_playlist_limit,
-                                        AppSettings.MAX_PINNED_PLAYLISTS,
-                                    ),
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                            browseActions = null
-                        }
-                    },
-                    onRename = playlist?.let { p ->
-                        { name: String ->
-                            browseActions = null
-                            viewModel.renamePlaylist(p, name)
-                        }
-                    },
-                    onDelete = playlist?.let { p ->
-                        {
-                            browseActions = null
-                            viewModel.deletePlaylist(p)
-                        }
-                    },
-                    onDeleteDownload = target.downloadId?.let { id ->
-                        {
-                            browseActions = null
-                            scope.launch { Downloads.deleteCollection(context, id) }
-                        }
-                    },
-                )
+                browseMenuBody(target, SongActionsPresentation.Sheet)
+            }
+        }
+        HeldContextMenu(
+            item = browseActions,
+            held = browseMenuOrigin,
+            hazeState = hazeState,
+            onDismiss = { browseActions = null },
+            // Tapping the lifted card opens it, as a tap on it in the list
+            // would have. Not for a Local Music grouping, which has no page.
+            onPreviewClick = { target ->
+                target.browseId?.let { id ->
+                    browseActions = null
+                    viewModel.openDetail(
+                        browseId = id,
+                        title = target.title,
+                        subtitle = target.subtitle,
+                        thumbnailUrl = target.thumbnailUrl,
+                        type = target.type,
+                    )
+                }
+            },
+        ) { target ->
+            browseMenuBody(target, SongActionsPresentation.Menu)
+        }
+        LaunchedEffect(browseActions == null) {
+            if (browseActions == null) {
+                browseMenuOrigin = null
+                browseRenameInSheet = false
             }
         }
 
