@@ -469,6 +469,10 @@ fun MediaController.autoplaySectionStart(): Int = autoplaySectionStart(
 private val DIRECT_FILE_URI_EXTENSIONS = setOf(
     "m4a", "m4b", "m4p", "mp4", "aac", "3ga", "3gp", "3gpp",
     "alac", "amr", "awb", "wma", "aif", "aiff", "ac3", "dts",
+    // DSF keeps its tags at the end, so the extractor reads the tail first and
+    // seeks back to the audio; DFF walks every chunk to the end before it
+    // starts, and seeks back the same way.
+    "dsf", "dff",
 )
 
 private fun resolvePlaybackUri(uriString: String, localPath: String?): String {

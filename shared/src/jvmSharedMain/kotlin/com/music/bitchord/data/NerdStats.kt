@@ -40,6 +40,11 @@ object NerdStats {
         val claimed: StreamFormat? = null,
         /** Authoritative source/provider that supplied this stream. */
         val sourceName: String? = null,
+        /**
+         * The file's container where it says something the codec doesn't —
+         * "DSF" or "DFF" for DSD, which reaches the decoder as plain PCM.
+         */
+        val container: String? = null,
     ) {
         /**
          * Whether what arrived is measurably worse than what was promised.
@@ -154,7 +159,17 @@ object NerdStats {
      * queue advance is the previous one.
      */
     fun isLosslessMime(mimeType: String?): Boolean =
-        mimeType != null && LOSSLESS_CODEC_SUFFIXES.any { mimeType.endsWith(it) }
+        mimeType != null && (LOSSLESS_CODEC_SUFFIXES.any { mimeType.endsWith(it) } || mimeType.startsWith("audio/dsd"))
+
+    /**
+     * A rate of a megahertz or more, as DSD's are named: 2822400 -> "2.8224 MHz".
+     * Null below that, where each caller keeps its own kHz wording. Exact
+     * digits rather than one decimal place, since the DSD rates are all
+     * multiples of 44.1 kHz and rounding them makes them unrecognisable.
+     */
+    fun megahertzLabel(hz: Int): String? =
+        if (hz < 1_000_000) null
+        else java.math.BigDecimal(hz).movePointLeft(6).stripTrailingZeros().toPlainString() + " MHz"
 
     fun isDolbyAtmosMime(mimeType: String?): Boolean =
         mimeType != null && (mimeType.endsWith("eac3-joc") || mimeType.endsWith("eac3"))
@@ -182,6 +197,7 @@ object NerdStats {
             mimeType.endsWith("mpeg", ignoreCase = true) || mimeType.endsWith("mp3", ignoreCase = true) -> "MP3"
             mimeType.endsWith("alac", ignoreCase = true) -> "ALAC"
             mimeType.endsWith("raw", ignoreCase = true) -> "PCM"
+            mimeType.startsWith("audio/dsd", ignoreCase = true) -> mimeType.substringAfter('/').uppercase()
             mimeType.endsWith("vorbis", ignoreCase = true) -> "Vorbis"
             mimeType.endsWith("eac3-joc", ignoreCase = true) -> "E-AC-3 JOC"
             mimeType.endsWith("eac3", ignoreCase = true) -> "E-AC-3"

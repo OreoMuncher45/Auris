@@ -1571,7 +1571,7 @@ private fun NerdStats.Snapshot.describe(): String? {
     val parts = buildList {
         codecLabel(mimeType)?.let(::add)
         bitDepth?.let { add(stringResource(Res.string.bit_depth, it)) }
-        sampleRateHz?.let { add("%.1f kHz".format(Locale.ROOT, it / 1000f)) }
+        sampleRateHz?.let { add(NerdStats.megahertzLabel(it) ?: "%.1f kHz".format(Locale.ROOT, it / 1000f)) }
         bitrateKbps?.let { add("$it kbps") }
         channels?.let {
             add(

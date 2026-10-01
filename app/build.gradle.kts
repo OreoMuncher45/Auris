@@ -301,6 +301,15 @@ dependencies {
     // progressive, and the extractors try to sniff XML as audio
     // (ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED). See withResolvedStreamType.
     implementation("androidx.media3:media3-exoplayer-dash:1.11.0")
+    // FFmpeg audio decoding for what the phone has no decoder of its own for:
+    // ALAC on every phone, and AC-4, E-AC-3 / AC-3 (Dolby Atmos music),
+    // TrueHD and DTS on phones without Dolby or DTS licensed in. Added as the
+    // *last* audio renderer in silenceSkippingRenderers, so a platform decoder
+    // still wins wherever one exists. No artifact: the extension's Java half is
+    // vendored under app/src/main/java/androidx/media3/decoder/ffmpeg, and
+    // libffmpegJNI.so under src/main/jniLibs is built from librempeg (the only
+    // FFmpeg line with an AC-4 decoder) by native/ffmpeg/build.sh. It needs
+    // media3-decoder, which media3-exoplayer already brings.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.9.0")
 
     // ---- Images: Coil 3 + Palette (dominant colors for the mesh gradient) ----

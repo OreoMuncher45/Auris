@@ -73,6 +73,8 @@ import com.music.bitchord.ui.utils.containSheetGestures
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.dsd.DsdFilter
+import com.music.bitchord.playback.dsd.DsdFormat
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -115,12 +117,17 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  * now" is worth answering whether or not there is a switch that forces it.
  */
 private fun bitExactVerdict(
+    dsd: Boolean,
     outputExact: Boolean,
     outputExactDetail: String?,
     loudnessActive: Boolean,
     eqActive: Boolean,
     spatialActive: Boolean,
 ): String = when {
+    // Not a fault to fix: there is no DSD output path (native DSD or DoP)
+    // here, so the PCM conversion is a deviation every DSD track carries,
+    // whatever the stages after it do.
+    dsd -> "No — DSD converted to PCM"
     loudnessActive -> "No — loudness normalization"
     eqActive -> "No — equalizer"
     spatialActive -> "No — spatial audio"
@@ -306,12 +313,19 @@ fun AudioPipelineDialog(
                 ) {
                     // 1. Track Info Stage
                     val sourceName = nerdStats?.sourceName ?: "—"
-                    val format = NerdStats.codecLabel(nerdStats?.mimeType) ?: nerdStats?.mimeType ?: "—"
+                    // DSD is the one source whose own rate is not the rate the
+                    // rest of the pipeline runs at: DsdExtractor hands the
+                    // renderer 176.4 kHz PCM, so every stage after this one has
+                    // to be told that rate instead of the DSD bit rate.
+                    val dsdRateHz = nerdStats?.takeIf { it.mimeType?.startsWith("audio/dsd") == true }?.sampleRateHz
+                    val pcmRateHz = if (dsdRateHz != null) DsdFormat.PCM_RATE else nerdStats?.sampleRateHz
+                    val codec = NerdStats.codecLabel(nerdStats?.mimeType) ?: nerdStats?.mimeType ?: "—"
+                    val format = nerdStats?.container?.let { "$codec ($it)" } ?: codec
                     val bitDepth = nerdStats?.bitDepth?.let { "$it-bit" }
                         ?: nerdStats?.claimed?.bitDepth?.let { "$it-bit" }
                         ?: "—"
-                    val sampleRate = nerdStats?.sampleRateHz?.let { "$it Hz" }
-                        ?: nerdStats?.claimed?.sampleRateHz?.let { "$it Hz" }
+                    val sampleRate = nerdStats?.sampleRateHz?.let(::rateText)
+                        ?: nerdStats?.claimed?.sampleRateHz?.let(::rateText)
                         ?: "—"
                     val bitrate = nerdStats?.bitrateKbps?.let { "$it kbps" } ?: "—"
                     val channels = when (nerdStats?.channels) {
@@ -339,7 +353,11 @@ fun AudioPipelineDialog(
                     }
 
                     // 2. Decoder Stage
-                    val decoderName = outputStatus.decoderName ?: "—"
+                    val decoderName = if (dsdRateHz != null) {
+                        "DSD to PCM (native FIR decimator)"
+                    } else {
+                        outputStatus.decoderName ?: "—"
+                    }
 
                     PipelineRule()
                     PipelineSection(
@@ -352,29 +370,38 @@ fun AudioPipelineDialog(
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_decoder_name), decoderName)
                         outputStatus.decoderOutputEncoding?.let {
-                            PipelineRow(stringResource(R.string.pipeline_format), it)
+                            val withRate = if (dsdRateHz != null) "$it / ${rateText(DsdFormat.PCM_RATE)}" else it
+                            PipelineRow(stringResource(R.string.pipeline_format), withRate)
                         }
                     }
 
                     // 3. Resampler Stage
-                    val inRate = nerdStats?.sampleRateHz
-                    val outRate = outputStatus.actualSampleRateHz ?: inRate
+                    // For DSD this is the decimation DsdExtractor did: the one
+                    // step that actually changes the rate, so it is described
+                    // as what it is rather than as a resample, and its output
+                    // side is the PCM it produced, not the DSD rate.
+                    val inRate = dsdRateHz ?: nerdStats?.sampleRateHz
+                    val outRate = if (dsdRateHz != null) DsdFormat.PCM_RATE else outputStatus.actualSampleRateHz ?: inRate
                     val isPassthrough = inRate != null && outRate != null && inRate == outRate
                     val ioRateText = if (inRate != null && outRate != null) {
-                        "$inRate Hz → $outRate Hz"
+                        "${rateText(inRate)} → ${rateText(outRate)}"
                     } else if (inRate != null) {
-                        "$inRate Hz → —"
+                        "${rateText(inRate)} → —"
                     } else if (outRate != null) {
-                        "— → $outRate Hz"
+                        "— → ${rateText(outRate)}"
                     } else {
                         "—"
                     }
                     val resamplerType = when {
+                        dsdRateHz != null ->
+                            "FIR decimation ×${dsdRateHz / DsdFormat.PCM_RATE}, ${DsdFormat.tapsFor(dsdRateHz)} taps"
                         inRate == null && outRate == null -> "—"
                         isPassthrough -> "None"
                         else -> "Resampler"
                     }
+                    val cutoffText = if (dsdRateHz != null) rateText(DsdFilter.CUTOFF_HZ) else "—"
                     val qualityText = when {
+                        dsdRateHz != null -> "DSD to PCM, full band below the cutoff"
                         inRate == null && outRate == null -> "—"
                         isPassthrough -> "Passthrough"
                         else -> "Resampled"
@@ -384,21 +411,21 @@ fun AudioPipelineDialog(
                     PipelineSection(
                         stageIndex = 2,
                         icon = Icons.Rounded.Tune,
-                        title = stringResource(R.string.pipeline_resampler),
+                        title = if (dsdRateHz != null) "DSD to PCM" else stringResource(R.string.pipeline_resampler),
                         columnCoordinates = columnCoordinates,
                         stageActivationProvider = stageActivation,
                         onStageIconPositioned = onStageIconPositioned,
                     ) {
                         PipelineRow(stringResource(R.string.pipeline_io_rate), ioRateText)
                         PipelineRow(stringResource(R.string.pipeline_type), resamplerType)
-                        PipelineRow(stringResource(R.string.pipeline_cutoff), "—")
+                        PipelineRow(stringResource(R.string.pipeline_cutoff), cutoffText)
                         PipelineRow(stringResource(R.string.pipeline_quality), qualityText)
                     }
 
                     // 4. DSP Stage
                     val pcmFormat = outputStatus.dspFormat
-                    val dspRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz
-                    val dspRateText = if (dspRate != null) "$dspRate Hz" else "—"
+                    val dspRate = outputStatus.actualSampleRateHz ?: pcmRateHz
+                    val dspRateText = dspRate?.let(::rateText) ?: "—"
                     val eqPresetText = if (eqEnabled) {
                         eqPreset.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }
                     } else {
@@ -463,6 +490,7 @@ fun AudioPipelineDialog(
                         PipelineRow(
                             stringResource(R.string.pipeline_bit_exact),
                             bitExactVerdict(
+                                dsd = dsdRateHz != null,
                                 outputExact = outputStatus.outputExact,
                                 outputExactDetail = outputStatus.outputExactDetail,
                                 loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
@@ -481,8 +509,8 @@ fun AudioPipelineDialog(
                         AudioFormat.ENCODING_PCM_16BIT -> "PCM16"
                         else -> "Float32"
                     }
-                    val audioTrackRate = outputStatus.actualSampleRateHz ?: nerdStats?.sampleRateHz ?: 48000
-                    val audioTrackText = "$audioTrackEncoding / $audioTrackRate Hz"
+                    val audioTrackRate = outputStatus.actualSampleRateHz ?: pcmRateHz ?: 48000
+                    val audioTrackText = "$audioTrackEncoding / ${rateText(audioTrackRate)}"
 
                     PipelineRule()
                     PipelineSection(
@@ -519,10 +547,11 @@ fun AudioPipelineDialog(
                                 "Direct path active; endpoint format not independently verified"
                             outputStatus.systemMixerRateHz != null -> {
                                 val hal = outputStatus.halFormat
+                                val mixerRate = outputStatus.systemMixerRateHz?.let(::rateText)
                                 if (hal != null) {
-                                    "AudioFlinger Mixer ${outputStatus.systemMixerRateHz} Hz, HAL $hal"
+                                    "AudioFlinger Mixer $mixerRate, HAL $hal"
                                 } else {
-                                    "AudioFlinger Mixer ${outputStatus.systemMixerRateHz} Hz"
+                                    "AudioFlinger Mixer $mixerRate"
                                 }
                             }
                             else -> null
@@ -542,7 +571,7 @@ fun AudioPipelineDialog(
                             if (bt != null && bt.isConnected) {
                                 PipelineRow("Codec", if (bt.hasNamedCodec) bt.codecName else "System Managed")
                                 bt.bitDepth?.let { PipelineRow("Codec Bits", "$it-bit") }
-                                bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", "$it Hz") }
+                                bt.sampleRateHz?.let { PipelineRow("Codec Sample Rate", rateText(it)) }
                                 PipelineRow("Codec Bitrate", bt.bitrateLabel)
                                 bt.mode?.let { PipelineRow("Codec Mode", it) }
                             } else {
@@ -966,6 +995,10 @@ private fun PipelineNote(text: String) {
     )
 }
 
+/** 44100 -> "44.1 kHz", 2822400 -> "2.8224 MHz". */
+private fun rateText(hz: Int): String =
+    NerdStats.megahertzLabel(hz) ?: "${"%.1f".format(Locale.ROOT, hz / 1000f).removeSuffix(".0")} kHz"
+
 internal fun formatUsbCapability(raw: String): String {
     var formatted = raw
         .replace("PCM32", "PCM 32-bit")
@@ -977,7 +1010,7 @@ internal fun formatUsbCapability(raw: String): String {
     formatted = hzRegex.replace(formatted) { matchResult ->
         val hz = matchResult.groupValues[1].toIntOrNull()
             ?: return@replace matchResult.value
-        "${"%.1f".format(Locale.ROOT, hz / 1000f).removeSuffix(".0")} kHz"
+        rateText(hz)
     }
     return formatted
 }

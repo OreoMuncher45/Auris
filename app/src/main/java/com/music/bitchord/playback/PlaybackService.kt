@@ -10,6 +10,7 @@ import android.media.AudioManager
 import android.media.audiofx.AudioEffect
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
 import android.os.SystemClock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -30,14 +31,17 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
@@ -68,6 +72,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.audio.PrecisionAudioSink
+import com.music.bitchord.playback.dsd.DsdExtractorsFactory
 import com.music.bitchord.playback.audio.DirectAudioProbe
 import com.music.bitchord.playback.audio.OutputNegotiator
 import com.music.bitchord.playback.audio.PcmEncoding
@@ -1516,7 +1521,12 @@ class PlaybackService : MediaLibraryService() {
             DefaultDataSource.Factory(this, resolvingFactory),
         )
         AudioCache.setUpstream(defaultDataSourceFactory)
-        mediaSourceFactory = DefaultMediaSourceFactory(AudioCache.playbackFactory(defaultDataSourceFactory))
+        // DsdExtractorsFactory: the stock extractors plus DSF/DFF, which Media3
+        // cannot open at all. A DSD file leaves the extractor as float PCM.
+        mediaSourceFactory = DefaultMediaSourceFactory(
+            AudioCache.playbackFactory(defaultDataSourceFactory),
+            DsdExtractorsFactory(),
+        )
             .setLoadErrorHandlingPolicy(PermanentAwareLoadErrorPolicy())
 
         configuredFloatOutput = shouldEnableFloatOutput()
@@ -4887,18 +4897,30 @@ class PlaybackService : MediaLibraryService() {
         val format = player.audioFormat
         val mediaId = player.currentMediaItem?.mediaId
         val measured = format?.measure()
+        // DSD reaches the renderer already decimated to PCM (DsdExtractor), so
+        // its sample mime is `audio/raw`; the extractor leaves `dsd64` and the
+        // like in `codecs`, and that is the name worth showing — with the DSD
+        // stream's own bitrate and rate (2.8224 MHz for DSD64) rather than the
+        // 176.4 kHz PCM it became.
+        val dsd = format?.codecs?.takeIf { it.startsWith("dsd") }
+        val dsdRateHz = dsd?.removePrefix("dsd")?.toIntOrNull()?.times(44_100)
         NerdStats.current.value = NerdStats.Snapshot(
-            mimeType = format?.sampleMimeType,
+            mimeType = dsd?.let { "audio/$it" } ?: format?.sampleMimeType,
             bitrateKbps = measured?.pcmBitrateKbps
-                ?.takeIf { NerdStats.isLosslessMime(format?.sampleMimeType) }
+                ?.takeIf { dsd == null && NerdStats.isLosslessMime(format?.sampleMimeType) }
                 ?: format?.bitrate?.takeIf { it > 0 }?.div(1000)
                 ?: NerdStats.declaredFormat(mediaId)?.kbps
                 ?: NerdStats.pickedBitrateKbps(mediaId),
-            sampleRateHz = measured?.sampleRateHz,
+            sampleRateHz = dsdRateHz ?: measured?.sampleRateHz,
             channels = measured?.channels,
-            bitDepth = measured?.bitDepth,
+            bitDepth = if (dsd != null) 1 else measured?.bitDepth,
             claimed = NerdStats.declaredFormat(mediaId),
             sourceName = currentSourceName(mediaId, player.currentMediaItem),
+            container = when (format?.containerMimeType) {
+                "audio/x-dsf" -> "DSF"
+                "audio/x-dff" -> "DFF"
+                else -> null
+            },
         )
     }
 
@@ -5261,6 +5283,36 @@ class PlaybackService : MediaLibraryService() {
                     candidates
                 }
             }
+        }
+
+        // FFmpeg after the MediaCodec renderer, so it only gets a track no
+        // platform decoder takes: ALAC everywhere, and AC-4 and Dolby Digital
+        // (Plus, Atmos) on phones without Dolby's own decoder. Atmos then plays
+        // as its 5.1 bed, folded down to stereo — the object layer needs
+        // Dolby's decoder, which is the only thing that can read it.
+        // Same sink as the MediaCodec renderer, so the DSP chain and the
+        // precision path see no difference between the two.
+        override fun buildAudioRenderers(
+            context: Context,
+            extensionRendererMode: Int,
+            mediaCodecSelector: MediaCodecSelector,
+            enableDecoderFallback: Boolean,
+            audioSink: AudioSink,
+            eventHandler: Handler,
+            eventListener: AudioRendererEventListener,
+            out: ArrayList<Renderer>,
+        ) {
+            super.buildAudioRenderers(
+                context,
+                extensionRendererMode,
+                mediaCodecSelector,
+                enableDecoderFallback,
+                audioSink,
+                eventHandler,
+                eventListener,
+                out,
+            )
+            out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
         }
 
         override fun buildAudioSink(
