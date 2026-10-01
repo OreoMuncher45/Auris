@@ -52,6 +52,8 @@ import kotlinx.coroutines.withContext
 internal suspend fun renderLyricsShareCard(
     context: Context,
     card: LyricsShareRequest,
+    /** Pad out to the full 1080×1920 frame, the passage centred in the room. */
+    story: Boolean = false,
 ): Bitmap = withContext(Dispatchers.Default) {
     val type = Fonts(context)
     val cover = card.artworkUrl?.let { loadBitmap(context, it) }
@@ -62,16 +64,20 @@ internal suspend fun renderLyricsShareCard(
     // barely taller than its own text instead of a 9:16 sheet with a paragraph
     // floating in the middle of it, and the size comes down only as far as the
     // ladder goes — past that the frame gives rather than the type does.
-    val bodyTop = HEADER_BOTTOM + GAP_ABOVE_BODY
-    val frameRoom = MAX_CARD_H - FOOTER_THUMB - FOOTER_PAD - GAP_BELOW_BODY - bodyTop
+    val headTop = HEADER_BOTTOM + GAP_ABOVE_BODY
+    val frameRoom = MAX_CARD_H - FOOTER_THUMB - FOOTER_PAD - GAP_BELOW_BODY - headTop
     val plan = fittestPlan(type, card.lines, frameRoom)
+    // A story is always the whole frame, so the spare room is split above and
+    // below the passage; otherwise the card is only as tall as its words.
+    val spare = if (story) (frameRoom - plan.content).coerceAtLeast(0f) else 0f
+    val bodyTop = headTop + spare / 2
     // The passage ends where its own rows end, and everything under it — the
     // gap, the sleeve credit, the foot — hangs off that. Because the card is
     // measured from the same sum the rows are drawn from, no line can ever
     // land past the bottom by a rounding error and be replaced by a mark
     // saying something was left out.
     val bodyBottom = bodyTop + plan.content
-    val cardH = bodyBottom + GAP_BELOW_BODY + FOOTER_THUMB + FOOTER_PAD
+    val cardH = bodyBottom + spare / 2 + GAP_BELOW_BODY + FOOTER_THUMB + FOOTER_PAD
 
     val bitmap = Bitmap.createBitmap(CARD_W, cardH.roundToInt(), Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)

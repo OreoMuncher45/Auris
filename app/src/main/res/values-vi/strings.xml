@@ -521,6 +521,8 @@
     <string name="listen_most_around">Bạn nghe nhiều nhất vào khoảng %1$s.</string>
     <string name="lyrics_share_title">Chia sẻ lời bài hát</string>
     <string name="lyrics_share_description">Những dòng bạn chọn, được bố trí trên một thẻ cùng ảnh bìa.</string>
+    <string name="lyrics_share_story">Chuyển thành story</string>
+    <string name="lyrics_share_story_revert">Quay lại thẻ</string>
     <string name="listening_shape">Thói quen nghe nhạc của bạn</string>
     <string name="member_since">Thành viên từ</string>
     <string name="member_since_value">Thành viên từ %1$s</string>

@@ -48,6 +48,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -103,6 +104,8 @@ fun PlayerDrawer(
     title: String,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Air between the title and whatever the drawer opens with. */
+    titleGap: Dp = 14.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -258,7 +261,7 @@ fun PlayerDrawer(
                 color = Color.White,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 4.dp, bottom = 14.dp),
+                    .padding(start = 4.dp, bottom = titleGap),
             )
             content()
         }

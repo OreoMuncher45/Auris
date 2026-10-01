@@ -16,6 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.IosShare
+import androidx.compose.material.icons.rounded.PhoneIphone
+import androidx.compose.material.icons.rounded.Undo
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -72,12 +74,14 @@ internal fun AndroidLyricsShareSheet(
     var image by remember(request) { mutableStateOf<Bitmap?>(null) }
     var failed by remember(request) { mutableStateOf(false) }
     var saved by remember(request) { mutableStateOf(false) }
+    // Same picture, cut to the 9:16 frame a story wants instead of to its lines.
+    var story by remember(request) { mutableStateOf(false) }
 
-    LaunchedEffect(request) {
+    LaunchedEffect(request, story) {
         image = null
         failed = false
         saved = false
-        image = runCatching { renderLyricsShareCard(context, request) }
+        image = runCatching { renderLyricsShareCard(context, request, story) }
             .onFailure { failed = true }
             .getOrNull()
     }
@@ -87,18 +91,19 @@ internal fun AndroidLyricsShareSheet(
         title = stringResource(R.string.lyrics_share_title),
         onDismiss = onDismiss,
         modifier = modifier,
+        titleGap = 2.dp,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
                 text = stringResource(R.string.lyrics_share_description),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.White.copy(alpha = 0.7f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
+                modifier = Modifier.fillMaxWidth().padding(start = 4.dp),
             )
 
             val bitmap = image
@@ -130,6 +135,18 @@ internal fun AndroidLyricsShareSheet(
                 )
             }
 
+            ShareAction(
+                label = stringResource(if (story) R.string.lyrics_share_story_revert else R.string.lyrics_share_story),
+                icon = if (story) Icons.Rounded.Undo else Icons.Rounded.PhoneIphone,
+                accent = false,
+                enabled = image != null,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    haptics.play(Haptic.Tap)
+                    story = !story
+                },
+            )
+
             if (failed) {
                 Text(
                     text = stringResource(R.string.couldnt_draw_picture),
@@ -137,8 +154,6 @@ internal fun AndroidLyricsShareSheet(
                     color = MaterialTheme.colorScheme.error,
                     textAlign = TextAlign.Center,
                 )
-            } else {
-                Box(Modifier.padding(vertical = 8.dp))
             }
 
             Row(

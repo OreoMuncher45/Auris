@@ -512,6 +512,8 @@
     <string name="listen_most_around">คุณฟังเพลงมากที่สุดช่วง %1$s</string>
     <string name="lyrics_share_title">แชร์เนื้อเพลง</string>
     <string name="lyrics_share_description">บรรทัดที่คุณเลือก เรียงเป็นการ์ดพร้อมปก</string>
+    <string name="lyrics_share_story">แปลงเป็นสตอรี่</string>
+    <string name="lyrics_share_story_revert">กลับเป็นการ์ด</string>
     <string name="listening_shape">รูปแบบการฟังของคุณ</string>
     <string name="member_since">สมาชิกตั้งแต่</string>
     <string name="member_since_value">เป็นสมาชิกตั้งแต่ %1$s</string>

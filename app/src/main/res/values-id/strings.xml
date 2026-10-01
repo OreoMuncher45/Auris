@@ -484,6 +484,8 @@
     <string name="listen_most_around">Anda paling banyak mendengarkan sekitar %1$s.</string>
     <string name="lyrics_share_title">Bagikan lirik</string>
     <string name="lyrics_share_description">Baris yang kamu pilih, ditata pada kartu bersama sampul.</string>
+    <string name="lyrics_share_story">Jadikan story</string>
+    <string name="lyrics_share_story_revert">Kembali ke kartu</string>
     <string name="listening_shape">Pola mendengarkan Anda</string>
     <string name="member_since">Anggota sejak</string>
     <string name="member_since_value">Anggota sejak %1$s</string>

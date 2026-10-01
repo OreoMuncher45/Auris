@@ -512,6 +512,8 @@
     <string name="listen_most_around">Sueles escuchar más cerca de las %1$s.</string>
     <string name="lyrics_share_title">Compartir la letra</string>
     <string name="lyrics_share_description">Las líneas que elegiste, maquetadas en una tarjeta con la portada.</string>
+    <string name="lyrics_share_story">Convertir en historia</string>
+    <string name="lyrics_share_story_revert">Volver a la tarjeta</string>
     <string name="listening_shape">Tus hábitos de reproducción</string>
     <string name="member_since">Miembro desde</string>
     <string name="member_since_value">Miembro desde %1$s</string>

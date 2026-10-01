@@ -460,6 +460,8 @@
     <string name="listen_most_around">Słuchasz muzyki głównie około %1$s.</string>
     <string name="lyrics_share_title">Udostępnij tekst</string>
     <string name="lyrics_share_description">Wybrane wersy, ułożone na karcie z okładką.</string>
+    <string name="lyrics_share_story">Zmień na relację</string>
+    <string name="lyrics_share_story_revert">Wróć do karty</string>
     <string name="listening_shape">Twój wzorzec słuchania</string>
     <string name="member_since">Członek od</string>
     <string name="member_since_value">Członek od %1$s</string>

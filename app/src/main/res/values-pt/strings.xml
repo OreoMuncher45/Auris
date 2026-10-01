@@ -464,6 +464,8 @@
     <string name="listen_most_around">Você ouve mais por volta das %1$s.</string>
     <string name="lyrics_share_title">Partilhar a letra</string>
     <string name="lyrics_share_description">Os versos que escolheste, compostos num cartão com a capa.</string>
+    <string name="lyrics_share_story">Converter em story</string>
+    <string name="lyrics_share_story_revert">Voltar ao cartão</string>
     <string name="listening_shape">Seu padrão de escuta</string>
     <string name="member_since">Membro desde</string>
     <string name="member_since_value">Membro desde %1$s</string>
