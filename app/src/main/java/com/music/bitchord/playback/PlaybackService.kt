@@ -7,12 +7,14 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.media.audiofx.AudioEffect
 import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
 import android.os.Handler
 import android.os.SystemClock
+import com.music.bitchord.data.TelemetryProvenance
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import com.music.bitchord.playback.audio.usb.UsbDirectManager
@@ -684,6 +686,7 @@ class PlaybackService : MediaLibraryService() {
     private var discordPresenceUp = false
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val localBitrateCache = ConcurrentHashMap<String, Int>()
 
     /**
      * The stream resolver the player's own data source runs, kept so a Cast
@@ -1223,6 +1226,7 @@ class PlaybackService : MediaLibraryService() {
         // its id was still recorded as answered. Both are documented where the
         // state lives.
         NerdStats.forgetLastSession()
+        localBitrateCache.clear()
         QualityUpgrade.forgetLastSession()
 
         setMediaNotificationProvider(
@@ -2806,6 +2810,11 @@ class PlaybackService : MediaLibraryService() {
     ) {
         val exoPlayer = player ?: return
         currentAudioInputFormat = null
+        NerdStats.onTrackTransition()
+        AudioOutputStatus.onTrackTransition()
+        mediaItem?.mediaId?.let { id ->
+            resolveLocalBitrate(id, mediaItem)
+        }
 
         // A crossfade handoff never fires [formatListener] for the entering
         // track — [CrossfadeController] starts its decoder during ARMING,
@@ -4946,6 +4955,86 @@ class PlaybackService : MediaLibraryService() {
         return "Unknown"
     }
 
+    private fun resolveLocalUri(mediaId: String, mediaItem: MediaItem?): Uri? {
+        val directUriStr = when {
+            mediaId.startsWith("content://") || mediaId.startsWith("file://") -> mediaId
+            mediaId.startsWith("/") -> "file://$mediaId"
+            else -> null
+        }
+        if (directUriStr != null) return Uri.parse(directUriStr)
+
+        val localConfigUri = mediaItem?.localConfiguration?.uri
+        if (localConfigUri != null && (localConfigUri.scheme == "file" || localConfigUri.scheme == "content")) {
+            return localConfigUri
+        }
+
+        val requestUri = mediaItem?.requestMetadata?.mediaUri
+        if (requestUri != null && (requestUri.scheme == "file" || requestUri.scheme == "content")) {
+            return requestUri
+        }
+
+        val extras = mediaItem?.mediaMetadata?.extras
+        val localUriStr = extras?.getString(EXTRA_LOCAL_URI)
+        if (!localUriStr.isNullOrBlank()) {
+            return Uri.parse(localUriStr)
+        }
+
+        val localPath = extras?.getString(EXTRA_LOCAL_PATH)
+        if (!localPath.isNullOrBlank()) {
+            return Uri.fromFile(java.io.File(localPath))
+        }
+
+        val downloadedUri = Downloads.verifiedSavedUri(mediaId)
+        if (downloadedUri != null) {
+            return Uri.parse(downloadedUri)
+        }
+
+        return null
+    }
+
+    private fun resolveLocalBitrate(mediaId: String, mediaItem: MediaItem?) {
+        if (!isLocalPlayback(mediaId, mediaItem)) return
+        if (localBitrateCache.containsKey(mediaId)) return
+
+        val uri = resolveLocalUri(mediaId, mediaItem) ?: return
+        scope.launch(Dispatchers.IO) {
+            val kbps = runCatching {
+                val retriever = MediaMetadataRetriever()
+                var bps: Long? = null
+                var durMs: Long? = null
+                try {
+                    retriever.setDataSource(this@PlaybackService, uri)
+                    bps = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()
+                    durMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                } finally {
+                    retriever.release()
+                }
+
+                if (bps != null && bps > 0) {
+                    ((bps + 500L) / 1000L).toInt()
+                } else if (durMs != null && durMs > 0) {
+                    val sizeBytes = when (uri.scheme) {
+                        "file" -> uri.path?.let { java.io.File(it).length() }
+                        "content" -> contentResolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+                        else -> null
+                    }
+                    if (sizeBytes != null && sizeBytes > 0) {
+                        ((sizeBytes * 8000L) / durMs / 1000L).toInt().takeIf { it > 0 }
+                    } else null
+                } else null
+            }.getOrNull()
+
+            if (kbps != null && kbps > 0) {
+                localBitrateCache[mediaId] = kbps
+                withContext(Dispatchers.Main) {
+                    if (player?.currentMediaItem?.mediaId == mediaId) {
+                        publishNerdStats()
+                    }
+                }
+            }
+        }
+    }
+
     private fun publishNerdStats() {
         val player = player ?: return
         val format = player.audioFormat
@@ -4958,16 +5047,35 @@ class PlaybackService : MediaLibraryService() {
         // 176.4 kHz PCM it became.
         val dsd = format?.codecs?.takeIf { it.startsWith("dsd") }
         val dsdRateHz = dsd?.removePrefix("dsd")?.toIntOrNull()?.times(44_100)
+        val isLossless = dsd != null || NerdStats.isLosslessMime(format?.sampleMimeType)
+        val isRawPcm = NerdStats.isRawPcm(format?.sampleMimeType)
+        val pcmDataRate = measured?.pcmBitrateKbps
+
+        val (bitrate, provenance) = when {
+            format?.averageBitrate != null && format.averageBitrate > 0 ->
+                Pair((format.averageBitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
+            format?.bitrate != null && format.bitrate > 0 ->
+                Pair((format.bitrate + 500) / 1000, TelemetryProvenance.AUTHORITATIVE)
+            mediaId != null && localBitrateCache.containsKey(mediaId) ->
+                Pair(localBitrateCache[mediaId], TelemetryProvenance.AUTHORITATIVE)
+            NerdStats.declaredFormat(mediaId)?.kbps != null ->
+                Pair(NerdStats.declaredFormat(mediaId)?.kbps, TelemetryProvenance.AUTHORITATIVE)
+            NerdStats.pickedBitrateKbps(mediaId) != null ->
+                Pair(NerdStats.pickedBitrateKbps(mediaId), TelemetryProvenance.AUTHORITATIVE)
+            dsd == null && isRawPcm && pcmDataRate != null ->
+                Pair(pcmDataRate, TelemetryProvenance.DERIVED)
+            else ->
+                Pair(null, TelemetryProvenance.UNKNOWN)
+        }
+
         NerdStats.current.value = NerdStats.Snapshot(
             mimeType = dsd?.let { "audio/$it" } ?: format?.sampleMimeType,
-            bitrateKbps = measured?.pcmBitrateKbps
-                ?.takeIf { dsd == null && NerdStats.isLosslessMime(format?.sampleMimeType) }
-                ?: format?.bitrate?.takeIf { it > 0 }?.div(1000)
-                ?: NerdStats.declaredFormat(mediaId)?.kbps
-                ?: NerdStats.pickedBitrateKbps(mediaId),
+            bitrateKbps = bitrate,
+            bitrateProvenance = provenance,
+            pcmDataRateKbps = if (isLossless) pcmDataRate else null,
             sampleRateHz = dsdRateHz ?: measured?.sampleRateHz,
             channels = measured?.channels,
-            bitDepth = if (dsd != null) 1 else measured?.bitDepth,
+            bitDepth = if (dsd != null) 1 else if (isLossless) measured?.bitDepth else null,
             claimed = NerdStats.declaredFormat(mediaId),
             sourceName = currentSourceName(mediaId, player.currentMediaItem),
             container = when (format?.containerMimeType) {
@@ -6390,6 +6498,7 @@ class PlaybackService : MediaLibraryService() {
         spare = null
         AudioOutputStatus.reset()
         NerdStats.forgetLastSession()
+        localBitrateCache.clear()
         super.onDestroy()
     }
 

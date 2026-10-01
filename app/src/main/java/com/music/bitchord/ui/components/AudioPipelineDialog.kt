@@ -245,13 +245,20 @@ fun AudioPipelineDialog(
             val pcmRateHz = if (dsdRateHz != null) DsdFormat.PCM_RATE else nerdStats?.sampleRateHz
             val codec = NerdStats.codecLabel(nerdStats?.mimeType) ?: nerdStats?.mimeType ?: "—"
             val format = nerdStats?.container?.let { "$codec ($it)" } ?: codec
-            val bitDepth = nerdStats?.bitDepth?.let { "$it-bit" }
-                ?: nerdStats?.claimed?.bitDepth?.let { "$it-bit" }
-                ?: "—"
+            // A lossy codec has no bit depth of its own; the decoder's PCM
+            // depth is not the source's, so it is only shown for lossless.
+            val bitDepth = if (nerdStats?.isLossless == true) {
+                nerdStats?.bitDepth?.let { "$it-bit" }
+                    ?: nerdStats?.claimed?.bitDepth?.let { "$it-bit" }
+                    ?: "—"
+            } else {
+                "—"
+            }
             val sampleRate = nerdStats?.sampleRateHz?.let(::rateText)
                 ?: nerdStats?.claimed?.sampleRateHz?.let(::rateText)
                 ?: "—"
             val bitrate = nerdStats?.bitrateKbps?.let { "$it kbps" } ?: "—"
+            val pcmDataRate = nerdStats?.pcmDataRateKbps?.let { "$it kbps" } ?: "—"
             val channels = when (nerdStats?.channels) {
                 1 -> stringResource(R.string.mono)
                 2 -> stringResource(R.string.stereo)
@@ -273,6 +280,7 @@ fun AudioPipelineDialog(
                 PipelineRow(stringResource(R.string.pipeline_bit_depth), bitDepth)
                 PipelineRow(stringResource(R.string.pipeline_sample_rate), sampleRate)
                 PipelineRow(stringResource(R.string.pipeline_bitrate), bitrate)
+                PipelineRow(stringResource(R.string.pipeline_pcm_data_rate), pcmDataRate)
                 PipelineRow(stringResource(R.string.pipeline_channels), channels)
             }
 
@@ -305,7 +313,7 @@ fun AudioPipelineDialog(
             // as what it is rather than as a resample, and its output
             // side is the PCM it produced, not the DSD rate.
             val inRate = dsdRateHz ?: nerdStats?.sampleRateHz
-            val outRate = if (dsdRateHz != null) DsdFormat.PCM_RATE else outputStatus.actualSampleRateHz ?: inRate
+            val outRate = if (dsdRateHz != null) DsdFormat.PCM_RATE else outputStatus.actualSampleRateHz
             val isPassthrough = inRate != null && outRate != null && inRate == outRate
             val ioRateText = if (inRate != null && outRate != null) {
                 "${rateText(inRate)} → ${rateText(outRate)}"
@@ -319,14 +327,14 @@ fun AudioPipelineDialog(
             val resamplerType = when {
                 dsdRateHz != null ->
                     "FIR decimation ×${dsdRateHz / DsdFormat.PCM_RATE}, ${DsdFormat.tapsFor(dsdRateHz)} taps"
-                inRate == null && outRate == null -> "—"
+                inRate == null || outRate == null -> "—"
                 isPassthrough -> "None"
                 else -> "Resampler"
             }
             val cutoffText = if (dsdRateHz != null) rateText(DsdFilter.CUTOFF_HZ) else "—"
             val qualityText = when {
                 dsdRateHz != null -> "DSD to PCM, full band below the cutoff"
-                inRate == null && outRate == null -> "—"
+                inRate == null || outRate == null -> "—"
                 isPassthrough -> "Passthrough"
                 else -> "Resampled"
             }
@@ -431,10 +439,16 @@ fun AudioPipelineDialog(
                 AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM24"
                 AudioFormat.ENCODING_PCM_32BIT -> "PCM32"
                 AudioFormat.ENCODING_PCM_16BIT -> "PCM16"
-                else -> "Float32"
+                else -> null
             }
-            val audioTrackRate = outputStatus.actualSampleRateHz ?: pcmRateHz ?: 48000
-            val audioTrackText = "$audioTrackEncoding / ${rateText(audioTrackRate)}"
+            val audioTrackRate = outputStatus.actualSampleRateHz
+            val audioTrackText = when {
+                audioTrackEncoding != null && audioTrackRate != null ->
+                    "$audioTrackEncoding / ${rateText(audioTrackRate)}"
+                audioTrackEncoding != null -> audioTrackEncoding
+                audioTrackRate != null -> rateText(audioTrackRate)
+                else -> "—"
+            }
 
             PipelineRule()
             PipelineSection(
