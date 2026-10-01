@@ -9,6 +9,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -290,6 +295,8 @@ fun SongRow(
     isPlaying: Boolean = false,
     /** Accent supplied by artwork-tinted pages. */
     activeTint: Color = MaterialTheme.colorScheme.primary,
+    /** Search results use artwork bars instead of the usual current-song icon. */
+    searchPlayingStyle: Boolean = false,
     /** True while a Downloads row belongs to the current multi-selection. */
     selected: Boolean = false,
 ) {
@@ -328,6 +335,7 @@ fun SongRow(
             isCurrent = isCurrent,
             isPlaying = isPlaying,
             activeTint = activeTint,
+            searchPlayingStyle = searchPlayingStyle,
             selected = selected,
         )
         return
@@ -374,6 +382,7 @@ fun SongRow(
             isCurrent = isCurrent,
             isPlaying = isPlaying,
             activeTint = activeTint,
+            searchPlayingStyle = searchPlayingStyle,
             selected = selected,
         )
     }
@@ -440,6 +449,7 @@ private fun SongRowContent(
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
     activeTint: Color = MaterialTheme.colorScheme.primary,
+    searchPlayingStyle: Boolean = false,
     selected: Boolean = false,
 ) {
     val titleColor by animateColorAsState(
@@ -463,7 +473,9 @@ private fun SongRowContent(
             // Same 52dp the artwork would take, so a numbered list and an
             // illustrated one share a left edge and a divider inset.
             Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-                if (isCurrent) {
+                if (searchPlayingStyle && isCurrent && isPlaying) {
+                    SearchPlayingBars()
+                } else if (isCurrent) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
                         contentDescription = stringResource(Res.string.now_playing),
@@ -479,15 +491,20 @@ private fun SongRowContent(
                 }
             }
         } else {
-            AsyncImage(
-                model = com.music.bitchord.ui.player.rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
+            Box(Modifier.size(52.dp)) {
+                AsyncImage(
+                    model = com.music.bitchord.ui.player.rememberRemoteArtworkUrl(song)?.artworkAt(ROW_ART_PX),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .thumbnailBorder(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                if (searchPlayingStyle && isCurrent && isPlaying) {
+                    SearchPlayingBars(Modifier.align(Alignment.Center))
+                }
+            }
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -520,7 +537,7 @@ private fun SongRowContent(
                 modifier = Modifier.size(20.dp),
             )
         }
-        if (isCurrent && trackNumber == null) {
+        if (isCurrent && trackNumber == null && !(searchPlayingStyle && isPlaying)) {
             Spacer(Modifier.width(8.dp))
             Icon(
                 imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
@@ -553,6 +570,49 @@ private fun SongRowContent(
                     modifier = Modifier.size(20.dp),
                 )
             }
+        }
+    }
+}
+
+/** The accent a current song's title takes in lists that mark it with [SearchPlayingBars]. */
+val PlayingAccent = Color(0xFFFB4A62)
+
+@Composable
+fun SearchPlayingBars(modifier: Modifier = Modifier) {
+    val heights = listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
+        val transition = rememberInfiniteTransition(label = "search playing bar $index")
+        val height by transition.animateFloat(
+            initialValue = minimum,
+            targetValue = 1f - (index * 0.12f),
+            animationSpec = infiniteRepeatable(
+                animation = keyframes {
+                    durationMillis = 520 + index * 130
+                    minimum at 0
+                    1f at (260 + index * 50)
+                    minimum at durationMillis
+                },
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "search bar height $index",
+        )
+        height
+    }
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color.Black.copy(alpha = 0.52f))
+            .padding(horizontal = 5.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        heights.forEach { height ->
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(14.dp * height)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color.White),
+            )
         }
     }
 }

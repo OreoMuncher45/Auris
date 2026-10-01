@@ -55,6 +55,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.BrowseItem
@@ -64,13 +65,17 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.SearchHistoryEntity
+import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
 import com.music.bitchord.ui.haptics.Haptic
@@ -82,6 +87,8 @@ fun SearchScreen(
     query: String,
     onQueryChange: (String) -> Unit,
     filter: SearchFilter,
+    currentSong: Song?,
+    isPlaying: Boolean,
     onFilterChange: (SearchFilter) -> Unit,
     results: UiState<List<SearchResult>>?,
     loadingMore: Boolean,
@@ -212,13 +219,22 @@ fun SearchScreen(
                             onBrowseClick = { item ->
                                 onBrowseClick(item)
                             },
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
                         )
                     }
                 }
                 results == null -> if (history.isEmpty()) {
                     item { MessageState(stringResource(Res.string.search_empty)) }
                 } else {
-                    recentSearches(history, onHistoryClick, onHistoryRemove, onHistoryClear)
+                    recentSearches(
+                        history = history,
+                        currentSong = currentSong,
+                        isPlaying = isPlaying,
+                        onClick = onHistoryClick,
+                        onRemove = onHistoryRemove,
+                        onClear = onHistoryClear,
+                    )
                 }
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
                 results is UiState.Error -> item { MessageState(results.message) }
@@ -276,6 +292,10 @@ fun SearchScreen(
                                     },
                                     onLongPress = { onSongLongPress(row.song) },
                                     onSwipeToQueue = { onSongSwipe(row.song) },
+                                    isCurrent = row.song.isSameTrackAs(currentSong),
+                                    isPlaying = isPlaying && row.song.isSameTrackAs(currentSong),
+                                    searchPlayingStyle = true,
+                                    activeTint = PlayingAccent,
                                 )
                                 is SearchResult.Browse -> BrowseRow(
                                     item = row.item,
@@ -503,6 +523,8 @@ private fun LazyListScope.searchTypeaheadDropdown(
     onSongClick: (Song) -> Unit,
     onSongLongPress: ((Song) -> Unit)?,
     onBrowseClick: (BrowseItem) -> Unit,
+    currentSong: Song?,
+    isPlaying: Boolean,
 ) {
     item(key = "typeahead:divider") {
         HorizontalDivider(
@@ -523,6 +545,8 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
+                isCurrent = result.song.isSameTrackAs(currentSong),
+                isPlaying = isPlaying && result.song.isSameTrackAs(currentSong),
             )
             is SearchResult.Browse -> BrowseRow(
                 item = result.item,
@@ -533,6 +557,8 @@ private fun LazyListScope.searchTypeaheadDropdown(
                 song = result.song,
                 onClick = { onSongClick(result.song) },
                 onLongPress = onSongLongPress?.let { { it(result.song) } },
+                isCurrent = result.song.isSameTrackAs(currentSong),
+                isPlaying = isPlaying && result.song.isSameTrackAs(currentSong),
             )
         }
     }
@@ -547,6 +573,8 @@ private fun TypeaheadSongRow(
     song: Song,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
+    isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
 ) {
     Row(
         modifier = Modifier
@@ -556,21 +584,24 @@ private fun TypeaheadSongRow(
             .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = song.artworkAt(ROW_ART_PX),
-            contentDescription = null,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .thumbnailBorder(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        Box(Modifier.size(52.dp)) {
+            AsyncImage(
+                model = song.artworkAt(ROW_ART_PX),
+                contentDescription = null,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .thumbnailBorder(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+            if (isCurrent && isPlaying) SearchPlayingBars(Modifier.align(Alignment.Center))
+        }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = song.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -593,6 +624,8 @@ private fun TypeaheadSongRow(
  */
 private fun LazyListScope.recentSearches(
     history: List<SearchHistoryEntity>,
+    currentSong: Song?,
+    isPlaying: Boolean,
     onClick: (SearchHistoryEntity) -> Unit,
     onRemove: (String) -> Unit,
     onClear: () -> Unit,
@@ -624,6 +657,8 @@ private fun LazyListScope.recentSearches(
     items(history, key = { "recent:${it.id}" }) { entity ->
         RecentSearchEntityRow(
             entity = entity,
+            isCurrent = entity.entityType == EntityType.TRACK && entity.id == currentSong?.videoId,
+            isPlaying = isPlaying,
             onClick = { onClick(entity) },
             onRemove = { onRemove(entity.id) },
         )
@@ -637,6 +672,8 @@ private fun LazyListScope.recentSearches(
 @Composable
 private fun RecentSearchEntityRow(
     entity: SearchHistoryEntity,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
     onClick: () -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -647,21 +684,26 @@ private fun RecentSearchEntityRow(
             .padding(start = PAGE_GUTTER, end = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        AsyncImage(
-            model = entity.artworkUrl,
-            contentDescription = null,
-            modifier = Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .thumbnailBorder(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
+        Box(Modifier.size(52.dp)) {
+            AsyncImage(
+                model = entity.artworkUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .thumbnailBorder(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            )
+            if (isCurrent && isPlaying) {
+                SearchPlayingBars(Modifier.align(Alignment.Center))
+            }
+        }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = entity.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
+                color = if (isCurrent) PlayingAccent else MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
