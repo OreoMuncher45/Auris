@@ -1234,4 +1234,13 @@
     <string name="source_downloads_off">Streaming uniquement</string>
     <string name="lossless_output_permission">Vérifier le codec Bluetooth</string>
     <string name="lossless_output_permission_detail">Autorisez Appareils à proximité pour qu’un casque LDAC ou LHDC débloque les modules sans perte</string>
+    <string name="cached_songs">Titres en cache</string>
+    <string name="cached_songs_subtitle">Titres de YouTube et JioSaavn dans le cache audio</string>
+    <string name="cached_songs_empty">Aucun titre en cache pour l’instant. Les titres lus depuis YouTube ou JioSaavn apparaîtront ici.</string>
+    <string name="show_cache_folder">Afficher le dossier des titres en cache</string>
+    <string name="show_cache_folder_subtitle">Ajoute à la Bibliothèque un dossier avec les titres YouTube et JioSaavn conservés dans le cache</string>
+    <string name="song_cache_unlimited">Illimité</string>
+    <string name="song_cache_unlimited_subtitle">Aucune limite. L’audio en cache peut grandir jusqu’à remplir votre stockage.</string>
+    <string name="clear_song_cache_title">Vider le cache audio ?</string>
+    <string name="clear_song_cache_warning">Tous les titres en cache seront supprimés et le dossier des titres en cache sera vidé. Ils seront à nouveau diffusés en streaming à la prochaine lecture.</string>
 </resources>

@@ -1213,4 +1213,13 @@
     <string name="source_downloads_off">仅限在线播放</string>
     <string name="lossless_output_permission">检查蓝牙编解码器</string>
     <string name="lossless_output_permission_detail">允许“附近的设备”权限，LDAC 或 LHDC 耳机即可解锁仅限无损的插件</string>
+    <string name="cached_songs">已缓存的歌曲</string>
+    <string name="cached_songs_subtitle">歌曲缓存中的 YouTube 和 JioSaavn 歌曲</string>
+    <string name="cached_songs_empty">还没有已缓存的歌曲。你从 YouTube 或 JioSaavn 播放的歌曲会显示在这里。</string>
+    <string name="show_cache_folder">显示已缓存歌曲文件夹</string>
+    <string name="show_cache_folder_subtitle">在资料库中添加一个文件夹，列出歌曲缓存中保存的 YouTube 和 JioSaavn 歌曲</string>
+    <string name="song_cache_unlimited">无限制</string>
+    <string name="song_cache_unlimited_subtitle">无上限。缓存的音频会一直增长，直到存储空间用完。</string>
+    <string name="clear_song_cache_title">清除歌曲缓存？</string>
+    <string name="clear_song_cache_warning">所有已缓存的歌曲都将被删除，已缓存歌曲文件夹也会被清空。下次播放时会重新在线播放。</string>
 </resources>

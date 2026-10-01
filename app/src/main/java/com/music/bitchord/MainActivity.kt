@@ -147,6 +147,7 @@ import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.LibraryReplayEntry
 import com.music.bitchord.ui.screens.libraryDeviceItems
+import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SettingsScreen
@@ -745,7 +746,7 @@ private fun BitChordApp(
         // the same disk work twice on every open, which was especially visible
         // for large download libraries and slow content providers.
         if (openPage.songs !is UiState.Loading &&
-            (open == "local:downloads" || Downloads.recordIdOf(open) != null)
+            (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null)
         ) {
             viewModel.reloadLocalDetail(open)
         }

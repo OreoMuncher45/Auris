@@ -1213,4 +1213,13 @@
     <string name="source_downloads_off">Hanya streaming</string>
     <string name="lossless_output_permission">Periksa codec Bluetooth</string>
     <string name="lossless_output_permission_detail">Izinkan Perangkat di sekitar agar headphone LDAC atau LHDC bisa membuka addon lossless</string>
+    <string name="cached_songs">Lagu dalam cache</string>
+    <string name="cached_songs_subtitle">Lagu dari YouTube dan JioSaavn di cache lagu</string>
+    <string name="cached_songs_empty">Belum ada lagu dalam cache. Lagu yang kamu putar dari YouTube atau JioSaavn akan muncul di sini.</string>
+    <string name="show_cache_folder">Tampilkan folder lagu dalam cache</string>
+    <string name="show_cache_folder_subtitle">Menambahkan folder di Pustaka berisi lagu YouTube dan JioSaavn yang disimpan di cache lagu</string>
+    <string name="song_cache_unlimited">Tanpa batas</string>
+    <string name="song_cache_unlimited_subtitle">Tanpa batas. Audio dalam cache bisa terus bertambah hingga penyimpanan penuh.</string>
+    <string name="clear_song_cache_title">Hapus cache lagu?</string>
+    <string name="clear_song_cache_warning">Semua lagu dalam cache akan dihapus dan folder lagu dalam cache akan dikosongkan. Lagu akan di-streaming lagi saat diputar berikutnya.</string>
 </resources>

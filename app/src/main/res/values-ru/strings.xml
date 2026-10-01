@@ -1259,4 +1259,13 @@
     <string name="source_downloads_off">Только стриминг</string>
     <string name="lossless_output_permission">Проверить Bluetooth-кодек</string>
     <string name="lossless_output_permission_detail">Разрешите доступ к устройствам поблизости, чтобы наушники LDAC или LHDC открыли аддоны без потерь</string>
+    <string name="cached_songs">Кэшированные треки</string>
+    <string name="cached_songs_subtitle">Треки из YouTube и JioSaavn в кэше треков</string>
+    <string name="cached_songs_empty">Кэшированных треков пока нет. Здесь появятся треки, которые вы слушаете из YouTube или JioSaavn.</string>
+    <string name="show_cache_folder">Показывать папку кэшированных треков</string>
+    <string name="show_cache_folder_subtitle">Добавляет в Библиотеку папку с треками из YouTube и JioSaavn, сохранёнными в кэше</string>
+    <string name="song_cache_unlimited">Без ограничений</string>
+    <string name="song_cache_unlimited_subtitle">Без ограничений. Кэшированное аудио может расти, пока не заполнится память.</string>
+    <string name="clear_song_cache_title">Очистить кэш треков?</string>
+    <string name="clear_song_cache_warning">Все кэшированные треки будут удалены, а папка кэшированных треков опустеет. При следующем воспроизведении они снова будут загружаться потоком.</string>
 </resources>

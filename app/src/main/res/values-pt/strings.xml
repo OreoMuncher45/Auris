@@ -1238,4 +1238,13 @@
     <string name="source_downloads_off">Somente streaming</string>
     <string name="lossless_output_permission">Verificar codec Bluetooth</string>
     <string name="lossless_output_permission_detail">Permita Dispositivos por perto para que fones LDAC ou LHDC liberem os complementos sem perdas</string>
+    <string name="cached_songs">Músicas em cache</string>
+    <string name="cached_songs_subtitle">Músicas do YouTube e JioSaavn no cache de músicas</string>
+    <string name="cached_songs_empty">Ainda não há músicas em cache. As músicas que você tocar do YouTube ou JioSaavn aparecerão aqui.</string>
+    <string name="show_cache_folder">Mostrar pasta de músicas em cache</string>
+    <string name="show_cache_folder_subtitle">Adiciona à Biblioteca uma pasta com as músicas do YouTube e JioSaavn guardadas no cache</string>
+    <string name="song_cache_unlimited">Ilimitado</string>
+    <string name="song_cache_unlimited_subtitle">Sem limite. O áudio em cache pode crescer até encher o armazenamento.</string>
+    <string name="clear_song_cache_title">Limpar cache de músicas?</string>
+    <string name="clear_song_cache_warning">Todas as músicas em cache serão excluídas e a pasta de músicas em cache ficará vazia. Elas serão transmitidas novamente na próxima vez que você tocar.</string>
 </resources>

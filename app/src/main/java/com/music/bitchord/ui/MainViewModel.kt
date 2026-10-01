@@ -75,7 +75,9 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.StreamChoice
+import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -1220,6 +1222,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         viewModelScope.launch {
+            // Emptied from Settings while the folder sits open underneath.
+            AudioCache.contentsChanged.drop(1).collect {
+                if (_detailStack.value.any { page -> page.browseId == CACHE_FOLDER_BROWSE_ID }) {
+                    reloadLocalDetail(CACHE_FOLDER_BROWSE_ID)
+                }
+            }
+        }
+        viewModelScope.launch {
             AppSettings.webdavUrl.drop(1).collect {
                 reloadRemoteDetail(com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID)
             }
@@ -2236,6 +2246,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (songs.isEmpty()) UiState.Error("No downloaded tracks")
                     else UiState.Success(songs)
                 }
+                browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
                 browseId == "local:all" -> {
                     val context = getApplication<Application>()
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
@@ -2345,6 +2356,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (songs.isEmpty()) UiState.Error("No downloaded tracks")
                     else UiState.Success(songs)
                 }
+                browseId == CACHE_FOLDER_BROWSE_ID -> cachedSongsState()
                 browseId == "local:all" -> {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {
                         UiState.Error(text(R.string.storage_required_read))
@@ -2380,6 +2392,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun downloadedPlaylist(browseId: String): List<Song> {
         val id = Downloads.recordIdOf(browseId) ?: return emptyList()
         return Downloads.getCollectionSongs(getApplication(), id)
+    }
+
+    /**
+     * The Cached songs folder: the YouTube and JioSaavn tracks the song cache
+     * is holding, most recently played first. See [AudioCache.cachedSongs].
+     */
+    private suspend fun cachedSongsState(): UiState<List<Song>> {
+        val songs = AudioCache.cachedSongs().map { it.song }
+        return if (songs.isEmpty()) UiState.Error(text(R.string.cached_songs_empty)) else UiState.Success(songs)
     }
 
     /**
@@ -2493,6 +2514,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 browseId == "local:downloads" -> runCatching {
                     Downloads.getDownloadedSongs(context)
                         .ifEmpty { error("No downloaded tracks") }
+                }
+                browseId == CACHE_FOLDER_BROWSE_ID -> runCatching {
+                    AudioCache.cachedSongs().map { it.song }
+                        .ifEmpty { error(text(R.string.cached_songs_empty)) }
                 }
                 browseId == "local:all" -> runCatching {
                     if (!LocalMediaRepository.hasStoragePermission(context)) {

@@ -1172,4 +1172,13 @@
     <string name="source_downloads_off">Solo streaming</string>
     <string name="lossless_output_permission">Controlla codec Bluetooth</string>
     <string name="lossless_output_permission_detail">Consenti Dispositivi nelle vicinanze perché le cuffie LDAC o LHDC sblocchino i componenti lossless</string>
+    <string name="cached_songs">Brani in cache</string>
+    <string name="cached_songs_subtitle">Brani di YouTube e JioSaavn nella cache dei brani</string>
+    <string name="cached_songs_empty">Ancora nessun brano in cache. I brani che riproduci da YouTube o JioSaavn appariranno qui.</string>
+    <string name="show_cache_folder">Mostra cartella dei brani in cache</string>
+    <string name="show_cache_folder_subtitle">Aggiunge alla Libreria una cartella con i brani di YouTube e JioSaavn conservati nella cache</string>
+    <string name="song_cache_unlimited">Illimitata</string>
+    <string name="song_cache_unlimited_subtitle">Nessun limite. L’audio in cache può crescere fino a riempire la memoria.</string>
+    <string name="clear_song_cache_title">Svuotare la cache dei brani?</string>
+    <string name="clear_song_cache_warning">Tutti i brani in cache verranno eliminati e la cartella dei brani in cache verrà svuotata. Verranno riprodotti di nuovo in streaming la prossima volta.</string>
 </resources>

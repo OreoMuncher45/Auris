@@ -1205,4 +1205,13 @@
     <string name="source_downloads_off">Yalnızca akış</string>
     <string name="lossless_output_permission">Bluetooth kodeğini kontrol et</string>
     <string name="lossless_output_permission_detail">LDAC veya LHDC kulaklıkların kayıpsız eklentileri açabilmesi için Yakındaki cihazlar iznini verin</string>
+    <string name="cached_songs">Önbellekteki şarkılar</string>
+    <string name="cached_songs_subtitle">Şarkı önbelleğindeki YouTube ve JioSaavn şarkıları</string>
+    <string name="cached_songs_empty">Henüz önbellekte şarkı yok. YouTube veya JioSaavn üzerinden çaldığın şarkılar burada görünecek.</string>
+    <string name="show_cache_folder">Önbellekteki şarkılar klasörünü göster</string>
+    <string name="show_cache_folder_subtitle">Kitaplığa, önbellekte tutulan YouTube ve JioSaavn şarkılarını içeren bir klasör ekler</string>
+    <string name="song_cache_unlimited">Sınırsız</string>
+    <string name="song_cache_unlimited_subtitle">Sınır yok. Önbellekteki ses, depolama alanı dolana kadar büyüyebilir.</string>
+    <string name="clear_song_cache_title">Şarkı önbelleği temizlensin mi?</string>
+    <string name="clear_song_cache_warning">Önbellekteki tüm şarkılar silinecek ve önbellekteki şarkılar klasörü boşaltılacak. Bir sonraki çalışta yeniden akışla oynatılacaklar.</string>
 </resources>

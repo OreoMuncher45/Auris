@@ -1238,4 +1238,13 @@
     <string name="source_downloads_off">הזרמה בלבד</string>
     <string name="lossless_output_permission">בדיקת קודק Bluetooth</string>
     <string name="lossless_output_permission_detail">אפשרו מכשירים בקרבת מקום כדי שאוזניות LDAC או LHDC יפתחו תוספים ללא אובדן</string>
+    <string name="cached_songs">שירים במטמון</string>
+    <string name="cached_songs_subtitle">שירים מ-YouTube ומ-JioSaavn במטמון השירים</string>
+    <string name="cached_songs_empty">אין עדיין שירים במטמון. שירים שתנגן מ-YouTube או מ-JioSaavn יופיעו כאן.</string>
+    <string name="show_cache_folder">הצג תיקיית שירים במטמון</string>
+    <string name="show_cache_folder_subtitle">מוסיף לספרייה תיקייה עם שירי YouTube ו-JioSaavn שנשמרו במטמון</string>
+    <string name="song_cache_unlimited">ללא הגבלה</string>
+    <string name="song_cache_unlimited_subtitle">אין מגבלה. האודיו במטמון יכול לגדול עד שהאחסון יתמלא.</string>
+    <string name="clear_song_cache_title">לנקות את מטמון השירים?</string>
+    <string name="clear_song_cache_warning">כל השירים במטמון יימחקו ותיקיית השירים במטמון תתרוקן. הם יוזרמו שוב בפעם הבאה שתנגן אותם.</string>
 </resources>

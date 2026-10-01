@@ -1271,4 +1271,13 @@
     <string name="source_downloads_off">Tylko streaming</string>
     <string name="lossless_output_permission">Sprawdź kodek Bluetooth</string>
     <string name="lossless_output_permission_detail">Zezwól na Urządzenia w pobliżu, by słuchawki LDAC lub LHDC odblokowały dodatki bezstratne</string>
+    <string name="cached_songs">Utwory w pamięci podręcznej</string>
+    <string name="cached_songs_subtitle">Utwory z YouTube i JioSaavn w pamięci podręcznej utworów</string>
+    <string name="cached_songs_empty">Brak utworów w pamięci podręcznej. Utwory odtwarzane z YouTube lub JioSaavn pojawią się tutaj.</string>
+    <string name="show_cache_folder">Pokaż folder utworów w pamięci podręcznej</string>
+    <string name="show_cache_folder_subtitle">Dodaje do Biblioteki folder z utworami z YouTube i JioSaavn przechowywanymi w pamięci podręcznej</string>
+    <string name="song_cache_unlimited">Bez limitu</string>
+    <string name="song_cache_unlimited_subtitle">Bez limitu. Dźwięk w pamięci podręcznej może rosnąć, aż zapełni się pamięć.</string>
+    <string name="clear_song_cache_title">Wyczyścić pamięć podręczną utworów?</string>
+    <string name="clear_song_cache_warning">Wszystkie utwory z pamięci podręcznej zostaną usunięte, a folder utworów w pamięci podręcznej zostanie opróżniony. Przy następnym odtworzeniu zostaną ponownie przesłane strumieniowo.</string>
 </resources>

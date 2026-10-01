@@ -1556,6 +1556,10 @@ class PlaybackService : MediaLibraryService() {
             // hand. See [StreamContainer].
             streamResolver.resolveDataSpec(dataSpec).also { resolved ->
                 mediaIdIn(dataSpec.uri)?.let { StreamContainer.served(it, resolved.uri.toString()) }
+                // The same seam tells the cache whose file it is writing, which
+                // decides whether the entry outlives the track — see
+                // [AudioCache.Origin].
+                AudioCache.recordServed(dataSpec, resolved.uri.toString())
             }
         }
         // Read-ahead resolves streams through the same chain the player does.
@@ -2812,6 +2816,8 @@ class PlaybackService : MediaLibraryService() {
         currentAudioInputFormat = null
         NerdStats.onTrackTransition()
         AudioOutputStatus.onTrackTransition()
+        mediaItem?.let { AudioCache.noteSongs(listOf(it.toSong())) }
+        scheduleForeignCachePurge()
         mediaItem?.mediaId?.let { id ->
             resolveLocalBitrate(id, mediaItem)
         }
@@ -5213,6 +5219,31 @@ class PlaybackService : MediaLibraryService() {
         MediaWidget.refresh(this)
     }
 
+    private var foreignCachePurgeJob: Job? = null
+
+    /**
+     * Lets go of whatever an addon or module served for tracks the queue has
+     * moved past — see [AudioCache.dropForeignEntries].
+     *
+     * Delayed so a crossfade has finished with the outgoing track, and a
+     * run of skips collapses into one pass. The track playing and the one
+     * after it are kept: both may still be read, seeked through or analysed.
+     */
+    private fun scheduleForeignCachePurge() {
+        foreignCachePurgeJob?.cancel()
+        foreignCachePurgeJob = scope.launch {
+            delay(FOREIGN_CACHE_PURGE_DELAY_MS)
+            val exoPlayer = player ?: return@launch
+            val keep = buildSet {
+                exoPlayer.currentMediaItem?.mediaId?.let(::add)
+                val next = exoPlayer.nextMediaItemIndex
+                if (next != C.INDEX_UNSET) add(exoPlayer.getMediaItemAt(next).mediaId)
+                spare?.currentMediaItem?.mediaId?.let(::add)
+            }
+            AudioCache.dropForeignEntries(keep)
+        }
+    }
+
     /**
      * Hands the cache the queue ahead of the one playing: [AudioCache.QUEUE_DEPTH]
      * tracks is more than it does anything with, but it decides that, not this.
@@ -5225,6 +5256,9 @@ class PlaybackService : MediaLibraryService() {
         } else {
             emptyList()
         }
+        // So whatever read-ahead writes for these can be named in the Cached
+        // songs folder; its own requests carry nothing but an id.
+        AudioCache.noteSongs(upcomingSongs)
         val preferAudio = AppSettings.preferMusicOnly.value
         val request = preferAudio to upcomingSongs.map { it.videoId }
         if (request == preferredPrefetchRequest) return
@@ -7944,6 +7978,8 @@ class PlaybackService : MediaLibraryService() {
         const val MEDIA_PLAYLISTS_ID = "playlists"
         const val MEDIA_MORE_ID = "more"
         const val MEDIA_LIKED_ID = "liked"
+        /** See [scheduleForeignCachePurge]: comfortably past the longest crossfade. */
+        const val FOREIGN_CACHE_PURGE_DELAY_MS = 30_000L
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
         const val MAX_AUTO_PAGE_SIZE = 50

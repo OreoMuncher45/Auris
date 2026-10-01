@@ -1153,4 +1153,13 @@
     <string name="source_downloads_off">Chỉ phát trực tuyến</string>
     <string name="lossless_output_permission">Kiểm tra codec Bluetooth</string>
     <string name="lossless_output_permission_detail">Cho phép Thiết bị lân cận để tai nghe LDAC hoặc LHDC mở khóa addon lossless</string>
+    <string name="cached_songs">Bài hát đã lưu bộ nhớ đệm</string>
+    <string name="cached_songs_subtitle">Bài hát từ YouTube và JioSaavn trong bộ nhớ đệm</string>
+    <string name="cached_songs_empty">Chưa có bài hát nào trong bộ nhớ đệm. Bài hát bạn phát từ YouTube hoặc JioSaavn sẽ hiện ở đây.</string>
+    <string name="show_cache_folder">Hiện thư mục bài hát trong bộ nhớ đệm</string>
+    <string name="show_cache_folder_subtitle">Thêm vào Thư viện một thư mục chứa các bài hát YouTube và JioSaavn được lưu trong bộ nhớ đệm</string>
+    <string name="song_cache_unlimited">Không giới hạn</string>
+    <string name="song_cache_unlimited_subtitle">Không giới hạn. Âm thanh trong bộ nhớ đệm có thể tăng cho đến khi đầy bộ nhớ.</string>
+    <string name="clear_song_cache_title">Xóa bộ nhớ đệm bài hát?</string>
+    <string name="clear_song_cache_warning">Tất cả bài hát trong bộ nhớ đệm sẽ bị xóa và thư mục bài hát trong bộ nhớ đệm sẽ trống. Chúng sẽ được phát trực tuyến lại vào lần phát tiếp theo.</string>
 </resources>
