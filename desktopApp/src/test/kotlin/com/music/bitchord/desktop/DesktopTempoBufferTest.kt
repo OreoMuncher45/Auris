@@ -71,6 +71,35 @@ class DesktopTempoBufferTest {
         }
     }
 
+    @Test
+    fun `finishing works at any speed and block size the ease can stop on`() {
+        // The ease stops a hair above 1x as often as not; at 1.0065x the drain once reached 8
+        // frames before the start of what was held and threw on the audio thread.
+        val source = tone(seconds = 3.0)
+        for (speed in floatArrayOf(1.0005f, 1.003f, 1.0065f, 1.0075f, 1.02f, 1.05f, 1.1f)) {
+            for (block in intArrayOf(1_920, 4_096, 8_192, 2_304)) {
+                val tempo = DesktopTempoBuffer(channels, rate).apply { this.speed = speed }
+                val pushed = (1.3 * rate).toInt() / block * block * channels
+                var offset = 0
+                while (offset < pushed) {
+                    val count = minOf(block * channels, pushed - offset)
+                    tempo.push(source.copyOfRange(offset, offset + count), count)
+                    offset += count
+                    while (tempo.available > 8_192) tempo.take(4_096)
+                }
+                tempo.finish()
+                var last = FloatArray(0)
+                while (tempo.available > 0) {
+                    val out = tempo.take(4_096)
+                    last = (last + out.copyOf(tempo.outputCount)).takeLast(64).toFloatArray()
+                }
+                for (i in 0 until 64) {
+                    assertEquals(source[pushed - 64 + i], last[i], 1e-6f, "speed $speed, block $block: sample $i")
+                }
+            }
+        }
+    }
+
     private fun tone(seconds: Double): FloatArray = FloatArray((seconds * rate * channels).toInt()) { index ->
         sin(2.0 * PI * 440.0 * (index / channels) / rate).toFloat()
     }

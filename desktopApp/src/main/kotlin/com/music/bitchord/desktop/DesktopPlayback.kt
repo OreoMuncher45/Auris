@@ -29,6 +29,12 @@ data class DesktopPlaybackState(
     val volume: Float = 1.0f,
     val isLoading: Boolean = false,
     val positionMs: Long = 0L,
+    /**
+     * A seek has landed but none of its audio has reached the speakers yet — the decoder is still
+     * fetching it. [isPlaying] stays true (it is what Listen Together and the media keys follow),
+     * so this is what tells the lyrics not to run on through the wait.
+     */
+    val awaitingAudio: Boolean = false,
     val durationMs: Long = 0L,
     val error: String? = null,
     val streamFormat: DesktopStreamFormat? = null,

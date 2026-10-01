@@ -279,6 +279,7 @@ import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.isSameTrackAs
+import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.SmartAnalysis
@@ -1531,7 +1532,10 @@ fun BitChordDesktopApp() {
     // draws it — see PlaybackPosition — so a tick never recomposes the player.
     val playerPosition = remember { PlaybackPosition() }
     LaunchedEffect(playbackEngine) {
-        playbackEngine.state.collect { playerPosition.positionMs = it.positionMs }
+        playbackEngine.state.collect {
+            playerPosition.positionMs = it.positionMs
+            playerPosition.advancing = !it.awaitingAudio
+        }
     }
 
     // Lyrics and motion artwork follow whatever is *playing*, not whatever page happens to be open.
@@ -1546,11 +1550,22 @@ fun BitChordDesktopApp() {
     var lyricsError by remember { mutableStateOf<String?>(null) }
     var canvas by remember { mutableStateOf<DesktopCanvasArtwork?>(null) }
 
+    // The length the lyrics are matched on, taken once per track. A better rendition swapped in
+    // mid-song reports its own, slightly different length — or none, for a manifest — and keyed
+    // on the live duration, every such upgrade threw away the lyrics on screen and fetched them
+    // all over again. Only the playing track's own report counts: right after a skip, [playback]
+    // still describes the track before.
+    var lyricsLengthMs by remember(selectedSong?.videoId) { mutableStateOf(0L) }
+    val playingLengthMs = playback.durationMs.takeIf { playback.song?.videoId == selectedSong?.videoId } ?: 0L
+    LaunchedEffect(selectedSong?.videoId, playingLengthMs > 0L) {
+        if (lyricsLengthMs <= 0L && playingLengthMs > 0L) lyricsLengthMs = playingLengthMs
+    }
+
     // Keyed on the duration too: it lands a beat after the track, and a database match needs it,
     // so looking up against a length of zero would settle on the wrong recording.
     LaunchedEffect(
         selectedSong?.videoId,
-        playback.durationMs,
+        lyricsLengthMs,
         syncedLyrics,
         prioritizeSyllables,
         lyricsOn,
@@ -1572,7 +1587,7 @@ fun BitChordDesktopApp() {
         // A length is what a database match is made on, and it lands a beat after the track. Looking
         // up without one would settle on whichever recording shares the name — so this waits, the
         // same way Android's `loadLyrics` turns the call away until a duration exists.
-        val length = playback.durationMs.takeIf { it > 0L } ?: current.durationMillis()
+        val length = lyricsLengthMs.takeIf { it > 0L } ?: current.durationMillis()
         if (length <= 0L) {
             lyricsLoading = true
             return@LaunchedEffect
@@ -1997,9 +2012,9 @@ fun BitChordDesktopApp() {
     }
 
     /**
-     * Adds shelves to the page as they arrive, skipping any heading already on it — the phone's
-     * `publishHomeShelves`. Recently Played is [prepend]ed and replaces any stale copy the core
-     * feed carried.
+     * Adds shelves to the page as they arrive, skipping any heading already on it and any shelf
+     * that repeats one's releases — the phone's `publishHomeShelves`. Recently Played is
+     * [prepend]ed and replaces any stale copy the core feed carried.
      */
     fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
         val existing = (homeState as? UiState.Success)?.data.orEmpty()
@@ -2009,7 +2024,8 @@ fun BitChordDesktopApp() {
             homeState = UiState.Success(shelves + existing.filterNot { it.title.lowercase() in replacing })
             return
         }
-        val added = shelves.filter { it.items.isNotEmpty() && homeSeenTitles.add(it.title.lowercase()) }
+        val added = shelves.withoutRepeatsOf(existing)
+            .filter { it.items.isNotEmpty() && homeSeenTitles.add(it.title.lowercase()) }
         if (added.isNotEmpty()) homeState = UiState.Success(existing + added)
     }
 

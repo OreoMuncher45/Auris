@@ -29,6 +29,7 @@ import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
@@ -1480,7 +1481,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             })
             return
         }
-        val added = shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+        val added = shelves.withoutRepeatsOf(existing)
+            .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
         if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
     }
 
@@ -1491,7 +1493,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (identity != listenerKey()) return@onSuccess
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
-            val shelves = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+            val shelves = feed.shelves.withoutRepeatsOf(emptyList())
+                .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
             if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
         }
         recent?.await()?.onSuccess { shelf ->
@@ -1512,15 +1515,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             YtMusicRepository.moreHome(token).onSuccess { feed ->
                 if (identity == listenerKey()) {
-                    val added = feed.shelves.filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
+                    val existing = (_home.value as? UiState.Success)?.data ?: emptyList()
+                    val added = feed.shelves.withoutRepeatsOf(existing)
+                        .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
                     // A page with nothing new signals the feed has looped back on
                     // itself rather than run dry with a token still attached —
                     // treat it the same as exhausted so scrolling can't spin here.
                     homeContinuation = feed.continuation.takeIf { added.isNotEmpty() }
-                    if (added.isNotEmpty()) {
-                        val existing = (_home.value as? UiState.Success)?.data ?: emptyList()
-                        _home.value = UiState.Success(existing + added)
-                    }
+                    if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
                 }
             }
             if (identity == listenerKey()) _homeLoadingMore.value = false

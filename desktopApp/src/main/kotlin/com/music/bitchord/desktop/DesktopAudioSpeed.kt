@@ -63,7 +63,10 @@ internal class DesktopAudioSpeed(
         // Kept: the [search] frames before the next nominal read. Consuming right up to it, as
         // this used to, left the first join of every call unable to slide back onto the true
         // continuation — a forced bad join once a block.
-        val drop = (read - search).coerceAtLeast(0)
+        // Nor past where the source carries on from the last window, which [drain] copies from:
+        // sped up, the next read runs ahead of it, and dropping up to the read left [drain]
+        // reaching before the start of what was held.
+        val drop = minOf(read - search, if (hasTail) lastJoin + hop else read).coerceAtLeast(0)
         consume(drop)
         readFrom = read - drop
         lastJoin -= drop

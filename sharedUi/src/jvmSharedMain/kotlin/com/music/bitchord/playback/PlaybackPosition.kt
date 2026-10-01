@@ -3,6 +3,7 @@ package com.music.bitchord.playback
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /**
@@ -25,4 +26,13 @@ import androidx.compose.runtime.setValue
 class PlaybackPosition {
     /** Written only by whoever owns playback — the phone's controller, the desktop's engine. */
     var positionMs by mutableLongStateOf(0L)
+
+    /**
+     * False while playback is meant to be running but the playhead is not moving yet: a seek still
+     * waiting on its audio. The lyrics carry the position forward on the frame clock between
+     * reports, and through that wait they ran ahead of the song and then sat frozen until it
+     * caught up. The phone never sets it — Media3 already reports a buffering player as not
+     * playing — the desktop engine does, because its "playing" also drives Listen Together.
+     */
+    var advancing by mutableStateOf(true)
 }

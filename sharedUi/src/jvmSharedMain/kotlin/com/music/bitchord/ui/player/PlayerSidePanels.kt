@@ -112,7 +112,7 @@ fun LyricsSidePanel(
                             trackKey = song.videoId,
                             positionMs = lyricsPositionMs,
                             looking = !lyricsUnavailable,
-                            isPlaying = isPlaying,
+                            isPlaying = isPlaying && position.advancing,
                             onSeekToLine = seekToLyric,
                             controlsOpen = true,
                             onRevealControls = {},

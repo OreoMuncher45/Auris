@@ -11,7 +11,9 @@ import org.bytedeco.ffmpeg.global.avcodec.av_packet_alloc
 import org.bytedeco.ffmpeg.global.avcodec.av_packet_free
 import org.bytedeco.ffmpeg.global.avcodec.av_packet_unref
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_alloc_context3
+import org.bytedeco.ffmpeg.global.avcodec.AVDISCARD_ALL
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_find_decoder
+import org.bytedeco.ffmpeg.global.avcodec.avcodec_get_name
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_flush_buffers
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_free_context
 import org.bytedeco.ffmpeg.global.avcodec.avcodec_open2
@@ -35,6 +37,7 @@ import org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_FLT
 import org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_S16
 import org.bytedeco.ffmpeg.global.avutil.AV_SAMPLE_FMT_S32
 import org.bytedeco.ffmpeg.global.avutil.av_channel_layout_default
+import org.bytedeco.ffmpeg.global.avutil.av_dict_get
 import org.bytedeco.ffmpeg.global.avutil.av_dict_set
 import org.bytedeco.ffmpeg.global.avutil.av_frame_alloc
 import org.bytedeco.ffmpeg.global.avutil.av_get_bytes_per_sample
@@ -114,6 +117,12 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
     var positionUs: Long = 0L
         private set
 
+    /** The stream's first timestamp: song position 0, which an HLS or MPEG-TS stream puts well past 0. */
+    private var streamStartUs = 0L
+
+    /** After a seek, decoded audio before this song position is dropped; see [seek]. */
+    private var trimBeforeUs: Long? = null
+
     /** What is actually being decoded, once [open] has succeeded. */
     var measuredFormat: DesktopStreamFormat? = null
         private set
@@ -161,17 +170,30 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         format = opened
         check(avformat_find_stream_info(opened, null as AVDictionary?) >= 0) { "no stream info" }
 
-        streamIndex = av_find_best_stream(opened, AVMEDIA_TYPE_AUDIO, -1, -1, null as org.bytedeco.ffmpeg.avcodec.AVCodec?, 0)
+        streamIndex = bestRendition(opened)
+            ?: av_find_best_stream(opened, AVMEDIA_TYPE_AUDIO, -1, -1, null as org.bytedeco.ffmpeg.avcodec.AVCodec?, 0)
         check(streamIndex >= 0) { "no audio stream" }
+        // The rest of a manifest's renditions are not fetched: FFmpeg's DASH and HLS demuxers
+        // only download segments for streams that are not discarded.
+        for (i in 0 until opened.nb_streams()) {
+            if (i != streamIndex) opened.streams(i).discard(AVDISCARD_ALL)
+        }
 
         val stream = opened.streams(streamIndex)
         val timeBase = stream.time_base()
         streamTimeBase = timeBase.num().toDouble() / timeBase.den().toDouble()
+        streamStartUs = stream.start_time()
+            .takeIf { it != AV_NOPTS_VALUE }
+            ?.let { (it * streamTimeBase * 1_000_000L).toLong() }
+            ?: 0L
 
         val parameters = stream.codecpar()
         val decoder = avcodec_find_decoder(parameters.codec_id()) ?: error("no decoder for stream")
         val context = avcodec_alloc_context3(decoder)
         check(avcodec_parameters_to_context(context, parameters) >= 0) { "bad codec parameters" }
+        // Lets the decoder keep frame timestamps right when it trims priming samples (Opus's
+        // pre-skip, an MP3's encoder delay), which the seek trim in [convert] reads.
+        context.pkt_timebase(timeBase)
         check(avcodec_open2(context, decoder, null as AVDictionary?) >= 0) { "decoder refused to open" }
         codec = context
 
@@ -188,6 +210,37 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         frame = av_frame_alloc()
         drained = false
     }.onFailure { close() }
+
+    /**
+     * The rendition to play when a container offers more than one audio stream — lossless first,
+     * then the highest bitrate — or null when there is nothing to choose between.
+     *
+     * A Tidal DASH manifest, which addons pass straight through, lists HE-AAC (~97kbps), AAC-LC
+     * (~320kbps) and FLAC as separate streams, and `av_find_best_stream` has no notion of
+     * lossless: it chose AAC-LC, so a track the addon served as FLAC played at 320kbps. The phone
+     * never had this problem because Media3 makes the choice itself.
+     */
+    private fun bestRendition(container: AVFormatContext): Int? {
+        val audio = (0 until container.nb_streams()).filter { i ->
+            val parameters = container.streams(i).codecpar()
+            parameters.codec_type() == AVMEDIA_TYPE_AUDIO && avcodec_find_decoder(parameters.codec_id()) != null
+        }
+        if (audio.size < 2) return null
+        return audio.maxWithOrNull(
+            compareBy<Int> { i ->
+                val name = avcodec_get_name(container.streams(i).codecpar().codec_id())?.string
+                DesktopStreamFormat(codec = name).isLossless
+            }.thenBy { i -> renditionBitrate(container, i) },
+        )
+    }
+
+    /** A stream's bitrate, from its parameters or, in a manifest, the bandwidth it advertises. */
+    private fun renditionBitrate(container: AVFormatContext, index: Int): Long {
+        val stream = container.streams(index)
+        stream.codecpar().bit_rate().takeIf { it > 0 }?.let { return it }
+        return av_dict_get(stream.metadata(), "variant_bitrate", null, 0)
+            ?.value()?.string?.toLongOrNull() ?: 0L
+    }
 
     /** The decoded stream's own figures. */
     private fun measure(
@@ -290,7 +343,12 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         while (true) {
             // Whatever the decoder is already holding, before asking for more.
             val received = avcodec_receive_frame(context, decoded)
-            if (received == 0) return convert(decoded)
+            if (received == 0) {
+                val block = convert(decoded) ?: return null
+                // Empty when the whole frame fell before a seek target; on to the next one.
+                if (block.isNotEmpty()) return block
+                continue
+            }
             if (received == AVERROR_EOF) return null
             // Every other negative means "not enough input yet".
             if (!pump(container, pkt, context)) return null
@@ -343,15 +401,36 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         val produced = swr_convert(swr, planes, capacity, decoded.data(), decoded.nb_samples())
         if (produced <= 0) return ByteArray(0)
 
-        if (decoded.pts() != AV_NOPTS_VALUE) {
-            positionUs = (decoded.pts() * streamTimeBase * 1_000_000L).toLong()
+        val stamp = decoded.best_effort_timestamp().takeIf { it != AV_NOPTS_VALUE } ?: decoded.pts()
+        val frameUs = if (stamp != AV_NOPTS_VALUE) {
+            (stamp * streamTimeBase * 1_000_000L).toLong() - streamStartUs
+        } else {
+            null
         }
+        if (frameUs != null) positionUs = frameUs
 
-        val bytes = produced * target.frameBytes
+        // Frames before a seek target: the demuxer landed on the index point before it.
+        var skip = 0
+        val trimTo = trimBeforeUs
+        if (trimTo != null) {
+            if (frameUs == null || trimTo - frameUs > MAX_SEEK_TRIM_US) {
+                // No timestamp to trim against — or one so far short of the target that it is on
+                // another clock than the seek was — so play from wherever the seek landed.
+                trimBeforeUs = null
+            } else {
+                skip = ((trimTo - frameUs) * target.sampleRate / 1_000_000L)
+                    .coerceIn(0L, produced.toLong())
+                    .toInt()
+                if (skip < produced) trimBeforeUs = null
+            }
+        }
+        if (skip >= produced) return ByteArray(0)
+
+        val bytes = (produced - skip) * target.frameBytes
         if (scratch.size < bytes) scratch = ByteArray(bytes)
         val buffer = outputBuffer ?: return null
-        buffer.position(0L)
-        buffer.limit(bytes.toLong())
+        buffer.position(skip.toLong() * target.frameBytes)
+        buffer.limit(produced.toLong() * target.frameBytes)
         buffer.get(scratch, 0, bytes)
         return scratch.copyOf(bytes)
     }
@@ -366,15 +445,24 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
         outputPlanes = PointerPointer<BytePointer>(1L).apply { put(0L, buffer) }
     }
 
-    /** Jumps to [micros], leaving the decoder with nothing stale in it. */
+    /**
+     * Jumps to exactly [micros], leaving the decoder with nothing stale in it.
+     *
+     * A backward seek lands on the index point at or before the target: a WebM cue, an fMP4/DASH
+     * fragment, an HLS segment, a FLAC seek point — seconds early, routinely. The engine counts
+     * the position from the target it asked for, so audio from the landing point played under a
+     * position (and lyrics) that far ahead of it, for the rest of the track. Decoding from the
+     * landing point and dropping everything before the target is what Media3 does on the phone.
+     */
     override fun seek(micros: Long): Boolean {
         val container = format ?: return false
         val context = codec ?: return false
-        val target = (micros / 1_000_000.0 / streamTimeBase).toLong()
+        val target = ((micros + streamStartUs) / 1_000_000.0 / streamTimeBase).toLong()
         if (av_seek_frame(container, streamIndex, target, AVSEEK_FLAG_BACKWARD) < 0) return false
         avcodec_flush_buffers(context)
         drained = false
         positionUs = micros
+        trimBeforeUs = micros.takeIf { it > 0 }
         return true
     }
 
@@ -414,6 +502,9 @@ internal class DesktopAudioDecoder : DesktopSampleSource {
 
         /** How much FFmpeg buffers between calls into [DesktopRangeStream]. */
         const val IO_BUFFER_BYTES = 64 * 1024
+
+        /** Further apart than any index point, cue or segment lands before its target. */
+        const val MAX_SEEK_TRIM_US = 30_000_000L
 
         /** `whence` values, which FFmpeg takes straight from stdio. */
         const val SEEK_CUR = 1

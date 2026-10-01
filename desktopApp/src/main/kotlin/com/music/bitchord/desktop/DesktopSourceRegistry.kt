@@ -105,16 +105,42 @@ internal object DesktopSourceRegistry {
             DesktopStreamClient.resolve(song, youtubeCeiling(quality)).map { it.copy(sourceId = config.id) }
 
         /** Allows an unavailable module/Jio stream to fall back by identity. */
-        override suspend fun matches(song: Song): List<Song> {
-            if (song.title.isBlank() || song.isVideo) return emptyList()
-            for (query in DesktopTrackMatcher.queries(song)) {
-                val candidates = DesktopSearchClient.search(query, SearchFilter.SONGS)
-                    .getOrDefault(emptyList())
-                    .mapNotNull { (it as? SearchResult.Track)?.song }
-                DesktopTrackMatcher.ranked(candidates, song).ifEmpty { null }?.let { return it }
-            }
-            return emptyList()
+        override suspend fun matches(song: Song): List<Song> = youTubeMatches(song)
+    }
+
+    /** YouTube Music's copies of [song], most confident first, found by title and artist. */
+    private suspend fun youTubeMatches(song: Song): List<Song> {
+        if (song.title.isBlank() || song.isVideo) return emptyList()
+        for (query in DesktopTrackMatcher.queries(song)) {
+            val candidates = DesktopSearchClient.search(query, SearchFilter.SONGS)
+                .getOrDefault(emptyList())
+                .mapNotNull { (it as? SearchResult.Track)?.song }
+            DesktopTrackMatcher.ranked(candidates, song).ifEmpty { null }?.let { return it }
         }
+        return emptyList()
+    }
+
+    /**
+     * The YouTube upload Automix measures [song] on: the row itself when it is one, else the best
+     * YouTube Music match for an addon, module or JioSaavn row. Android's
+     * `TrackAnalyzer.analysisUriFor` does the same.
+     */
+    suspend fun youTubeIdentity(song: Song): Song? =
+        if (hasYouTubeOriginal(song)) song else youTubeMatches(song).firstOrNull()
+
+    /**
+     * Whether resolving [song] could ask an addon for it — an addon's own row, or a YouTube row
+     * with an addon ranked above YouTube to substitute it.
+     *
+     * Such a track is not read ahead: an addon is only asked for a stream once the track is about
+     * to play, as on Android, whose read-ahead only warms sources that are
+     * `worthPrefetching`.
+     */
+    fun mayServeFromAddon(song: Song): Boolean {
+        val addons = playbackAdapters(null).filterIsInstance<AddonAdapter>()
+        if (addons.isEmpty()) return false
+        if (DesktopAddonSource.parseTrack(song.videoId) != null) return true
+        return hasYouTubeOriginal(song) && !song.isVideo && !DesktopOriginalVersion.isPinned(song.videoId)
     }
 
     private fun DesktopSourceConfig.descriptor() = DesktopSourceDescriptor(

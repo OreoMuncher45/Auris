@@ -355,6 +355,33 @@ data class HomeShelf(
     val moreParams: String? = null,
 )
 
+/**
+ * These shelves minus any that mostly repeat one already on the page, or one earlier in this
+ * batch. YouTube serves the same new releases from FEmusic_new_releases ("Albums & singles") and
+ * FEmusic_explore ("New albums & singles"), lightly reordered under a different heading, so a
+ * title check alone lets both through.
+ *
+ * Only browsable items (albums, playlists, artists) are compared. Song shelves overlap on
+ * purpose: Recents and YouTube's own "Listen again" share tracks but rank them differently.
+ */
+fun List<HomeShelf>.withoutRepeatsOf(existing: List<HomeShelf>): List<HomeShelf> {
+    val shown = existing.toMutableList()
+    return filter { shelf ->
+        val keys = shelf.browseKeys()
+        val repeat = keys.isNotEmpty() && shown.any { other ->
+            val shared = other.browseKeys().count { it in keys }
+            shared > 0 && shared >= REPEAT_SHELF_SHARE * minOf(shelf.items.size, other.items.size)
+        }
+        if (!repeat) shown += shelf
+        !repeat
+    }
+}
+
+/** Share of the smaller shelf's items both must hold for one to count as a repeat of the other. */
+private const val REPEAT_SHELF_SHARE = 0.6
+
+private fun HomeShelf.browseKeys(): Set<String> = items.mapNotNullTo(HashSet()) { it.browseId }
+
 /** A page of the Home feed, plus the token for the next one — null once exhausted. */
 data class HomeFeed(
     val shelves: List<HomeShelf>,
