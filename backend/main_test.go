@@ -247,14 +247,14 @@ func TestRequestOrigin(t *testing.T) {
 	}
 
 	config.TrustProxy = true
-	defer func() { config.TrustProxy = false }()
+	t.Cleanup(func() { config.TrustProxy = false })
 	if got := requestOrigin(r); got != "https://example.com" {
 		t.Errorf("Expected https://example.com, got %s", got)
 	}
 
 	// An explicit public origin wins over request headers.
 	config.PublicOrigin = "https://party.example.com"
-	defer func() { config.PublicOrigin = "" }()
+	t.Cleanup(func() { config.PublicOrigin = "" })
 	if got := requestOrigin(r); got != "https://party.example.com" {
 		t.Errorf("Expected https://party.example.com, got %s", got)
 	}
@@ -276,7 +276,7 @@ func TestInviteDeepLinkUsesPublicOrigin(t *testing.T) {
 	}
 
 	config.PublicOrigin = "https://party.example.com"
-	defer func() { config.PublicOrigin = "" }()
+	t.Cleanup(func() { config.PublicOrigin = "" })
 
 	res, err := http.Get(ts.URL + "/invite/" + p.Code)
 	if err != nil {

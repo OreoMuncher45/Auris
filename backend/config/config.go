@@ -56,7 +56,7 @@ func getOrigin(key string) string {
 		return ""
 	}
 	u, err := url.Parse(val)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
 		log.Printf("%s %q is not an http(s) origin; ignoring", key, val)
 		return ""
 	}

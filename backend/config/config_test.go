@@ -18,6 +18,13 @@ func TestGetOrigin(t *testing.T) {
 		t.Errorf("Expected an origin with a path to be ignored, got %q", got)
 	}
 
+	for _, bad := range []string{"https://party.example.com?a=b", "https://party.example.com#frag", "https://user@party.example.com"} {
+		t.Setenv("JAM_PUBLIC_ORIGIN", bad)
+		if got := getOrigin("JAM_PUBLIC_ORIGIN"); got != "" {
+			t.Errorf("Expected %q to be ignored, got %q", bad, got)
+		}
+	}
+
 	t.Setenv("JAM_PUBLIC_ORIGIN", "")
 	if got := getOrigin("JAM_PUBLIC_ORIGIN"); got != "" {
 		t.Errorf("Expected an unset origin to be empty, got %q", got)
