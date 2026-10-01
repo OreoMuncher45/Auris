@@ -1046,4 +1046,10 @@
 
     <string name="card_songs_format">%1$s songs</string>
 
+    <string name="source_needs_lossless_output">Needs a lossless output · use a lossless supported device</string>
+    <string name="source_needs_lossless_bt_codec">Needs a lossless output · Bluetooth is on %1$s; use a lossless supported device</string>
+    <string name="source_needs_lossless_bt_unknown">Needs a lossless output · can’t tell which Bluetooth codec is in use</string>
+    <string name="source_downloads_off">Streaming only</string>
+    <string name="lossless_output_permission">Check Bluetooth codec</string>
+    <string name="lossless_output_permission_detail">Allow Nearby devices so LDAC or LHDC headphones can unlock lossless-only addons</string>
 </resources>

@@ -1190,4 +1190,10 @@
 
 
 
+    <string name="source_needs_lossless_output">需要无损输出 · 请使用支持无损的设备</string>
+    <string name="source_needs_lossless_bt_codec">需要无损输出 · 蓝牙当前为 %1$s；请使用支持无损的设备</string>
+    <string name="source_needs_lossless_bt_unknown">需要无损输出 · 无法识别正在使用的蓝牙编解码器</string>
+    <string name="source_downloads_off">仅限在线播放</string>
+    <string name="lossless_output_permission">检查蓝牙编解码器</string>
+    <string name="lossless_output_permission_detail">允许“附近的设备”权限，LDAC 或 LHDC 耳机即可解锁仅限无损的插件</string>
 </resources>
