@@ -125,17 +125,14 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
     /**
      * The one request for this cover, built once.
      *
-     * Both the sleeve and the full-bleed banner draw from it, which is what
-     * their own comments claim ("one ask, one decode, one bitmap for both") and
-     * what building it inline at each of them quietly failed to deliver: Coil
-     * compares models to decide whether to start a new load, and two separately
-     * built requests are never equal — `ImageRequest` has no `equals`, and
-     * neither does the size resolver `.size()` hands it. So each was its own
-     * load, and worse, *every recomposition* was another one. The player
-     * recomposes at least twice a second off the position tick, and each pass
-     * pushed the painter back through Loading before it settled on Success
-     * again, which is exactly the [loaded] this screen hangs the banner, the
-     * sleeve's alpha, its shadow and its placeholder icon on.
+     * Built once rather than inline at the sleeve, because Coil compares models
+     * to decide whether to start a new load, and two separately built requests
+     * are never equal — `ImageRequest` has no `equals`, and neither does the
+     * size resolver `.size()` hands it. Inline, *every recomposition* was a new
+     * load. The player recomposes at least twice a second off the position
+     * tick, and each pass pushed the painter back through Loading before it
+     * settled on Success again, which is exactly the [loaded] this screen hangs
+     * the full-bleed banner, the sleeve's shadow and its placeholder icon on.
      *
      * Remembered on the cover and the attempt, so it changes when the picture
      * changes and when a retry is deliberately asked for, and at no other time.

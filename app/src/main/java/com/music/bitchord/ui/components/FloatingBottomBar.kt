@@ -196,7 +196,7 @@ fun FloatingBottomBar(
     Box(
         modifier = modifier
             .navigationBarsPadding()
-            .padding(horizontal = PAGE_GUTTER)
+            .padding(horizontal = BAR_GUTTER)
             .padding(bottom = 2.dp)
             .fillMaxWidth()
             .clip(pillShape)

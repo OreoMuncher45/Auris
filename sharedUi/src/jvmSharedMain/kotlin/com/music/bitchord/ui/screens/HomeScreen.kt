@@ -3,7 +3,9 @@ package com.music.bitchord.ui.screens
 import com.music.bitchord.ui.components.contextClick
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -71,6 +73,7 @@ import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.components.HERO_CARD_RATIO
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
@@ -145,14 +148,7 @@ fun HomeScreen(
             contentPadding = contentPadding,
         ) {
             if (title != null) {
-                item {
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.displayLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
-                    )
-                }
+                item { HomeTitle(title) }
             }
             if (!signedIn && onSignIn != null) {
                 item {
@@ -468,23 +464,46 @@ fun CompactTrackRow(
             )
         }
         if (onLongPress != null) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onLongPress),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(Res.string.more),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            RowMoreButton(onClick = onLongPress)
         }
     }
 }
+
+/**
+ * Listen now's large heading, with the wordmark stacked above it.
+ *
+ * Only the home tab carries it — the top bar no longer shows the logo, so this
+ * is where the app's mark lives. Its height is taken from the heading's own
+ * font size rather than a fixed dp, so the two keep their proportion under the
+ * system font scale.
+ */
+@Composable
+private fun HomeTitle(title: String, modifier: Modifier = Modifier) {
+    val style = MaterialTheme.typography.displayLarge
+    val logoHeight = with(LocalDensity.current) { (style.fontSize * LOGO_TO_FONT).toDp() }
+    Column(modifier = modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp)) {
+        Icon(
+            painter = painterResource(Res.drawable.ic_logo),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier
+                .padding(bottom = 14.dp)
+                .height(logoHeight)
+                .aspectRatio(LOGO_ASPECT),
+        )
+        Text(
+            text = title,
+            style = style,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+}
+
+/** The wordmark's height against the heading's font size. */
+private const val LOGO_TO_FONT = 0.9f
+
+/** ic_logo's viewport, 730 x 484. */
+private const val LOGO_ASPECT = 730f / 484f
 
 /**
  * Shared by the home feed, Explore and Library so headings line up across tabs.

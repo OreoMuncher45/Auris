@@ -205,13 +205,19 @@ object InnertubeParser {
      * The Moods & genres browse page is a set of navigation-button grids, not
      * a normal carousel. Keep the browse params on every button: they select
      * the playlist shelves that belong to that exact mood or genre.
+     *
+     * A signed-in page leads with a personalised "For you" grid, which is only
+     * shortcuts to buttons the Moods and Genres grids already hold. It's
+     * dropped: Explore shows the full set once, not a second copy of a few.
+     * The heading is localised, so it's recognised by repeating a later
+     * section's button, with the English title as a backstop.
      */
     fun parseMoodAndGenres(response: JsonObject): List<MoodGenreSection> {
         val sections = response.o("contents")
             .o("singleColumnBrowseResultsRenderer").a("tabs")?.firstOrNull()
             .o("tabRenderer").o("content").o("sectionListRenderer").a("contents")
             .orEmpty()
-        return sections.mapNotNull { section ->
+        val parsed = sections.mapNotNull { section ->
             val grid = section.o("gridRenderer") ?: return@mapNotNull null
             val title = grid.o("header").o("gridHeaderRenderer").o("title").runs()
             val items = grid.a("items").orEmpty().mapNotNull { item ->
@@ -222,9 +228,20 @@ object InnertubeParser {
                 val browseId = endpoint.s("browseId") ?: return@mapNotNull null
                 val label = button.o("buttonText").runs().takeIf { it.isNotBlank() }
                     ?: return@mapNotNull null
-                MoodGenre(label, browseId, endpoint.s("params"))
+                MoodGenre(
+                    title = label,
+                    browseId = browseId,
+                    params = endpoint.s("params"),
+                    stripeColor = button.o("solid").s("leftStripeColor")?.toLongOrNull(),
+                )
             }
             if (title.isBlank() || items.isEmpty()) null else MoodGenreSection(title, items)
+        }
+        return parsed.filterIndexed { index, section ->
+            val later = parsed.drop(index + 1)
+                .flatMapTo(HashSet()) { it.items.map { item -> item.browseId to item.params } }
+            val shortcuts = section.items.any { (it.browseId to it.params) in later }
+            !shortcuts && !section.title.equals("For you", ignoreCase = true)
         }
     }
 

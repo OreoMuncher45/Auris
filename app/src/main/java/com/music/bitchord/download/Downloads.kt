@@ -425,10 +425,12 @@ object Downloads {
      * track listing — so it gets a segment of its own rather than an id in the
      * same namespace.
      *
-     * Playlists only, which is why the word is in the prefix. A downloaded album
-     * stamps its name onto each of its tracks, so the Albums tab groups it back
-     * up without being told; a playlist's tracks are off forty different releases
-     * and no tag on any of them names it, so it is the one that needs a page.
+     * Built for playlists, which is why the word is in the prefix: a playlist's
+     * tracks are off forty different releases and no tag on any of them names
+     * it, so it is the one that needs a page. A downloaded album opens through
+     * it as well, from its card on the Library's On Device shelf — the record
+     * is the same either way — though the Albums tab still groups one up on
+     * its own.
      */
     const val PLAYLIST_PREFIX = "local:playlist:"
 
@@ -440,7 +442,8 @@ object Downloads {
         browseId.removePrefix(PLAYLIST_PREFIX).takeIf { it != browseId && it.isNotEmpty() }
 
     /**
-     * The playlists downloaded whole, in name order, without their tracks.
+     * The playlists and albums downloaded whole, in name order, without their
+     * tracks.
      *
      * What the Library page's On Device shelf draws a card from. Unlike
      * [collectionsAmong] there is no track list here to prune against — that
@@ -457,10 +460,10 @@ object Downloads {
      * songs: the rule is worth stating on a known folder rather than only on
      * whatever this process happens to have recorded.
      */
-    fun savedPlaylists(onDisk: Map<String, String> = _saved.value): List<SavedCollection> {
+    fun savedReleases(onDisk: Map<String, String> = _saved.value): List<SavedCollection> {
         if (_collections.value.isEmpty()) return emptyList()
         return _collections.value.values
-            .filter { record -> record.playlist && record.videoIds.any { it in onDisk } }
+            .filter { record -> record.videoIds.any { it in onDisk } }
             .sortedBy { it.title.lowercase(Locale.ROOT) }
     }
 

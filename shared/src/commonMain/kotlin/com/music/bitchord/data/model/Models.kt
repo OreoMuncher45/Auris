@@ -401,6 +401,8 @@ data class MoodGenre(
     val params: String?,
     /** First real cover from the category's playlist shelves, loaded in the background. */
     val thumbnailUrl: String? = null,
+    /** YouTube Music's own stripe colour for the button, as ARGB; null when the button carries none. */
+    val stripeColor: Long? = null,
 )
 
 /**

@@ -2,10 +2,8 @@ package com.music.bitchord.ui.screens
 
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.stringResource
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,8 +23,8 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,9 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,8 +52,6 @@ import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.librarySkeleton
-import com.music.bitchord.ui.player.MeshGradientBackground
-import com.music.bitchord.ui.player.rememberArtworkColors
 
 /**
  * The signed-in library: the saved collections, as shelves of cards.
@@ -89,8 +84,8 @@ fun LibraryScreen(
      */
     onShowAll: (HomeShelf) -> Unit,
     /**
-     * The way in to Replay at the head of the page — the phone's row of Replay
-     * cards, or [ReplayBanner] where there is nothing to deal them from yet.
+     * The way in to Replay at the head of the page — the row of Replay cards,
+     * their placeholders while the history is read, or nothing at all.
      */
     replay: @Composable () -> Unit,
     onSignIn: () -> Unit,
@@ -101,10 +96,14 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
     /**
-     * The "On device" shelf: the device's own folders and whatever the app can
-     * play without a network — downloads, local files, the remote libraries
-     * this build supports, and the playlists downloaded whole. Built by the
+     * The device's folders — downloads, local files, the remote libraries this
+     * build supports — drawn as a list under the Replay cards. Built by the
      * app, since which of those exist is the platform's business.
+     */
+    links: List<LibraryLink>,
+    /**
+     * The "On device" shelf under that list: the releases kept on this device
+     * whole. Left off the page entirely while there are none.
      */
     deviceItems: List<ShelfItem>,
     /** The big "Library" heading; the desktop's pages carry none. */
@@ -133,18 +132,20 @@ fun LibraryScreen(
                     )
                 }
             }
-            // Drawn whether or not anything has been played: with nothing behind
-            // it the page still has to say the feature exists, or the only way
-            // to discover it is to have already used it.
             item(key = "replay") { replay() }
-            item(key = "shelf:$onDevice") {
-                val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
-                LibraryGridShelf(
-                    shelf = onDeviceShelf,
-                    onItemClick = onShelfItemClick,
-                    onItemLongPress = onShelfItemLongPress,
-                    onShowAll = { onShowAll(onDeviceShelf) },
-                )
+            if (links.isNotEmpty()) {
+                item(key = "links") { LibraryLinkList(links = links, onClick = onShelfItemClick) }
+            }
+            if (deviceItems.isNotEmpty()) {
+                item(key = "shelf:$onDevice") {
+                    val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
+                    LibraryGridShelf(
+                        shelf = onDeviceShelf,
+                        onItemClick = onShelfItemClick,
+                        onItemLongPress = onShelfItemLongPress,
+                        onShowAll = { onShowAll(onDeviceShelf) },
+                    )
+                }
             }
             if (!signedIn) {
                 item {
@@ -207,108 +208,61 @@ fun LibraryScreen(
     }
 }
 
+/** One of the Library's folder rows: the page [item] opens, behind [icon]. */
+data class LibraryLink(val item: ShelfItem, val icon: ImageVector)
+
 /**
- * The way in to Replay, at the top of the page.
- *
- * On the Library tab rather than a tab of its own because that is what Replay
- * is — a view of what is already yours, alongside the playlists and the
- * downloads. A fifth tab would give a page most people open a handful of times
- * a year the same standing as Search.
- *
- * ## Why it is painted the way the cards are
- *
- * The mesh is the same one the Replay cards and the player's backdrop run —
- * sampled from the artwork of the record the period was mostly spent on, and
- * drifting rather than settling (see [MeshGradientBackground]'s `continuous`).
- * A fixed brand gradient here looked like a promo banner, which is the one thing
- * this must not be: it advertises the user's own listening, so it should be lit
- * by the user's own listening, and it should not look like anything else on the
- * page. With nothing played yet the mesh falls back to its stock colours, which
- * is a perfectly good button and still not a red rectangle.
- *
- * A single wide strip rather than a shelf of cards: there is exactly one of it,
- * and a carousel with one item in it always reads as a carousel that failed to
- * load the rest.
+ * The folders as a plain list — icon, name, chevron, hairlines between — the
+ * way a music app's library has always opened, rather than as cards that all
+ * look alike because none of them has artwork.
  */
 @Composable
-fun ReplayBanner(
-    /** The record the period was mostly spent on, whose colours light the strip. */
-    artworkUrl: String?,
-    /** The headline numbers, when there are any; otherwise what Replay is. */
-    summary: String?,
-    onClick: () -> Unit,
-) {
-    val palette = rememberArtworkColors(artworkUrl)
-    Box(
-        Modifier
-            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
-    ) {
-        // Behind the row and sized to it rather than given a height of its own,
-        // so the strip is as tall as its two lines of type and no taller.
-        Box(Modifier.matchParentSize()) {
-            MeshGradientBackground(
-                palette = palette,
-                trackKey = artworkUrl ?: "replay",
-                continuous = true,
-                // A short wide strip: at the backdrop's own radius the four
-                // colours blur into one wash before they reach its ends.
-                blurRadius = 28.dp,
-            )
-        }
-        // The mesh carries a vertical scrim of its own, pitched for a full
-        // screen where it has hundreds of dp to fade across; over a strip this
-        // short it lands as a flat darkening of the whole thing. So this one is
-        // kept deliberately light and runs the other way — just enough under the
-        // words on the left, and almost nothing over the colour on the right,
-        // which is the half anyone actually sees as a gradient.
-        Box(
-            Modifier
-                .matchParentSize()
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            Color.Black.copy(alpha = 0.34f),
-                            Color.Black.copy(alpha = 0.12f),
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
-        )
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = stringResource(Res.string.your_replay),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
+private fun LibraryLinkList(links: List<LibraryLink>, onClick: (ShelfItem) -> Unit) {
+    Column(Modifier.padding(top = 4.dp, bottom = 22.dp)) {
+        links.forEachIndexed { index, link ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 54.dp)
+                    .clickable { onClick(link.item) }
+                    .padding(horizontal = PAGE_GUTTER),
+            ) {
+                Icon(
+                    imageVector = link.icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(LINK_ICON_SIZE),
                 )
+                Spacer(Modifier.width(LINK_ICON_GAP))
                 Text(
-                    // The numbers when there are any, because "5,231 minutes" is
-                    // a reason to tap and a description of the feature is not.
-                    text = summary ?: stringResource(Res.string.replay_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.82f),
-                    maxLines = 2,
+                    text = link.item.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = BitChordIcons.ChevronRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .6f),
+                    modifier = Modifier.size(20.dp),
                 )
             }
-            Spacer(Modifier.width(12.dp))
-            Icon(
-                imageVector = BitChordIcons.ChevronRight,
-                contentDescription = null,
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(16.dp),
-            )
+            if (index < links.lastIndex) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = PAGE_GUTTER + LINK_ICON_SIZE + LINK_ICON_GAP),
+                    thickness = 0.5.dp,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
         }
     }
 }
+
+private val LINK_ICON_SIZE = 24.dp
+private val LINK_ICON_GAP = 16.dp
 
 /**
  * The one shelf on this page that can be written to: it leads with the tile

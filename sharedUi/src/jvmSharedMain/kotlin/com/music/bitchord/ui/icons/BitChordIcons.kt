@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
@@ -149,6 +150,60 @@ object BitChordIcons {
             }
         }.build()
     }
+
+    /**
+     * The phone tab bar's Explore, Library and Search glyphs: solid-weight
+     * iOS shapes rather than this file's stroked family, taken from the
+     * outlines of Flutter's cupertino_icons font (MIT) — square_grid_2x2,
+     * square_stack_fill and search.
+     *
+     * Each is the glyph laid out the way the font sets it: the 512-unit em
+     * box is the viewport, the baseline sits at the font's ascent share of
+     * it, and the advance is centred. So they keep the font's own optical
+     * size and weight against one another at any icon size.
+     */
+    val TabExplore: ImageVector by lazy {
+        fontGlyph(
+            "bc_tab_explore",
+            "M99.5 230.24Q58.5 230.24 58.5 188.24V93.24Q58.5 51.24 99.5 51.24H197.5Q238.5 51.24 238.5 93.24V188.24Q238.5 230.24 197.5 230.24Z" +
+                "M314.5 230.24Q273.5 230.24 273.5 188.24V93.24Q273.5 51.24 314.5 51.24H412.5Q453.5 51.24 453.5 93.24V188.24Q453.5 230.24 412.5 230.24Z" +
+                "M99.5 200.24H196.5Q207.5 200.24 207.5 188.24V93.24Q207.5 81.24 196.5 81.24H99.5Q88.5 81.24 88.5 93.24V188.24Q88.5 200.24 99.5 200.24Z" +
+                "M314.5 200.24H411.5Q422.5 200.24 422.5 188.24V93.24Q422.5 81.24 411.5 81.24H314.5Q303.5 81.24 303.5 93.24V188.24Q303.5 200.24 314.5 200.24Z" +
+                "M99.5 445.24Q58.5 445.24 58.5 403.24V307.24Q58.5 266.24 99.5 266.24H197.5Q238.5 266.24 238.5 307.24V403.24Q238.5 445.24 197.5 445.24Z" +
+                "M314.5 445.24Q273.5 445.24 273.5 403.24V307.24Q273.5 266.24 314.5 266.24H412.5Q453.5 266.24 453.5 307.24V403.24Q453.5 445.24 412.5 445.24Z" +
+                "M99.5 415.24H196.5Q207.5 415.24 207.5 403.24V308.24Q207.5 296.24 196.5 296.24H99.5Q88.5 296.24 88.5 308.24V403.24Q88.5 415.24 99.5 415.24Z" +
+                "M314.5 415.24H411.5Q422.5 415.24 422.5 403.24V308.24Q422.5 296.24 411.5 296.24H314.5Q303.5 296.24 303.5 308.24V403.24Q303.5 415.24 314.5 415.24Z",
+        )
+    }
+
+    /**
+     * Two units lower than the font sets it: the back card's top edge rises
+     * just past the em box, and the viewport would clip it flat.
+     */
+    val TabLibrary: ImageVector by lazy {
+        fontGlyph(
+            "bc_tab_library",
+            "M154 27.24Q156 0.24 185 0.24H322Q352 0.24 353 27.24Z" +
+                "M116 87.24Q121 56.24 150 56.24H356Q385 56.24 390 87.24Z" +
+                "M133 500.24Q66 500.24 66 434.24V187.24Q66 121.24 133 121.24H378Q446 121.24 446 187.24V434.24Q446 500.24 385 500.24Z",
+        )
+    }
+
+    val TabSearch: ImageVector by lazy {
+        fontGlyph(
+            "bc_tab_search",
+            "M219 374.24Q151 374.24 102.5 325.74Q54 277.24 54 209.24Q54 141.24 102.5 92.74Q151 44.24 219 44.24Q287 44.24 335.5 92.74Q384 141.24 384 209.24Q384 264.24 350 309.24L451 410.24Q458 417.24 458 427.24Q458 438.24 451 445.24Q444 452.24 434 452.24Q423 452.24 416 445.24L315 343.24Q271 374.24 219 374.24Z" +
+                "M128 300.24Q166 338.24 219 338.24Q272 338.24 310 300.24Q348 262.24 348 209.24Q348 156.24 310 118.24Q272 80.24 219 80.24Q166 80.24 128 118.24Q90 156.24 90 209.24Q90 262.24 128 300.24Z",
+        )
+    }
+
+    /** A filled glyph outline in the 512-unit em box — see [TabExplore]. */
+    private fun fontGlyph(name: String, pathData: String): ImageVector =
+        ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 512f, viewportHeight = 512f,
+        ).addPath(pathData = addPathNodes(pathData), fill = stroke).build()
 
     val Search: ImageVector by lazy {
         ImageVector.Builder(

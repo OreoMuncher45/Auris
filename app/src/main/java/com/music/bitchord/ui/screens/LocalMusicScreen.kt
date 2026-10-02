@@ -104,6 +104,8 @@ import com.music.bitchord.download.DownloadedCollection
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.hangIntoGutter
+import com.music.bitchord.ui.components.NUMBERED_ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
@@ -1233,8 +1235,15 @@ private fun DrillDownHeader(
             }
             Spacer(Modifier.weight(1f))
             onMore?.let { more ->
+                // Hangs into the gutter the way the back arrow opposite it
+                // does (that one through the row's 6dp start), so the two
+                // glyphs sit the same distance from their edges.
                 Box(
-                    modifier = Modifier.size(44.dp).clip(CircleShape).clickable(onClick = more),
+                    modifier = Modifier
+                        .hangIntoGutter(PAGE_GUTTER - 6.dp)
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = more),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(Icons.Rounded.MoreHoriz, stringResource(R.string.more), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1444,7 +1453,7 @@ private fun DrillDownSongList(
                 )
                 if (index < songs.lastIndex) {
                     HorizontalDivider(
-                        modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
+                        modifier = Modifier.padding(start = NUMBERED_ROW_DIVIDER_INSET),
                         thickness = 0.5.dp,
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     )

@@ -24,9 +24,9 @@ import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.CompactTrackRow
 import com.music.bitchord.ui.screens.LibraryGridPage
+import com.music.bitchord.ui.screens.LibraryLink
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
-import com.music.bitchord.ui.screens.ReplayBanner
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.playback.PlaybackPosition
@@ -125,6 +125,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.FullscreenExit
@@ -2024,28 +2025,39 @@ fun BitChordDesktopApp() {
         overlays.settingsPage = DesktopSettingsPage.MAIN
     }
 
+    /** The Library's folder rows: the two folders this computer has. */
+    val libraryLinks = remember {
+        listOf(
+            LibraryLink(
+                item = ShelfItem(
+                    title = DesktopStrings["downloads", "Downloads"],
+                    subtitle = DesktopStrings["downloaded_songs", "Downloaded songs"],
+                    thumbnailUrl = null,
+                    videoId = null,
+                    browseId = LOCAL_DOWNLOADS_ID,
+                ),
+                icon = Icons.Rounded.Download,
+            ),
+            LibraryLink(
+                item = ShelfItem(
+                    title = DesktopStrings["local_music", "Local Music"],
+                    subtitle = DesktopStrings["d_audio_files_on_this_computer", "Audio files on this computer"],
+                    thumbnailUrl = null,
+                    videoId = null,
+                    browseId = LOCAL_MUSIC_ID,
+                ),
+                icon = Icons.Rounded.Folder,
+            ),
+        )
+    }
+
     /**
-     * The Library's "On device" shelf: the two folders this computer has, and the playlists kept
-     * on it rather than on the account — the desktop's counterpart of the phone's downloaded
-     * playlists, and like them reachable from nowhere else.
+     * The Library's "On device" shelf: the playlists kept on this computer rather than on the
+     * account — the desktop's counterpart of the phone's downloaded releases, and like them
+     * reachable from nowhere else.
      */
     val libraryDeviceItems = remember(playlists) {
-        listOf(
-            ShelfItem(
-                title = DesktopStrings["downloads", "Downloads"],
-                subtitle = DesktopStrings["downloaded_songs", "Downloaded songs"],
-                thumbnailUrl = null,
-                videoId = null,
-                browseId = LOCAL_DOWNLOADS_ID,
-            ),
-            ShelfItem(
-                title = DesktopStrings["local_music", "Local Music"],
-                subtitle = DesktopStrings["d_audio_files_on_this_computer", "Audio files on this computer"],
-                thumbnailUrl = null,
-                videoId = null,
-                browseId = LOCAL_MUSIC_ID,
-            ),
-        ) + playlists.map { playlist ->
+        playlists.map { playlist ->
             ShelfItem(
                 title = playlist.title,
                 subtitle = "Playlist • ${playlist.songs.size} songs",
@@ -3703,12 +3715,10 @@ fun BitChordDesktopApp() {
                             onNewPlaylist = { overlays.playlistDialog = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
                             replay = {
-                                // The phone's wallet of Replay cards, or its banner until there is
+                                // The phone's wallet of Replay cards, or nothing until there is
                                 // listening to deal them from.
                                 val cards = remember(replaySummary) { replaySummary.heroCards() }
-                                if (replaySummary.isEmpty || cards.isEmpty()) {
-                                    ReplayBanner(artworkUrl = null, summary = null, onClick = { overlays.replay = true })
-                                } else {
+                                if (!replaySummary.isEmpty && cards.isNotEmpty()) {
                                     ShelfRow(
                                         modifier = Modifier.padding(vertical = 6.dp),
                                         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
@@ -3735,6 +3745,7 @@ fun BitChordDesktopApp() {
                             onRefresh = ::reloadLibrary,
                             pullState = rememberPullToRefreshState(),
                             contentPadding = sharedPagePadding,
+                            links = libraryLinks,
                             deviceItems = libraryDeviceItems,
                             showTitle = false,
                         )

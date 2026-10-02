@@ -453,6 +453,7 @@ internal fun AndroidCanvasArtworkPlayer(
         },
         update = { frame ->
             val view = frame.getChildAt(0) as TextureView
+            val applied = frame.applied
             // Set on the view itself. A Compose alpha layer over a TextureView
             // is not reliably composited, and this is the same fade either way.
             view.alpha = if (contentMode == CanvasContentMode.FIT_PORTRAIT && clipAspect <= 0f) {
@@ -463,9 +464,18 @@ internal fun AndroidCanvasArtworkPlayer(
                 // recomposing the player around it.
                 alpha * presentationAlpha()
             }
-            view.applyContentTransform(clipAspect, contentMode, alignPortraitTop)
+            // Only when something they are made of has changed. The fade above
+            // re-runs this block on every frame of a collapse or of the player
+            // closing into the mini player, and each pass built a fresh matrix,
+            // gradient and three RenderEffects for a picture that hadn't
+            // moved — and re-setting the effect makes the node rebuild it.
+            if (applied.transformDiffers(clipAspect, contentMode, alignPortraitTop, view.width, view.height)) {
+                view.applyContentTransform(clipAspect, contentMode, alignPortraitTop)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                view.setBottomFade(bottomFade, bounds, bottomFadeEndPx)
+                if (applied.fadeDiffers(bottomFade, bounds, bottomFadeEndPx)) {
+                    view.setBottomFade(bottomFade, bounds, bottomFadeEndPx)
+                }
             } else {
                 frame.fadeFraction = bottomFade
                 frame.fadeEndPx = bottomFadeEndPx
@@ -626,7 +636,52 @@ private fun TextureView.setBottomFade(fraction: Float, bounds: IntSize, endPx: F
  * while [fadeFraction] is zero: with no fade asked for this is a plain
  * FrameLayout and `dispatchDraw` takes the ordinary path.
  */
+/**
+ * What the update block last applied to the clip's view, so it re-applies a
+ * transform or a fade only when one of its inputs has actually changed.
+ */
+private class AppliedLook {
+    private var aspect = Float.NaN
+    private var mode: CanvasContentMode? = null
+    private var alignTop = false
+    private var width = -1
+    private var height = -1
+
+    private var fade = Float.NaN
+    private var fadeBounds = IntSize(-1, -1)
+    private var fadeEnd: Float? = Float.NaN
+
+    fun transformDiffers(
+        clipAspect: Float,
+        contentMode: CanvasContentMode,
+        alignPortraitTop: Boolean,
+        viewWidth: Int,
+        viewHeight: Int,
+    ): Boolean {
+        if (clipAspect == aspect && contentMode == mode && alignPortraitTop == alignTop &&
+            viewWidth == width && viewHeight == height
+        ) return false
+        aspect = clipAspect
+        mode = contentMode
+        alignTop = alignPortraitTop
+        width = viewWidth
+        height = viewHeight
+        return true
+    }
+
+    fun fadeDiffers(fraction: Float, bounds: IntSize, endPx: Float?): Boolean {
+        if (fraction == fade && bounds == fadeBounds && endPx == fadeEnd) return false
+        fade = fraction
+        fadeBounds = bounds
+        fadeEnd = endPx
+        return true
+    }
+}
+
 private class FadingBottomFrame(context: Context) : FrameLayout(context) {
+    /** See [AppliedLook]. */
+    val applied = AppliedLook()
+
     /** Share of the height, from the bottom, over which the child dissolves. */
     var fadeFraction: Float = 0f
         set(value) {

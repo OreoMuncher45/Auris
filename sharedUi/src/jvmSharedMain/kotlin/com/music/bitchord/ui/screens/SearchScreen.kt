@@ -71,6 +71,7 @@ import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.RowMoreButton
 import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
@@ -385,13 +386,11 @@ private fun TopResultCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            IconButton(onClick = onLongPress, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(Res.string.more),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
+            RowMoreButton(
+                onClick = onLongPress,
+                tint = MaterialTheme.colorScheme.onSurface,
+                iconSize = 24.dp,
+            )
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

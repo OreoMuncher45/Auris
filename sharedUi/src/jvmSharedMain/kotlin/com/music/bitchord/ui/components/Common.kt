@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.ui.haptics.Haptic
@@ -88,17 +89,32 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.foundation.border
 
 /**
- * The left and right inset every page's content sits at.
- *
- * It is the same inset the mini player and the tab bar float at, so the edge of
- * a track row, a card or a heading lines up with the edge of the bars stacked
- * below them rather than stepping in from them. One constant, shared by the
- * bars and the pages, is what keeps that true.
+ * The left and right inset every page's content sits at — the artist page's
+ * edge, which every other page now shares, so a track row, a card or a
+ * heading starts at the same place whichever page it is on.
  */
-val PAGE_GUTTER = 10.dp
+val PAGE_GUTTER = 16.dp
+
+/**
+ * The tighter inset the floating chrome sits at: the mini player, the tab bar
+ * and the top bar's buttons. Bars that float over the page read as their own
+ * layer, so they keep closer to the screen's edge than the content does.
+ */
+val BAR_GUTTER = 10.dp
 
 /** Where a divider under a track row starts: clear of the 52dp of artwork. */
 val ROW_DIVIDER_INSET = PAGE_GUTTER + 68.dp
+
+/**
+ * A numbered row's track-number column, the number centred in it: room for
+ * three digits. It sits between two page gutters — the row's own on the left,
+ * a matching gap before the title on the right — so the number has the same
+ * space either side of it, counted from the screen edge.
+ */
+val TRACK_NUMBER_WIDTH = 24.dp
+
+/** Where a divider under a numbered row starts: at its title, past the number. */
+val NUMBERED_ROW_DIVIDER_INSET = PAGE_GUTTER + TRACK_NUMBER_WIDTH + PAGE_GUTTER
 
 /**
  * How wide the floating bars at the foot of the page — the tab bar and the mini
@@ -408,7 +424,7 @@ private fun QueueSwipeBackground(swipeState: SwipeToDismissBoxState) {
                 }
             }
             .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
-            .padding(horizontal = PAGE_GUTTER + 6.dp),
+            .padding(horizontal = PAGE_GUTTER),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -470,9 +486,13 @@ private fun SongRowContent(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (trackNumber != null) {
-            // Same 52dp the artwork would take, so a numbered list and an
-            // illustrated one share a left edge and a divider inset.
-            Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+            // Centred between the screen edge and the title (see
+            // [TRACK_NUMBER_WIDTH]). Same height as the artwork, so rows stay
+            // level.
+            Box(
+                Modifier.width(TRACK_NUMBER_WIDTH).height(52.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 if (searchPlayingStyle && isCurrent && isPlaying) {
                     SearchPlayingBars()
                 } else if (isCurrent) {
@@ -487,6 +507,7 @@ private fun SongRowContent(
                         text = "$trackNumber",
                         style = MaterialTheme.typography.bodyLarge,
                         color = subtitleColor,
+                        maxLines = 1,
                     )
                 }
             }
@@ -506,7 +527,10 @@ private fun SongRowContent(
                 }
             }
         }
-        Spacer(Modifier.width(14.dp))
+        // A number is followed by the page gutter again, so the gap from the
+        // screen edge to the number and from the number to the title match,
+        // whatever its digit count.
+        Spacer(Modifier.width(if (trackNumber == null) 14.dp else PAGE_GUTTER))
         Column(Modifier.weight(1f)) {
             ExplicitSongTitle(
                 song = song,
@@ -556,22 +580,53 @@ private fun SongRowContent(
         }
         // Same sheet the long-press opens, for anyone who doesn't think to hold.
         if (onMore != null) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .clickable(onClick = onMore),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(Res.string.more),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            RowMoreButton(onClick = onMore)
         }
     }
+}
+
+/**
+ * The ⋮ at the end of a row. Its circle is a touch target nobody sees, so it
+ * hangs [ROW_MORE_OUTSET] into the page gutter: the dots end at the row's
+ * content edge, mirroring the artwork on the left, rather than a whole
+ * button's width short of it — and the row's text gets that width back.
+ */
+@Composable
+fun RowMoreButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    iconSize: Dp = 20.dp,
+) {
+    Box(
+        modifier = modifier
+            .hangIntoGutter(ROW_MORE_OUTSET)
+            .size(36.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Rounded.MoreVert,
+            contentDescription = stringResource(Res.string.more),
+            tint = tint,
+            modifier = Modifier.size(iconSize),
+        )
+    }
+}
+
+/** How far a row's [RowMoreButton] reaches past the content edge into the gutter. */
+val ROW_MORE_OUTSET = 14.dp
+
+/**
+ * Lays a trailing control out [outset] narrower than it draws, so it overhangs
+ * its row's end edge by that much: for buttons whose glyph is far smaller than
+ * their touch target, which would otherwise sit visibly inset from the edge.
+ */
+fun Modifier.hangIntoGutter(outset: Dp): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints)
+    val width = (placeable.width - outset.roundToPx()).coerceAtLeast(0)
+    layout(width, placeable.height) { placeable.place(0, 0) }
 }
 
 /** The accent a current song's title takes in lists that mark it with [SearchPlayingBars]. */
@@ -717,7 +772,7 @@ fun MessageState(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = PAGE_GUTTER + 12.dp, vertical = 48.dp),
+            .padding(horizontal = PAGE_GUTTER + 6.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

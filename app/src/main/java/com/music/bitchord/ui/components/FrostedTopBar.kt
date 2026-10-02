@@ -14,9 +14,9 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.background
+import androidx.compose.ui.util.lerp
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,14 +55,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -73,7 +71,6 @@ import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
-import com.music.bitchord.BuildConfig
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.settings.AppSettings
@@ -139,14 +136,11 @@ fun topBarContentPadding(): Dp = topBarHeight() + TopBarContentGap
  * The top bar's content — title, back affordance, actions — over no blur of its
  * own.
  *
- * Ordinary pages put [TopBarBlur] underneath it and use this bar's lower
- * hairline to finish that bounded pane. Replay, album, playlist and artist
- * pages set [transparentBackdrop], as does every page while Liquid Glass is
- * active, so the shared top gradient remains unobstructed.
- *
- * The exception is Reduce dynamic blur, where a bounded bar fills itself solid
- * instead. A [transparentBackdrop] page remains transparent because the
- * app-level gradient already carries its floating controls.
+ * The app mounts it with [transparentBackdrop] and [artworkPageChrome] on every
+ * page, in either material: no full-width pane, just floating circles over the
+ * shared top gradient — liquid glass when that is on, the navbar's blur when it
+ * is not. The bounded-pane path ([TopBarBlur] underneath, lower hairline, solid
+ * fill under Reduce dynamic blur) is kept for previews only.
  *
  * Apple Music behaviour: the big in-list header owns the title at rest;
  * once the list scrolls, the small centered title fades in.
@@ -286,7 +280,7 @@ fun FrostedTopBar(
                         // centred in the same 44dp control in every material.
                         modifier = Modifier
                             .align(Alignment.CenterStart)
-                            .padding(start = PAGE_GUTTER),
+                            .padding(start = BAR_GUTTER),
                     )
                 } else {
                     IconButton(
@@ -300,40 +294,9 @@ fun FrostedTopBar(
                         )
                     }
                 }
-            } else if (useFloatingChrome) {
-                FloatingAppMark(
-                    hazeState = backButtonHazeState,
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = PAGE_GUTTER),
-                )
-            } else {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_logo),
-                        contentDescription = null,
-                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
-                        modifier = Modifier.height(18.dp),
-                    )
-                    // The dev flavor gets its own applicationId so it can sit
-                    // installed next to the prod build; this badge is the
-                    // in-app equivalent, so the two are never mixed up at a
-                    // glance once both are running.
-                    if (BuildConfig.FLAVOR == "dev") {
-                        Text(
-                            text = "Dev",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
-                    }
-                }
             }
+            // No wordmark at the leading end: the root tabs carry it above
+            // their large heading instead (LargePageTitle in :sharedUi).
             if (useFloatingChrome) {
                 ArtworkPageActions(
                     hazeState = backButtonHazeState,
@@ -341,7 +304,7 @@ fun FrostedTopBar(
                         .align(Alignment.CenterEnd)
                         // Same outer edge as the navbar; PILL_INSET below is
                         // internal padding around the icons, not extra margin.
-                        .padding(end = PAGE_GUTTER),
+                        .padding(end = BAR_GUTTER),
                     content = actions,
                 )
             } else {
@@ -357,49 +320,6 @@ fun FrostedTopBar(
         }
         HorizontalDivider(thickness = 0.5.dp, color = dividerColor)
         RefreshPuck(refreshing = refreshing, pullFraction = pullFraction)
-    }
-}
-
-/** Root-page app mark: a navbar-matched logo circle plus an external Dev badge. */
-@OptIn(ExperimentalHazeMaterialsApi::class)
-@Composable
-private fun FloatingAppMark(
-    hazeState: HazeState?,
-    modifier: Modifier = Modifier,
-) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val useLiquidGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
-    val contentColor = if (useLiquidGlass && !reduceDynamicBlur) {
-        glassContentColor()
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .then(artworkPageSurface(shape = CircleShape, hazeState = hazeState)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Image(
-                painter = painterResource(R.drawable.ic_logo),
-                contentDescription = null,
-                colorFilter = ColorFilter.tint(contentColor),
-                modifier = Modifier.size(width = 24.dp, height = 16.dp),
-            )
-        }
-        if (BuildConfig.FLAVOR == "dev") {
-            Text(
-                text = "Dev",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 6.dp),
-            )
-        }
     }
 }
 
@@ -443,6 +363,7 @@ private fun ArtworkPageActions(
 ) {
     Row(
         modifier = modifier
+            .soloAvatarAnchor()
             .then(artworkPageSurface(shape = CircleShape, hazeState = hazeState))
             // Keep the right edge fixed while a new action opens room to its
             // left. The surface itself therefore grows instead of jumping to
@@ -453,10 +374,10 @@ private fun ArtworkPageActions(
                     stiffness = Spring.StiffnessMediumLow,
                 ),
             )
-            // One 48dp profile target with no inset is a true 48x48 circle.
-            // Once another action exists, restore the navbar's PILL_INSET at
-            // both edges. This is layout padding inside the surface, not an
-            // outer margin, so PAGE_GUTTER remains unchanged.
+            // The profile photo alone collapses the pill onto the photo itself;
+            // once another action exists, the navbar's PILL_INSET returns at
+            // both edges. This is layout inside the surface, not an outer
+            // margin, so BAR_GUTTER remains unchanged.
             .artworkActionEdgePadding(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -465,23 +386,55 @@ private fun ArtworkPageActions(
 }
 
 /**
- * Navbar edge padding that collapses only for the profile-only state.
+ * Keeps the profile photo where it sits in the full pill when the pill
+ * collapses onto it.
+ *
+ * In the full pill the photo's centre is PILL_INSET plus half a 48dp target in
+ * from the surface's trailing edge; collapsed, only half of [AVATAR_SIZE]. The
+ * difference becomes a margin outside the surface on that side, so the photo
+ * stays put and only the glass around it grows and shrinks. How collapsed the
+ * pill is comes from its height, which [artworkActionEdgePadding] runs from
+ * [AVATAR_SIZE] to 48dp in step with the collapse — and which
+ * animateContentSize animates alongside the width, so the margin follows it.
+ */
+private fun Modifier.soloAvatarAnchor(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+    val collapsed = AVATAR_SIZE.toPx()
+    val full = 48.dp.toPx()
+    val solo = 1f - ((placeable.height - collapsed) / (full - collapsed)).coerceIn(0f, 1f)
+    val margin = ((PILL_INSET + (48.dp - AVATAR_SIZE) / 2).toPx() * solo).roundToInt()
+    val width = (placeable.width + margin).coerceIn(constraints.minWidth, constraints.maxWidth)
+
+    layout(width, placeable.height) {
+        placeable.placeRelative(0, 0)
+    }
+}
+
+/**
+ * Edge padding that collapses the pill onto the profile photo when it is the
+ * only action.
  *
  * Invisible/animating action slots can measure between zero and 48dp, so the
  * natural content width—not the number of emitted composables—is the reliable
- * source of truth. At exactly one icon target the pill stays circular; above
- * that it gains the same inset as the navbar while retaining fully round ends.
+ * source of truth. At exactly one 48dp target the padding goes negative by the
+ * photo's own inset, so the surface shrinks to the [AVATAR_SIZE] circle and the
+ * photo fills it with no ring of padding; the target's touch area still
+ * extends past the drawn circle. As a second action opens room, the padding
+ * runs back up to the navbar's inset and the full 48dp height.
  */
 private fun Modifier.artworkActionEdgePadding(): Modifier = layout { measurable, constraints ->
-    val placeable = measurable.measure(constraints.copy(minWidth = 0))
+    val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
     val oneActionWidth = 48.dp.roundToPx()
     val extraActionFraction = ((placeable.width - oneActionWidth).toFloat() / oneActionWidth)
         .coerceIn(0f, 1f)
-    val edgePadding = (PILL_INSET.roundToPx() * extraActionFraction).roundToInt()
+    val soloInset = -((oneActionWidth - AVATAR_SIZE.roundToPx()) / 2f)
+    val edgePadding = lerp(soloInset, PILL_INSET.toPx(), extraActionFraction).roundToInt()
+    val verticalPadding = lerp(soloInset, 0f, extraActionFraction).roundToInt()
     val width = (placeable.width + edgePadding * 2).coerceIn(constraints.minWidth, constraints.maxWidth)
+    val height = (placeable.height + verticalPadding * 2).coerceIn(constraints.minHeight, constraints.maxHeight)
 
-    layout(width, placeable.height) {
-        placeable.placeRelative(edgePadding, 0)
+    layout(width, height) {
+        placeable.placeRelative(edgePadding, verticalPadding)
     }
 }
 

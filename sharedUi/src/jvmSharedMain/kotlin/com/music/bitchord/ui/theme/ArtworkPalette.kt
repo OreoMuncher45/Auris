@@ -55,8 +55,8 @@ data class ArtworkPalette(
      * A blur wide enough to lose the picture leaves the mean of what it
      * sampled, so a page that starts from this colour where the artwork stops
      * reads as that blur carrying on rather than as a second surface beginning.
-     * Lighter than [background], which the page still settles into further
-     * down — the artwork's colour is strongest right under the artwork.
+     * Lighter than [background]. A detail page is this colour, flat, all the
+     * way down.
      */
     val wash: Color,
     /** Fill for the glass buttons and chips that sit on [background]. */
