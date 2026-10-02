@@ -52,6 +52,8 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Star
+import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -186,6 +188,11 @@ private val HEADER_DROP = 44.dp
 
 /** How far the artist name/logo and everything under it sit above the usual [HEADER_DROP]. */
 private val ARTIST_HEADER_LIFT = 64.dp
+
+/** The artist action row: a large Play flanked by two smaller glass circles. */
+private val ARTIST_PLAY_BUTTON = 76.dp
+private val ARTIST_SIDE_BUTTON = 52.dp
+private val ARTIST_ACTION_GAP = 24.dp
 
 /** The title logo's widest share of the page, and tallest share of the photo. */
 private const val ARTIST_LOGO_WIDTH = 0.82f
@@ -436,16 +443,6 @@ fun DetailScreen(
                 }
             }
 
-            if (isArtist && (page.subscriberCountText != null || page.monthlyListenerCount != null)) {
-                item(key = "artist-stats") {
-                    ArtistStatsRow(
-                        subscriberCountText = page.subscriberCountText,
-                        monthlyListenerCount = page.monthlyListenerCount,
-                        palette = palette,
-                    )
-                }
-            }
-
             if (searching) {
                 item(key = "search") {
                     DetailSearchField(
@@ -471,6 +468,31 @@ fun DetailScreen(
                         subscription = page.subscription?.takeIf { onToggleSubscription != null },
                         onToggleSubscription = onToggleSubscription,
                         bottomSpace = 22.dp,
+                    )
+                }
+            }
+
+            // Under the buttons rather than the name: the buttons are what the
+            // header is for, and the counts are small print to them.
+            if (isArtist && (page.subscriberCountText != null || page.monthlyListenerCount != null)) {
+                item(key = "artist-stats") {
+                    ArtistStatsRow(
+                        subscriberCountText = page.subscriberCountText,
+                        monthlyListenerCount = page.monthlyListenerCount,
+                        palette = palette,
+                    )
+                }
+            }
+
+            // The first release on the shelves below, pulled out as a card of its own.
+            val topRelease = if (isArtist) page.sections.topRelease() else null
+            if (topRelease != null) {
+                item(key = "top-release") {
+                    TopReleaseCard(
+                        item = topRelease,
+                        palette = palette,
+                        onClick = { onSectionItemClick(topRelease) },
+                        onLongPress = onSectionItemLongPress?.let { { it(topRelease) } },
                     )
                 }
             }
@@ -1147,7 +1169,13 @@ private val SOFT_FOOT_MASK = Brush.verticalGradient(
  */
 private val SOFT_FOOT_BLUR = 48.dp
 
-/** Shuffle • Play • Download — the Apple Music action row. */
+/**
+ * Shuffle • Play • Star — the artist page's action row, as Apple Music lays
+ * it out: a large Play circle with a small glass circle either side.
+ *
+ * The star is the page's existing subscribe toggle. Where the page offers none
+ * (a guest) an empty slot of the same size keeps Play in the middle.
+ */
 @Composable
 private fun ActionRow(
     palette: ArtworkPalette,
@@ -1162,43 +1190,47 @@ private fun ActionRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = HEADER_GUTTER),
-        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(ARTIST_ACTION_GAP, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Subscribing sits where saving does on a release — first circle, left
-        // of Play — and says the same thing with the same pair of icons.
-        if (subscription != null) {
-            CircleIconButton(
-                icon = if (subscription.subscribed) BitChordIcons.Check else BitChordIcons.Plus,
-                contentDescription = stringResource(
-                    if (subscription.subscribed) R.string.unsubscribe else R.string.subscribe,
-                ),
-                palette = palette,
-                onClick = { onToggleSubscription?.invoke() },
-                haptic = if (subscription.subscribed) Haptic.ToggleOff else Haptic.ToggleOn,
-            )
-        }
-
-        PlayPill(
-            onClick = onPlay,
-        )
-
-        // Circular Shuffle button
         CircleIconButton(
             icon = BitChordIcons.Shuffle,
             contentDescription = stringResource(R.string.shuffle),
             palette = palette,
             onClick = onShuffle,
             haptic = Haptic.Resume,
+            size = ARTIST_SIDE_BUTTON,
         )
+
+        PlayPill(
+            onClick = onPlay,
+            iconOnly = true,
+            size = ARTIST_PLAY_BUTTON,
+        )
+
+        if (subscription != null) {
+            CircleIconButton(
+                icon = if (subscription.subscribed) Icons.Rounded.Star else Icons.Rounded.StarBorder,
+                contentDescription = stringResource(
+                    if (subscription.subscribed) R.string.unsubscribe else R.string.subscribe,
+                ),
+                palette = palette,
+                onClick = { onToggleSubscription?.invoke() },
+                haptic = if (subscription.subscribed) Haptic.ToggleOff else Haptic.ToggleOn,
+                size = ARTIST_SIDE_BUTTON,
+            )
+        } else {
+            Spacer(Modifier.size(ARTIST_SIDE_BUTTON))
+        }
     }
     Spacer(Modifier.height(bottomSpace))
 }
 
 /**
- * The prominent Play control that anchors the action row. Releases request its
- * icon-only circle; the artist retains the labeled pill. Both use a fixed white
- * surface with black content so the primary action survives every palette.
+ * The prominent Play control that anchors the action row. Releases and the
+ * artist page both use its icon-only circle; the labeled pill is the default.
+ * Both use a fixed white surface with black content so the primary action
+ * survives every palette.
  */
 @Composable
 private fun PlayPill(
@@ -1570,6 +1602,72 @@ private fun SuggestedSongRow(
                 contentDescription = stringResource(R.string.add_to_playlist),
                 tint = palette.accent,
                 modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The first album or single on an artist's shelves, in the order YouTube lists
+ * them. Playlists, videos and related artists share these shelves and are
+ * skipped — only an `MPRE…` browse id is a release.
+ */
+private fun List<HomeShelf>.topRelease(): ShelfItem? =
+    asSequence()
+        .flatMap { it.items.asSequence() }
+        .firstOrNull { it.browseId?.startsWith("MPRE") == true }
+
+/**
+ * The artist page's top-release card: sleeve, what it is and when, and its
+ * title, in a rounded glass panel the width of the page.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TopReleaseCard(
+    item: ShelfItem,
+    palette: ArtworkPalette,
+    onClick: () -> Unit,
+    onLongPress: (() -> Unit)?,
+) {
+    val shape = RoundedCornerShape(28.dp)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = ARTIST_CONTENT_GUTTER)
+            .padding(bottom = 22.dp)
+            .lightweightLiquidGlass(
+                shape = shape,
+                fallbackColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+            )
+            .clip(shape)
+            .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
+            .padding(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = item.thumbnailUrl.artworkAt(CARD_ART_PX),
+            contentDescription = null,
+            modifier = Modifier
+                .size(88.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .thumbnailBorder(RoundedCornerShape(12.dp))
+                .background(palette.elevated),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = palette.onBackgroundVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleLarge,
+                color = palette.onBackground,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
