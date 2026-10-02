@@ -469,6 +469,13 @@ private fun BitChordApp(
         )
     }
     playerSheetMotion.windowInfo = LocalWindowInfo.current
+    // "Reduce animation" keeps the player as it always was: M3's own slide up
+    // and down, its own scrim and window animations, no pull from the mini
+    // player and no artwork flying between the two. Everything below that
+    // takes part in the docking asks for [activeDock] / this, never for the
+    // dock or the motion directly.
+    val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val activeDock = playerDock.takeIf { !reducePlayerMotion }
     playerSheetMotion.flingVelocity = with(LocalDensity.current) { PLAYER_PULL_FLING_VELOCITY.toPx() }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
@@ -3382,11 +3389,15 @@ private fun BitChordApp(
                         },
                         onNext = { controller?.seekToNextMediaItem() },
                         onPrevious = { controller?.seekToPrevious() },
-                        onExpand = playerSheetMotion::open,
+                        onExpand = if (reducePlayerMotion) {
+                            { showNowPlaying = true }
+                        } else {
+                            playerSheetMotion::open
+                        },
                         controlsLocked = controlsLocked,
                         onBlockedControl = showHostOnlyNotice,
-                        dock = playerDock,
-                        pull = playerSheetMotion,
+                        dock = activeDock,
+                        pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                         modifier = Modifier.fillMaxWidth(),
                     )
                 } else Column(
@@ -3414,11 +3425,15 @@ private fun BitChordApp(
                             },
                             onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
-                            onExpand = playerSheetMotion::open,
+                            onExpand = if (reducePlayerMotion) {
+                                { showNowPlaying = true }
+                            } else {
+                                playerSheetMotion::open
+                            },
                             controlsLocked = controlsLocked,
                             onBlockedControl = showHostOnlyNotice,
-                            dock = playerDock,
-                            pull = playerSheetMotion,
+                            dock = activeDock,
+                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(Modifier.height(8.dp))
@@ -3445,7 +3460,9 @@ private fun BitChordApp(
             // fly home on, rather than on the sheet's own.
             val sheetDensity = LocalDensity.current
             val confirmSheetValue: (SheetValue) -> Boolean = { value ->
-                if (value == SheetValue.Hidden) {
+                // Read when asked, not when the sheet was made: the setting
+                // can change while the player is up.
+                if (value == SheetValue.Hidden && !reducePlayerMotion) {
                     playerSheetMotion.close()
                     false
                 } else {
@@ -3483,7 +3500,7 @@ private fun BitChordApp(
                 // None of M3's: it follows the sheet's own animation, which is
                 // no longer what moves the player. The player draws its own,
                 // off where the player actually is — see the content below.
-                scrimColor = Color.Transparent,
+                scrimColor = if (reducePlayerMotion) BottomSheetDefaults.ScrimColor else Color.Transparent,
                 // The player fills the screen and paints its own background to
                 // the very top, so the sheet's default 28.dp top corners would
                 // only cut two notches out of the artwork behind the status bar.
@@ -3506,8 +3523,8 @@ private fun BitChordApp(
                 // scroll from taking the next touch meant for that list.
                 // See [PlayerSheetMotion.attachWindow].
                 val sheetWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-                DisposableEffect(sheetWindow) {
-                    playerSheetMotion.attachWindow(sheetWindow)
+                DisposableEffect(sheetWindow, reducePlayerMotion) {
+                    if (!reducePlayerMotion) playerSheetMotion.attachWindow(sheetWindow)
                     onDispose { }
                 }
                 Box(
@@ -3524,7 +3541,7 @@ private fun BitChordApp(
                             // its own background is opaque, and a full-screen
                             // blend behind it is paid on every frame the window
                             // draws for nothing anyone can see.
-                            if (open > 0f && !(open >= 1f && playerDock.attached)) {
+                            if (!reducePlayerMotion && open > 0f && !(open >= 1f && playerDock.attached)) {
                                 val top = playerSheetMotion.position().takeUnless { it.isNaN() } ?: 0f
                                 drawRect(
                                     color = Color.Black.copy(alpha = PLAYER_SCRIM_ALPHA * open),
@@ -3541,7 +3558,7 @@ private fun BitChordApp(
                             playerSheetMotion.laidOut = true
                         },
                 ) {
-                    CompositionLocalProvider(LocalPlayerDock provides playerDock) {
+                    CompositionLocalProvider(LocalPlayerDock provides activeDock) {
                         nowPlaying(playerSong)
                     }
                 }

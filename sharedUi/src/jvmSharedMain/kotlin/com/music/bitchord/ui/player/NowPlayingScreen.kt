@@ -1750,6 +1750,16 @@ fun NowPlayingScreen(
         }
     }
     val docking: () -> Boolean = { dockT() < 1f }
+    // The same, for composition: derived, so it recomposes the player twice a
+    // trip — as the sheet leaves fully open and as it gets back — rather than
+    // on each frame between.
+    //
+    // What it is for: a clip decoding behind the player while the artwork is
+    // flying is work nobody can see — the player is fading out round it — and
+    // it was costing frames of exactly the movement the eye is on. Paused for
+    // the trip, as for the collapse into the lyrics or the queue; a paused
+    // clip keeps its last frame, so nothing blinks.
+    val dockMoving by remember { derivedStateOf { docking() } }
     // The rest of the player gets out of the way a little ahead of the artwork,
     // so the cover lands on the bar rather than on a ghost of the player.
     val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
@@ -1866,7 +1876,8 @@ fun NowPlayingScreen(
                     // Paused for the whole collapse into the queue/lyrics panel
                     // and back, not just once it hands off to the still frame at
                     // p >= 0.5 — see [CanvasArtworkPlayer.pausedForTransition].
-                    pausedForTransition = collapseStarted,
+                    // And for the whole trip to or from the mini player.
+                    pausedForTransition = collapseStarted || dockMoving,
                     // Spotify's 9:16 Canvas is the phone background, so it
                     // covers every edge. Other providers retain the contained
                     // portrait treatment introduced for motion cover art.
@@ -1896,7 +1907,8 @@ fun NowPlayingScreen(
                     // Keeping this null also removes the old three-second GPU
                     // readback cadence from this provider alone.
                     refreshFrameEveryMs = if (
-                        spotifyCanvasFullscreen || tabletArtworkBackdrop || lyricsOpen || queueOpen
+                        spotifyCanvasFullscreen || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
+                        dockMoving
                     ) {
                         null
                     } else {
@@ -2760,7 +2772,7 @@ fun NowPlayingScreen(
                             CanvasArtworkPlayer(
                                 canvas = clip,
                                 isPlaying = isPlaying,
-                                pausedForTransition = collapseStarted,
+                                pausedForTransition = collapseStarted || dockMoving,
                                 onRenderedChanged = { canvasRendered = it },
                                 onFrameCaptured = {
                                     if (!tabletArtworkBackdrop && !lyricsOpen && !queueOpen) {
@@ -2768,7 +2780,7 @@ fun NowPlayingScreen(
                                     }
                                 },
                                 refreshFrameEveryMs = if (
-                                    tabletArtworkBackdrop || lyricsOpen || queueOpen
+                                    tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
                                 ) null else meshRefreshMs,
                                 modifier = Modifier.fillMaxSize(),
                             )
