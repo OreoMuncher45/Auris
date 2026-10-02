@@ -1233,4 +1233,13 @@
     <string name="source_downloads_off">सिर्फ़ स्ट्रीमिंग</string>
     <string name="lossless_output_permission">Bluetooth कोडेक जाँचें</string>
     <string name="lossless_output_permission_detail">आस-पास के डिवाइस की अनुमति दें ताकि LDAC या LHDC हेडफ़ोन लॉसलेस ऐड-ऑन खोल सकें</string>
+    <string name="cached_songs">कैश किए गए गाने</string>
+    <string name="cached_songs_subtitle">सॉन्ग कैश में YouTube और JioSaavn के गाने</string>
+    <string name="cached_songs_empty">अभी कोई कैश किया गया गाना नहीं है। YouTube या JioSaavn से चलाए गए गाने यहाँ दिखेंगे।</string>
+    <string name="show_cache_folder">कैश किए गए गानों का फ़ोल्डर दिखाएँ</string>
+    <string name="show_cache_folder_subtitle">लाइब्रेरी में सॉन्ग कैश में रखे YouTube और JioSaavn गानों का फ़ोल्डर जोड़ता है</string>
+    <string name="song_cache_unlimited">असीमित</string>
+    <string name="song_cache_unlimited_subtitle">कोई सीमा नहीं। कैश ऑडियो स्टोरेज भरने तक बढ़ सकता है।</string>
+    <string name="clear_song_cache_title">सॉन्ग कैश साफ़ करें?</string>
+    <string name="clear_song_cache_warning">सभी कैश किए गए गाने हटा दिए जाएँगे और कैश किए गए गानों का फ़ोल्डर खाली हो जाएगा। अगली बार चलाने पर वे फिर से स्ट्रीम होंगे।</string>
 </resources>

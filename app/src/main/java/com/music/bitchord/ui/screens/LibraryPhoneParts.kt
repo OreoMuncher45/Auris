@@ -41,6 +41,7 @@ fun libraryDeviceItems(downloadedPlaylists: List<SavedCollection>): List<ShelfIt
     val webdavConfigured by AppSettings.webdavUrl.collectAsStateWithLifecycle()
     val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
     val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
+    val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     // The remote libraries share one card shape; each entry is title, subtitle
     // and the page it opens.
     val remotes = listOf(
@@ -79,6 +80,16 @@ fun libraryDeviceItems(downloadedPlaylists: List<SavedCollection>): List<ShelfIt
             videoId = null,
             browseId = "local:all",
         ),
+    ) + listOfNotNull(
+        // Opt-in from Settings → Storage: what the song cache is holding from
+        // YouTube and JioSaavn. See [com.music.bitchord.playback.AudioCache.cachedSongs].
+        ShelfItem(
+            title = stringResource(R.string.cached_songs),
+            subtitle = stringResource(R.string.cached_songs_subtitle),
+            thumbnailUrl = null,
+            videoId = null,
+            browseId = CACHE_FOLDER_BROWSE_ID,
+        ).takeIf { showCacheFolder },
     ) + remotes.map { (title, subtitle, browseId) ->
         ShelfItem(
             title = title,
@@ -103,6 +114,9 @@ fun libraryDeviceItems(downloadedPlaylists: List<SavedCollection>): List<ShelfIt
         )
     }
 }
+
+/** The Cached songs folder's page id — one of the `local:` device folders. */
+const val CACHE_FOLDER_BROWSE_ID = "local:cache"
 
 /**
  * The phone's way in to Replay: its row of headline cards, or the plain banner

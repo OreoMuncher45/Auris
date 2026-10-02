@@ -1073,4 +1073,13 @@
     <string name="source_downloads_off">Streaming only</string>
     <string name="lossless_output_permission">Check Bluetooth codec</string>
     <string name="lossless_output_permission_detail">Allow Nearby devices so LDAC or LHDC headphones can unlock lossless-only addons</string>
+    <string name="cached_songs">Cached songs</string>
+    <string name="cached_songs_subtitle">Songs from YouTube and JioSaavn in the song cache</string>
+    <string name="cached_songs_empty">No cached songs yet. Songs you play from YouTube or JioSaavn will show up here.</string>
+    <string name="show_cache_folder">Show cached songs folder</string>
+    <string name="show_cache_folder_subtitle">Adds a Cached songs folder to Library with the YouTube and JioSaavn songs kept in the song cache</string>
+    <string name="song_cache_unlimited">Unlimited</string>
+    <string name="song_cache_unlimited_subtitle">No limit. Cached audio can keep growing until your storage is full.</string>
+    <string name="clear_song_cache_title">Clear song cache?</string>
+    <string name="clear_song_cache_warning">All cached songs will be deleted and the Cached songs folder will be emptied. They will stream again the next time you play them.</string>
 </resources>

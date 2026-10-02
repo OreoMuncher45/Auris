@@ -1219,4 +1219,13 @@
     <string name="source_downloads_off">สตรีมมิงเท่านั้น</string>
     <string name="lossless_output_permission">ตรวจสอบตัวแปลงสัญญาณ Bluetooth</string>
     <string name="lossless_output_permission_detail">อนุญาตอุปกรณ์ใกล้เคียงเพื่อให้หูฟัง LDAC หรือ LHDC ปลดล็อกส่วนเสริมแบบ lossless</string>
+    <string name="cached_songs">เพลงในแคช</string>
+    <string name="cached_songs_subtitle">เพลงจาก YouTube และ JioSaavn ในแคชเพลง</string>
+    <string name="cached_songs_empty">ยังไม่มีเพลงในแคช เพลงที่คุณเล่นจาก YouTube หรือ JioSaavn จะแสดงที่นี่</string>
+    <string name="show_cache_folder">แสดงโฟลเดอร์เพลงในแคช</string>
+    <string name="show_cache_folder_subtitle">เพิ่มโฟลเดอร์ในคลังเพลงที่มีเพลงจาก YouTube และ JioSaavn ที่เก็บไว้ในแคช</string>
+    <string name="song_cache_unlimited">ไม่จำกัด</string>
+    <string name="song_cache_unlimited_subtitle">ไม่มีขีดจำกัด เสียงในแคชอาจเพิ่มขึ้นจนพื้นที่จัดเก็บเต็ม</string>
+    <string name="clear_song_cache_title">ล้างแคชเพลงใช่ไหม</string>
+    <string name="clear_song_cache_warning">เพลงในแคชทั้งหมดจะถูกลบและโฟลเดอร์เพลงในแคชจะว่างเปล่า เพลงจะสตรีมใหม่ในครั้งถัดไปที่เล่น</string>
 </resources>

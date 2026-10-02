@@ -1556,6 +1556,10 @@ class PlaybackService : MediaLibraryService() {
             // hand. See [StreamContainer].
             streamResolver.resolveDataSpec(dataSpec).also { resolved ->
                 mediaIdIn(dataSpec.uri)?.let { StreamContainer.served(it, resolved.uri.toString()) }
+                // The same seam tells the cache whose file it is writing, which
+                // decides whether the entry outlives the track — see
+                // [AudioCache.Origin].
+                AudioCache.recordServed(dataSpec, resolved.uri.toString())
             }
         }
         // Read-ahead resolves streams through the same chain the player does.
@@ -2812,6 +2816,10 @@ class PlaybackService : MediaLibraryService() {
         currentAudioInputFormat = null
         NerdStats.onTrackTransition()
         AudioOutputStatus.onTrackTransition()
+        // The entry this track is read from now counts as played — the only
+        // kind the Cached songs folder lists. See [AudioCache.Origin].
+        mediaItem?.let { AudioCache.notePlayed(it.toSong(), it.localConfiguration?.uri) }
+        scheduleForeignCachePurge()
         mediaItem?.mediaId?.let { id ->
             resolveLocalBitrate(id, mediaItem)
         }
@@ -5213,6 +5221,37 @@ class PlaybackService : MediaLibraryService() {
         MediaWidget.refresh(this)
     }
 
+    private var foreignCachePurgeJob: Job? = null
+
+    /**
+     * Lets go of whatever an addon or module served, and whatever Automix
+     * downloaded only to analyse, for tracks the queue has moved past — see
+     * [AudioCache.dropForeignEntries].
+     *
+     * Delayed so a crossfade has finished with the outgoing track, and a
+     * run of skips collapses into one pass. The tracks around the playhead
+     * are kept: they may still be read, seeked through or analysed.
+     */
+    private fun scheduleForeignCachePurge() {
+        foreignCachePurgeJob?.cancel()
+        foreignCachePurgeJob = scope.launch {
+            delay(FOREIGN_CACHE_PURGE_DELAY_MS)
+            val exoPlayer = player ?: return@launch
+            val keep = buildSet {
+                exoPlayer.currentMediaItem?.mediaId?.let(::add)
+                val current = exoPlayer.currentMediaItemIndex
+                if (current != C.INDEX_UNSET) {
+                    val window = (current - 1)..(current + FOREIGN_CACHE_KEEP_AHEAD)
+                    for (index in window) {
+                        if (index in 0 until exoPlayer.mediaItemCount) add(exoPlayer.getMediaItemAt(index).mediaId)
+                    }
+                }
+                spare?.currentMediaItem?.mediaId?.let(::add)
+            }
+            AudioCache.dropForeignEntries(keep)
+        }
+    }
+
     /**
      * Hands the cache the queue ahead of the one playing: [AudioCache.QUEUE_DEPTH]
      * tracks is more than it does anything with, but it decides that, not this.
@@ -5225,6 +5264,9 @@ class PlaybackService : MediaLibraryService() {
         } else {
             emptyList()
         }
+        // So whatever read-ahead writes for these can be named in the Cached
+        // songs folder; its own requests carry nothing but an id.
+        AudioCache.noteSongs(upcomingSongs)
         val preferAudio = AppSettings.preferMusicOnly.value
         val request = preferAudio to upcomingSongs.map { it.videoId }
         if (request == preferredPrefetchRequest) return
@@ -7944,6 +7986,10 @@ class PlaybackService : MediaLibraryService() {
         const val MEDIA_PLAYLISTS_ID = "playlists"
         const val MEDIA_MORE_ID = "more"
         const val MEDIA_LIKED_ID = "liked"
+        /** See [scheduleForeignCachePurge]: comfortably past the longest crossfade. */
+        const val FOREIGN_CACHE_PURGE_DELAY_MS = 30_000L
+        /** How many upcoming tracks [scheduleForeignCachePurge] leaves alone for read-ahead and Automix. */
+        const val FOREIGN_CACHE_KEEP_AHEAD = 3
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
         const val MAX_AUTO_PAGE_SIZE = 50

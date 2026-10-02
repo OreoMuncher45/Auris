@@ -1205,4 +1205,13 @@
     <string name="source_downloads_off">Solo streaming</string>
     <string name="lossless_output_permission">Comprobar códec Bluetooth</string>
     <string name="lossless_output_permission_detail">Permite Dispositivos cercanos para que los auriculares LDAC o LHDC desbloqueen los complementos sin pérdida</string>
+    <string name="cached_songs">Canciones en caché</string>
+    <string name="cached_songs_subtitle">Canciones de YouTube y JioSaavn en la caché de canciones</string>
+    <string name="cached_songs_empty">Aún no hay canciones en caché. Las canciones que reproduzcas desde YouTube o JioSaavn aparecerán aquí.</string>
+    <string name="show_cache_folder">Mostrar carpeta de canciones en caché</string>
+    <string name="show_cache_folder_subtitle">Añade a la Biblioteca una carpeta con las canciones de YouTube y JioSaavn guardadas en la caché</string>
+    <string name="song_cache_unlimited">Ilimitado</string>
+    <string name="song_cache_unlimited_subtitle">Sin límite. El audio en caché puede crecer hasta llenar tu almacenamiento.</string>
+    <string name="clear_song_cache_title">¿Borrar caché de canciones?</string>
+    <string name="clear_song_cache_warning">Se eliminarán todas las canciones en caché y la carpeta de canciones en caché quedará vacía. Se volverán a transmitir la próxima vez que las reproduzcas.</string>
 </resources>
