@@ -270,7 +270,7 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
             }
             // Synced here too, so seeking while paused or buffering still moves
             // the scrubber (the poll loop only runs on play).
-            position.positionMs = player.currentPosition.coerceAtLeast(0L)
+            position.report(player.currentPosition.coerceAtLeast(0L))
             state = state.copy(
                 song = item?.toSong(),
                 isPlaying = player.isPlaying,
@@ -298,6 +298,17 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
                     queueChanged = true
                 }
             }
+            // Every jump the player makes — a seek, a skip, a repeat starting
+            // over, a stretch of silence skipped — is announced here, ahead of
+            // the `onEvents` that reports where it landed. It is the only thing
+            // the lyrics accept as a reason to go backwards; see PlaybackPosition.
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                position.seeks++
+            }
             override fun onEvents(p: Player, events: Player.Events) = sync(
                 error = state.error,
                 rebuildQueue = queueChanged.also { queueChanged = false },
@@ -321,7 +332,7 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
     val foreground = rememberIsForeground()
     LaunchedEffect(controller, state.isPlaying, foreground) {
         while (controller != null && state.isPlaying && foreground) {
-            position.positionMs = controller.currentPosition.coerceAtLeast(0L)
+            position.report(controller.currentPosition.coerceAtLeast(0L))
             val duration = controller.duration.coerceAtLeast(0L)
             if (duration != state.durationMs) state = state.copy(durationMs = duration)
             delay(500)

@@ -30,6 +30,14 @@ data class DesktopPlaybackState(
     val isLoading: Boolean = false,
     val positionMs: Long = 0L,
     /**
+     * When [positionMs] was read off the sink, on the [System.nanoTime] clock — taken on the audio
+     * thread, so the lyrics can date it by when it was true rather than by when the UI got to it.
+     * Set alongside [positionMs], always: a stale pair reads as a reading from long ago.
+     */
+    val positionSampledAtNanos: Long = 0L,
+    /** Bumped on every deliberate jump of the playhead — a seek, a track opened or replaced. */
+    val seeks: Int = 0,
+    /**
      * A seek has landed but none of its audio has reached the speakers yet — the decoder is still
      * fetching it. [isPlaying] stays true (it is what Listen Together and the media keys follow),
      * so this is what tells the lyrics not to run on through the wait.

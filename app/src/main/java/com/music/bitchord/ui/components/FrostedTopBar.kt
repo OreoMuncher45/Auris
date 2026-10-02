@@ -16,7 +16,6 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.background
-import androidx.compose.ui.util.lerp
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,11 +43,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.MutableFloatState
-import androidx.compose.runtime.State
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -366,10 +360,8 @@ private fun ArtworkPageActions(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    val solo = remember { mutableFloatStateOf(0f) }
     Row(
         modifier = modifier
-            .soloAvatarAnchor()
             .then(artworkPageSurface(shape = CircleShape, hazeState = hazeState))
             // Keep the right edge fixed while a new action opens room to its
             // left. The surface itself therefore grows instead of jumping to
@@ -380,79 +372,35 @@ private fun ArtworkPageActions(
                     stiffness = Spring.StiffnessMediumLow,
                 ),
             )
-            // The profile photo alone collapses the pill onto the photo itself;
-            // once another action exists, the navbar's PILL_INSET returns at
-            // both edges. This is layout inside the surface, not an outer
-            // margin, so BAR_GUTTER remains unchanged.
-            .artworkActionEdgePadding(solo),
+            // One 48dp profile target with no inset is a true 48x48 circle.
+            // Once another action exists, restore the navbar's PILL_INSET at
+            // both edges. This is layout padding inside the surface, not an
+            // outer margin, so BAR_GUTTER remains unchanged.
+            .artworkActionEdgePadding(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        CompositionLocalProvider(LocalSoloAvatar provides solo, content = content)
+        content()
     }
 }
 
 /**
- * How alone the profile photo is in its pill: 1 when it is the only action and
- * the pill has collapsed onto it, 0 once another action has opened it out.
- * Written during the pill's measure and read in the photo's draw layer, so the
- * photo's size follows the pill's own animation without a recomposition.
- *
- * Outside a floating pill it reads 0: the ordinary photo.
- */
-private val LocalSoloAvatar = staticCompositionLocalOf<State<Float>> { mutableFloatStateOf(0f) }
-
-/**
- * Keeps the profile photo where it sits in the full pill when the pill
- * collapses onto it.
- *
- * In the full pill the photo's centre is PILL_INSET plus half a 48dp target in
- * from the surface's trailing edge; collapsed, only half of [SOLO_AVATAR_SIZE]. The
- * difference becomes a margin outside the surface on that side, so the photo
- * stays put and only the glass around it grows and shrinks. How collapsed the
- * pill is comes from its height, which [artworkActionEdgePadding] runs from
- * [SOLO_AVATAR_SIZE] to 48dp in step with the collapse — and which
- * animateContentSize animates alongside the width, so the margin follows it.
- */
-private fun Modifier.soloAvatarAnchor(): Modifier = layout { measurable, constraints ->
-    val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
-    val collapsed = SOLO_AVATAR_SIZE.toPx()
-    val full = 48.dp.toPx()
-    val solo = 1f - ((placeable.height - collapsed) / (full - collapsed)).coerceIn(0f, 1f)
-    val margin = ((PILL_INSET + (48.dp - SOLO_AVATAR_SIZE) / 2).toPx() * solo).roundToInt()
-    val width = (placeable.width + margin).coerceIn(constraints.minWidth, constraints.maxWidth)
-
-    layout(width, placeable.height) {
-        placeable.placeRelative(0, 0)
-    }
-}
-
-/**
- * Edge padding that collapses the pill onto the profile photo when it is the
- * only action.
+ * Navbar edge padding that collapses only for the profile-only state.
  *
  * Invisible/animating action slots can measure between zero and 48dp, so the
  * natural content width—not the number of emitted composables—is the reliable
- * source of truth. At exactly one 48dp target the padding goes negative by the
- * photo's own inset, so the surface shrinks to the [SOLO_AVATAR_SIZE] circle and
- * the photo fills it with no ring of padding; the target's touch area still
- * extends past the drawn circle. As a second action opens room, the padding
- * runs back up to the navbar's inset and the full 48dp height. How far along
- * that it is goes to [solo] for the photo to size itself by.
+ * source of truth. At exactly one icon target the pill stays circular; above
+ * that it gains the same inset as the navbar while retaining fully round ends.
  */
-private fun Modifier.artworkActionEdgePadding(solo: MutableFloatState): Modifier = layout { measurable, constraints ->
-    val placeable = measurable.measure(constraints.copy(minWidth = 0, minHeight = 0))
+private fun Modifier.artworkActionEdgePadding(): Modifier = layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minWidth = 0))
     val oneActionWidth = 48.dp.roundToPx()
     val extraActionFraction = ((placeable.width - oneActionWidth).toFloat() / oneActionWidth)
         .coerceIn(0f, 1f)
-    solo.floatValue = 1f - extraActionFraction
-    val soloInset = -((oneActionWidth - SOLO_AVATAR_SIZE.roundToPx()) / 2f)
-    val edgePadding = lerp(soloInset, PILL_INSET.toPx(), extraActionFraction).roundToInt()
-    val verticalPadding = lerp(soloInset, 0f, extraActionFraction).roundToInt()
+    val edgePadding = (PILL_INSET.roundToPx() * extraActionFraction).roundToInt()
     val width = (placeable.width + edgePadding * 2).coerceIn(constraints.minWidth, constraints.maxWidth)
-    val height = (placeable.height + verticalPadding * 2).coerceIn(constraints.minHeight, constraints.maxHeight)
 
-    layout(width, height) {
-        placeable.placeRelative(edgePadding, verticalPadding)
+    layout(width, placeable.height) {
+        placeable.placeRelative(edgePadding, 0)
     }
 }
 
@@ -505,14 +453,6 @@ fun TopBarAccountButton(
 ) {
     val translation = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
-    val solo = LocalSoloAvatar.current
-    // Laid out at the solo size, so the photo is loaded sharp for it, and
-    // scaled down to [AVATAR_SIZE] once other actions share the pill.
-    val avatarScale = Modifier.graphicsLayer {
-        val scale = lerp(AVATAR_SIZE / SOLO_AVATAR_SIZE, 1f, solo.value)
-        scaleX = scale
-        scaleY = scale
-    }
     // Wrapped in an IconButton so it keeps the 48dp target, the ripple and the
     // spacing every other action in this bar has.
     IconButton(
@@ -541,16 +481,14 @@ fun TopBarAccountButton(
                 contentDescription = stringResource(R.string.switch_account),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(SOLO_AVATAR_SIZE)
-                    .then(avatarScale)
+                    .size(AVATAR_SIZE)
                     .clip(CircleShape)
                     .thumbnailBorder(CircleShape),
             )
         } else {
             Box(
                 modifier = Modifier
-                    .size(SOLO_AVATAR_SIZE)
-                    .then(avatarScale)
+                    .size(AVATAR_SIZE)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .thumbnailBorder(CircleShape),
@@ -560,8 +498,7 @@ fun TopBarAccountButton(
                     Icons.Rounded.Person,
                     contentDescription = stringResource(R.string.switch_account),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    // 18dp once scaled down to AVATAR_SIZE.
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
@@ -656,9 +593,3 @@ private val PUCK_OVERSHOOT = 20.dp
  * glyph does, and at 24 it sat heavier in the bar than the wordmark opposite it.
  */
 private val AVATAR_SIZE = 28.dp
-
-/**
- * The photo's diameter alone in its pill, where the pill collapses onto it —
- * a little larger, since there is no glass ring around it to carry its weight.
- */
-private val SOLO_AVATAR_SIZE = 31.dp

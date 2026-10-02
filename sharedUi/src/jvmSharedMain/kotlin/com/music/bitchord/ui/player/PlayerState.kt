@@ -314,11 +314,3 @@ internal fun rememberPlayerVolume(): PlayerVolume {
     return volume
 }
 
-/**
- * Reads the playhead inside a recomposition scope of its own, so a tick
- * recomposes [content] and not the screen around it — see [PlaybackPosition].
- */
-@Composable
-internal fun PlaybackPositionScope(positionMs: () -> Long, content: @Composable (Long) -> Unit) {
-    content(positionMs())
-}

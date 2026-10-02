@@ -57,6 +57,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableLongState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -69,6 +70,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -111,6 +113,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.data.lyrics.CharGrowth
 import com.music.bitchord.data.lyrics.isGeniusSectionHeader
@@ -497,8 +500,7 @@ internal fun adjustedLyricsSeekTarget(lineTimeMs: Long, offsetMs: Int): Long =
 internal fun CurrentLyricStrip(
     lines: List<LyricLine>,
     trackKey: String,
-    /** Read in here — a tick recomposes the strip alone. */
-    positionMs: () -> Long,
+    playhead: LyricPlayhead,
     isPlaying: Boolean,
     durationMs: Long,
     lyricsUnavailable: Boolean,
@@ -518,7 +520,7 @@ internal fun CurrentLyricStrip(
             CurrentLyricLine(
                 lines = lines,
                 trackKey = trackKey,
-                positionMs = positionMs(),
+                playhead = playhead,
                 isPlaying = isPlaying,
                 durationMs = durationMs,
                 onClick = onClick,
@@ -539,11 +541,47 @@ internal fun CurrentLyricStrip(
 }
 
 /**
+ * What the lyrics read the playhead through: the player's latest reading,
+ * shifted by the lyrics offset, together with when it was taken and whether the
+ * player has jumped since — see [LyricClock] for why all three are needed.
+ *
+ * Read only from the frame loop and from effects, never in composition. Read in
+ * composition, every reading recomposed the whole lyric panel twice a second;
+ * and a value captured there and a stamp read later in the frame could belong
+ * to two different readings, which is the very mismatch this exists to stop.
+ */
+@Stable
+internal class LyricPlayhead(
+    private val position: PlaybackPosition,
+    private val offsetMs: State<Int>,
+) {
+    val positionMs: Long get() = adjustedLyricsPosition(position.positionMs, offsetMs.value)
+
+    val sampledAtNanos: Long get() = position.sampledAtNanos
+
+    /**
+     * Changes whenever the lyrics are meant to jump: the player seeking, or the
+     * reader moving the lyrics offset — which shifts every reading at once, and
+     * without saying so would look like a reading gone wrong.
+     */
+    val discontinuity: Long
+        get() = (position.seeks.toLong() shl 32) or (offsetMs.value.toLong() and 0xFFFF_FFFFL)
+}
+
+@Composable
+internal fun rememberLyricPlayhead(position: PlaybackPosition): LyricPlayhead {
+    val offset = PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
+    return remember(position, offset) { LyricPlayhead(position, offset) }
+}
+
+private fun nanosToMs(nanos: Long): Double = nanos / 1_000_000.0
+
+/**
  * The song position, ticking every frame.
  *
  * The player reports where it is about twice a second, which is fine for a
  * scrubber and far too coarse for a highlight that has to keep up with a
- * singer. This runs a clock on the frames in between and lets the reports
+ * singer. This runs a clock on the frames in between and lets the readings
  * steer it — see [LyricClock] for why steering, rather than setting, is the
  * difference between a sweep that glides and one that stutters or stalls.
  *
@@ -554,21 +592,23 @@ internal fun CurrentLyricStrip(
 @Composable
 private fun rememberLyricClock(
     trackKey: Any,
-    positionMs: Long,
+    playhead: LyricPlayhead,
     isPlaying: Boolean,
 ): MutableLongState {
-    val clock = remember(trackKey) { mutableLongStateOf(positionMs) }
-    val engine = remember(trackKey) { LyricClock(positionMs) }
-    // Read by the frame loop rather than keying it. Keyed, every report
-    // restarted the loop, and the restart spent a frame waiting for its first
-    // frame time — a hitch in the sweep twice a second, every second.
-    val report = rememberUpdatedState(positionMs)
+    val clock = remember(trackKey) {
+        mutableLongStateOf(Snapshot.withoutReadObservation { playhead.positionMs })
+    }
+    val engine = remember(trackKey) { LyricClock(clock.longValue) }
 
-    // Not moving: the report is the truth, including a seek made while paused.
+    // Not moving: each reading is the truth, including a seek made while paused.
+    // Followed off the snapshot rather than read here, so a reading recomposes
+    // nothing.
     if (!isPlaying) {
-        LaunchedEffect(engine, positionMs) {
-            engine.hold(positionMs)
-            clock.longValue = positionMs
+        LaunchedEffect(engine, playhead) {
+            snapshotFlow { playhead.positionMs }.collect { positionMs ->
+                engine.hold(positionMs, nanosToMs(System.nanoTime()))
+                clock.longValue = positionMs
+            }
         }
     }
 
@@ -578,20 +618,39 @@ private fun rememberLyricClock(
     // the right trade for a lyric being read and the wrong one for a phone in a
     // pocket, and the composition alone cannot tell the two apart.
     //
-    // Every start is a fresh run from the latest report, so neither a pause nor
-    // a spell in the background is mistaken for one very long frame.
+    // Every start is a fresh run from the latest reading, so neither a pause
+    // nor a spell in the background is mistaken for one very long frame.
+    //
+    // One loop for the whole run, reading the playhead itself. Keyed on the
+    // reading instead, every reading restarted it, and each restart spent a
+    // frame waiting for its first frame time — a hitch twice a second.
     val foreground = rememberIsForeground()
-    LaunchedEffect(engine, isPlaying, foreground) {
+    LaunchedEffect(engine, playhead, isPlaying, foreground) {
         if (!isPlaying || !foreground) return@LaunchedEffect
         engine.restart()
         while (true) {
             withFrameNanos { frameNanos ->
-                clock.longValue = engine.frame(frameNanos / 1_000_000.0, report.value)
+                // Readings are stamped on the System.nanoTime clock. The frame
+                // time is that clock too wherever it is a vsync stamp, and is
+                // preferred for being evenly spaced; anywhere it is not, the
+                // two are seconds apart and the real clock is used instead.
+                val system = System.nanoTime()
+                val now = if (abs(system - frameNanos) < SAME_CLOCK_NANOS) frameNanos else system
+                val sampledAt = playhead.sampledAtNanos
+                clock.longValue = engine.frame(
+                    nowMs = nanosToMs(now),
+                    reportedMs = playhead.positionMs,
+                    sampledAtMs = if (sampledAt > 0L) nanosToMs(sampledAt) else Double.NaN,
+                    discontinuity = playhead.discontinuity,
+                )
             }
         }
     }
     return clock
 }
+
+/** A frame time this close to [System.nanoTime] is on the same clock. */
+private const val SAME_CLOCK_NANOS = 250_000_000L
 
 /**
  * A lyric line with the sung part of it lit, the rest dimmed, and the boundary
@@ -1452,7 +1511,7 @@ internal fun LyricsPanel(
      */
     subLines: List<LyricLine>? = null,
     trackKey: String,
-    positionMs: Long,
+    playhead: LyricPlayhead,
     /** Whether a lookup for this track is still in flight. */
     looking: Boolean,
     isPlaying: Boolean,
@@ -1479,7 +1538,7 @@ internal fun LyricsPanel(
     modifier: Modifier = Modifier,
 ) {
     val panelPlaying = isPlaying && active
-    val clock = rememberLyricClock(trackKey, positionMs, panelPlaying)
+    val clock = rememberLyricClock(trackKey, playhead, panelPlaying)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
@@ -2382,7 +2441,7 @@ private fun String.stripParens(): String = replace("(", "").replace(")", "").tri
 private fun CurrentLyricLine(
     lines: List<LyricLine>,
     trackKey: Any,
-    positionMs: Long,
+    playhead: LyricPlayhead,
     isPlaying: Boolean,
     durationMs: Long,
     onClick: () -> Unit,
@@ -2423,7 +2482,7 @@ private fun CurrentLyricLine(
         return
     }
 
-    val clock = rememberLyricClock(trackKey, positionMs, isPlaying)
+    val clock = rememberLyricClock(trackKey, playhead, isPlaying)
 
     val index by remember(lines) {
         derivedStateOf { lines.indexOfLast { it.timeMs <= clock.longValue } }

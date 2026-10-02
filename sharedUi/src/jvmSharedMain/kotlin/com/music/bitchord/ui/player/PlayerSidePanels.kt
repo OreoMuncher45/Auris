@@ -49,7 +49,7 @@ fun LyricsSidePanel(
 ) {
     val haptics = rememberHaptics()
     val lyricsOffsetMs by PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
-    val lyricsPosition: () -> Long = { adjustedLyricsPosition(position.positionMs, lyricsOffsetMs) }
+    val lyricsPlayhead = rememberLyricPlayhead(position)
     val seekToLyric: (Long) -> Unit = { lineTimeMs ->
         onSeek(adjustedLyricsSeekTarget(lineTimeMs, lyricsOffsetMs))
     }
@@ -105,22 +105,20 @@ fun LyricsSidePanel(
                     // Controls always open, as in the landscape player: there
                     // is no transport hidden behind these lines for a tap to
                     // bring back.
-                    PlaybackPositionScope(lyricsPosition) { lyricsPositionMs ->
-                        LyricsPanel(
-                            lines = lyrics.orEmpty(),
-                            subLines = lyricsTranslation.subLines,
-                            trackKey = song.videoId,
-                            positionMs = lyricsPositionMs,
-                            looking = !lyricsUnavailable,
-                            isPlaying = isPlaying && position.advancing,
-                            onSeekToLine = seekToLyric,
-                            controlsOpen = true,
-                            onRevealControls = {},
-                            onHideControls = {},
-                            translationProgress = particleProgress,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
+                    LyricsPanel(
+                        lines = lyrics.orEmpty(),
+                        subLines = lyricsTranslation.subLines,
+                        trackKey = song.videoId,
+                        playhead = lyricsPlayhead,
+                        looking = !lyricsUnavailable,
+                        isPlaying = isPlaying && position.advancing,
+                        onSeekToLine = seekToLyric,
+                        controlsOpen = true,
+                        onRevealControls = {},
+                        onHideControls = {},
+                        translationProgress = particleProgress,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
         }

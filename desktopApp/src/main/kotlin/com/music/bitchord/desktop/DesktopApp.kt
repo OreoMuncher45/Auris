@@ -1581,7 +1581,10 @@ fun BitChordDesktopApp() {
     val playerPosition = remember { PlaybackPosition() }
     LaunchedEffect(playbackEngine) {
         playbackEngine.state.collect {
-            playerPosition.positionMs = it.positionMs
+            // The audio thread's own timestamp, not this collector's: it runs on the UI thread and
+            // gets to a reading as late as the UI is busy.
+            playerPosition.report(it.positionMs, it.positionSampledAtNanos)
+            playerPosition.seeks = it.seeks
             playerPosition.advancing = !it.awaitingAudio
         }
     }

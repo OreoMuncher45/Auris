@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -24,8 +25,31 @@ import androidx.compose.runtime.setValue
  */
 @Stable
 class PlaybackPosition {
-    /** Written only by whoever owns playback — the phone's controller, the desktop's engine. */
+    /** The latest reading of the playhead. Written through [report], with the time it was taken. */
     var positionMs by mutableLongStateOf(0L)
+        private set
+
+    /**
+     * When [positionMs] was read off the player, on the [System.nanoTime] clock.
+     *
+     * The lyrics run a clock of their own between readings, and the only thing
+     * that lets them use a reading is knowing *when* it was true. The moment the
+     * UI first sees one is not that: it waits on the main thread, and a busy
+     * frame there — a heavy recomposition, a collection, the blur stack — holds
+     * it back by as long as the frame takes. Dated by when it was seen, a reading
+     * from before a half-second stall looked half a second old, and the lyrics
+     * either stopped to wait for it or rolled back to meet it.
+     */
+    var sampledAtNanos by mutableLongStateOf(0L)
+        private set
+
+    /**
+     * Bumped by the owner every time the playhead jumps on purpose — a seek, a
+     * skip, a repeat starting over — so the lyrics can tell a real jump from a
+     * reading that is merely late or early. Nothing else is allowed to move them
+     * backwards.
+     */
+    var seeks by mutableIntStateOf(0)
 
     /**
      * False while playback is meant to be running but the playhead is not moving yet: a seek still
@@ -35,4 +59,15 @@ class PlaybackPosition {
      * playing — the desktop engine does, because its "playing" also drives Listen Together.
      */
     var advancing by mutableStateOf(true)
+
+    /**
+     * Records a reading of the playhead and when it was taken. Pass
+     * [sampledAtNanos] when the reading was made somewhere else and handed over
+     * — the desktop's audio thread — so it carries the moment it was true and
+     * not the moment it arrived.
+     */
+    fun report(positionMs: Long, sampledAtNanos: Long = System.nanoTime()) {
+        this.positionMs = positionMs
+        this.sampledAtNanos = sampledAtNanos
+    }
 }

@@ -975,7 +975,9 @@ class DesktopPlaybackEngine(
         sink.drain()
         current = null
         track.decoder.close()
-        _state.update { it.copy(isPlaying = false, positionMs = it.durationMs) }
+        _state.update {
+            it.copy(isPlaying = false, positionMs = it.durationMs, positionSampledAtNanos = System.nanoTime())
+        }
         onEnded()
     }
 
@@ -1308,7 +1310,14 @@ class DesktopPlaybackEngine(
         silence?.reset()
         resetPlayhead(track, millis * 1_000)
         // Cleared by [play] once the first of the new position's audio is on its way out.
-        _state.update { it.copy(positionMs = millis, awaitingAudio = true) }
+        _state.update {
+            it.copy(
+                positionMs = millis,
+                positionSampledAtNanos = System.nanoTime(),
+                seeks = it.seeks + 1,
+                awaitingAudio = true,
+            )
+        }
     }
 
     /** The track a second look is running for, started as it began playing. */
@@ -1334,6 +1343,9 @@ class DesktopPlaybackEngine(
             volume = volume,
             isLoading = false,
             positionMs = positionUs / 1_000,
+            positionSampledAtNanos = System.nanoTime(),
+            // A track opened, or the playing one replaced, starts the playhead somewhere new.
+            seeks = _state.value.seeks + 1,
             durationMs = (track.decoder.durationUs ?: 0L) / 1_000,
             // What the decoder is actually being fed, falling back to what the source promised only
             // until something has been measured.
@@ -1351,11 +1363,21 @@ class DesktopPlaybackEngine(
         if (displaySwitched) {
             val incoming = upcoming ?: return
             val positionMs = incomingHeardUs(incoming) / 1_000
+            val sampledAt = System.nanoTime()
             if (_state.value.positionMs / 250 == positionMs / 250) return
-            _state.update { it.copy(positionMs = positionMs, isPlaying = !paused, mixing = isSmartMixInProgress()) }
+            _state.update {
+                it.copy(
+                    positionMs = positionMs,
+                    positionSampledAtNanos = sampledAt,
+                    isPlaying = !paused,
+                    mixing = isSmartMixInProgress(),
+                )
+            }
             return
         }
         val positionMs = (playhead.at(sink.framesPlayed()) / 1_000).coerceAtLeast(0)
+        // Taken with the reading, here on the audio thread: see DesktopPlaybackState.
+        val sampledAt = System.nanoTime()
         if (_state.value.song?.videoId != track.song.videoId) return
         requestAnalysisAround(track)
         val status = analysisStatus(track)
@@ -1365,6 +1387,7 @@ class DesktopPlaybackEngine(
         _state.update {
             it.copy(
                 positionMs = positionMs,
+                positionSampledAtNanos = sampledAt,
                 isPlaying = !paused,
                 smartAnalysis = status,
                 mixing = isSmartMixInProgress(),
