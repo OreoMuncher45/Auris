@@ -484,16 +484,15 @@ fun DetailScreen(
                 }
             }
 
-            // The newest release, pulled out of the shelves below as a card of its
-            // own. Only on an artist page with a release dated well enough to tell.
-            val latestRelease = if (isArtist) page.sections.latestRelease() else null
-            if (latestRelease != null) {
-                item(key = "latest-release") {
-                    LatestReleaseCard(
-                        item = latestRelease,
+            // The first release on the shelves below, pulled out as a card of its own.
+            val topRelease = if (isArtist) page.sections.topRelease() else null
+            if (topRelease != null) {
+                item(key = "top-release") {
+                    TopReleaseCard(
+                        item = topRelease,
                         palette = palette,
-                        onClick = { onSectionItemClick(latestRelease) },
-                        onLongPress = onSectionItemLongPress?.let { { it(latestRelease) } },
+                        onClick = { onSectionItemClick(topRelease) },
+                        onLongPress = onSectionItemLongPress?.let { { it(topRelease) } },
                     )
                 }
             }
@@ -1608,34 +1607,23 @@ private fun SuggestedSongRow(
     }
 }
 
-/** A four-digit year in the subtitle of an album or single — "Album • 2023". */
-private val RELEASE_YEAR = Regex("""\b(?:19|20)\d{2}\b""")
-
 /**
- * The newest album or single across an artist's shelves.
- *
- * YouTube hands over a year, not a date, so recency is the year and a tie goes
- * to the one listed first. Playlists, videos and related artists share these
- * shelves and are skipped — only an `MPRE…` browse id is a release. Null when
- * no release carries a year, rather than guessing at one.
+ * The first album or single on an artist's shelves, in the order YouTube lists
+ * them. Playlists, videos and related artists share these shelves and are
+ * skipped — only an `MPRE…` browse id is a release.
  */
-private fun List<HomeShelf>.latestRelease(): ShelfItem? =
+private fun List<HomeShelf>.topRelease(): ShelfItem? =
     asSequence()
         .flatMap { it.items.asSequence() }
-        .filter { it.browseId?.startsWith("MPRE") == true }
-        .mapNotNull { item ->
-            RELEASE_YEAR.findAll(item.subtitle).lastOrNull()?.value?.toInt()?.let { item to it }
-        }
-        .maxByOrNull { it.second }
-        ?.first
+        .firstOrNull { it.browseId?.startsWith("MPRE") == true }
 
 /**
- * The artist page's newest-release card: sleeve, what it is and when, and its
+ * The artist page's top-release card: sleeve, what it is and when, and its
  * title, in a rounded glass panel the width of the page.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LatestReleaseCard(
+private fun TopReleaseCard(
     item: ShelfItem,
     palette: ArtworkPalette,
     onClick: () -> Unit,
