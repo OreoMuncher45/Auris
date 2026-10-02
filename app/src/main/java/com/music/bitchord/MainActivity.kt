@@ -95,6 +95,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
@@ -278,6 +279,8 @@ import com.music.bitchord.ui.replay.ReplayStoryPage
 import com.music.bitchord.ui.replay.rememberReplayState
 import com.music.bitchord.ui.theme.BitChordTheme
 import com.music.bitchord.ui.theme.rememberArtworkPalette
+import com.music.bitchord.data.canvas.AppleArtistArtRepository
+import com.music.bitchord.data.canvas.keyColors
 import com.music.bitchord.ui.theme.SystemBarIcons
 import com.music.bitchord.ui.utils.guardSheetFromContentTouches
 import com.music.bitchord.ui.utils.rememberIosOverscrollFactory
@@ -291,6 +294,12 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 
 /** A full first screen of a native YouTube Music radio before AutoPlay tops it up. */
+/** How much of an artist page's header scrolls away before the top fade begins. */
+private const val TOP_FADE_START = 0.55f
+
+/** How much of the header's height the fade takes to reach full strength. */
+private const val TOP_FADE_RAMP = 0.3f
+
 private const val INITIAL_RADIO_TRACKS = 24
 
 internal fun shouldSkipAfterDislike(
@@ -2017,7 +2026,19 @@ private fun BitChordApp(
     // handing them the theme's background puts a black band on a page that is
     // washed in an artwork's colour instead. Off a detail page this resolves
     // to the theme's background anyway, which is exactly right there.
-    val detailPalette = rememberArtworkPalette(detail?.thumbnailUrl)
+    //
+    // An artist page is coloured from Apple's art when it has some, so this has
+    // to read the same source the page does or the bars stay the YouTube photo's
+    // colour while the page beneath them has moved on.
+    val appleArtVersion by AppleArtistArtRepository.updates.collectAsStateWithLifecycle()
+    val detailApple = remember(detail?.title, detail?.type, appleArtVersion) {
+        detail?.takeIf { it.type == BrowseType.ARTIST }
+            ?.let { AppleArtistArtRepository.cached(it.title) }
+    }
+    val detailPalette = rememberArtworkPalette(
+        imageUrl = detailApple?.heroUrl ?: detail?.thumbnailUrl,
+        keyColors = detailApple?.keyColors(),
+    )
 
     // One set of numbers for the cards, the page, the stories and the shared
     // picture, so they cannot disagree. Read while any of them is on screen —
@@ -3097,11 +3118,30 @@ private fun BitChordApp(
                 // separately maintained approximation. Both edges therefore
                 // share the same curve, height and page-aware colour — including
                 // the white theme background in light mode.
+                // On an artist page the photograph and logo run up under the status
+                // bar, and a fade across them would only muddy them. It comes in as
+                // the page scrolls past that header, when content starts passing
+                // under the bar and needs the cover.
+                val artistListState = detail
+                    ?.takeIf { isDetailVisible && it.type == BrowseType.ARTIST }
+                    ?.let { detailListStates.getOrPut(it.browseId) { LazyListState() } }
+                val topFadeAlpha by remember(artistListState) {
+                    derivedStateOf {
+                        val list = artistListState ?: return@derivedStateOf 1f
+                        if (list.firstVisibleItemIndex > 0) return@derivedStateOf 1f
+                        val header = list.layoutInfo.visibleItemsInfo
+                            .firstOrNull { it.index == 0 }?.size?.toFloat()
+                            ?: return@derivedStateOf 0f
+                        ((list.firstVisibleItemScrollOffset - header * TOP_FADE_START) /
+                            (header * TOP_FADE_RAMP)).coerceIn(0f, 1f)
+                    }
+                }
                 BottomFadeScrim(
                     pageColor = chromePageColor,
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .rotate(180f),
+                        .rotate(180f)
+                        .graphicsLayer { alpha = topFadeAlpha },
                 )
 
                 FrostedTopBar(

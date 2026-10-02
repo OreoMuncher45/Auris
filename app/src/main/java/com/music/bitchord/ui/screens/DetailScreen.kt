@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -94,6 +95,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import com.music.bitchord.data.canvas.AppleArtistArt
+import com.music.bitchord.data.canvas.AppleArtistArtRepository
+import com.music.bitchord.data.canvas.keyColors
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import com.music.bitchord.data.canvas.CanvasArtwork
@@ -180,6 +184,18 @@ private val ARTIST_CONTENT_GUTTER = PAGE_GUTTER
  */
 private val HEADER_DROP = 44.dp
 
+/** How far the artist name/logo and everything under it sit above the usual [HEADER_DROP]. */
+private val ARTIST_HEADER_LIFT = 64.dp
+
+/** The title logo's widest share of the page, and tallest share of the photo. */
+private const val ARTIST_LOGO_WIDTH = 0.82f
+private const val ARTIST_LOGO_MAX_HEIGHT = 0.30f
+
+private val CREDIT_SEPARATOR = Regex(""",\s|\s&\s|\s(?:x|and|feat\.?|ft\.?|with)\s""", RegexOption.IGNORE_CASE)
+
+/** Whether this reads as several artists credited together rather than one name. */
+private fun String.looksLikeCredit() = CREDIT_SEPARATOR.containsMatchIn(this)
+
 /**
  * Album / artist / playlist page. Rendered inside the main content area
  * rather than as a sheet, so the tab bar and mini player stay visible.
@@ -255,7 +271,23 @@ fun DetailScreen(
         rawSongs.withIndex().associate { (i, s) -> s.videoId to i + 1 }
     }
     val isArtist = page.type == BrowseType.ARTIST
-    val palette = rememberArtworkPalette(page.thumbnailUrl)
+    // Apple Music's hero photo and title logo for this artist, found by name.
+    // Null until (and unless) it arrives; the YouTube header stands in meanwhile.
+    var appleArt by remember(page.browseId) {
+        mutableStateOf(if (isArtist) AppleArtistArtRepository.cached(page.title) else null)
+    }
+    // Opened from a track, the title is the whole credit ("A, B & C") until the
+    // page loads and swaps in the one artist's name. Searching a credit finds
+    // nobody, so a title that reads as several artists waits for that swap; any
+    // other name starts the moment the page opens.
+    val nameSettled = !page.title.looksLikeCredit() || page.songs !is UiState.Loading
+    LaunchedEffect(page.browseId, page.title, nameSettled) {
+        if (isArtist && nameSettled) appleArt = AppleArtistArtRepository.artFor(page.title) ?: appleArt
+    }
+    val palette = rememberArtworkPalette(
+        imageUrl = appleArt?.heroUrl ?: page.thumbnailUrl,
+        keyColors = appleArt?.keyColors(),
+    )
 
     // Narrowing the running order in place — the release equivalent of the
     // filter box on the Local Music tab, and the one thing a long track list
@@ -306,6 +338,8 @@ fun DetailScreen(
     val credit = page.headerLines(songs.size).first.ifBlank { songs.firstOrNull()?.artist.orEmpty() }
     var canvas by remember(page.browseId) { mutableStateOf<CanvasArtwork?>(null) }
     LaunchedEffect(page.browseId, page.title, credit, canvasEnabled, prioritizeSpotifyCanvas) {
+        // An artist's clip is set below, by the lookup that finds it.
+        if (isArtist) return@LaunchedEffect
         if (!canvasEnabled || page.type != BrowseType.ALBUM) {
             canvas = null
             return@LaunchedEffect
@@ -314,6 +348,11 @@ fun DetailScreen(
         // can run twice. Keep a clip that is already playing if the second
         // pass comes back empty.
         canvas = CanvasRepository.canvasForAlbum(page.title, credit) ?: canvas
+    }
+    // An artist's clip comes with the same Apple lookup as its photograph.
+    val artistVideo = appleArt?.videoUrl
+    LaunchedEffect(artistVideo, canvasEnabled) {
+        if (isArtist) canvas = artistVideo?.takeIf { canvasEnabled }?.let { CanvasArtwork(url = it) }
     }
 
     // Opening the search carries the page up to it, so the field lands just
@@ -358,6 +397,7 @@ fun DetailScreen(
                     canvas = canvas,
                     artHeight = artHeight,
                     listState = listState,
+                    heroUrl = appleArt?.heroUrl,
                     modifier = Modifier.matchParentSize(),
                 )
 
@@ -370,7 +410,7 @@ fun DetailScreen(
                 ) {
             item(key = "header") {
                 if (isArtist) {
-                    ArtistHeader(page = page, palette = palette, artHeight = artHeight)
+                    ArtistHeader(page = page, palette = palette, artHeight = artHeight, appleArt = appleArt)
                 } else {
                     ReleaseHeader(
                         page = page,
@@ -430,10 +470,7 @@ fun DetailScreen(
                         onShuffle = { onShuffle(songs) },
                         subscription = page.subscription?.takeIf { onToggleSubscription != null },
                         onToggleSubscription = onToggleSubscription,
-                        // Halved when an About section follows directly — see
-                        // [AboutSection]'s own top inset, which makes up the
-                        // rest of that shorter gap.
-                        bottomSpace = if (description.isNullOrBlank()) 22.dp else 11.dp,
+                        bottomSpace = 22.dp,
                     )
                 }
             }
@@ -441,10 +478,16 @@ fun DetailScreen(
             // YouTube's own editorial blurb — an album or an artist only, per
             // [DetailPage.description]. A playlist never carries one, and the
             // section is skipped for it even on the rare response that does.
-            if (!description.isNullOrBlank() &&
+            //
+            // On an artist page it closes the page, after the shelves, rather
+            // than sitting between the action row and the songs.
+            val showAbout = !description.isNullOrBlank() &&
                 (page.type == BrowseType.ALBUM || isArtist)
-            ) {
+            fun LazyListScope.aboutItem() {
+                if (!showAbout || description == null) return
                 item(key = "about") {
+                    // Clear of the last shelf above it.
+                    Box(Modifier.padding(top = if (isArtist) 28.dp else 0.dp)) {
                     AboutSection(
                         title = stringResource(
                             if (isArtist) R.string.about_artist else R.string.about_album,
@@ -453,8 +496,10 @@ fun DetailScreen(
                         palette = palette,
                         horizontalPadding = if (isArtist) ARTIST_CONTENT_GUTTER else ABOUT_GUTTER,
                     )
+                    }
                 }
             }
+            if (!isArtist) aboutItem()
 
             when (val state = page.songs) {
                 is UiState.Loading -> detailSkeleton(isArtist)
@@ -602,6 +647,7 @@ fun DetailScreen(
                     }
                 }
             }
+            if (isArtist) aboutItem()
         }
 
     }
@@ -927,10 +973,33 @@ internal fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
  * drawing behind this. See [ReleaseHeader] for why the picture isn't here.
  */
 @Composable
-private fun ArtistHeader(page: DetailPage, palette: ArtworkPalette, artHeight: Dp) {
-    Box(Modifier.fillMaxWidth()) {
-        Spacer(Modifier.fillMaxWidth().height(artHeight + HEADER_DROP))
-        Text(
+private fun ArtistHeader(
+    page: DetailPage,
+    palette: ArtworkPalette,
+    artHeight: Dp,
+    appleArt: AppleArtistArt?,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        Spacer(Modifier.fillMaxWidth().height(artHeight + HEADER_DROP - ARTIST_HEADER_LIFT))
+        if (appleArt?.logoUrl != null) {
+            // Apple's own title logo stands in for the name, laid over its photo.
+            // Capped in height as well as width: a logo set on two or three
+            // lines is nearly square, and by width alone it would swallow the
+            // photograph it is meant to sit on.
+            val aspect = appleArt.logoAspect.coerceIn(0.4f, 6f)
+            val logoWidth = maxWidth * ARTIST_LOGO_WIDTH
+            val logoHeight = minOf(logoWidth / aspect, artHeight * ARTIST_LOGO_MAX_HEIGHT)
+            AsyncImage(
+                model = appleArt.logoUrl,
+                contentDescription = page.title,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(top = 14.dp, bottom = 20.dp)
+                    .height(logoHeight)
+                    .aspectRatio(aspect),
+            )
+        } else Text(
             text = page.title,
             style = MaterialTheme.typography.displayLarge,
             color = palette.onBackground,
@@ -970,6 +1039,7 @@ private fun PageBackground(
     canvas: CanvasArtwork?,
     artHeight: Dp,
     listState: LazyListState,
+    heroUrl: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -977,7 +1047,7 @@ private fun PageBackground(
     // freeze the bottom of the video into the wrong picture.
     val softenFoot = canvas == null && !reduceDynamicBlur &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val art = page.thumbnailUrl.artworkAt(HEADER_ART_PX)
+    val art = heroUrl ?: page.thumbnailUrl.artworkAt(HEADER_ART_PX)
 
     Box(modifier.clipToBounds()) {
         Box(
