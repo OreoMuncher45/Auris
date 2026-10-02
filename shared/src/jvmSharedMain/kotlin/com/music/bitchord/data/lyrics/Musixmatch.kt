@@ -160,23 +160,12 @@ object Musixmatch {
         return entries.mapNotNull { entry ->
             val lineStart = secondsToMs(entry.startSeconds)
             val lineEnd = maxOf(lineStart, secondsToMs(entry.endSeconds))
-            val words = ArrayList<LyricWord>()
-            val current = StringBuilder()
-            var currentStart = lineStart
-            var currentEnd = lineStart
             var previousStart = lineStart
-
-            fun flush() {
-                val text = current.toString().trim()
-                current.setLength(0)
-                if (text.isNotEmpty()) {
-                    words += LyricWord(currentStart, maxOf(currentStart, currentEnd), text)
-                }
-            }
-
-            entry.fragments.forEachIndexed { index, fragment ->
-                val raw = fragment.text
-                if (raw.isEmpty()) return@forEachIndexed
+            // Fragments carry their own spacing, so a fragment with no space
+            // after it is a syllable of a word that carries on — see
+            // [wordsFromRuns].
+            val runs = entry.fragments.mapIndexedNotNull { index, fragment ->
+                if (fragment.text.isEmpty()) return@mapIndexedNotNull null
                 val start = maxOf(
                     lineStart,
                     previousStart,
@@ -185,19 +174,10 @@ object Musixmatch {
                 val next = entry.fragments.getOrNull(index + 1)?.let {
                     secondsToMs(entry.startSeconds + it.offsetSeconds)
                 } ?: lineEnd
-                val end = maxOf(start, minOf(lineEnd, next))
                 previousStart = start
-
-                if (raw.first().isWhitespace()) flush()
-                val content = raw.trim()
-                if (content.isNotEmpty()) {
-                    if (current.isEmpty()) currentStart = start
-                    current.append(content)
-                    currentEnd = end
-                }
-                if (raw.last().isWhitespace()) flush()
+                TimedRun(start, maxOf(start, minOf(lineEnd, next)), fragment.text)
             }
-            flush()
+            val words = wordsFromRuns(runs, spacingIsExplicit = true)
 
             val text = entry.text.trim().ifEmpty { words.joinToString(" ") { it.text } }
             if (text.isEmpty()) return@mapNotNull null

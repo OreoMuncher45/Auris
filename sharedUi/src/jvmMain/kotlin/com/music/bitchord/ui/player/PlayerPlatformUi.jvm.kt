@@ -23,8 +23,6 @@ private val startNanos = System.nanoTime()
 
 internal actual fun uptimeMillis(): Long = (System.nanoTime() - startNanos) / 1_000_000L
 
-internal actual fun elapsedRealtimeMillis(): Long = (System.nanoTime() - startNanos) / 1_000_000L
-
 // Skia blurs at every size; there is no platform floor to check.
 internal actual val renderEffectBlurSupported: Boolean = true
 

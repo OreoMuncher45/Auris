@@ -177,14 +177,16 @@ object LrcLib {
             val until = marks.getOrNull(index + 1)?.range?.first ?: body.length
             msOf(mark) to body.substring(mark.range.last + 1, until)
         }
-        return runs.mapIndexedNotNull { index, (startMs, text) ->
-            if (text.isBlank()) return@mapIndexedNotNull null
-            // The next run's stamp is this word's end — including when that run
-            // is the closing terminator, which is the only thing that gives the
-            // last word of a line an end at all.
-            val endMs = runs.getOrNull(index + 1)?.first ?: startMs
-            LyricWord(startMs = startMs, endMs = maxOf(endMs, startMs), text = text.trim())
-        }
+        // The next run's stamp is this one's end — including when that run is
+        // the closing terminator, which is the only thing that gives the last
+        // word of a line an end at all. A run with no space after it is one
+        // syllable of a word that carries on, which is how [toEnhancedLrc]
+        // writes a word whose syllables were timed apart.
+        return wordsFromRuns(
+            runs.mapIndexed { index, (startMs, text) ->
+                TimedRun(startMs, runs.getOrNull(index + 1)?.first ?: startMs, text)
+            },
+        )
     }
 
     private fun msOf(mark: MatchResult): Long {

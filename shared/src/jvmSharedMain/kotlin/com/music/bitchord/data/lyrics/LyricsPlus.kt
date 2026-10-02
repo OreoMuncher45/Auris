@@ -169,28 +169,16 @@ object LyricsPlus {
      * The API's own spacing is the word boundary — it emits `"e"` then
      * `"nough "`, and the trailing space is the only thing saying those are
      * one word. Splitting on the syllable instead would render "e nough".
+     * Each syllable's own timing stays on the word for the sweep to follow.
      */
-    private fun mergeSyllables(syllables: List<Syllable>): List<LyricWord> {
-        val words = mutableListOf<LyricWord>()
-        val current = StringBuilder()
-        var start = 0L
-        var end = 0L
-
-        syllables.forEach { syllable ->
-            val text = syllable.text ?: return@forEach
-            if (text.isBlank()) return@forEach
-            val time = syllable.time ?: return@forEach
-            if (current.isEmpty()) start = time
-            current.append(text.trim())
-            end = time + (syllable.duration ?: 0L)
-            if (text.last().isWhitespace()) {
-                words += LyricWord(start, end, current.toString())
-                current.setLength(0)
-            }
-        }
-        if (current.isNotEmpty()) words += LyricWord(start, end, current.toString())
-        return words
-    }
+    private fun mergeSyllables(syllables: List<Syllable>): List<LyricWord> = wordsFromRuns(
+        syllables.mapNotNull { syllable ->
+            val text = syllable.text ?: return@mapNotNull null
+            val time = syllable.time ?: return@mapNotNull null
+            TimedRun(time, time + (syllable.duration ?: 0L), text)
+        },
+        spacingIsExplicit = true,
+    )
 
     @Serializable
     data class Response(

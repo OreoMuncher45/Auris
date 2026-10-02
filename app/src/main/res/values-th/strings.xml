@@ -545,6 +545,9 @@
     <string name="replay_minutes_end"> กับดนตรี</string>
     <string name="replay_minutes_start">คุณใช้เวลา </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="other">%1$s นาที</item>
+    </plurals>
     <string name="replay_mostly_around"> ส่วนใหญ่ในช่วง %1$s</string>
     <string name="replay_private_counting">สร้างขึ้นแบบส่วนตัวจากประวัติการฟังบนอุปกรณ์นี้</string>
     <string name="replay_share_card_description">การ์ดสวยงามพร้อมไฮไลต์การฟังหลักของคุณ</string>
@@ -562,7 +565,7 @@
     <string name="top_artist">ศิลปินยอดนิยม</string>
     <string name="top_genre">แนวเพลงยอดนิยม</string>
     <string name="top_song">เพลงยอดนิยม</string>
-    <string name="when_you_listen_most">ช่วงเวลาที่คุณฟังมากที่สุด</string>
+    <string name="when_you_listen_the_most">ช่วงเวลาที่คุณฟังมากที่สุด</string>
     <string name="your_biggest_day">วันที่คุณฟังมากที่สุด: %1$s</string>
     <string name="your_listening_experience">ประสบการณ์การฟังของคุณ</string>
     <string name="your_lyrics_card">การ์ดเนื้อเพลงของคุณ</string>

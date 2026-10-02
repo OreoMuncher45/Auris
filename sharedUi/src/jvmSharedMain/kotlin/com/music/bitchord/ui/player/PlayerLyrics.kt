@@ -69,7 +69,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
@@ -195,6 +195,24 @@ private val GLOW_ROOM = 10.dp
 private val BACKING_FONT_SIZE = 23.sp
 private val BACKING_LINE_HEIGHT = 29.sp
 private const val BACKING_ALPHA = 0.72f
+
+/**
+ * How the answering voice comes and goes; see [revealBacking]. am-lyrics opens
+ * its backing line over about 400 ms and folds it away over 450.
+ */
+private const val BACKING_OPEN_MS = 400
+
+/**
+ * How far ahead of its first word the answering voice starts to open: far
+ * enough that its words have faded in by the time the sweep reaches them.
+ */
+private const val BACKING_LEAD_MS = 250L
+private const val BACKING_CLOSE_MS = 450
+private val BACKING_RISE = 6.dp
+private const val BACKING_REST_SCALE = 0.94f
+
+/** The words reach full opacity when the room is this far open (1 / 1.6). */
+private const val BACKING_FADE_LEAD = 1.6f
 
 /**
  * The romanization or translation hung under each line — caption-sized, the
@@ -525,9 +543,9 @@ internal fun CurrentLyricStrip(
  *
  * The player reports where it is about twice a second, which is fine for a
  * scrubber and far too coarse for a highlight that has to keep up with a
- * singer. This carries that report forward on the frame clock between
- * reports. Small corrections hold the highlight until playback catches up;
- * discontinuities still reset immediately so seeking remains responsive.
+ * singer. This runs a clock on the frames in between and lets the reports
+ * steer it — see [LyricClock] for why steering, rather than setting, is the
+ * difference between a sweep that glides and one that stutters or stalls.
  *
  * Returned as state rather than a plain value on purpose: read inside a draw
  * lambda, only the draw phase re-runs each frame. Read in composition, the
@@ -539,35 +557,36 @@ private fun rememberLyricClock(
     positionMs: Long,
     isPlaying: Boolean,
 ): MutableLongState {
-    val startedAtMs = remember(trackKey) { elapsedRealtimeMillis() }
     val clock = remember(trackKey) { mutableLongStateOf(positionMs) }
-    val reconciler = remember(trackKey) {
-        LyricClockReconciler(positionMs, startedAtMs, isPlaying)
+    val engine = remember(trackKey) { LyricClock(positionMs) }
+    // Read by the frame loop rather than keying it. Keyed, every report
+    // restarted the loop, and the restart spent a frame waiting for its first
+    // frame time — a hitch in the sweep twice a second, every second.
+    val report = rememberUpdatedState(positionMs)
+
+    // Not moving: the report is the truth, including a seek made while paused.
+    if (!isPlaying) {
+        LaunchedEffect(engine, positionMs) {
+            engine.hold(positionMs)
+            clock.longValue = positionMs
+        }
     }
+
     // Gated on the app being on screen. The loop asks for a frame, writes a
     // value that invalidates a drawing, and is handed the next frame for it —
     // which is a request to render continuously for as long as it runs. That is
     // the right trade for a lyric being read and the wrong one for a phone in a
     // pocket, and the composition alone cannot tell the two apart.
     //
-    // Resuming needs no catch-up: [positionMs] is a key, so coming back
-    // restarts the effect and reconciles the latest playback report before
-    // requesting another frame.
+    // Every start is a fresh run from the latest report, so neither a pause nor
+    // a spell in the background is mistaken for one very long frame.
     val foreground = rememberIsForeground()
-    LaunchedEffect(positionMs, isPlaying, foreground) {
-        clock.longValue = reconciler.reconcile(
-            displayedMs = clock.longValue,
-            reportedMs = positionMs,
-            observedAtMs = elapsedRealtimeMillis(),
-            isPlaying = isPlaying,
-        )
+    LaunchedEffect(engine, isPlaying, foreground) {
         if (!isPlaying || !foreground) return@LaunchedEffect
-        val firstFrame = withFrameMillis { it }
+        engine.restart()
         while (true) {
-            withFrameMillis { frame ->
-                // Advance from the authoritative report, not the held display value:
-                // otherwise each small correction would accumulate permanent drift.
-                clock.longValue = maxOf(clock.longValue, positionMs + frame - firstFrame)
+            withFrameNanos { frameNanos ->
+                clock.longValue = engine.frame(frameNanos / 1_000_000.0, report.value)
             }
         }
     }
@@ -675,7 +694,9 @@ private fun SweptLyricLine(
             position >= line.endMs -> drawContent()
             // Not started: nothing lit, the dim copy is the whole of it.
             position <= line.timeMs -> Unit
-            else -> layout?.let { sweepTo(it, line.revealedChars(position), feather) }
+            else -> layout?.let {
+                sweepTo(it, line.revealedChars(position), line.sweepSpans, feather)
+            }
         }
     }
 
@@ -1011,14 +1032,32 @@ private fun ContentDrawScope.sliceRisen(
     }
 }
 
-/** Where a fractional character index sits across a visual line, in pixels. */
+/**
+ * Where a fractional character index sits across a visual line, in pixels.
+ *
+ * Inside a timed piece — a syllable, or a word nobody split — that sits whole
+ * on this row, the index is read as a share of the piece and laid across its
+ * width. Read letter by letter instead, the edge crossed a "w" in the same time
+ * as an "i": it sped up and slowed down inside every word, a wobble that a held
+ * note made plain. am-lyrics wipes each syllable across its box at a constant
+ * rate, and this is the same thing.
+ */
 private fun horizontalAt(
     layout: TextLayoutResult,
     chars: Float,
     visualLine: Int,
+    spans: List<IntRange>,
 ): Float {
     val lineStart = layout.getLineStart(visualLine)
     val lineEnd = layout.getLineEnd(visualLine, visibleEnd = true)
+    val word = spans.firstOrNull { chars >= it.first && chars < it.last + 1 }
+    if (word != null && word.first >= lineStart && word.last + 1 <= lineEnd) {
+        val from = layout.xOn(word.first, visualLine, 0f)
+        val to = layout.xOn(word.last + 1, visualLine, 0f)
+        return from + (to - from) * (chars - word.first) / (word.last + 1 - word.first)
+    }
+    // A word broken over a wrap, or the space between two words: letter by
+    // letter, which is all a single space or a half-word needs.
     val index = chars.toInt().coerceIn(lineStart, lineEnd)
     // Row-aware at both ends: on the last character of a wrapped row the next
     // position belongs to the row below, and read straight it puts the edge
@@ -1034,9 +1073,10 @@ private fun horizontalAt(
  *
  * Wrapped lines are handled a visual line at a time: the ones already passed
  * are drawn whole, the one holding the boundary is cut at it, and the rest are
- * left to the dim copy. Within a word the cut sits between two character
- * positions, so the edge advances smoothly rather than jumping a letter at a
- * time.
+ * left to the dim copy. Within a word the cut moves across the word's width
+ * at a steady rate — see [horizontalAt] — rather than jumping a letter at a
+ * time. [spans] are the line's timed pieces, [LyricLine.sweepSpans]; empty, the
+ * cut goes letter by letter.
  *
  * The boundary itself is then feathered over [WIPE_FEATHER] rather than left
  * as the cut, which needs the caller to give this an offscreen layer to erase
@@ -1047,6 +1087,7 @@ private fun horizontalAt(
 private fun ContentDrawScope.sweepTo(
     layout: TextLayoutResult,
     revealedChars: Float,
+    spans: List<IntRange>,
     feather: Boolean,
 ) {
     if (revealedChars <= 0f) return
@@ -1062,7 +1103,7 @@ private fun ContentDrawScope.sweepTo(
         val end = layout.getLineEnd(visualLine, visibleEnd = true)
         val cut = revealedChars < end
         val right = if (cut) {
-            horizontalAt(layout, revealedChars, visualLine)
+            horizontalAt(layout, revealedChars, visualLine, spans)
         } else {
             layout.getLineRight(visualLine)
         }
@@ -1955,6 +1996,49 @@ internal fun LyricsPanel(
                     lineHeight = SUB_LYRIC_LINE_HEIGHT,
                     fontWeight = FontWeight.Bold,
                 )
+                // The answering voice is only on screen while it is being sung,
+                // the way Apple Music keeps it: it opens on its own clock, just
+                // ahead of its first word, and folds away once its last one is
+                // done — not with the lead, which it routinely enters halfway
+                // through and outlasts. Left open on every row, a verse of
+                // echoes read as two lyrics interleaved.
+                //
+                // A backing line with text but no timings of its own has no
+                // clock to open on, so it borrows the lead's.
+                //
+                // A row the panel has already left waits for the scroll in
+                // flight to land before it closes. Until then it can still be
+                // the row the list measures from, and a row shrinking there drags
+                // everything below it up with it: the line being scrolled to
+                // overshoots by exactly what folded away. Once the move has
+                // landed it is above the line the list hangs from, and closing
+                // there only draws the rows above together.
+                val backingOpen = line.background?.let { backing ->
+                    val due by remember(backing, clock) {
+                        derivedStateOf {
+                            val now = clock.longValue
+                            now >= backing.timeMs - BACKING_LEAD_MS && now < backing.endMs
+                        }
+                    }
+                    val wanted = !isSynced || picking || if (backing.isWordSynced) {
+                        due
+                    } else {
+                        isActive || index == focusLine
+                    }
+                    animateFloatAsState(
+                        targetValue = if (wanted) 1f else 0f,
+                        animationSpec = when {
+                            reduceAnimation -> tween(0)
+                            wanted -> tween(BACKING_OPEN_MS, easing = LYRIC_EASING)
+                            else -> tween(
+                                BACKING_CLOSE_MS,
+                                delayMillis = if (index < focusLine) run.durationMs else 0,
+                                easing = FastOutSlowInEasing,
+                            )
+                        },
+                        label = "backingOpen",
+                    )
+                }
                 Column(modifier = shape) {
                     PanelVoice(
                         line = line,
@@ -1983,6 +2067,7 @@ internal fun LyricsPanel(
                             glowAlpha = 0f,
                             room = 0.dp,
                             alignEnd = alignEnd,
+                            rise = false,
                             // Only the rows actually in front of the reader get the
                             // particle pass. Sixty rows' worth of glyph boxes is a
                             // layout walk per frame for text nobody is looking at.
@@ -2000,57 +2085,65 @@ internal fun LyricsPanel(
                         )
                     }
                     line.background?.let { backing ->
-                        PanelVoice(
-                            line = backing.withoutBracketPunctuation(),
-                            clock = clock,
-                            style = style.copy(
-                                fontSize = BACKING_FONT_SIZE,
-                                lineHeight = BACKING_LINE_HEIGHT,
-                            ),
-                            isActive = isActive,
-                            sung = sung,
-                            synced = isSynced,
-                            browsing = browsing,
-                            // No bloom on the second voice. The glow marks
-                            // what is being sung *at you*; putting it on both
-                            // makes the row read as two equal lines, which is
-                            // the thing this split exists to stop.
-                            glowAlpha = 0f,
-                            room = 0.dp,
-                            alignEnd = alignEnd,
-                            modifier = Modifier
+                        Column(
+                            Modifier
                                 .fillMaxWidth()
-                                // No top inset: the lead's own bottom room is
-                                // the gap, which leaves the two voices closer
-                                // to each other than to the rows either side.
-                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
-                                .graphicsLayer { alpha = BACKING_ALPHA },
-                        )
-                        sub?.background
-                            ?.takeIf { it.text.differsFrom(backing.text) }
-                            ?.let { subBacking ->
-                                PanelVoice(
-                                    line = subBacking.withoutBracketPunctuation(),
-                                    clock = clock,
-                                    style = subStyle.copy(
-                                        fontSize = SUB_BACKING_FONT_SIZE,
-                                        lineHeight = SUB_BACKING_LINE_HEIGHT,
-                                    ),
-                                    isActive = isActive,
-                                    sung = sung,
-                                    synced = isSynced,
-                                    browsing = browsing,
-                                    glowAlpha = 0f,
-                                    room = 0.dp,
-                                    alignEnd = alignEnd,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .revealBelow(subReveal.progress)
-                                        .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
-                                        .offset(y = -SUB_LYRIC_TUCK)
-                                        .graphicsLayer { alpha = BACKING_ALPHA * SUB_LYRIC_ALPHA },
-                                )
-                            }
+                                .then(backingOpen?.let { Modifier.revealBacking(it, alignEnd) } ?: Modifier),
+                        ) {
+                            PanelVoice(
+                                line = backing.withoutBracketPunctuation(),
+                                clock = clock,
+                                style = style.copy(
+                                    fontSize = BACKING_FONT_SIZE,
+                                    lineHeight = BACKING_LINE_HEIGHT,
+                                ),
+                                isActive = isActive,
+                                sung = sung,
+                                synced = isSynced,
+                                browsing = browsing,
+                                // No bloom on the second voice. The glow marks
+                                // what is being sung *at you*; putting it on both
+                                // makes the row read as two equal lines, which is
+                                // the thing this split exists to stop.
+                                glowAlpha = 0f,
+                                room = 0.dp,
+                                alignEnd = alignEnd,
+                                rise = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    // No top inset: the lead's own bottom room is
+                                    // the gap, which leaves the two voices closer
+                                    // to each other than to the rows either side.
+                                    .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                    .graphicsLayer { alpha = BACKING_ALPHA },
+                            )
+                            sub?.background
+                                ?.takeIf { it.text.differsFrom(backing.text) }
+                                ?.let { subBacking ->
+                                    PanelVoice(
+                                        line = subBacking.withoutBracketPunctuation(),
+                                        clock = clock,
+                                        style = subStyle.copy(
+                                            fontSize = SUB_BACKING_FONT_SIZE,
+                                            lineHeight = SUB_BACKING_LINE_HEIGHT,
+                                        ),
+                                        isActive = isActive,
+                                        sung = sung,
+                                        synced = isSynced,
+                                        browsing = browsing,
+                                        glowAlpha = 0f,
+                                        room = 0.dp,
+                                        alignEnd = alignEnd,
+                                        rise = false,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .revealBelow(subReveal.progress)
+                                            .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                            .offset(y = -SUB_LYRIC_TUCK)
+                                            .graphicsLayer { alpha = BACKING_ALPHA * SUB_LYRIC_ALPHA },
+                                    )
+                                }
+                        }
                     }
                 }
             }
@@ -2083,6 +2176,12 @@ private fun PanelVoice(
     /** Whether this line is one of the right-hand voice's; see [LyricAlignment]. */
     alignEnd: Boolean,
     translationProgress: State<Float>? = null,
+    /**
+     * Whether words lift off the line as they are sung. Only the lead does:
+     * on the small lines under it — the answering voice, a translation — the
+     * movement competes with the line being read and makes the row look busy.
+     */
+    rise: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     if (line.isWordSynced && !browsing) {
@@ -2108,6 +2207,7 @@ private fun PanelVoice(
             glowAlpha = glowAlpha,
             glowRoom = room,
             feather = isActive,
+            rise = rise,
             alignEnd = alignEnd,
             translationProgress = translationProgress,
         )
@@ -2128,6 +2228,7 @@ private fun PanelVoice(
             modifier = modifier,
             glowAlpha = 0f,
             glowRoom = room,
+            rise = rise,
             alignEnd = alignEnd,
             translationProgress = translationProgress,
         )
@@ -2156,19 +2257,6 @@ private fun PanelVoice(
     }
 }
 
-/**
- * The answering vocal without the parentheses every text-only source wraps it
- * in — see [withBackgroundVocals]. Apple Music draws its own equivalent line
- * bare, and the brackets were only ever there to mark the split before there
- * was a row of its own to draw it on.
- *
- * The LRC writer still gets the line with its brackets: that punctuation is
- * what the provider published, so a downloaded file keeps it. This is a
- * display-only trim, done here rather than in the data layer, and applied to
- * the words too, not just [LyricLine.text] — [SweptLyricLine] measures the
- * words against the text it draws, and a sweep reading "(echoed" against a
- * line reading "echoed" would search for a substring that is no longer there.
- */
 /**
  * What [LyricsPanel] draws under each line, and how far it has opened.
  *
@@ -2232,14 +2320,54 @@ private fun Modifier.revealBelow(progress: State<Float>): Modifier = this
         }
     }
 
+/**
+ * Opens the answering voice under its lead as [progress] runs from 0 to 1.
+ *
+ * The room it takes opens with it, so the rows below make way rather than
+ * jump; the words fade in a little ahead of the room being made, and rise the
+ * last few pixels into place from a hair smaller — the same small arrival
+ * am-lyrics gives its backing line. Scaled from the edge the line is written
+ * from, so a right-hand duet line grows out of its own margin.
+ *
+ * Nothing is drawn at all once it is closed: the layer is at zero alpha, and
+ * the sweep inside it is never asked for a frame.
+ */
+private fun Modifier.revealBacking(progress: State<Float>, alignEnd: Boolean): Modifier = this
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val open = progress.value
+        val rise = BACKING_RISE.toPx()
+        layout(placeable.width, (placeable.height * open).roundToInt()) {
+            placeable.placeWithLayer(0, 0) {
+                alpha = (open * BACKING_FADE_LEAD).coerceAtMost(1f)
+                translationY = rise * (1f - open)
+                val grow = BACKING_REST_SCALE + (1f - BACKING_REST_SCALE) * open
+                scaleX = grow
+                scaleY = grow
+                transformOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 0f)
+            }
+        }
+    }
+
 private fun String.differsFrom(original: String): Boolean =
     trim().lowercase(Locale.ROOT) != original.trim().lowercase(Locale.ROOT)
 
+/**
+ * The answering vocal without the parentheses every text-only source wraps it
+ * in — see [withBackgroundVocals]. Apple Music draws its own equivalent line
+ * bare, and the brackets were only ever there to mark the split before there
+ * was a row of its own to draw it on.
+ *
+ * The LRC writer still gets the line with its brackets: that punctuation is
+ * what the provider published, so a downloaded file keeps it. This is a
+ * display-only trim, done here rather than in the data layer, and applied to
+ * the words too, not just [LyricLine.text] — [SweptLyricLine] measures the
+ * words against the text it draws, and a sweep reading "(echoed" against a
+ * line reading "echoed" would search for a substring that is no longer there.
+ */
 private fun LyricLine.withoutBracketPunctuation(): LyricLine = copy(
     text = text.stripParens(),
-    words = words.mapNotNull { word ->
-        word.text.stripParens().takeIf { it.isNotEmpty() }?.let { word.copy(text = it) }
-    },
+    words = words.mapNotNull { word -> word.withoutChars { it == '(' || it == ')' } },
 )
 
 private fun String.stripParens(): String = replace("(", "").replace(")", "").trim()

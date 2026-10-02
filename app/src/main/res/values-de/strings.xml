@@ -532,6 +532,10 @@
     <string name="replay_minutes_end"> mit Musik verbracht.</string>
     <string name="replay_minutes_start">Du hast </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="one">%1$s Minute</item>
+        <item quantity="other">%1$s Minuten</item>
+    </plurals>
     <string name="replay_mostly_around">, meist gegen %1$s.</string>
     <string name="replay_private_counting">Privat aus deinem Hörverlauf auf diesem Gerät erstellt</string>
     <string name="replay_share_card_description">Eine übersichtliche Karte mit deinen wichtigsten Höhepunkten.</string>
@@ -549,7 +553,7 @@
     <string name="top_artist">Top-Künstler</string>
     <string name="top_genre">Top-Genre</string>
     <string name="top_song">Top-Song</string>
-    <string name="when_you_listen_most">Wann du am meisten hörst</string>
+    <string name="when_you_listen_the_most">Wann du am meisten hörst</string>
     <string name="your_biggest_day">Dein größter Tag: %1$s</string>
     <string name="your_listening_experience">Dein Hörerlebnis</string>
     <string name="your_lyrics_card">Deine Textkarte</string>

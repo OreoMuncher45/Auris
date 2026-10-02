@@ -532,6 +532,10 @@
     <string name="replay_minutes_end"> संगीत के साथ बिताए।</string>
     <string name="replay_minutes_start">आपने बिताए </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="one">%1$s मिनट</item>
+        <item quantity="other">%1$s मिनट</item>
+    </plurals>
     <string name="replay_mostly_around">, ज़्यादातर %1$s के आसपास।</string>
     <string name="replay_private_counting">इस डिवाइस पर आपके सुनने के इतिहास से निजी तौर पर तैयार किया गया</string>
     <string name="replay_share_card_description">आपकी मुख्य सुनने की झलकियों के साथ एक पॉलिश्ड कार्ड।</string>
@@ -549,7 +553,7 @@
     <string name="top_artist">टॉप कलाकार</string>
     <string name="top_genre">टॉप शैली</string>
     <string name="top_song">टॉप गाना</string>
-    <string name="when_you_listen_most">जब आप सबसे ज़्यादा सुनते हैं</string>
+    <string name="when_you_listen_the_most">जब आप सबसे ज़्यादा सुनते हैं</string>
     <string name="your_biggest_day">आपका सबसे बड़ा दिन: %1$s</string>
     <string name="your_listening_experience">आपका सुनने का अनुभव</string>
     <string name="your_lyrics_card">आपका शब्द कार्ड</string>

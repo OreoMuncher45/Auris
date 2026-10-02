@@ -561,6 +561,10 @@
     <string name="replay_minutes_end"> geçirdin.</string>
     <string name="replay_minutes_start">Müzikle </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="one">%1$s dakika</item>
+        <item quantity="other">%1$s dakika</item>
+    </plurals>
     <string name="replay_mostly_around">, çoğunlukla %1$s civarında.</string>
     <string name="replay_private_counting">Bu cihazdaki dinleme geçmişinden gizlice oluşturuldu</string>
     <string name="replay_share_card_description">Ana dinleme öne çıkanlarını içeren şık bir kart.</string>
@@ -578,7 +582,7 @@
     <string name="top_artist">En çok dinlenen sanatçı</string>
     <string name="top_genre">En çok dinlenen tür</string>
     <string name="top_song">En çok dinlenen şarkı</string>
-    <string name="when_you_listen_most">En çok ne zaman dinlediğin</string>
+    <string name="when_you_listen_the_most">En çok ne zaman dinlediğin</string>
     <string name="your_biggest_day">En yoğun günün: %1$s</string>
     <string name="your_listening_experience">Dinleme deneyimin</string>
     <string name="your_lyrics_card">Şarkı sözü kartın</string>
@@ -958,13 +962,9 @@
 
     <string name="lyrics_offset">Söz zamanlama ayarı</string>
 
-    <string name="lyrics_offset_description">Pozitif değerler sözleri daha geç gösterir</string>
 
-    <string name="lyrics_offset_reset">Sıfırla</string>
 
-    <string name="decrease_lyrics_offset">Söz zamanlama ayarını azalt</string>
 
-    <string name="increase_lyrics_offset">Söz zamanlama ayarını artır</string>
 
     <string name="auto_quick_picks">Hızlı seçimler</string>
 
@@ -1101,9 +1101,7 @@
 
     <string name="no_languages_match">Eşleşen dil yok</string>
 
-    <string name="data_saver">Veri Tasarrufu</string>
 
-    <string name="medium_quality">Orta Kalite</string>
 
 
 
@@ -1163,9 +1161,7 @@
 
     <string name="pipeline_device_name">Cihaz Adı</string>
 
-    <string name="playing_from">Şuradan çalınıyor: %1$s</string>
 
-    <string name="played_by">Çalan: %1$s</string>
 
     <string name="shared_link">Paylaşılan bağlantı</string>
 
@@ -1182,20 +1178,13 @@
 
     <string name="paxsenix_api_key_missing">PaxSenix API anahtarı — isteğe bağlı, yapılandırılmadı</string>
 
-    <string name="open_lyrics">Sözler</string>
-
-    <string name="audio_output">Ses çıkışı</string>
-
-    <string name="audio_output_playing">Burada çalıyor</string>
-
-    <string name="wired_headphones">Kablolu kulaklık</string>
-
-    <string name="usb_audio">USB ses</string>
 
 
-    <string name="personal_phone">%1$s adlı kişinin telefonu</string>
 
-    <string name="this_phone">Bu telefon</string>
+
+
+
+
 
 
 

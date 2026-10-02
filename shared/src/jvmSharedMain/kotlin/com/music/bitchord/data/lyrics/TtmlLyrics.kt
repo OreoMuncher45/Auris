@@ -228,11 +228,13 @@ object TtmlLyrics {
      * Glues syllables back into words. A word ends at the first whitespace
      * after it — whether that whitespace is a text node between two spans or
      * part of a span's own text — and its span runs from the first syllable's
-     * start to the last one's end.
+     * start to the last one's end. Each span's own timing is kept on the word
+     * as a [LyricSyllable], which is what the sweep follows.
      */
     private fun mergeIntoWords(pieces: List<Piece>): List<LyricWord> {
         val words = mutableListOf<LyricWord>()
         val current = StringBuilder()
+        val syllables = mutableListOf<LyricSyllable>()
         var start = 0L
         var end = 0L
         // Untimed text is punctuation hanging off a span, or a line that was
@@ -243,7 +245,10 @@ object TtmlLyrics {
         fun flush() {
             val text = current.toString().trim()
             current.setLength(0)
-            if (text.isNotEmpty() && timed) words += LyricWord(start, end, text)
+            if (text.isNotEmpty() && timed) {
+                words += LyricWord(start, end, text, LyricSyllable.normalized(syllables, text.length))
+            }
+            syllables.clear()
             timed = false
         }
 
@@ -261,7 +266,9 @@ object TtmlLyrics {
                     // Leading whitespace closes off whatever came before it.
                     if (piece.text.first().isWhitespace()) flush()
                     if (current.isEmpty()) start = piece.start
+                    val from = current.length
                     current.append(piece.text.trim())
+                    syllables += LyricSyllable(piece.start, piece.end, from, current.length)
                     end = piece.end
                     timed = true
                     if (piece.text.last().isWhitespace()) flush()

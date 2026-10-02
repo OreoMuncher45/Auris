@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl
@@ -216,19 +217,32 @@ object PaxSenix {
             val texts = wordRows.mapNotNull { (it as? JsonObject)?.string("text") }
             if (texts.isEmpty()) return@mapIndexedNotNull null
             val nextLine = rows.getOrNull(index + 1)?.long("timestamp")
-            val timed = wordRows.mapIndexedNotNull { wordIndex, element ->
+            // Each entry is a syllable. `part` marks one that runs straight into
+            // the next — "e" then "nough" — so the space goes only where it is
+            // false. Joined with a space throughout, that read "long e nough".
+            val runs = wordRows.mapIndexedNotNull { wordIndex, element ->
                 val word = element as? JsonObject ?: return@mapIndexedNotNull null
                 val text = word.string("text")?.trim()?.takeIf(String::isNotEmpty)
                     ?: return@mapIndexedNotNull null
                 val wordStart = word.long("timestamp") ?: return@mapIndexedNotNull null
-                val wordEnd = (wordRows.getOrNull(wordIndex + 1) as? JsonObject)?.long("timestamp")
+                val wordEnd = word.long("endtime")
+                    ?: (wordRows.getOrNull(wordIndex + 1) as? JsonObject)?.long("timestamp")
                     ?: nextLine ?: wordStart + 800
-                LyricWord(wordStart, wordEnd.coerceAtLeast(wordStart), text)
+                val joinsNext = (word["part"] as? JsonPrimitive)?.booleanOrNull == true
+                TimedRun(wordStart, wordEnd, if (joinsNext) text else "$text ")
             }
+            val timed = wordsFromRuns(runs, spacingIsExplicit = true)
+            // A syllable with no stamp leaves nothing to time the line by, as
+            // before; the text is then the entries as they came.
+            val untimed = runs.size != texts.count { it.isNotBlank() }
             LyricLine(
                 timeMs = minOf(start, timed.firstOrNull()?.startMs ?: start),
-                text = texts.joinToString(" ") { it.trim() },
-                words = timed.takeIf { it.size == texts.size }.orEmpty(),
+                text = if (untimed) {
+                    texts.joinToString(" ") { it.trim() }
+                } else {
+                    timed.joinToString(" ") { it.text }
+                },
+                words = if (untimed) emptyList() else timed,
                 sungUntilMs = nextLine,
             )
         }

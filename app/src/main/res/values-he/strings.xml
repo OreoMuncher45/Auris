@@ -496,6 +496,10 @@
     <string name="replay_minutes_end"> עם מוזיקה.</string>
     <string name="replay_minutes_start">בילית </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="one">%1$s דקה</item>
+        <item quantity="other">%1$s דקות</item>
+    </plurals>
     <string name="replay_mostly_around">, רובם סביב %1$s.</string>
     <string name="replay_private_counting">נבנה באופן פרטי מההיסטוריה המקומית שלך</string>
     <string name="replay_share_card_description">כרטיס מלוטש עם דגשי ההאזנה העיקריים שלך.</string>
@@ -513,7 +517,7 @@
     <string name="top_artist">אמן מוביל</string>
     <string name="top_genre">ז\'אנר מוביל</string>
     <string name="top_song">שיר מוביל</string>
-    <string name="when_you_listen_most">מתי אתה מאזין הכי הרבה</string>
+    <string name="when_you_listen_the_most">מתי אתה מאזין הכי הרבה</string>
     <string name="your_biggest_day">היום הגדול ביותר שלך: %1$s</string>
     <string name="your_listening_experience">חווית ההאזנה שלך</string>
     <string name="your_lyrics_card">כרטיס המילים שלך</string>

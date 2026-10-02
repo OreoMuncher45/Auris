@@ -92,12 +92,18 @@ object KaraokeLrc {
             val lineStart = match.groupValues[1].toLong()
             val lineDuration = match.groupValues[2].toLong()
             val body = match.groupValues[3]
-            val prefixed = PREFIX_WORD.findAll(body).mapNotNull { word ->
-                timedWord(word.groupValues[3], word.groupValues[1], word.groupValues[2])
-            }.toList()
-            val suffixed = SUFFIX_WORD.findAll(body).mapNotNull { word ->
-                timedWord(word.groupValues[1], word.groupValues[2], word.groupValues[3])
-            }.toList()
+            // QRC and YRC stamp each syllable, and say which ones make a word
+            // by leaving the space out between them — see [wordsFromRuns].
+            val prefixed = wordsFromRuns(
+                PREFIX_WORD.findAll(body).map { word ->
+                    timedRun(word.groupValues[3], word.groupValues[1], word.groupValues[2])
+                }.toList(),
+            )
+            val suffixed = wordsFromRuns(
+                SUFFIX_WORD.findAll(body).map { word ->
+                    timedRun(word.groupValues[1], word.groupValues[2], word.groupValues[3])
+                }.toList(),
+            )
             val words = if (prefixed.sumOf { it.text.length } >= suffixed.sumOf { it.text.length }) prefixed else suffixed
             if (words.isEmpty()) return@mapNotNull null
             LyricLine(
@@ -110,11 +116,9 @@ object KaraokeLrc {
         return rows.withInstrumentalGaps()
     }
 
-    private fun timedWord(text: String, start: String, duration: String): LyricWord? {
-        val clean = EnhancedLrc.decodeEntities(text).trim()
-        if (clean.isEmpty()) return null
+    private fun timedRun(text: String, start: String, duration: String): TimedRun {
         val startMs = start.toLong()
-        return LyricWord(startMs, startMs + duration.toLong(), clean)
+        return TimedRun(startMs, startMs + duration.toLong(), EnhancedLrc.decodeEntities(text))
     }
 
     private fun lyricContent(raw: String): String = CONTENT.find(raw)?.groupValues?.get(1)

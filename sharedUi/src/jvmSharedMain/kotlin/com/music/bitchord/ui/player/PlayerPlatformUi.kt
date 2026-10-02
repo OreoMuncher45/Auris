@@ -6,9 +6,6 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 /** Milliseconds on the clock `SystemClock.uptimeMillis` reads on the phone. */
 internal expect fun uptimeMillis(): Long
 
-/** Milliseconds on a monotonic clock that keeps counting through sleep. */
-internal expect fun elapsedRealtimeMillis(): Long
-
 /** Whether `Modifier.blur` actually blurs here, rather than being a no-op. */
 internal expect val renderEffectBlurSupported: Boolean
 

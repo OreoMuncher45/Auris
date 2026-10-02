@@ -3,12 +3,112 @@ package com.music.bitchord.data.lyrics
 /**
  * One word of a line, with the stretch of the song it is sung over.
  *
- * Apple's TTML splits long words into syllables; those are merged back into
- * whole words on the way in, so [startMs] is the first syllable's start and
- * [endMs] the last one's end. Whole words are what the sweep needs — a
- * highlight that ran across "e" and "nough" separately reads as a stutter.
+ * Apple's TTML splits long words into syllables. The word is still the unit
+ * the line is laid out, lifted and lit in — "e" and "nough" are one word on
+ * screen — so [startMs] is the first syllable's start and [endMs] the last
+ * one's end. But the syllables keep their own timing in [syllables], and the
+ * sweep follows those: "e" is clipped and "nough" is held, and a wipe spread
+ * evenly over the pair runs ahead of the first half and behind the second.
+ *
+ * Empty for a word nobody split, which is most of them — the word is then its
+ * own single syllable.
  */
-data class LyricWord(val startMs: Long, val endMs: Long, val text: String)
+data class LyricWord(
+    val startMs: Long,
+    val endMs: Long,
+    val text: String,
+    val syllables: List<LyricSyllable> = emptyList(),
+) {
+    /**
+     * How many of [text]'s characters have been sung at [positionMs], as a
+     * fraction. Each syllable fills its own characters over its own time, and
+     * a pause between two of them rests on the boundary rather than creeping
+     * into the next one before it is sung.
+     */
+    fun charsSungAt(positionMs: Long): Float {
+        if (positionMs <= startMs) return 0f
+        if (positionMs >= endMs) return text.length.toFloat()
+        if (syllables.isEmpty()) {
+            val span = (endMs - startMs).coerceAtLeast(1L)
+            return (positionMs - startMs).toFloat() / span * text.length
+        }
+        for (syllable in syllables) {
+            if (positionMs < syllable.startMs) return syllable.startChar.toFloat()
+            if (positionMs < syllable.endMs) {
+                val span = (syllable.endMs - syllable.startMs).coerceAtLeast(1L)
+                val through = (positionMs - syllable.startMs).toFloat() / span
+                return syllable.startChar + through * (syllable.endChar - syllable.startChar)
+            }
+        }
+        return text.length.toFloat()
+    }
+
+    /**
+     * This word with every character [drop] matches taken out of its text, and
+     * the syllables moved to keep covering the same letters. Null if nothing
+     * is left.
+     */
+    fun withoutChars(drop: (Char) -> Boolean): LyricWord? {
+        if (text.none(drop)) return this
+        // Where each old offset lands once the dropped characters are gone.
+        val moved = IntArray(text.length + 1)
+        val kept = StringBuilder()
+        text.forEachIndexed { index, char ->
+            moved[index] = kept.length
+            if (!drop(char)) kept.append(char)
+        }
+        moved[text.length] = kept.length
+        val lead = kept.indexOfFirst { !it.isWhitespace() }.takeIf { it >= 0 } ?: return null
+        val trimmed = kept.toString().trim()
+        val parts = syllables.map {
+            LyricSyllable(
+                startMs = it.startMs,
+                endMs = it.endMs,
+                startChar = (moved[it.startChar] - lead).coerceAtLeast(0),
+                endChar = (moved[it.endChar] - lead).coerceAtMost(trimmed.length),
+            )
+        }
+        return copy(text = trimmed, syllables = LyricSyllable.normalized(parts, trimmed.length))
+    }
+}
+
+/**
+ * One separately timed piece of a [LyricWord]: the characters [startChar]
+ * until [endChar] of the word's text, sung from [startMs] to [endMs].
+ */
+data class LyricSyllable(
+    val startMs: Long,
+    val endMs: Long,
+    val startChar: Int,
+    val endChar: Int,
+) {
+    companion object {
+        /**
+         * Tidies a word's syllables, as a parser collected them, into what
+         * [LyricWord.charsSungAt] expects: in order, end to end with no
+         * characters between them, and covering the whole of a
+         * [length]-character word. Punctuation hanging off the last syllable
+         * belongs to it, and an untimed apostrophe between two goes to the
+         * first.
+         *
+         * Empty when there is nothing to split — one syllable is just the word.
+         */
+        fun normalized(parts: List<LyricSyllable>, length: Int): List<LyricSyllable> {
+            val usable = parts
+                .filter { it.endChar > it.startChar && it.startChar < length }
+                .sortedBy { it.startChar }
+            if (usable.size < 2) return emptyList()
+            return usable.mapIndexed { index, part ->
+                LyricSyllable(
+                    startMs = part.startMs,
+                    endMs = maxOf(part.startMs, part.endMs),
+                    startChar = if (index == 0) 0 else part.startChar,
+                    endChar = usable.getOrNull(index + 1)?.startChar ?: length,
+                )
+            }
+        }
+    }
+}
 
 /**
  * Which side of the panel a line is sung from.
@@ -75,6 +175,22 @@ data class LyricLine(
     }
 
     /**
+     * Where each separately timed piece of the line sits in [text]: a word's
+     * syllables where the provider split it, the word itself where it did not.
+     * The sweep crosses each of these at a steady pace of its own.
+     */
+    val sweepSpans: List<IntRange> by lazy(LazyThreadSafetyMode.NONE) {
+        words.flatMapIndexed { index, word ->
+            val span = wordSpans[index]
+            if (word.syllables.isEmpty()) {
+                listOf(span)
+            } else {
+                word.syllables.map { (span.first + it.startChar) until (span.first + it.endChar) }
+            }
+        }
+    }
+
+    /**
      * Whether anything on this line is off the floor at [positionMs].
      *
      * Two comparisons, so the lines that are not being sung — which is every
@@ -97,16 +213,18 @@ data class LyricLine(
      * settle back once they are past — the lift travelling along the line is
      * most of what separates singing from a bar sliding across the text.
      *
-     * Up from the word's own start and down from its own end, both over
-     * [RISE_MS], so a word held longer than that reaches the top and rests
-     * there while patter only ever gets part of the way up — the same "a note
-     * carried is worth more than a note rattled off" that shapes the glow.
+     * How high a word goes is set by how long it is held — see [liftHeight]:
+     * patter barely leaves the line and a carried note goes all the way up,
+     * the same "a note carried is worth more than a note rattled off" that
+     * shapes the glow. It rises over its own length, so a quick word's small
+     * lift is also a quick one, and settles back over [RISE_MS] from its end.
      */
     fun wordLift(index: Int, positionMs: Long): Float {
         val word = words.getOrNull(index) ?: return 0f
-        val rising = ((positionMs - word.startMs) / RISE_MS).coerceIn(0f, 1f)
+        val riseMs = (word.endMs - word.startMs).toFloat().coerceIn(RISE_MIN_MS, RISE_MS)
+        val rising = ((positionMs - word.startMs) / riseMs).coerceIn(0f, 1f)
         val falling = (1f - (positionMs - word.endMs) / RISE_MS).coerceIn(0f, 1f)
-        return smooth(minOf(rising, falling))
+        return liftHeight(word) * smooth(minOf(rising, falling))
     }
 
     /**
@@ -158,11 +276,7 @@ data class LyricLine(
             val start = text.indexOf(word.text, offset).takeIf { it >= 0 } ?: offset
             val end = start + word.text.length
             if (positionMs < word.startMs) return start.toFloat()
-            if (positionMs < word.endMs) {
-                val span = (word.endMs - word.startMs).coerceAtLeast(1L)
-                val through = (positionMs - word.startMs).toFloat() / span
-                return start + through * word.text.length
-            }
+            if (positionMs < word.endMs) return start + word.charsSungAt(positionMs)
             // Past this word: the trailing space fills over the pause before
             // the next one, so the highlight keeps creeping instead of resting
             // on the word's last letter.
@@ -179,8 +293,10 @@ data class LyricLine(
     }
 
     /**
-     * How much of a word's lift is left at [positionMs] — 1 while it is being
-     * sung, easing to 0 over [RISE_MS] once it is past.
+     * How much of a word's lift is left at [positionMs] — its full
+     * [liftHeight] while it is being sung, easing to 0 over [RISE_MS] once it
+     * is past. Carries the height so a letter-by-letter word comes to rest at
+     * exactly the lift [wordLift] hands it over to.
      *
      * Split out of [wordLift] because a word animated letter by letter has its
      * own way up but settles back down the same way every other word does; the
@@ -188,7 +304,8 @@ data class LyricLine(
      */
     fun wordFall(index: Int, positionMs: Long): Float {
         val word = words.getOrNull(index) ?: return 0f
-        return smooth((1f - (positionMs - word.endMs) / RISE_MS).coerceIn(0f, 1f))
+        val falling = (1f - (positionMs - word.endMs) / RISE_MS).coerceIn(0f, 1f)
+        return liftHeight(word) * smooth(falling)
     }
 
     /**
@@ -364,6 +481,27 @@ class CharGrowth {
 
 /** How long a word takes to rise, and to settle back down once it is past. */
 private const val RISE_MS = 700f
+
+/** The quickest a word ever rises: a 90 ms syllable snapping up reads as a twitch. */
+private const val RISE_MIN_MS = 250f
+
+/**
+ * How far up a word goes, as a share of the full lift, from how long it is held.
+ *
+ * A word sung in [LIFT_QUICK_MS] or less only nudges up by [LIFT_FLOOR]; one
+ * held for [LIFT_HELD_MS] or more goes the whole way. Eased between the two, so
+ * the words of an ordinary line differ from one another by a little rather than
+ * falling into "up" and "not up".
+ */
+private fun liftHeight(word: LyricWord): Float {
+    val held = (word.endMs - word.startMs).toFloat()
+    val through = ((held - LIFT_QUICK_MS) / (LIFT_HELD_MS - LIFT_QUICK_MS)).coerceIn(0f, 1f)
+    return LIFT_FLOOR + (1f - LIFT_FLOOR) * smooth(through)
+}
+
+private const val LIFT_QUICK_MS = 150f
+private const val LIFT_HELD_MS = 900f
+private const val LIFT_FLOOR = 0.25f
 
 /** Ease in and out of the ends, so the lift has no corners on it. */
 private fun smooth(fraction: Float) = fraction * fraction * (3f - 2f * fraction)

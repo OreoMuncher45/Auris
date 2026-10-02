@@ -44,13 +44,14 @@ object EnhancedLrc {
             val lineEnd = rows.getOrNull(index + 1)?.timeMs
                 ?: (stamp(row.words.last()) + TAIL_MS)
 
-            val words = row.words.mapIndexedNotNull { i, match ->
-                val text = decodeEntities(match.groupValues[4]).trim()
-                if (text.isEmpty()) return@mapIndexedNotNull null
+            // Kept as written, spacing and all: a run with no space after it
+            // is a syllable of a word that carries on into the next one.
+            val runs = row.words.mapIndexed { i, match ->
                 val wordStart = stamp(match)
                 val wordEnd = row.words.getOrNull(i + 1)?.let { stamp(it) } ?: lineEnd
-                LyricWord(wordStart, wordEnd.coerceAtLeast(wordStart), text)
+                TimedRun(wordStart, wordEnd, decodeEntities(match.groupValues[4]))
             }
+            val words = wordsFromRuns(runs)
             if (words.isEmpty()) return@mapIndexedNotNull null
             LyricLine(
                 timeMs = minOf(row.timeMs, words.first().startMs),

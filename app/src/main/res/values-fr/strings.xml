@@ -533,6 +533,10 @@
     <string name="replay_minutes_end"> avec la musique.</string>
     <string name="replay_minutes_start">Vous avez passé </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="one">%1$s minute</item>
+        <item quantity="other">%1$s minutes</item>
+    </plurals>
     <string name="replay_mostly_around">, surtout vers %1$s.</string>
     <string name="replay_private_counting">Calculé de façon privée à partir de l\'historique d\'écoute sur cet appareil</string>
     <string name="replay_share_card_description">Une carte soignée avec vos principaux temps forts d\'écoute.</string>
@@ -550,7 +554,7 @@
     <string name="top_artist">Meilleur artiste</string>
     <string name="top_genre">Meilleur genre</string>
     <string name="top_song">Meilleure chanson</string>
-    <string name="when_you_listen_most">Quand vous écoutez le plus</string>
+    <string name="when_you_listen_the_most">Quand vous écoutez le plus</string>
     <string name="your_biggest_day">Votre plus grosse journée : %1$s</string>
     <string name="your_listening_experience">Votre expérience d\'écoute</string>
     <string name="your_lyrics_card">Votre carte de paroles</string>

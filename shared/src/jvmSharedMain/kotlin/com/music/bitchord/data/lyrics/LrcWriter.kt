@@ -100,13 +100,29 @@ private fun LyricLine.enhancedBody(): String {
     // through the lead it answers, so concatenating the two can hand us a stamp
     // earlier than the one before it — and a reader taking each run's end from
     // the next one's start would read that as a negative-length word.
+    //
+    // A word timed by syllable is written one stamp per syllable with no space
+    // between them, which is how A2 says they are one word; [LrcLib.parseLrc]
+    // glues them back together on the way in.
     var previous = timeMs
     runs.forEachIndexed { index, word ->
-        val start = maxOf(word.startMs, previous)
-        out.append(wordStamp(start)).append(word.text)
+        if (word.syllables.isEmpty()) {
+            val start = maxOf(word.startMs, previous)
+            out.append(wordStamp(start)).append(word.text)
+            previous = start
+        } else {
+            word.syllables.forEach { syllable ->
+                val start = maxOf(syllable.startMs, previous)
+                out.append(wordStamp(start)).append(word.text, syllable.startChar, syllable.endChar)
+                previous = start
+            }
+        }
         if (index != runs.lastIndex) out.append(' ')
-        previous = start
     }
+    // A line that is one split word has no space in it anywhere, and a line
+    // with none is read back as one word per stamp; the space before the
+    // closing stamp is what says the spacing is real.
+    if (runs.any { it.syllables.isNotEmpty() }) out.append(' ')
     out.append(wordStamp(maxOf(runs.maxOf { it.endMs }, previous)))
     return out.toString()
 }

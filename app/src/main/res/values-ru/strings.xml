@@ -552,6 +552,12 @@
     <string name="replay_minutes_end"> с музыкой.</string>
     <string name="replay_minutes_start">Вы провели </string>
     <string name="replay_minutes_value">%1$s</string>
+    <plurals name="replay_minutes_unit">
+        <item quantity="one">%1$s минуту</item>
+        <item quantity="few">%1$s минуты</item>
+        <item quantity="many">%1$s минут</item>
+        <item quantity="other">%1$s минуты</item>
+    </plurals>
     <string name="replay_mostly_around">, в основном около %1$s.</string>
     <string name="replay_private_counting">Формируется приватно на основе истории прослушивания на этом устройстве</string>
     <string name="replay_share_card_description">Аккуратная карточка с главными моментами вашего прослушивания.</string>
@@ -569,7 +575,7 @@
     <string name="top_artist">Топ-исполнитель</string>
     <string name="top_genre">Топ-жанр</string>
     <string name="top_song">Топ-песня</string>
-    <string name="when_you_listen_most">Когда вы слушаете больше всего</string>
+    <string name="when_you_listen_the_most">Когда вы слушаете больше всего</string>
     <string name="your_biggest_day">Ваш самый насыщенный день: %1$s</string>
     <string name="your_listening_experience">Ваш опыт прослушивания</string>
     <string name="your_lyrics_card">Ваша карточка с текстом</string>
