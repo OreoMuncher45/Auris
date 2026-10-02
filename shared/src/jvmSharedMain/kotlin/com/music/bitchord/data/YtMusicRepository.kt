@@ -821,6 +821,15 @@ object YtMusicRepository {
      * Saves an album or playlist to the library, or removes it. [playlistId] is
      * the one the page named — see [LibraryState].
      */
+    /**
+     * Whether the release at [browseId] is in the library, and the playlist that
+     * saving it acts on — read off the release's own page, since a card that
+     * only knows the browse id has neither. Null where the page offers no save
+     * button (a signed-out response, or a release YouTube marks unsaveable).
+     */
+    suspend fun releaseLibraryState(browseId: String): Result<LibraryState?> =
+        call("library-state:$browseId") { InnertubeParser.parseLibraryState(Innertube.browse(browseId)) }
+
     suspend fun setSaved(playlistId: String, saved: Boolean): Result<Unit> =
         call("library:$playlistId") { Innertube.ratePlaylist(playlistId, saved) }
 

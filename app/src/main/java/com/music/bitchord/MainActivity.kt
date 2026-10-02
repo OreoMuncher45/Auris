@@ -722,6 +722,7 @@ private fun BitChordApp(
     val searchLoadingMore by viewModel.searchLoadingMore.collectAsStateWithLifecycle()
     val searchScrollReset by viewModel.searchScrollReset.collectAsStateWithLifecycle()
     val detailStack by viewModel.detailStack.collectAsStateWithLifecycle()
+    val releaseLibrary by viewModel.releaseLibrary.collectAsStateWithLifecycle()
     val detail = detailStack.lastOrNull()
     // Local Music has no artwork to wash the top inset in, so it renders with
     // the ordinary bounded status bar rather than the artwork gradient used by
@@ -2850,6 +2851,13 @@ private fun BitChordApp(
                             // guest is never shown the button.
                             onToggleSubscription = if (signedIn) {
                                 { viewModel.toggleSubscription(page.browseId) }
+                            } else {
+                                null
+                            },
+                            releaseLibrary = releaseLibrary,
+                            onLoadReleaseLibrary = viewModel::loadReleaseLibrary,
+                            onToggleReleaseLibrary = if (signedIn) {
+                                viewModel::toggleReleaseLibrary
                             } else {
                                 null
                             },

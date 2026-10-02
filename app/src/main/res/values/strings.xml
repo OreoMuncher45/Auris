@@ -505,6 +505,9 @@
     <string name="your_playlists">Your playlists</string>
     <string name="who_can_see_it">Who can see it</string>
     <string name="about_artist">About the artist</string>
+    <string name="recent_album">Recent Album</string>
+    <string name="recent_single">Recent Single</string>
+    <string name="recent_ep">Recent EP</string>
     <string name="about_album">About the album</string>
     <string name="nothing_matches">Nothing here matches “%1$s”</string>
     <string name="close_search">Close search</string>

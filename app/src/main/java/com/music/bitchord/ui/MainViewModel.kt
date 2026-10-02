@@ -522,6 +522,42 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _detailStack = MutableStateFlow<List<DetailPage>>(emptyList())
     val detailStack: StateFlow<List<DetailPage>> = _detailStack.asStateFlow()
 
+    private val _releaseLibrary = MutableStateFlow<Map<String, LibraryState>>(emptyMap())
+
+    /**
+     * Library state of releases that are only a card on some page — the artist
+     * page's top release — keyed by browse id. They have no page of their own on
+     * the stack to carry it, so it is read off the release and kept here.
+     */
+    val releaseLibrary: StateFlow<Map<String, LibraryState>> = _releaseLibrary.asStateFlow()
+
+    /** Reads whether the release [browseId] is saved, once; a no-op if already known. */
+    fun loadReleaseLibrary(browseId: String) {
+        if (browseId in _releaseLibrary.value) return
+        viewModelScope.launch {
+            YtMusicRepository.releaseLibraryState(browseId).getOrNull()?.let { state ->
+                _releaseLibrary.value += (browseId to state)
+            }
+        }
+    }
+
+    /** Saves the release [browseId] to the library or takes it out, as [toggleLibrary] does for a page. */
+    fun toggleReleaseLibrary(browseId: String) {
+        if (!requireSignIn()) return
+        viewModelScope.launch {
+            val current = _releaseLibrary.value[browseId]
+                ?: YtMusicRepository.releaseLibraryState(browseId).getOrNull()
+                ?: return@launch
+            val target = !current.saved
+            _releaseLibrary.value += (browseId to current.copy(saved = target))
+            if (YtMusicRepository.setSaved(current.playlistId, target).isSuccess) {
+                libraryStale = true
+            } else {
+                _releaseLibrary.value += (browseId to current)
+            }
+        }
+    }
+
 
     /** Set once per launch if GitHub has a release newer than this build. */
     val updateAvailable: StateFlow<AppUpdateChecker.UpdateInfo?> = AppUpdateChecker.available

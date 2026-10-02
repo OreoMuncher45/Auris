@@ -33,6 +33,8 @@ data class AppleArtistArt(
     val videoUrl: String?,
     val background: Int,
     val accent: Int,
+    /** The colour Apple fills the artist's Play button with; absent for some artists. */
+    val keyColor: Int?,
 )
 
 /** Apple's colours for this artist, in the form the palette takes. */
@@ -171,6 +173,7 @@ object AppleArtistArtRepository {
             videoUrl = video,
             background = background,
             accent = accent,
+            keyColor = header.optString("keyColor").toArgb(),
         )
     }
 
