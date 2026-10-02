@@ -52,8 +52,11 @@ object SpotifyCanvasQuery {
         /** The track has a canvas at [url]. */
         data class Found(val url: String, val type: String?) : Answer
 
-        /** Spotify answered the query: this track has no (video) canvas. */
-        data object NoCanvas : Answer
+        /**
+         * Spotify answered the query without a video URL this can play. [detail] says what came
+         * back instead (no canvas at all, or one whose shape isn't a plain `.mp4`), for the log.
+         */
+        data class NoCanvas(val detail: String) : Answer
 
         /**
          * The query itself didn't work -- unparseable, GraphQL errors and no data (a stale hash
@@ -74,10 +77,14 @@ object SpotifyCanvasQuery {
             return Answer.Failed(reason, staleHash = errors.any { it.contains("PersistedQueryNotFound", ignoreCase = true) })
         }
         val canvas = (data["trackUnion"] as? JsonObject)?.get("canvas") as? JsonObject
-            ?: return Answer.NoCanvas
-        val url = canvas.text("url")?.takeIf { it.startsWith("https://") } ?: return Answer.NoCanvas
+            ?: return Answer.NoCanvas("canvas null")
+        // The web player itself plays video canvases from `fileId` through its own video player
+        // and only reads `url` for images and GIFs, so a video canvas can come back without the
+        // plain MP4 URL this client expects. Describe it rather than collapse it into "none".
+        val detail = "type=${canvas.text("type")} fileId=${canvas.text("fileId")} url=${canvas.text("url")}"
+        val url = canvas.text("url")?.takeIf { it.startsWith("https://") } ?: return Answer.NoCanvas(detail)
         // Some canvases are still images; this plays video only.
-        if (!VIDEO_URL.containsMatchIn(url)) return Answer.NoCanvas
+        if (!VIDEO_URL.containsMatchIn(url)) return Answer.NoCanvas(detail)
         return Answer.Found(url, canvas.text("type"))
     }
 

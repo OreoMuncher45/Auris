@@ -45,15 +45,38 @@ class SpotifyCanvasQueryTest {
 
     @Test
     fun `a track without a canvas is a final answer, not a failure`() {
-        assertEquals(Answer.NoCanvas, SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"__typename":"Track","canvas":null}}}"""))
-        assertEquals(Answer.NoCanvas, SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"__typename":"Track"}}}"""))
-        assertEquals(Answer.NoCanvas, SpotifyCanvasQuery.parse("""{"data":{"trackUnion":null}}"""))
+        val nullCanvas = assertIs<Answer.NoCanvas>(
+            SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"__typename":"Track","canvas":null}}}"""),
+        )
+        assertEquals("canvas null", nullCanvas.detail)
+
+        val missingCanvas = assertIs<Answer.NoCanvas>(
+            SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"__typename":"Track"}}}"""),
+        )
+        assertEquals("canvas null", missingCanvas.detail)
+
+        val missingTrack = assertIs<Answer.NoCanvas>(
+            SpotifyCanvasQuery.parse("""{"data":{"trackUnion":null}}"""),
+        )
+        assertEquals("canvas null", missingTrack.detail)
     }
 
     @Test
     fun `an image canvas or a link that is not https is not played`() {
-        assertEquals(Answer.NoCanvas, SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"canvas":{"type":"IMAGE","url":"https://canvaz.scdn.co/upload/x.jpg"}}}}"""))
-        assertEquals(Answer.NoCanvas, SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"canvas":{"url":"http://canvaz.scdn.co/x.cnvs.mp4"}}}}"""))
+        val image = assertIs<Answer.NoCanvas>(
+            SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"canvas":{"type":"IMAGE","url":"https://canvaz.scdn.co/upload/x.jpg"}}}}"""),
+        )
+        assertTrue(image.detail.contains("type=IMAGE"))
+
+        val insecure = assertIs<Answer.NoCanvas>(
+            SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"canvas":{"url":"http://canvaz.scdn.co/x.cnvs.mp4"}}}}"""),
+        )
+        assertTrue(insecure.detail.contains("url=http://"))
+
+        val fileIdVideo = assertIs<Answer.NoCanvas>(
+            SpotifyCanvasQuery.parse("""{"data":{"trackUnion":{"canvas":{"type":"VIDEO_LOOPING","fileId":"abc123"}}}}"""),
+        )
+        assertTrue(fileIdVideo.detail.contains("fileId=abc123"))
     }
 
     @Test

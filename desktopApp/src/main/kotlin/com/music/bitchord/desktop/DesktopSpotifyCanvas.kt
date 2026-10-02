@@ -127,12 +127,15 @@ internal object DesktopSpotifyCanvas {
     /** The live `canvas` query hash, read off the web player's own scripts. */
     private val queryHashes = SpotifyCanvasQuery.QueryHashes(fetch = { url -> canvasGet(url) })
 
-    /** The track's canvas, asked for the way the current web player does; `canvaz-cache` only when
-     * that query fails outright (not when it answers that there's no canvas — that's final). */
+    /** The track's canvas, asked for the way the current web player does; `canvaz-cache` is the
+     * fallback when the query fails or answers with nothing playable. */
     private fun fetchCanvasUrl(trackUri: String, token: String): String? =
         when (val answer = fetchCanvasViaPathfinder(trackUri, token)) {
             is SpotifyCanvasQuery.Answer.Found -> answer.url
-            SpotifyCanvasQuery.Answer.NoCanvas -> null
+            is SpotifyCanvasQuery.Answer.NoCanvas -> {
+                DesktopTrackLog.log("canvas: Pathfinder has no playable canvas (${answer.detail}); trying canvaz-cache")
+                fetchCanvasViaCanvaz(trackUri, token)
+            }
             is SpotifyCanvasQuery.Answer.Failed -> {
                 DesktopTrackLog.log("canvas: Spotify's canvas query failed (${answer.reason}); trying canvaz-cache")
                 fetchCanvasViaCanvaz(trackUri, token)
