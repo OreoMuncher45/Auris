@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.canvas.SpotifyCanvasQuery
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -121,11 +122,57 @@ internal object DesktopSpotifyCanvas {
         get(url("$ALBUM_TRACKS_URL/$albumId/tracks", listOf("limit" to "1")), token)
             ?.get("items")?.jsonArray?.firstOrNull()?.jsonObject?.text("uri")
 
-    // ── canvaz-cache: protobuf in, protobuf out ──────────────────────────
+    // ── Pathfinder: the `canvas` GraphQL query ───────────────────────────
+
+    /** The live `canvas` query hash, read off the web player's own scripts. */
+    private val queryHashes = SpotifyCanvasQuery.QueryHashes(fetch = { url -> canvasGet(url) })
+
+    /** The track's canvas, asked for the way the current web player does; `canvaz-cache` is the
+     * fallback when the query fails or answers with nothing playable. */
+    private fun fetchCanvasUrl(trackUri: String, token: String): String? =
+        when (val answer = fetchCanvasViaPathfinder(trackUri, token)) {
+            is SpotifyCanvasQuery.Answer.Found -> answer.url
+            is SpotifyCanvasQuery.Answer.NoCanvas -> {
+                DesktopTrackLog.log("canvas: Pathfinder has no playable canvas (${answer.detail}); trying canvaz-cache")
+                fetchCanvasViaCanvaz(trackUri, token)
+            }
+            is SpotifyCanvasQuery.Answer.Failed -> {
+                DesktopTrackLog.log("canvas: Spotify's canvas query failed (${answer.reason}); trying canvaz-cache")
+                fetchCanvasViaCanvaz(trackUri, token)
+            }
+        }
+
+    private fun fetchCanvasViaPathfinder(trackUri: String, token: String, isRetry: Boolean = false): SpotifyCanvasQuery.Answer {
+        val hash = queryHashes.canvasHash(forceRefresh = isRetry)
+        val response = runCatching {
+            val builder = HttpRequest.newBuilder(URI.create(SpotifyCanvasQuery.ENDPOINT))
+                .timeout(Duration.ofSeconds(15))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Accept-Language", "en")
+                .header("App-platform", "WebPlayer")
+                .header("User-Agent", CANVAS_UA)
+            authHeaders(token).forEach { (name, value) -> builder.header(name, value) }
+            http.send(
+                builder.POST(HttpRequest.BodyPublishers.ofString(SpotifyCanvasQuery.requestBody(trackUri, hash))).build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
+        }.getOrElse { return SpotifyCanvasQuery.Answer.Failed("request threw: ${it.message}") }
+        if (response.statusCode() !in 200..299) return SpotifyCanvasQuery.Answer.Failed("http ${response.statusCode()}")
+
+        val answer = SpotifyCanvasQuery.parse(response.body())
+        // A rebuilt web player retires the old hash: look it up again once.
+        if (answer is SpotifyCanvasQuery.Answer.Failed && answer.staleHash && !isRetry) {
+            return fetchCanvasViaPathfinder(trackUri, token, isRetry = true)
+        }
+        return answer
+    }
+
+    // ── canvaz-cache: protobuf in, protobuf out (fallback) ───────────────
 
     internal data class CanvasHit(val url: String, val trackUri: String?)
 
-    private fun fetchCanvasUrl(trackUri: String, token: String): String? {
+    private fun fetchCanvasViaCanvaz(trackUri: String, token: String): String? {
         val bytes = runCatching {
             val builder = HttpRequest.newBuilder(URI.create(CANVAS_URL))
                 .timeout(Duration.ofSeconds(15))
