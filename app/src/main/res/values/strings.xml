@@ -674,7 +674,7 @@
     <string name="not_enough_listening">Not enough listening yet</string>
     <string name="not_enough_this_month">Play a few more songs this month to unlock your Replay.</string>
     <string name="pinned">Pinned</string>
-    <string name="replay_across"> across </string>
+    <string name="replay_across">Across </string>
     <string name="replay_album_end"> held your attention.</string>
     <string name="replay_album_focus">One album</string>
     <string name="replay_album_start">This time, </string>
