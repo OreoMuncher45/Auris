@@ -4,6 +4,11 @@ import com.music.bitchord.ui.components.contextClick
 import androidx.compose.ui.unit.Dp
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.stringResource
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -132,6 +137,21 @@ fun SearchScreen(
      * the one search box the window needs, so the page there is results only.
      */
     showField: Boolean = true,
+    /**
+     * Whether the page is searching the device's Local Music folder instead of
+     * YouTube. The phone's top bar flips this; the desktop never does.
+     */
+    searchingLibrary: Boolean = false,
+    /** The Library source's tracks for [query]; null while nothing is typed. */
+    libraryResults: UiState<List<Song>>? = null,
+    /** Files on the device are a running order to play through, not a station seed. */
+    onLibrarySongClick: (List<Song>, Int) -> Unit = onSongClick,
+    /**
+     * The YouTube / Library switcher, full width at the head of the page. Up
+     * only while the field is empty: once something is typed the page is
+     * about the results, and the switcher would just push them down.
+     */
+    sourceSwitcher: (@Composable () -> Unit)? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -155,14 +175,14 @@ fun SearchScreen(
     // MainViewModel.suggestions. Nothing below it is worth showing while it is
     // up: the results are for whatever was searched before this edit began,
     // and so are the filter tabs above them.
-    val suggesting = suggestions.isNotEmpty()
+    val suggesting = suggestions.isNotEmpty() && !searchingLibrary
     // Live media results arrive from the parallel typeahead pipeline; show
     // them only while the user is still typing (suggestions visible), so they
     // appear as a dropdown beneath the text completions rather than floating
     // after the search has committed.
     val showTypeahead = typeaheadResults.isNotEmpty() && suggesting
-    LaunchedEffect(listState, results, loadingMore) {
-        if (results !is UiState.Success) return@LaunchedEffect
+    LaunchedEffect(listState, results, loadingMore, searchingLibrary) {
+        if (results !is UiState.Success || searchingLibrary) return@LaunchedEffect
         snapshotFlow {
             val layout = listState.layoutInfo
             (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
@@ -184,13 +204,30 @@ fun SearchScreen(
                     onQueryChange = onQueryChange,
                     onSubmit = onSubmit,
                     focusRequester = focusRequester,
+                    placeholder = if (searchingLibrary) {
+                        stringResource(Res.string.search_library_hint)
+                    } else {
+                        stringResource(Res.string.search_hint)
+                    },
                     modifier = Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp),
                 )
+            }
+            if (sourceSwitcher != null) {
+                AnimatedVisibility(
+                    visible = query.isEmpty(),
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically(),
+                ) {
+                    Box(Modifier.padding(start = PAGE_GUTTER, end = PAGE_GUTTER, bottom = 4.dp)) {
+                        sourceSwitcher()
+                    }
+                }
             }
             // The filters only mean something once there is a result set to narrow;
             // they stay up for an empty or failed search too, or picking a filter
             // that finds nothing would take away the control needed to leave it.
-            if (results != null && !suggesting) {
+            // They are YouTube's categories, so the Library source has none.
+            if (results != null && !suggesting && !searchingLibrary) {
                 SearchFilterTabs(filter = filter, onFilterChange = onFilterChange)
             }
         }
@@ -201,6 +238,15 @@ fun SearchScreen(
             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
         ) {
             when {
+                searchingLibrary -> librarySearchResults(
+                    query = query.trim(),
+                    results = libraryResults,
+                    currentSong = currentSong,
+                    isPlaying = isPlaying,
+                    onSongClick = onLibrarySongClick,
+                    onSongLongPress = onSongLongPress,
+                    onSongSwipe = onSongSwipe,
+                )
                 suggesting -> {
                     searchSuggestions(
                         suggestions = suggestions,
@@ -338,6 +384,55 @@ private fun searchSections(rows: List<SearchResult>, filter: SearchFilter): List
         SearchSection("Playlists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.PLAYLIST }),
         SearchSection("More", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.OTHER }),
     ).filter { it.rows.isNotEmpty() }
+}
+
+/**
+ * The Library source's page: the Local Music folder's tracks that match, as
+ * plain song rows. An artist or album hit needs no row of its own — every
+ * track under that name matches too, so they are already here.
+ */
+private fun LazyListScope.librarySearchResults(
+    query: String,
+    results: UiState<List<Song>>?,
+    currentSong: Song?,
+    isPlaying: Boolean,
+    onSongClick: (List<Song>, Int) -> Unit,
+    onSongLongPress: (Song) -> Unit,
+    onSongSwipe: (Song) -> Unit,
+) {
+    when (results) {
+        null -> item(key = "library:empty") {
+            MessageState(stringResource(Res.string.search_library_empty))
+        }
+        UiState.Loading -> songListSkeleton(keyPrefix = "skeleton:search:library")
+        is UiState.Error -> item(key = "library:error") { MessageState(results.message) }
+        is UiState.Success -> if (results.data.isEmpty()) {
+            item(key = "library:no-match") {
+                MessageState(stringResource(Res.string.search_library_no_results, query))
+            }
+        } else {
+            val tracks = results.data
+            itemsIndexed(tracks, key = { index, song -> "library_${song.videoId}_$index" }) { index, song ->
+                SongRow(
+                    song = song,
+                    onClick = { onSongClick(tracks, index) },
+                    onLongPress = { onSongLongPress(song) },
+                    onSwipeToQueue = { onSongSwipe(song) },
+                    isCurrent = song.isSameTrackAs(currentSong),
+                    isPlaying = isPlaying && song.isSameTrackAs(currentSong),
+                    searchPlayingStyle = true,
+                    activeTint = PlayingAccent,
+                )
+                if (index < tracks.lastIndex) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = ROW_DIVIDER_INSET),
+                        thickness = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                }
+            }
+        }
+    }
 }
 
 /** The All response carries its highest-confidence music hit as a promoted card. */

@@ -70,6 +70,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -204,6 +205,14 @@ private const val BACKING_ALPHA = 0.72f
  * its backing line over about 400 ms and folds it away over 450.
  */
 private const val BACKING_OPEN_MS = 400
+
+/** Where a lyric line is in its own animation; see [SweptLyricLine]. */
+private const val PHASE_BEFORE = 0
+private const val PHASE_MOVING = 1
+private const val PHASE_AFTER = 2
+
+/** An instrumental break that is playing, so its fill is read off the clock. */
+private const val GAP_RUNNING = -1f
 
 /**
  * How far ahead of its first word the answering voice starts to open: far
@@ -697,6 +706,35 @@ private fun SweptLyricLine(
     // outside, but this runs on every frame of every line that has one.
     val growth = remember { CharGrowth() }
 
+    // Where this line is in its own animation — not started, moving, or done —
+    // which changes three times a line rather than sixty times a second. The
+    // draw passes below read the clock only while it says moving; on either
+    // side they draw a position that looks identical to any other there (see
+    // [LyricLine.animatesFromMs]), so a line nobody is singing never redraws.
+    //
+    // Read in draw, every line on screen used to redraw on every frame of
+    // playback, and each line away from the playing one sits under a blur
+    // that then had to be worked out again — most of the panel's frame, for a
+    // picture that had not changed. Paused, nothing moved, which is why the
+    // panel was smooth paused and slow playing.
+    val phase = remember(line, clock) {
+        derivedStateOf(structuralEqualityPolicy()) {
+            val now = clock.longValue
+            when {
+                now < line.animatesFromMs -> PHASE_BEFORE
+                now > line.animatesUntilMs -> PHASE_AFTER
+                else -> PHASE_MOVING
+            }
+        }
+    }
+    val drawnAt: () -> Long = {
+        when (phase.value) {
+            PHASE_MOVING -> clock.longValue
+            PHASE_BEFORE -> line.animatesFromMs - 1
+            else -> line.animatesUntilMs + 1
+        }
+    }
+
     // Carried by every copy: identical insets keep them laying out identically,
     // and the inset is what gives the blurred copy's layer somewhere to put the
     // halo. Sits inside the blur and outside the draw lambdas, so text-layout
@@ -732,7 +770,7 @@ private fun SweptLyricLine(
                         riseWith(
                             layout = measured,
                             line = line,
-                            positionMs = clock.longValue,
+                            positionMs = drawnAt(),
                             inset = glowRoom.toPx(),
                             peak = WORD_RISE.toPx(),
                             growth = growth,
@@ -744,7 +782,7 @@ private fun SweptLyricLine(
     }
 
     val sweep = Modifier.drawWithContent {
-        val position = clock.longValue
+        val position = drawnAt()
         when {
             // Sung and done with: all of it is lit. Checked first so the lines
             // above and below the playing one — which are in this same state
@@ -802,7 +840,7 @@ private fun SweptLyricLine(
                         glowGrown(
                             layout = measured,
                             line = line,
-                            positionMs = clock.longValue,
+                            positionMs = drawnAt(),
                             inset = glowRoom.toPx(),
                             peak = WORD_RISE.toPx(),
                             growth = growth,
@@ -1834,6 +1872,19 @@ internal fun LyricsPanel(
                 // reads as time running down instead of a symbol parked on
                 // screen waiting for the singing to come back.
                 val until = lines.getOrNull(index + 1)?.timeMs ?: line.endMs
+                // How far through the break the song is, held at 0 before it and
+                // 1 after: the dots read the clock only while it is running, so
+                // a break that is not playing never redraws — see SweptLyricLine.
+                val gapFill = remember(line, until, clock) {
+                    derivedStateOf(structuralEqualityPolicy()) {
+                        val now = clock.longValue
+                        when {
+                            now <= line.timeMs -> 0f
+                            now >= until -> 1f
+                            else -> GAP_RUNNING
+                        }
+                    }
+                }
                 // The row itself opens and closes with the break, so the list
                 // carries no dead space through the verses either side of it —
                 // which is also what stops the panel scrolling past a hole to
@@ -1880,8 +1931,8 @@ internal fun LyricsPanel(
                             // moves every frame, and this way a break costs a
                             // redraw of three circles, not a recomposition.
                             val span = (until - line.timeMs).coerceAtLeast(1L)
-                            val through = ((clock.longValue - line.timeMs).toFloat() / span)
-                                .coerceIn(0f, 1f)
+                            val through = gapFill.value.takeUnless { it == GAP_RUNNING }
+                                ?: ((clock.longValue - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
                             val radius = GAP_DOT_SIZE.toPx() / 2f
                             val stride = (GAP_DOT_SIZE + GAP_DOT_GAP).toPx()
                             repeat(GAP_DOTS) { dot ->

@@ -207,6 +207,29 @@ data class LyricLine(
     }
 
     /**
+     * The stretch of the song over which anything drawn for this line moves —
+     * the sweep, the lift and its settle, a held word's letters — from
+     * [animatesFromMs] to [animatesUntilMs]. Before it the line is drawn
+     * unsung, after it sung and at rest, and either way exactly the same on
+     * every frame.
+     *
+     * Which is what lets a line outside it stop listening to the clock. Every
+     * line on screen reading it redrew on every frame of playback — and the
+     * blur on the lines away from the playing one then had to be worked out
+     * again each time, for a picture that had not changed.
+     */
+    val animatesFromMs: Long by lazy(LazyThreadSafetyMode.NONE) {
+        minOf(timeMs, words.firstOrNull()?.startMs ?: timeMs)
+    }
+
+    /** See [animatesFromMs]. */
+    val animatesUntilMs: Long by lazy(LazyThreadSafetyMode.NONE) {
+        val settled = words.lastOrNull()?.let { it.endMs + RISE_MS.toLong() } ?: endMs
+        val grown = growingWords.maxOfOrNull { it.restsAtMs } ?: Long.MIN_VALUE
+        maxOf(endMs, settled, grown)
+    }
+
+    /**
      * How far the word covering [positionMs] has lifted, 0..1.
      *
      * Apple Music's words don't only light up, they rise as they land and

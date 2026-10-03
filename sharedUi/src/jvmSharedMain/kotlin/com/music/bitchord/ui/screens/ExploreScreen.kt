@@ -87,7 +87,14 @@ fun ExploreScreen(
                             text = stringResource(Res.string.explore),
                             style = MaterialTheme.typography.displayLarge,
                             color = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+                            // 14dp under the title, the same gap Library leaves
+                            // above its first card (8dp title + 6dp Replay row).
+                            modifier = Modifier.padding(
+                                start = PAGE_GUTTER,
+                                end = PAGE_GUTTER,
+                                top = 8.dp,
+                                bottom = 14.dp,
+                            ),
                         )
                     }
                 }

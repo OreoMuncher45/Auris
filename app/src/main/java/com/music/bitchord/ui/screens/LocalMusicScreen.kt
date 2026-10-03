@@ -1465,8 +1465,12 @@ private fun DrillDownSongList(
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
-/** Whether this track is a hit for a query typed into [LocalSearchField]. */
-private fun Song.matchesSearch(query: String): Boolean =
+/**
+ * Whether this track is a hit for a query typed into [LocalSearchField] — or
+ * into the Search tab with its Library source picked, which has to find the
+ * same tracks this folder would.
+ */
+internal fun Song.matchesSearch(query: String): Boolean =
     title.contains(query, ignoreCase = true) ||
         artist.contains(query, ignoreCase = true) ||
         albumName?.contains(query, ignoreCase = true) == true

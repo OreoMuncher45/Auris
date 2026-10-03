@@ -96,11 +96,11 @@ import androidx.compose.foundation.border
 val PAGE_GUTTER = 16.dp
 
 /**
- * The tighter inset the floating chrome sits at: the mini player, the tab bar
- * and the top bar's buttons. Bars that float over the page read as their own
- * layer, so they keep closer to the screen's edge than the content does.
+ * The inset the floating chrome sits at: the mini player, the tab bar and the
+ * top bar's controls. The same as [PAGE_GUTTER], so the bars' edges line up
+ * with the content scrolling beneath them rather than sitting just outside it.
  */
-val BAR_GUTTER = 10.dp
+val BAR_GUTTER = PAGE_GUTTER
 
 /** Where a divider under a track row starts: clear of the 52dp of artwork. */
 val ROW_DIVIDER_INSET = PAGE_GUTTER + 68.dp

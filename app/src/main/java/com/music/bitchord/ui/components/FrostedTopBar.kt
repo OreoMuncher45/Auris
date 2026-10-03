@@ -107,6 +107,9 @@ private val BackInset = 54.dp
 private val WordmarkInset = 96.dp
 private val ActionsInset = 56.dp
 
+/** Between a filling accessory and the actions pill. */
+private val ACCESSORY_GAP = 8.dp
+
 /** What the leading end of the bar needs: a back button, or the wordmark. */
 private fun leadingInset(hasBack: Boolean): Dp = if (hasBack) BackInset else WordmarkInset
 
@@ -161,6 +164,12 @@ fun FrostedTopBar(
     // A lambda, not a value: the drag changes every frame, and reading it in
     // the caller would recompose the whole app on each one.
     pullFraction: () -> Float = { 0f },
+    /**
+     * A page control filling the bar from the leading gutter to [actions], on
+     * no surface of its own — the Search tab's field, which brings its own.
+     * Root tabs have no back button there for it to collide with.
+     */
+    accessory: (@Composable () -> Unit)? = null,
     actions: @Composable () -> Unit = {},
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -296,23 +305,25 @@ fun FrostedTopBar(
             }
             // No wordmark at the leading end: the root tabs carry it above
             // their large heading instead (LargePageTitle in :sharedUi).
-            if (useFloatingChrome) {
-                ArtworkPageActions(
-                    hazeState = backButtonHazeState,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        // Same outer edge as the navbar; PILL_INSET below is
-                        // internal padding around the icons, not extra margin.
-                        .padding(end = BAR_GUTTER),
-                    content = actions,
-                )
-            } else {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
+            // The accessory takes everything from the leading gutter up to the
+            // actions, which keep their own width at the trailing end.
+            val edge = if (useFloatingChrome) BAR_GUTTER else 4.dp
+            Row(
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .then(if (accessory != null) Modifier.fillMaxWidth().padding(start = edge) else Modifier)
+                    // Same outer edge as the navbar; PILL_INSET below is
+                    // internal padding around the icons, not extra margin.
+                    .padding(end = edge),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (accessory != null) {
+                    Box(Modifier.weight(1f)) { accessory() }
+                    Spacer(Modifier.width(ACCESSORY_GAP))
+                }
+                if (useFloatingChrome) {
+                    ArtworkPageActions(hazeState = backButtonHazeState, content = actions)
+                } else {
                     actions()
                 }
             }

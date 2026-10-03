@@ -49,6 +49,7 @@ import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.settings.SearchHistory
 import com.music.bitchord.download.Downloads
 import android.util.LruCache
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -66,6 +67,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -78,9 +80,13 @@ import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
+import com.music.bitchord.ui.screens.matchesSearch
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+
+/** What the Search tab searches: YouTube Music, or the Local Music folder on this device. */
+enum class SearchSource { YOUTUBE, LIBRARY }
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -178,6 +184,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _typeaheadResults = MutableStateFlow<List<SearchResult>>(emptyList())
     val typeaheadResults: StateFlow<List<SearchResult>> = _typeaheadResults.asStateFlow()
+
+    /** Where the Search tab looks — see [setSearchSource]. */
+    private val _searchSource = MutableStateFlow(SearchSource.YOUTUBE)
+    val searchSource: StateFlow<SearchSource> = _searchSource.asStateFlow()
+
+    /** Every track in the Local Music folder, read when the Library source is picked. */
+    private val _librarySongs = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+
+    /**
+     * The Library source's answer for the current query: the Local Music
+     * folder narrowed by the same match its own filter box uses, so the two
+     * places never disagree about what is on the device. Null while the field
+     * is empty — there is nothing asked yet.
+     */
+    val libraryResults: StateFlow<UiState<List<Song>>?> = combine(_librarySongs, _query) { state, query ->
+        val term = query.trim()
+        when {
+            term.isEmpty() -> null
+            state is UiState.Success -> UiState.Success(state.data.filter { it.matchesSearch(term) })
+            else -> state
+        }
+    }.flowOn(Dispatchers.Default)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // The search pipeline's own state. Declared here, above [init], because
     // that is where the collector is started from and a property declared
@@ -1762,6 +1791,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         // Reset the submission gate so typeahead pipelines fire again.
         searchSubmitted = false
+        // The Library source answers from the device on every keystroke (see
+        // [libraryResults]); YouTube's completions have nothing to add to it.
+        if (_searchSource.value == SearchSource.LIBRARY) return
         // While typing, surface text completions — the pipeline already feeds
         // them through [suggestRequests] and publishes results via typeahead.
         suggestRequests.tryEmit(newValue)
@@ -1773,11 +1805,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun submitSearch() {
         val q = _query.value.trim()
-        if (q.isEmpty()) return
+        if (q.isEmpty() || _searchSource.value == SearchSource.LIBRARY) return
         searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
         runSearch()
+    }
+
+    /**
+     * Points the Search tab at YouTube Music or at the Local Music folder.
+     *
+     * The query carries over: whatever is in the field is answered again by
+     * the source just picked, so flipping is a way to compare the two rather
+     * than a reset.
+     */
+    fun setSearchSource(source: SearchSource) {
+        if (_searchSource.value == source) return
+        _searchSource.value = source
+        _suggestions.value = emptyList()
+        _typeaheadResults.value = emptyList()
+        _searchScrollReset.value += 1
+        when (source) {
+            SearchSource.LIBRARY -> loadLibrarySongs()
+            SearchSource.YOUTUBE -> submitSearch()
+        }
+    }
+
+    /**
+     * Reads the Local Music folder for the Library source. Re-read on every
+     * switch to it, so files added since — or a permission granted since —
+     * are in the next answer; the last list stays up meanwhile.
+     */
+    fun loadLibrarySongs() {
+        viewModelScope.launch {
+            val context = getApplication<Application>()
+            _librarySongs.value = if (!LocalMediaRepository.hasStoragePermission(context)) {
+                UiState.Error(text(R.string.storage_required_read))
+            } else {
+                runCatching { LocalMediaRepository.getLocalMusic(context) }.fold(
+                    onSuccess = { songs ->
+                        if (songs.isEmpty()) UiState.Error(text(R.string.no_local_audio_found))
+                        else UiState.Success(songs)
+                    },
+                    onFailure = { UiState.Error(text(R.string.no_local_audio_found)) },
+                )
+            }
+        }
     }
 
     fun onFilterChange(value: SearchFilter) {

@@ -1562,9 +1562,6 @@ private fun ShimmerText(
  * one a listener can carry from track to track; a FLAC's compressed rate
  * cannot, because it says more about how compressible that recording was than
  * about the copy being played.
- *
- * A stream that arrived worse than its source promised gets that stated
- * outright rather than left to be spotted — see [NerdStats.Snapshot.downgraded].
  */
 @Composable
 private fun NerdStats.Snapshot.describe(): String? {
@@ -1582,7 +1579,6 @@ private fun NerdStats.Snapshot.describe(): String? {
                 },
             )
         }
-        if (downgraded) add(stringResource(Res.string.downgraded_from, claimed?.summary.orEmpty()))
     }
     return parts.joinToString(" · ").takeIf { it.isNotEmpty() }
 }

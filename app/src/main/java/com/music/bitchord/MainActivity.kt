@@ -63,6 +63,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Upgrade
@@ -101,6 +102,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
@@ -205,6 +207,7 @@ import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.playback.setQueueDragActive
 import com.music.bitchord.ui.MainViewModel
+import com.music.bitchord.ui.SearchSource
 import com.music.bitchord.ui.components.BottomFadeScrim
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
@@ -227,6 +230,11 @@ import com.music.bitchord.ui.components.MiniPlayer
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
+import com.music.bitchord.ui.screens.SegmentedControl
+import com.music.bitchord.ui.components.SearchField
+import com.music.bitchord.sharedui.resources.Res as SharedRes
+import com.music.bitchord.sharedui.resources.search_hint
+import com.music.bitchord.sharedui.resources.search_library_hint
 import com.music.bitchord.ui.components.TopBarDownloadButton
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.topBarContentPadding
@@ -629,6 +637,7 @@ private fun BitChordApp(
     // Set each time the search tab is tapped, which SearchScreen uses as a
     // signal to focus the input field.
     var searchFocusRequested by remember { mutableStateOf(false) }
+    val searchFieldFocus = remember { FocusRequester() }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
     // Starting radio from the item already playing must not replace that media
@@ -673,6 +682,8 @@ private fun BitChordApp(
     val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
     val libraryState by viewModel.library.collectAsStateWithLifecycle()
     val filter by viewModel.filter.collectAsStateWithLifecycle()
+    val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
+    val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     val signedIn by viewModel.signedIn.collectAsStateWithLifecycle()
     val incomingJamInvite by JamInviteLink.pending.collectAsStateWithLifecycle()
     var activeJamInviteCode by rememberSaveable { mutableStateOf<String?>(null) }
@@ -1843,21 +1854,30 @@ private fun BitChordApp(
     ) { granted ->
         if (granted) {
             viewModel.reloadLocalDetail("local:all")
+            viewModel.loadLibrarySongs()
         } else {
             Toast.makeText(context, context.getString(R.string.storage_required_read), Toast.LENGTH_SHORT).show()
         }
+    }
+    val mediaPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+    // The Search tab's Library source reads the Local Music folder, so it asks
+    // for the same permission opening that folder does.
+    val onSearchSourceChange: (SearchSource) -> Unit = { source ->
+        if (source == SearchSource.LIBRARY && !LocalMediaRepository.hasStoragePermission(context)) {
+            mediaPermissionLauncher.launch(mediaPermission)
+        }
+        viewModel.setSearchSource(source)
     }
     // Shared by the Library tab itself and by a shelf's "Show all" page, so a
     // card opens the same way from either.
     val onLibraryItemClick: (ShelfItem) -> Unit = { item ->
         item.browseId?.let { id ->
             if (id == "local:all" && !LocalMediaRepository.hasStoragePermission(context)) {
-                val perm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    Manifest.permission.READ_MEDIA_AUDIO
-                } else {
-                    Manifest.permission.READ_EXTERNAL_STORAGE
-                }
-                mediaPermissionLauncher.launch(perm)
+                mediaPermissionLauncher.launch(mediaPermission)
             }
             // Left set rather than cleared: a card opened from a shelf's
             // "Show all" page stacks a detail page over it exactly as one
@@ -3071,6 +3091,35 @@ private fun BitChordApp(
                             onTypeaheadLongPress = openSongMenu,
                             contentPadding = listPadding,
                             topPadding = topBarContentPadding(),
+                            // The field is in the top bar; see the bar's accessory.
+                            showField = false,
+                            // The settings page's own two-state selector, so the
+                            // app has one look for "pick one of these".
+                            sourceSwitcher = {
+                                SegmentedControl(
+                                    options = listOf(
+                                        stringResource(R.string.search_source_youtube),
+                                        stringResource(R.string.library),
+                                    ),
+                                    selectedIndex = searchSource.ordinal,
+                                    onSelect = { index -> onSearchSourceChange(SearchSource.entries[index]) },
+                                )
+                            },
+                            searchingLibrary = searchSource == SearchSource.LIBRARY,
+                            libraryResults = libraryResults,
+                            // The same queue opening the Local Music folder and
+                            // tapping the row there would give.
+                            onLibrarySongClick = { songs, index ->
+                                playFrom(
+                                    songs,
+                                    index,
+                                    QueueSource(
+                                        context.getString(R.string.local_music),
+                                        PlaybackSourceType.BROWSE,
+                                        "local:all",
+                                    ),
+                                )
+                            },
                         )
                         else -> LibraryScreen(
                             signedIn = signedIn,
@@ -3210,6 +3259,40 @@ private fun BitChordApp(
                         else -> null
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
+                    // Only on the Search tab itself, not on anything pushed over it.
+                    accessory = if (
+                        selectedTab == TAB_SEARCH && detail == null && selectedMoodGenre == null &&
+                        libraryShowAll == null && !showSettings && !showAccountScrobbling &&
+                        !showSources && !showListenTogether && !showEqualizer && !showDiscord &&
+                        !showHistory && !showReplay
+                    ) {
+                        {
+                            // The search field lives up here in the bar, beside the
+                            // account photo, so it answers the nav bar's Search tap
+                            // itself: focus and keyboard, the way the page used to.
+                            val keyboard = LocalSoftwareKeyboardController.current
+                            LaunchedEffect(searchFocusRequested) {
+                                if (searchFocusRequested) {
+                                    searchFieldFocus.requestFocus()
+                                    keyboard?.show()
+                                    searchFocusRequested = false
+                                }
+                            }
+                            SearchField(
+                                query = query,
+                                onQueryChange = viewModel::onQueryChange,
+                                onSubmit = viewModel::submitSearch,
+                                focusRequester = searchFieldFocus,
+                                placeholder = org.jetbrains.compose.resources.stringResource(
+                                    if (searchSource == SearchSource.LIBRARY) {
+                                        SharedRes.string.search_library_hint
+                                    } else {
+                                        SharedRes.string.search_hint
+                                    },
+                                ),
+                            )
+                        }
+                    } else null,
                     actions = {
                         // This is intentionally scoped to Listen together: the
                         // round-trip time is meaningful while coordinating a
@@ -3357,6 +3440,31 @@ private fun BitChordApp(
                                     Icon(
                                         Icons.Rounded.Sort,
                                         contentDescription = stringResource(R.string.sort_songs),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            // Left of the account photo, on an artist page: iOS's
+                            // share glyph, sending the artist's channel link — the
+                            // one YouTube Music itself shares for an artist.
+                            if (detail != null && !isLocalDetail && detail.type == BrowseType.ARTIST &&
+                                detailActiveShelf == null && detail.browseId.startsWith("UC")
+                            ) {
+                                IconButton(
+                                    onClick = {
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(
+                                                Intent.EXTRA_TEXT,
+                                                "https://music.youtube.com/channel/${detail.browseId}",
+                                            )
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, detail.title))
+                                    },
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.IosShare,
+                                        contentDescription = stringResource(R.string.share),
                                         tint = MaterialTheme.colorScheme.onSurface,
                                     )
                                 }

@@ -29,6 +29,7 @@
     <string name="downloads">Downloads</string>
     <string name="downloaded_songs">Downloaded songs</string>
     <string name="local_music">Local Music</string>
+    <string name="search_source_youtube" translatable="false">YouTube</string>
     <string name="audio_files_on_device">Audio files on device</string>
     <string name="on_device">On Device</string>
     <string name="playlists">Playlists</string>

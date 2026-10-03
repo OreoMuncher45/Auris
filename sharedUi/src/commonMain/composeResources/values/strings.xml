@@ -158,6 +158,9 @@
     <string name="search">Search</string>
     <string name="search_empty">Search millions of songs on YouTube Music.</string>
     <string name="search_hint">Artists, Songs, Lyrics and More</string>
+    <string name="search_library_empty">Search the songs in your Local Music folder.</string>
+    <string name="search_library_hint">Songs, Artists and Albums</string>
+    <string name="search_library_no_results">Nothing in Local Music matches “%1$s”.</string>
     <string name="selected">Selected</string>
     <string name="share">Share</string>
     <string name="shelf_artists_on_the_rise">Artists on the rise</string>
