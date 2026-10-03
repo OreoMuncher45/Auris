@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.model.Song
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -27,11 +28,11 @@ class DesktopPersistence {
     fun saveDislikedIds(ids: Set<String>) = writeLines(KEY_DISLIKED_IDS, ids.toList())
 
     /** Every lyric database, in the order they are asked. */
-    fun lyricsSourceOrder(): List<String> {
-        val known = DesktopLyricsClient.sources.map { it.name }
-        val stored = readNames(DesktopLyricsClient.KEY_LYRICS_ORDER).filter { it in known }
-        return stored + known.filterNot { it in stored }
-    }
+    fun lyricsSourceOrder(): List<String> =
+        // The phone's rule for a saved order meeting a newer build: hidden sources drop out, a new
+        // one slots in beside its declared neighbour.
+        LyricsSource.ordered(readNames(DesktopLyricsClient.KEY_LYRICS_ORDER).mapNotNull(::lyricsSourceNamed))
+            .map { it.label }
 
     fun saveLyricsSourceOrder(names: List<String>) =
         saveString(DesktopLyricsClient.KEY_LYRICS_ORDER, names.joinToString(","))

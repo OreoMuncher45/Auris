@@ -103,6 +103,13 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.border
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.compose.AsyncImagePainter
+import coil3.request.ImageRequest
+import androidx.compose.runtime.mutableIntStateOf
+import kotlinx.coroutines.delay
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import com.music.bitchord.data.canvas.AppleArtistArt
 import com.music.bitchord.data.canvas.AppleArtistArtRepository
 import com.music.bitchord.data.canvas.keyColors
@@ -206,6 +213,9 @@ private val ARTIST_ACTION_GAP = 24.dp
 /** The title logo's widest share of the page, and tallest share of the photo. */
 private const val ARTIST_LOGO_WIDTH = 0.82f
 private const val ARTIST_LOGO_MAX_HEIGHT = 0.30f
+
+private const val LOGO_RETRIES = 2
+private const val LOGO_RETRY_DELAY_MS = 800L
 
 private val CREDIT_SEPARATOR = Regex(""",\s|\s&\s|\s(?:x|and|feat\.?|ft\.?|with)\s""", RegexOption.IGNORE_CASE)
 
@@ -1027,27 +1037,63 @@ private fun ArtistHeader(
     artHeight: Dp,
     appleArt: AppleArtistArt?,
 ) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth()) {
         Spacer(Modifier.fillMaxWidth().height(artHeight + HEADER_DROP - ARTIST_HEADER_LIFT))
-        if (appleArt?.logoUrl != null) {
+        val logoUrl = appleArt?.logoUrl
+        // Whether the logo has actually been drawn. Until it has — a first fetch
+        // of an Apple logo is a few hundred KB the CDN may still be resizing — the
+        // name stands in for it, so the header is never left with nothing in it.
+        var logoShown by remember(logoUrl) { mutableStateOf(false) }
+        if (appleArt != null && logoUrl != null) {
+            val context = LocalPlatformContext.current
+            var attempt by remember(logoUrl) { mutableIntStateOf(0) }
+            var failed by remember(logoUrl) { mutableStateOf(false) }
+            // Remembered, and at the size the URL already names: nothing about the
+            // load waits on layout to decide how big to decode, and a recomposition
+            // can't hand Coil a new request that cancels the one in flight.
+            val request = remember(logoUrl, attempt) {
+                ImageRequest.Builder(context).data(logoUrl).size(coil3.size.Size.ORIGINAL).build()
+            }
+            // A dropped fetch gets two more tries before the name is left in place.
+            LaunchedEffect(failed) {
+                if (failed && attempt < LOGO_RETRIES) {
+                    delay(LOGO_RETRY_DELAY_MS)
+                    failed = false
+                    attempt++
+                }
+            }
             // Apple's own title logo stands in for the name, laid over its photo.
             // Capped in height as well as width: a logo set on two or three
             // lines is nearly square, and by width alone it would swallow the
             // photograph it is meant to sit on.
             val aspect = appleArt.logoAspect.coerceIn(0.4f, 6f)
-            val logoWidth = maxWidth * ARTIST_LOGO_WIDTH
-            val logoHeight = minOf(logoWidth / aspect, artHeight * ARTIST_LOGO_MAX_HEIGHT)
+            val maxLogoHeight = artHeight * ARTIST_LOGO_MAX_HEIGHT
             AsyncImage(
-                model = appleArt.logoUrl,
+                model = request,
                 contentDescription = page.title,
                 contentScale = ContentScale.Fit,
+                onState = { state ->
+                    when (state) {
+                        is AsyncImagePainter.State.Success -> logoShown = true
+                        is AsyncImagePainter.State.Error -> failed = true
+                        else -> Unit
+                    }
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(top = 14.dp, bottom = 20.dp)
-                    .height(logoHeight)
-                    .aspectRatio(aspect),
+                    // Sized from the incoming width in layout rather than through a
+                    // BoxWithConstraints, which would subcompose the image.
+                    .layout { measurable, constraints ->
+                        val widest = constraints.maxWidth * ARTIST_LOGO_WIDTH
+                        val height = minOf(widest / aspect, maxLogoHeight.toPx()).roundToInt()
+                        val width = (height * aspect).roundToInt()
+                        val placeable = measurable.measure(Constraints.fixed(width, height))
+                        layout(width, height) { placeable.place(0, 0) }
+                    },
             )
-        } else Text(
+        }
+        if (!logoShown) Text(
             text = page.title,
             style = MaterialTheme.typography.displayLarge,
             color = palette.onBackground,

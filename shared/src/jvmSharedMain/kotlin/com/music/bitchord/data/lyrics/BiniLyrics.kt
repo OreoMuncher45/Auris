@@ -79,10 +79,17 @@ object BiniLyrics {
         response.results?.firstOrNull()
     }
 
-    /** The document a search already found, fetched and parsed. */
-    suspend fun lyricsFor(hit: Hit): Match? = withContext(Dispatchers.IO) {
+    /**
+     * The document a search already found, fetched and parsed. These are
+     * [LrcRed]'s own files now, so [LyricsRepository] passes a [get] that
+     * shares the one download between the two.
+     */
+    suspend fun lyricsFor(
+        hit: Hit,
+        get: suspend (String) -> String? = { lyricsGet(it) },
+    ): Match? = withContext(Dispatchers.IO) {
         val document = hit.lyricsUrl?.takeIf { it.isNotBlank() } ?: return@withContext null
-        val ttml = lyricsGet(document) ?: return@withContext null
+        val ttml = get(document) ?: return@withContext null
         val lines = TtmlLyrics.parse(ttml).takeIf { it.isNotEmpty() } ?: return@withContext null
         Match(hit.isrc?.takeIf { it.isNotBlank() }, lines)
     }
@@ -93,7 +100,8 @@ object BiniLyrics {
         durationMs: Long,
         album: String? = null,
         isrc: String? = null,
-    ): Match? = identify(title, artist, durationMs, album, isrc)?.let { lyricsFor(it) }
+        get: suspend (String) -> String? = { lyricsGet(it) },
+    ): Match? = identify(title, artist, durationMs, album, isrc)?.let { lyricsFor(it, get) }
 
     @Serializable
     data class Response(

@@ -47,6 +47,8 @@ import androidx.compose.ui.Modifier
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -100,6 +102,12 @@ private const val LANDSCAPE_PANE_FADE_OUT_MS = 140
 
 /** Which of its three things the player's content column is showing. */
 internal enum class PlayerPane { Main, Lyrics, Queue }
+
+/** The landscape sleeve's corner radius, at rest. */
+internal val LANDSCAPE_ART_CORNER = 10.dp
+
+/** The landscape sleeve's shape at rest, for a caller with no docking to do. */
+private val LandscapeArtShape = RoundedCornerShape(LANDSCAPE_ART_CORNER)
 
 /** Room above the landscape columns for the sheet's drag handle. */
 private val LANDSCAPE_HANDLE_STRIP = 24.dp
@@ -270,16 +278,38 @@ internal fun LandscapeArtwork(
     isPlaying: Boolean,
     onCanvasRenderedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    /** Halts the clip for a transition — see [CanvasArtworkPlayer]'s own. */
+    pausedForTransition: Boolean = false,
+    /**
+     * The sleeve's shape, asked for each frame: its corner rounds off into the
+     * mini player's cover's as the player docks into it.
+     */
+    sleeveShape: () -> Shape = { LandscapeArtShape },
+    /** How much of the sleeve's shadow is cast, 1 at rest. */
+    shadowFraction: () -> Float = { 1f },
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
+    val casts = artLoaded || canvasRendered
     Box(modifier = modifier) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // What `.shadow` and then `.clip` laid down, asked for in the
+                // layers' own blocks so a docking player can move them
+                // without recomposing the sleeve.
+                //
                 // Only cast once there is a picture: on the flat placeholder
                 // tile a shadow reads as a second, darker square.
-                .shadow(if (artLoaded || canvasRendered) 14.dp else 0.dp, RoundedCornerShape(10.dp))
-                .clip(RoundedCornerShape(10.dp))
+                .graphicsLayer {
+                    shadowElevation = if (casts) 14.dp.toPx() * shadowFraction() else 0f
+                    shape = sleeveShape()
+                    // As `.shadow` did: it clips only when it casts.
+                    clip = casts
+                }
+                .graphicsLayer {
+                    shape = sleeveShape()
+                    clip = true
+                }
                 .background(Color.Black.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center,
         ) {
@@ -306,6 +336,7 @@ internal fun LandscapeArtwork(
                 CanvasArtworkPlayer(
                     canvas = clip,
                     isPlaying = isPlaying,
+                    pausedForTransition = pausedForTransition,
                     onRenderedChanged = onCanvasRenderedChange,
                     modifier = Modifier.fillMaxSize(),
                 )

@@ -71,26 +71,19 @@ fun libraryLinks(): List<LibraryLink> {
             stringResource(R.string.cached_songs_subtitle),
             CACHE_FOLDER_BROWSE_ID,
         ).takeIf { showCacheFolder },
+        // Only once set up in Sources; unconfigured, they'd just be dead ends.
         link(
             Icons.Rounded.Cloud,
             stringResource(R.string.webdav),
-            if (webdavConfigured.isBlank()) {
-                stringResource(R.string.webdav_not_configured)
-            } else {
-                stringResource(R.string.webdav_subtitle)
-            },
+            stringResource(R.string.webdav_subtitle),
             com.music.bitchord.data.webdav.WebDavConfig.BROWSE_ID,
-        ),
+        ).takeIf { webdavConfigured.isNotBlank() },
         link(
             Icons.Rounded.Lan,
             stringResource(R.string.smb),
-            if (smbHost.isBlank() || smbShare.isBlank()) {
-                stringResource(R.string.smb_not_configured)
-            } else {
-                stringResource(R.string.smb_subtitle)
-            },
+            stringResource(R.string.smb_subtitle),
             com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
-        ),
+        ).takeIf { smbHost.isNotBlank() && smbShare.isNotBlank() },
     )
 }
 

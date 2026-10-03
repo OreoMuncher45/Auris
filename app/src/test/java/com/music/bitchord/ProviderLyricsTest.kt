@@ -20,16 +20,43 @@ import org.junit.Test
 class ProviderLyricsTest {
 
     @Test
-    fun `the six imported providers are exposed`() {
-        assertEquals(16, LyricsSource.entries.size)
-        assertTrue(LyricsSource.entries.containsAll(listOf(
+    fun `the imported providers are exposed`() {
+        assertEquals(17, LyricsSource.entries.size)
+        assertTrue(LyricsSource.offered.containsAll(listOf(
             LyricsSource.BETTER_LYRICS_PORTATO,
-            LyricsSource.MEGALOBIZ,
             LyricsSource.PAXSENIX_SPOTIFY,
             LyricsSource.PAXSENIX_MUSIXMATCH,
             LyricsSource.YOUTUBE_TRANSCRIPT,
             LyricsSource.YOUTUBE_MUSIC,
         )))
+    }
+
+    @Test
+    fun `hidden providers are kept but never offered`() {
+        assertTrue(LyricsSource.entries.containsAll(listOf(LyricsSource.SIMP_MUSIC, LyricsSource.MEGALOBIZ)))
+        assertTrue(LyricsSource.offered.none { it.hidden })
+        assertEquals(LyricsSource.LRC_RED, LyricsSource.offered.first())
+    }
+
+    @Test
+    fun `a saved order drops hidden sources and puts a new first source on top`() {
+        // What a previous build saved: every source it had, LRCLIB dragged to
+        // the top, and the two now-hidden ones still in it.
+        val saved = listOf(LyricsSource.LRCLIB) +
+            (LyricsSource.entries - LyricsSource.LRC_RED - LyricsSource.LRCLIB)
+        val ordered = LyricsSource.ordered(saved)
+        assertEquals(
+            listOf(LyricsSource.LRC_RED, LyricsSource.LRCLIB, LyricsSource.BINI_LYRICS),
+            ordered.take(3),
+        )
+        assertEquals(LyricsSource.offered.toSet(), ordered.toSet())
+        assertEquals(ordered.size, ordered.distinct().size)
+    }
+
+    @Test
+    fun `a new source lands right after its declared neighbour`() {
+        val saved = LyricsSource.offered - LyricsSource.BETTER_LYRICS_PORTATO
+        assertEquals(LyricsSource.offered, LyricsSource.ordered(saved))
     }
 
     @Test

@@ -114,6 +114,13 @@ class PlayerSheetMotion(
 
     private var settle: Job? = null
 
+    /**
+     * Whether the player is already on its way down. A second close — back
+     * pressed twice, say — restarted the slide from a standstill where it
+     * stood, a visible stall halfway home.
+     */
+    private var closing = false
+
     private fun travel(): Float =
         dock.sheetTravel.takeIf { it > 0f } ?: (windowInfo?.containerSize?.height ?: 0).toFloat()
 
@@ -164,6 +171,7 @@ class PlayerSheetMotion(
     fun open() {
         if (shown()) return
         settle?.cancel()
+        closing = false
         val travel = travel()
         held = travel
         // Raised already open: [held] is what slides it up.
@@ -211,7 +219,8 @@ class PlayerSheetMotion(
 
     /** From the sheet: whatever asked for it to hide, this is how it goes. */
     fun close() {
-        if (!shown()) return
+        if (!shown() || closing) return
+        closing = true
         quietWindow()
         settle?.cancel()
         val from = position().takeUnless { it.isNaN() } ?: run {
@@ -232,6 +241,7 @@ class PlayerSheetMotion(
             // downward drag on the bar has nothing to pull.
             if (delta >= 0f || shown()) return
             settle?.cancel()
+            closing = false
             held = travel()
             pullStartAt = held
             pullStartNanos = System.nanoTime()
@@ -253,7 +263,10 @@ class PlayerSheetMotion(
         // A flick decides on its own, either way; otherwise it is where the
         // finger left it.
         val open = if (flick) speed < 0f else held < travel / 2f
-        if (!open) quietWindow()
+        if (!open) {
+            closing = true
+            quietWindow()
+        }
         val from = held
         settle = scope.launch {
             // The finger's own speed goes into the spring, so the player
@@ -266,6 +279,7 @@ class PlayerSheetMotion(
 
     /** From the host, once the sheet has left composition. */
     fun onSheetGone() {
+        closing = false
         sheetSampleAt = Float.NaN
         sheetVelocity = 0f
         settle?.cancel()

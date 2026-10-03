@@ -484,17 +484,17 @@ object AppSettings {
     val syncedLyrics = MutableStateFlow(true)
 
     /** The databases [syncedLyrics] may ask. Empty is the same as off. */
-    val lyricsSources = MutableStateFlow(LyricsSource.entries.toSet())
+    val lyricsSources = MutableStateFlow(LyricsSource.offered.toSet())
 
     /**
      * The order [lyricsSources] are asked in — see [LyricsRepository][com.music.bitchord.data.lyrics.LyricsRepository]:
      * every enabled source is asked at once, but a higher-priority one still
      * pending is never preempted by a lower one that happened to answer first.
      * Reordered from Settings, so this is a full permutation of
-     * [LyricsSource.entries] rather than a subset — enabling and ordering are
+     * [LyricsSource.offered] rather than a subset — enabling and ordering are
      * independent choices.
      */
-    val lyricsSourceOrder = MutableStateFlow<List<LyricsSource>>(LyricsSource.entries)
+    val lyricsSourceOrder = MutableStateFlow<List<LyricsSource>>(LyricsSource.offered)
 
     /**
      * Off, the highest-priority source to answer at all is taken as the
@@ -1281,7 +1281,7 @@ object AppSettings {
             // Everything that was on the list this choice was made from, so a
             // later build can tell a source the user turned off from one they
             // have never been shown. See [readLyricsSources].
-            .putString(KEY_LYRICS_SOURCES_SEEN, LyricsSource.entries.joinToString(",") { it.name })
+            .putString(KEY_LYRICS_SOURCES_SEEN, LyricsSource.offered.joinToString(",") { it.name })
             .apply()
     }
 
@@ -1302,12 +1302,12 @@ object AppSettings {
      */
     private fun readLyricsSources(): Set<LyricsSource> {
         val stored = prefs.getString(KEY_LYRICS_SOURCES, null)
-            ?: return LyricsSource.entries.toSet()
+            ?: return LyricsSource.offered.toSet()
         val chosen = stored.split(",").toSources()
         val seen = prefs.getString(KEY_LYRICS_SOURCES_SEEN, null)
             ?.split(",")?.toSources()
             ?: LEGACY_SOURCES
-        return chosen + LyricsSource.entries.filter { it !in seen }
+        return (chosen + LyricsSource.entries.filter { it !in seen }).filterNot { it.hidden }.toSet()
     }
 
     private fun List<String>.toSources(): Set<LyricsSource> =
@@ -1335,17 +1335,18 @@ object AppSettings {
     }
 
     /**
-     * A named source dropped from the stored order — an upgrade reordered
-     * since it was saved — falls out on read; one added since is appended, in
-     * [LyricsSource]'s own declared order, so a fresh install and an upgraded
-     * one agree on where a new source lands until the user says otherwise.
+     * A named source dropped from the stored order — an upgrade removed or
+     * hid it since it was saved — falls out on read; one added since slots in
+     * after its declared neighbour (see [LyricsSource.ordered]), so a fresh
+     * install and an upgraded one agree on where a new source lands until the
+     * user says otherwise.
      */
     private fun readLyricsSourceOrder(): List<LyricsSource> {
         val stored = prefs.getString(KEY_LYRICS_SOURCE_ORDER, null)
-            ?: return LyricsSource.entries
+            ?: return LyricsSource.offered
         val saved = stored.split(",")
             .mapNotNull { name -> LyricsSource.entries.firstOrNull { it.name == name } }
-        return saved + LyricsSource.entries.filter { it !in saved }
+        return LyricsSource.ordered(saved)
     }
 
     fun setPrioritizeSyllableSync(value: Boolean) {
@@ -1366,8 +1367,8 @@ object AppSettings {
      * this is "start over on *which* lyrics", not "turn lyrics off".
      */
     fun resetLyricsSourceSettings() {
-        setLyricsSources(LyricsSource.entries.toSet())
-        setLyricsSourceOrder(LyricsSource.entries)
+        setLyricsSources(LyricsSource.offered.toSet())
+        setLyricsSourceOrder(LyricsSource.offered)
         setPrioritizeSyllableSync(false)
     }
 

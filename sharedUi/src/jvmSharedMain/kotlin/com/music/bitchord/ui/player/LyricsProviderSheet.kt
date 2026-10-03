@@ -61,9 +61,7 @@ internal fun LyricsProviderSheet(
     modifier: Modifier = Modifier,
 ) {
     val savedOrder by PlayerSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
-    val sources = remember(savedOrder) {
-        savedOrder + LyricsSource.entries.filterNot(savedOrder::contains)
-    }
+    val sources = remember(savedOrder) { LyricsSource.ordered(savedOrder) }
     var requestedSource by remember { mutableStateOf<LyricsSource?>(null) }
     LaunchedEffect(currentSource, requestedSource) {
         if (requestedSource != null && currentSource == requestedSource) onDismiss()

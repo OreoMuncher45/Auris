@@ -14,6 +14,13 @@ enum class LyricsSource(
     val detail: String,
     /** Whether it can return per-word timings, or only whole lines. */
     val wordSynced: Boolean,
+    /**
+     * Kept in code but off the list: not shown in Settings or the provider
+     * picker, and never asked — even by someone whose saved choices still name
+     * it. For a host that has stopped answering, where deleting the provider
+     * outright would only mean writing it again if it comes back.
+     */
+    val hidden: Boolean = false,
 ) {
     // Declaration order is the default priority — [AppSettings.lyricsSourceOrder]
     // and [AppSettings.lyricsSources] both fall back to [LyricsSource.entries]
@@ -29,6 +36,15 @@ enum class LyricsSource(
     // reliable hosting — behind them rather than in front, so a track does not
     // wait on a mirror that is down to be told what three other hosts already
     // had.
+    //
+    // [LRC_RED] is ahead of all of them: it is where [BINI_LYRICS] gets its
+    // documents now, so asking it directly is the same Apple timing without
+    // the middleman, and it is the one a dead mirror can't take down with it.
+    LRC_RED(
+        label = "lrc.red",
+        detail = "Apple timings by recording, syllable by syllable",
+        wordSynced = true,
+    ),
     BINI_LYRICS(
         label = "BiniLyrics",
         detail = "The same Apple timings, matched on the recording itself",
@@ -68,6 +84,7 @@ enum class LyricsSource(
         label = "SimpMusic",
         detail = "Matched on the video, so never the wrong edit",
         wordSynced = true,
+        hidden = true,
     ),
     UNISON(
         label = "Unison",
@@ -88,6 +105,7 @@ enum class LyricsSource(
         label = "Megalobiz",
         detail = "Community-made, whole-line LRC",
         wordSynced = false,
+        hidden = true,
     ),
     KUGOU(
         label = "KuGou",
@@ -109,4 +127,28 @@ enum class LyricsSource(
         detail = "Plain text fallback, massive web catalogue",
         wordSynced = false,
     ),
+    ;
+
+    companion object {
+        /** Every source a listener can see and choose, in default priority. */
+        val offered: List<LyricsSource> = entries.filterNot { it.hidden }
+
+        /**
+         * A saved order brought up to date with this build: hidden sources
+         * dropped, and any source added since it was saved slotted in right
+         * after the one it is declared behind — at the very top if nothing is
+         * declared ahead of it. So a new source lands where a fresh install
+         * puts it relative to its neighbours, rather than under every
+         * line-only fallback where it would never get to answer.
+         */
+        fun ordered(saved: List<LyricsSource>): List<LyricsSource> {
+            val result = saved.filter { it in offered }.distinct().toMutableList()
+            offered.forEachIndexed { index, source ->
+                if (source in result) return@forEachIndexed
+                val before = offered.subList(0, index).lastOrNull { it in result }
+                result.add(before?.let { result.indexOf(it) + 1 } ?: 0, source)
+            }
+            return result
+        }
+    }
 }

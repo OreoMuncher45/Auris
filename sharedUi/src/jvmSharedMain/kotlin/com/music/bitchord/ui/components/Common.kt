@@ -652,22 +652,28 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
         )
         height
     }
-    Row(
+    // The plate is a fixed square so only the bars move, never the box around them.
+    Box(
         modifier = modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(Color.Black.copy(alpha = 0.52f))
-            .padding(horizontal = 5.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(2.dp),
-        verticalAlignment = Alignment.Bottom,
+            .size(24.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(Color.Black.copy(alpha = 0.52f)),
+        contentAlignment = Alignment.Center,
     ) {
-        heights.forEach { height ->
-            Box(
-                Modifier
-                    .width(3.dp)
-                    .height(14.dp * height)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White),
-            )
+        Row(
+            modifier = Modifier.height(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            verticalAlignment = Alignment.Bottom,
+        ) {
+            heights.forEach { height ->
+                Box(
+                    Modifier
+                        .width(3.dp)
+                        .height(14.dp * height)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.White),
+                )
+            }
         }
     }
 }

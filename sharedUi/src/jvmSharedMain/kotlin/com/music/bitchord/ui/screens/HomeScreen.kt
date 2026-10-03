@@ -88,6 +88,9 @@ import com.music.bitchord.ui.components.trackColumnWidth
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
 
+/** How far the Listen now heading and feed sit above the shared top inset. */
+private val HOME_TITLE_LIFT = 28.dp
+
 private const val RECENTS_TITLE = "Recents"
 private const val RECENT_TRACKS_PER_COLUMN = 4
 
@@ -145,7 +148,16 @@ fun HomeScreen(
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = contentPadding,
+            // The heading sits higher than the other tabs' first row: pull the
+            // whole feed up by [HOME_TITLE_LIFT] with it.
+            contentPadding = if (title != null) {
+                PaddingValues(
+                    top = (contentPadding.calculateTopPadding() - HOME_TITLE_LIFT).coerceAtLeast(0.dp),
+                    bottom = contentPadding.calculateBottomPadding(),
+                )
+            } else {
+                contentPadding
+            },
         ) {
             if (title != null) {
                 item { HomeTitle(title) }

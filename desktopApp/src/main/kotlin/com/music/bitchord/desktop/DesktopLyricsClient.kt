@@ -43,7 +43,7 @@ object DesktopLyricsClient {
     internal data class Source(val name: String, val detail: String, val wordSynced: Boolean)
 
     /** Every provider the phone has, in the order it asks them out of the box. */
-    internal val sources: List<Source> = LyricsSource.entries.map { Source(it.label, it.detail, it.wordSynced) }
+    internal val sources: List<Source> = LyricsSource.offered.map { Source(it.label, it.detail, it.wordSynced) }
 
     /** The sources that will actually be asked, in the order they are asked. */
     internal fun enabledSources(order: List<String>, enabled: Set<String>): List<String> =

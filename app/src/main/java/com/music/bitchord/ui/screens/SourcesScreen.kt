@@ -1,7 +1,12 @@
 package com.music.bitchord.ui.screens
 
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -670,14 +675,43 @@ private fun BluetoothCodecPermissionRow() {
     val context = LocalContext.current
     val permission = "android.permission.BLUETOOTH_CONNECT"
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-    if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) return
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) LosslessOutput.refresh()
+    fun isGranted() =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+    var granted by remember { mutableStateOf(isGranted()) }
+    var denied by remember { mutableStateOf(false) }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        granted = ok
+        denied = !ok
+        if (ok) LosslessOutput.refresh()
     }
+    // Back from system Settings, where it may have been switched on.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val now = isGranted()
+        if (now && !granted) LosslessOutput.refresh()
+        granted = now
+        if (now) denied = false
+    }
+    // Asked as soon as the screen shows the shut-out it would fix, and again
+    // on every later visit, since this row is composed afresh each time. After
+    // a second refusal Android answers without a dialog, which lands in
+    // [denied] and the Settings prompt below.
+    LaunchedEffect(Unit) {
+        if (!isGranted()) ask.launch(permission)
+    }
+    if (granted) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { ask.launch(permission) }
+            .clickable {
+                if (denied) {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.fromParts("package", context.packageName, null)),
+                    )
+                } else {
+                    ask.launch(permission)
+                }
+            }
             .heightIn(min = 60.dp)
             .padding(horizontal = ROW_INSET, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -686,18 +720,22 @@ private fun BluetoothCodecPermissionRow() {
         Icon(
             imageVector = Icons.Rounded.Bluetooth,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+            tint = if (denied) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(ICON_SIZE),
         )
         Spacer(Modifier.width(ICON_GAP))
         Column(Modifier.weight(1f)) {
             Text(
-                text = stringResource(R.string.lossless_output_permission),
+                text = stringResource(
+                    if (denied) R.string.lossless_output_permission_denied else R.string.lossless_output_permission,
+                ),
                 style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.primary,
+                color = if (denied) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
             )
             Text(
-                text = stringResource(R.string.lossless_output_permission_detail),
+                text = stringResource(
+                    if (denied) R.string.lossless_output_permission_denied_detail else R.string.lossless_output_permission_detail,
+                ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,

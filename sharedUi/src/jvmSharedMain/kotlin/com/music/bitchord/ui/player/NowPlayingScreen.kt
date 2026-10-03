@@ -21,6 +21,7 @@ import kotlinx.coroutines.channels.Channel
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
@@ -421,7 +422,23 @@ private class DockFrame {
     /** Where the sleeve's pixels land in the player, for drawing it on top. */
     var portalLeft = 0f
     var portalTop = 0f
+    /**
+     * How much smaller than laid out the sleeve is drawn there. Always 1 for
+     * the portrait sleeve, which is re-laid out at its size each frame; the
+     * landscape one keeps its layout and is scaled down onto the cover.
+     */
+    var portalScale = 1f
+    /** The player itself, for placing the landscape sleeve within it. */
+    var host: LayoutCoordinates? = null
+    /** The landscape sleeve, as last placed. */
+    var landscapeArt: LayoutCoordinates? = null
 }
+
+/**
+ * One frame of the landscape sleeve's trip to the mini player: where it is
+ * drawn in the player, and how small. See `landscapeDockPose`.
+ */
+private class LandscapeDockPose(val left: Float, val top: Float, val scale: Float)
 
 /** The placeholder tile's corners — one shape, not a new one every frame it moves. */
 private val TileShape = RoundedCornerShape(8.dp)
@@ -496,6 +513,8 @@ private const val LYRICS_CONTROLS_IDLE_MS = 5_000L
 private const val SPOTIFY_CANVAS_CONTROLS_IDLE_MS = 5_000L
 /** One shared travel time keeps the deck, credits and stats moving as a unit. */
 private const val SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS = 420
+/** The deck's fade back in on returning from lyrics or the queue. */
+private const val PLAYER_DECK_FADE_IN_MS = 700
 /** Shared top-only scrim transition for the Canvas lower deck. */
 private const val SPOTIFY_DECK_TOP_FADE_FRACTION = 0.28f
 
@@ -529,26 +548,50 @@ private fun playerDeckSlideOut() = slideOutVertically(
  * weighted player/panel above it consumes the remainder, the deck's top and
  * everything drawn from it move together. The subtree is removed only after
  * the exit reaches zero, retaining neither an invisible player nor a duplicate.
+ *
+ * [fadeIn], read at the moment [visible] turns true, reveals the deck at its
+ * full height at once and fades it up instead. Returning to the main player
+ * with the deck stood down, the sleeve sized itself against the deck's missing
+ * height and was then squeezed as the deck slid up under it — the artwork
+ * swelling to fill the screen and shrinking back over one 420ms trip.
  */
 @Composable
 private fun SlidingPlayerDeck(
     visible: Boolean,
     reveal: Animatable<Float, AnimationVector1D>,
     modifier: Modifier = Modifier,
+    fadeIn: () -> Boolean = { false },
     content: @Composable () -> Unit,
 ) {
     var mounted by remember { mutableStateOf(visible) }
+    val alpha = remember { Animatable(1f) }
 
     LaunchedEffect(visible) {
         if (visible) {
-            mounted = true
-            reveal.animateTo(
-                1f,
-                tween(
-                    SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
-                    easing = FastOutSlowInEasing,
-                ),
-            )
+            if (fadeIn() && reveal.value < 1f) {
+                alpha.snapTo(0f)
+                reveal.snapTo(1f)
+                mounted = true
+                // Slower than the slide, and linear: on FastOutSlowIn the deck
+                // was most of the way up within a few frames and read as
+                // simply being there.
+                alpha.animateTo(
+                    1f,
+                    tween(PLAYER_DECK_FADE_IN_MS, easing = LinearEasing),
+                )
+            } else {
+                // Hidden part-way through a fade: the slide starts from
+                // wherever the height is, with the pixels whole again.
+                alpha.snapTo(1f)
+                mounted = true
+                reveal.animateTo(
+                    1f,
+                    tween(
+                        SPOTIFY_CANVAS_CONTROLS_ANIMATION_MS,
+                        easing = FastOutSlowInEasing,
+                    ),
+                )
+            }
         } else {
             reveal.animateTo(
                 0f,
@@ -563,17 +606,19 @@ private fun SlidingPlayerDeck(
 
     if (mounted) {
         Box(
-            modifier = modifier.layout { measurable, constraints ->
-                val placeable = measurable.measure(constraints.copy(minHeight = 0))
-                val animatedHeight = (placeable.height * reveal.value)
-                    .roundToInt()
-                    .coerceIn(constraints.minHeight, constraints.maxHeight)
-                layout(placeable.width, animatedHeight) {
-                    // No second translation: the weighted sibling above moves
-                    // this component's origin as its reported height changes.
-                    placeable.placeRelative(0, 0)
-                }
-            },
+            modifier = modifier
+                .graphicsLayer { this.alpha = alpha.value }
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                    val animatedHeight = (placeable.height * reveal.value)
+                        .roundToInt()
+                        .coerceIn(constraints.minHeight, constraints.maxHeight)
+                    layout(placeable.width, animatedHeight) {
+                        // No second translation: the weighted sibling above moves
+                        // this component's origin as its reported height changes.
+                        placeable.placeRelative(0, 0)
+                    }
+                },
         ) {
             content()
         }
@@ -1551,6 +1596,104 @@ fun NowPlayingScreen(
         }
     }
 
+    // Docking into the mini player — see [PlayerDock]. Both shapes of the
+    // player take part: the portrait sleeve morphs into the cover (see the
+    // sleeve), the landscape one is carried and scaled onto it (see
+    // [landscapeDockPose]).
+    val dock = LocalPlayerDock.current
+    if (dock != null) {
+        // Attached on first placement below rather than here: until then the
+        // sheet's window may not have drawn anything, and the mini player's
+        // cover is the only artwork on screen.
+        DisposableEffect(dock) {
+            onDispose { dock.attached = false }
+        }
+    }
+    val dockFrame = remember { DockFrame() }
+    // 1 with the player fully open, falling to 0 as the sheet reaches the mini
+    // player. Held at 1 — the player exactly as it always was — with no dock,
+    // no cover to dock into, or before the sheet's first placement has told
+    // this where on screen it is.
+    //
+    // The sheet's fraction is read first and always, whatever comes of it: the
+    // layout and draw blocks calling this are re-run only for the state they
+    // read, and one that bailed out before reading it would never hear the
+    // sheet move.
+    val dockT: () -> Float = {
+        if (dock == null) {
+            1f
+        } else {
+            val open = dock.openFraction()
+            if (dockFrame.anchor != null && dock.hasMiniArt()) open else 1f
+        }
+    }
+    val docking: () -> Boolean = { dockT() < 1f }
+    // The same, for composition: derived, so it recomposes the player twice a
+    // trip — as the sheet leaves fully open and as it gets back — rather than
+    // on each frame between.
+    //
+    // What it is for: a clip decoding behind the player while the artwork is
+    // flying is work nobody can see — the player is fading out round it — and
+    // it was costing frames of exactly the movement the eye is on. Paused for
+    // the trip, as for the collapse into the lyrics or the queue; a paused
+    // clip keeps its last frame, so nothing blinks.
+    val dockMoving by remember { derivedStateOf { docking() } }
+    // The rest of the player gets out of the way a little ahead of the artwork,
+    // so the cover lands on the bar rather than on a ghost of the player.
+    val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
+    // The sleeve, drawn over the faded player while it docks — see the sleeve.
+    val sleeveLayer = rememberGraphicsLayer()
+
+    // The player's own end of the docking, for whichever shape it takes: where
+    // it sits on screen, the fade, and the artwork drawn over that fade.
+    val dockHost: Modifier = Modifier
+        .then(
+            if (dock != null) {
+                Modifier.onGloballyPositioned { coordinates ->
+                    dockFrame.host = coordinates
+                    // Where the player would be fully open, on screen: its
+                    // position now, less the sheet's offset that placed it
+                    // there. Constant for the life of the sheet, and that
+                    // plus the offset of any later frame is where the
+                    // player is in that frame.
+                    //
+                    // Measured once, and again only if the player's size
+                    // changes: this is called on every frame the sheet
+                    // moves, with the same answer each time. Measuring it
+                    // each time also walked the artwork back and forth by a
+                    // pixel, the sheet rounding its offset its own way.
+                    if (dockFrame.anchor != null && dockFrame.anchorFor == coordinates.size) {
+                        return@onGloballyPositioned
+                    }
+                    val offset = dock.offset() ?: return@onGloballyPositioned
+                    dockFrame.anchorFor = coordinates.size
+                    dockFrame.anchor = coordinates.positionOnScreen() - Offset(0f, offset.toInt().toFloat())
+                    if (!dock.attached) dock.attached = true
+                }
+            } else {
+                Modifier
+            },
+        )
+        // Outside the fade below, so the artwork is the one thing on the
+        // player that doesn't fade on its way to the bar. Drawn on top of
+        // everything while it travels, as the one thing still moving.
+        .drawWithContent {
+            drawContent()
+            if (docking()) {
+                translate(dockFrame.portalLeft, dockFrame.portalTop) {
+                    val portalScale = dockFrame.portalScale
+                    scale(portalScale, portalScale, pivot = Offset.Zero) { drawLayer(sleeveLayer) }
+                }
+            }
+        }
+        // Never quite zero while docking. A layer at alpha 0 is skipped
+        // outright, children and all — and the sleeve records itself for
+        // the draw above from inside it, so for the last stretch of the
+        // way home the cover went on being drawn from a stale recording,
+        // bigger and higher than the bar's. One step of 255 is nothing to
+        // look at and keeps the subtree drawing.
+        .graphicsLayer { alpha = if (docking()) dockFade().coerceAtLeast(DOCK_FADE_FLOOR) else 1f }
+
     if (landscape) {
         // Paused always wins outright over a scrub in progress — see
         // [ARTWORK_PAUSE_SHRINK_SCALE].
@@ -1567,7 +1710,52 @@ fun NowPlayingScreen(
         val transitionWindow by PlayerSettings.smartTransitionWindow.collectAsStateWithLifecycle()
         val panelOpen = lyricsOpen || queueOpen
 
-        Box(modifier = modifier.fillMaxSize()) {
+        // Where the sleeve is drawn this frame on its way to or from the mini
+        // player's cover, or null when it can't be worked out.
+        //
+        // Unlike the portrait sleeve, this one keeps its layout and is carried:
+        // it is square and so is the cover, so a move and a scale take it the
+        // whole way, with nothing about the picture's crop to re-lay out. It
+        // rides as much of the sheet's travel as it can without passing the
+        // cover — the same share, for the same reason, as the portrait
+        // sleeve's `dockRide`.
+        fun landscapeDockPose(): LandscapeDockPose? {
+            if (dock == null) return null
+            val t = dockT()
+            val mini = dock.miniArtOnScreen() ?: return null
+            val anchor = dockFrame.anchor ?: return null
+            val host = dockFrame.host?.takeIf { it.isAttached } ?: return null
+            val sleeve = dockFrame.landscapeArt?.takeIf { it.isAttached } ?: return null
+            val offset = (dock.offset() ?: return null).toInt().toFloat()
+            val travel = dock.sheetTravel.takeIf { it > 0f } ?: return null
+            if (sleeve.size.width <= 0) return null
+            val open = Rect(
+                offset = anchor + host.localPositionOf(sleeve, Offset.Zero),
+                size = Size(sleeve.size.width.toFloat(), sleeve.size.height.toFloat()),
+            )
+            val ride = ((mini.top - open.top) / travel).coerceIn(0f, 1f)
+            val rect = lerp(mini, open.translate(0f, offset * ride), t)
+            // In the player's own pixels, where it sits this frame.
+            return LandscapeDockPose(
+                left = rect.left - anchor.x,
+                top = rect.top - anchor.y - offset,
+                scale = rect.width / open.width,
+            )
+        }
+        // The sleeve's corner as laid out, rounding off into the cover's as it
+        // lands. Laid out at full size and drawn scaled, so asked for as the
+        // radius that comes out right once it has been scaled.
+        val landscapeArtShape: () -> Shape = {
+            val t = dockT()
+            if (dock == null || t >= 1f) {
+                dockFrame.cornerShape(LANDSCAPE_ART_CORNER)
+            } else {
+                val scale = landscapeDockPose()?.scale?.takeIf { it > 0f } ?: 1f
+                dockFrame.cornerShape(lerp(dock.miniArtCorner(), LANDSCAPE_ART_CORNER, t) / scale)
+            }
+        }
+
+        Box(modifier = modifier.fillMaxSize().then(dockHost)) {
             LandscapePlayerLayout(
                 pane = when {
                     lyricsOpen -> PlayerPane.Lyrics
@@ -1588,12 +1776,52 @@ fun NowPlayingScreen(
                         canvasRendered = canvasRendered,
                         isPlaying = isPlaying,
                         onCanvasRenderedChange = { canvasRendered = it },
+                        // A clip decoding behind a player on its way to the
+                        // bar is work nobody sees — see [dockMoving].
+                        pausedForTransition = dockMoving,
+                        sleeveShape = landscapeArtShape,
+                        // Let go of on the way to the mini player, whose
+                        // cover sits flat in its bar.
+                        shadowFraction = dockT,
                         modifier = artworkModifier
+                            .then(
+                                if (dock != null) {
+                                    Modifier.onGloballyPositioned { dockFrame.landscapeArt = it }
+                                } else {
+                                    Modifier
+                                },
+                            )
+                            // While it docks the sleeve is drawn by the player
+                            // itself, over everything and outside the player's
+                            // fade — see [dockHost] — at the place and size
+                            // [landscapeDockPose] gives it.
+                            .drawWithContent {
+                                val pose = if (docking()) landscapeDockPose() else null
+                                if (pose != null) {
+                                    dockFrame.portalLeft = pose.left
+                                    dockFrame.portalTop = pose.top
+                                    dockFrame.portalScale = pose.scale
+                                    sleeveLayer.record { this@drawWithContent.drawContent() }
+                                } else {
+                                    if (docking()) {
+                                        // Nowhere to fly to this frame: the
+                                        // portal draws nothing rather than a
+                                        // stale copy.
+                                        dockFrame.portalScale = 0f
+                                    }
+                                    drawContent()
+                                }
+                            }
                             .then(skipSwipeGesture)
                             .graphicsLayer {
-                                scaleX = landscapeArtScale
-                                scaleY = landscapeArtScale
-                                translationX = swipeSettle.value
+                                // The paused shrink and the swipe nudge are
+                                // let go of on the way, as the portrait
+                                // sleeve's are: the cover does neither.
+                                val t = dockT()
+                                val scale = if (t >= 1f) landscapeArtScale else 1f + (landscapeArtScale - 1f) * t
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = if (t >= 1f) swipeSettle.value else swipeSettle.value * t
                             }
                             // With a panel up the sleeve is the way back to
                             // the player, as the portrait thumbnail is.
@@ -1613,7 +1841,9 @@ fun NowPlayingScreen(
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .padding(horizontal = 10.dp, vertical = 8.dp)
-                                .graphicsLayer { alpha = if (panelOpen) 0f else 1f },
+                                // Faded with the player rather than flown with
+                                // the sleeve: the cover in the bar has none.
+                                .graphicsLayer { alpha = if (panelOpen) 0f else dockFade() },
                         )
                     }
                 },
@@ -1787,98 +2017,12 @@ fun NowPlayingScreen(
         return
     }
 
-    // Docking into the mini player — see [PlayerDock]. Portrait only: the
-    // landscape player above keeps the sheet's plain slide.
-    val dock = LocalPlayerDock.current
-    if (dock != null) {
-        // Attached on first placement below rather than here: until then the
-        // sheet's window may not have drawn anything, and the mini player's
-        // cover is the only artwork on screen.
-        DisposableEffect(dock) {
-            onDispose { dock.attached = false }
-        }
-    }
-    val dockFrame = remember { DockFrame() }
-    // 1 with the player fully open, falling to 0 as the sheet reaches the mini
-    // player. Held at 1 — the player exactly as it always was — with no dock,
-    // no cover to dock into, or before the sheet's first placement has told
-    // this where on screen it is.
-    //
-    // The sheet's fraction is read first and always, whatever comes of it: the
-    // layout and draw blocks calling this are re-run only for the state they
-    // read, and one that bailed out before reading it would never hear the
-    // sheet move.
-    val dockT: () -> Float = {
-        if (dock == null) {
-            1f
-        } else {
-            val open = dock.openFraction()
-            if (dockFrame.anchor != null && dock.hasMiniArt()) open else 1f
-        }
-    }
-    val docking: () -> Boolean = { dockT() < 1f }
-    // The same, for composition: derived, so it recomposes the player twice a
-    // trip — as the sheet leaves fully open and as it gets back — rather than
-    // on each frame between.
-    //
-    // What it is for: a clip decoding behind the player while the artwork is
-    // flying is work nobody can see — the player is fading out round it — and
-    // it was costing frames of exactly the movement the eye is on. Paused for
-    // the trip, as for the collapse into the lyrics or the queue; a paused
-    // clip keeps its last frame, so nothing blinks.
-    val dockMoving by remember { derivedStateOf { docking() } }
-    // The rest of the player gets out of the way a little ahead of the artwork,
-    // so the cover lands on the bar rather than on a ghost of the player.
-    val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
-    // The sleeve, drawn over the faded player while it docks — see the sleeve.
-    val sleeveLayer = rememberGraphicsLayer()
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { playerBounds = it }
-            .then(
-                if (dock != null) {
-                    Modifier.onGloballyPositioned { coordinates ->
-                        // Where the player would be fully open, on screen: its
-                        // position now, less the sheet's offset that placed it
-                        // there. Constant for the life of the sheet, and that
-                        // plus the offset of any later frame is where the
-                        // player is in that frame.
-                        //
-                        // Measured once, and again only if the player's size
-                        // changes: this is called on every frame the sheet
-                        // moves, with the same answer each time. Measuring it
-                        // each time also walked the artwork back and forth by a
-                        // pixel, the sheet rounding its offset its own way.
-                        if (dockFrame.anchor != null && dockFrame.anchorFor == coordinates.size) {
-                            return@onGloballyPositioned
-                        }
-                        val offset = dock.offset() ?: return@onGloballyPositioned
-                        dockFrame.anchorFor = coordinates.size
-                        dockFrame.anchor = coordinates.positionOnScreen() - Offset(0f, offset.toInt().toFloat())
-                        if (!dock.attached) dock.attached = true
-                    }
-                } else {
-                    Modifier
-                },
-            )
-            // Outside the fade below, so the artwork is the one thing on the
-            // player that doesn't fade on its way to the bar. Drawn on top of
-            // everything while it travels, as the one thing still moving.
-            .drawWithContent {
-                drawContent()
-                if (docking()) {
-                    translate(dockFrame.portalLeft, dockFrame.portalTop) { drawLayer(sleeveLayer) }
-                }
-            }
-            // Never quite zero while docking. A layer at alpha 0 is skipped
-            // outright, children and all — and the sleeve records itself for
-            // the draw above from inside it, so for the last stretch of the
-            // way home the cover went on being drawn from a stale recording,
-            // bigger and higher than the bar's. One step of 255 is nothing to
-            // look at and keeps the subtree drawing.
-            .graphicsLayer { alpha = if (docking()) dockFade().coerceAtLeast(DOCK_FADE_FLOOR) else 1f }
+            .then(dockHost)
             .background(Color.Black),
     ) {
         // Anchored to the sleeve's bottom edge, so the screen carries on in the
@@ -2645,6 +2789,7 @@ fun NowPlayingScreen(
                                 val x = rect.left.roundToInt()
                                 val y = rect.top.roundToInt()
                                 dockFrame.portalLeft = (boxLeftPx + x).toFloat()
+                                dockFrame.portalScale = 1f
                                 dockFrame.portalTop = (y - bannerTopPx).toFloat()
                                 placeable.place(x, y)
                             }
@@ -3295,6 +3440,12 @@ fun NowPlayingScreen(
                     (!queueOpen || queueControlsOpen) &&
                     (!spotifyCanvasPresentation || spotifyCanvasControlsOpen || mixing),
                 reveal = playerDeckReveal,
+                // Back to the main player from lyrics or the queue with the
+                // deck stood down: the sleeve is about to come back out, so
+                // the deck has to hold its full height from the first frame.
+                // Asked when the deck is shown rather than read here — [p]
+                // read in this scope recomposes the whole player with it.
+                fadeIn = { !lyricsOpen && !queueOpen && p() > 0f },
             ) {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,

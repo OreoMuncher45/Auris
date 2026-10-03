@@ -1,19 +1,24 @@
 package com.music.bitchord.data.lyrics
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Where the player gets its lyrics.
  *
- * Sixteen sources, tried in [order] — the user's own priority list in Settings,
- * defaulting to [LyricsSource.entries]:
+ * Sources tried in [order] — the user's own priority list in Settings,
+ * defaulting to [LyricsSource.offered]; a [hidden][LyricsSource.hidden] one is
+ * never asked, whatever the saved settings say:
  *
+ *  - [LrcRed] — Apple Music TTML filed by ISRC, and the catalogue
+ *    [BiniLyrics] itself answers from.
  *  - [BetterLyrics], [PaxSenix] and [BiniLyrics] — Apple Music TTML,
  *    per-syllable, from three independent hosts so one having a bad day
  *    doesn't cost the timing.
@@ -99,8 +104,9 @@ object LyricsRepository {
         /** Lets callers turn a cancelled race loser back into "not fetched". */
         onSourceCancelled: ((LyricsSource) -> Unit)? = null,
     ): Result? = coroutineScope {
-        val sequence = order.filter { it in sources } +
-            LyricsSource.entries.filter { it in sources && it !in order }
+        val sequence = (order + LyricsSource.offered)
+            .distinct()
+            .filter { it in sources && !it.hidden }
 
         // Every source but [SimpMusicLyrics] is asked for a name, and
         // YouTube's is not the name anyone catalogued. Cleaned once, here,
@@ -118,6 +124,7 @@ object LyricsRepository {
             null
         }
         val recording = known ?: hit?.isrc?.takeIf { it.isNotBlank() }
+        val documents = SharedDocuments(this)
 
         // Genius is a plain text web scraper. To preserve bandwidth and avoid rate-limiting,
         // it starts lazily and is only contacted if all higher-priority synced sources miss.
@@ -135,6 +142,7 @@ object LyricsRepository {
                         album,
                         recording,
                         hit,
+                        documents::get,
                     )?.let { result(source, it) }
                     onSourceResult?.invoke(source, found)
                     found
@@ -166,6 +174,7 @@ object LyricsRepository {
             // Whoever lost the race is no longer worth waiting on, and
             // coroutineScope will not return while they are still running.
             racing.forEach { it.second.cancel() }
+            documents.cancel()
         }
     }
 
@@ -179,14 +188,17 @@ object LyricsRepository {
         isrc: String?,
         /** What [identify] already found, where it ran; saves a second search. */
         hit: BiniLyrics.Hit?,
+        /** Fetches a document once per lookup, however many sources want it. */
+        get: suspend (String) -> String?,
     ): List<LyricLine>? {
         val found = when (source) {
+            LyricsSource.LRC_RED -> LrcRed.lyrics(title, artist, durationMs, isrc, get)
             LyricsSource.BETTER_LYRICS -> BetterLyrics.lyrics(title, artist, durationMs, album)
             LyricsSource.BETTER_LYRICS_PORTATO -> BetterLyrics.portato(title, artist, durationMs, album)
             LyricsSource.LYRICS_PLUS -> LyricsPlus.lyrics(title, artist, durationMs, album, isrc)
             LyricsSource.BINI_LYRICS ->
-                (hit?.let { BiniLyrics.lyricsFor(it) }
-                    ?: BiniLyrics.lyrics(title, artist, durationMs, album, isrc))
+                (hit?.let { BiniLyrics.lyricsFor(it, get) }
+                    ?: BiniLyrics.lyrics(title, artist, durationMs, album, isrc, get))
                     ?.also { remember(videoId, it.isrc) }
                     ?.lines
             LyricsSource.UNISON -> Unison.lyrics(title, artist, durationMs, album)
@@ -270,5 +282,24 @@ object LyricsRepository {
     private fun remember(videoId: String, isrc: String?) {
         if (isrc.isNullOrBlank() || videoId.isEmpty()) return
         isrcs.put(videoId, isrc)
+    }
+
+    /**
+     * Documents fetched during one lookup, by URL, so two sources after the
+     * same file make one request between them. That is the ordinary case, not
+     * an edge: [BiniLyrics]' search answers with an [LrcRed] URL, and [LrcRed],
+     * handed the ISRC that search found, asks for exactly that URL too.
+     *
+     * Each download runs in the lookup's own scope rather than the asking
+     * source's, so the source that started it losing the race doesn't take
+     * the other one's copy down with it; [cancel] ends whatever is left.
+     */
+    private class SharedDocuments(private val scope: CoroutineScope) {
+        private val inFlight = ConcurrentHashMap<String, Deferred<String?>>()
+
+        suspend fun get(url: String): String? =
+            inFlight.computeIfAbsent(url) { scope.async(Dispatchers.IO) { lyricsGet(url) } }.await()
+
+        fun cancel() = inFlight.values.forEach { it.cancel() }
     }
 }

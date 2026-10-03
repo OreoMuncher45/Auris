@@ -75,6 +75,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -494,6 +495,13 @@ private fun BitChordApp(
     val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val activeDock = playerDock.takeIf { !reducePlayerMotion }
     playerSheetMotion.flingVelocity = with(LocalDensity.current) { PLAYER_PULL_FLING_VELOCITY.toPx() }
+    // How the app takes the player down, whatever for: a back press, or a page
+    // opened from inside it. Set straight to false, the sheet left in one frame
+    // on its window's own exit animation — the old fast drop, with a copy of the
+    // artwork slipping down out of the mini player's cover after it.
+    val dismissPlayer: () -> Unit = {
+        if (reducePlayerMotion) showNowPlaying = false else playerSheetMotion.close()
+    }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
     // [PlayerDeepLink.handled]. The sheet itself is gated on there being a track,
@@ -696,7 +704,7 @@ private fun BitChordApp(
         val invite = incomingJamInvite ?: return@LaunchedEffect
         activeJamInviteCode = invite.code
         activeJamInviteServer = invite.serverUrl
-        showNowPlaying = false
+        dismissPlayer()
         showReplay = false
         replayStory = null
         showReplayShare = false
@@ -1677,7 +1685,7 @@ private fun BitChordApp(
                 }
             }
             is LinkRequest.Page -> {
-                showNowPlaying = false
+                dismissPlayer()
                 // Titled by the page itself once it lands — a link carries a
                 // browse id and nothing else. See MainViewModel.openDetail.
                 viewModel.openDetail(request.browseId, title = "")
@@ -1694,7 +1702,7 @@ private fun BitChordApp(
                     // Either the link was a search to look at, or "play X"
                     // found nothing to start — and the results are a better
                     // answer to a spoken request than silence is.
-                    showNowPlaying = false
+                    dismissPlayer()
                     selectedTab = TAB_SEARCH
                     viewModel.searchFor(request.query)
                 }
@@ -1854,6 +1862,7 @@ private fun BitChordApp(
     ) { granted ->
         if (granted) {
             viewModel.reloadLocalDetail("local:all")
+            viewModel.reloadLocalDetail("local:downloads")
             viewModel.loadLibrarySongs()
         } else {
             Toast.makeText(context, context.getString(R.string.storage_required_read), Toast.LENGTH_SHORT).show()
@@ -1876,7 +1885,7 @@ private fun BitChordApp(
     // card opens the same way from either.
     val onLibraryItemClick: (ShelfItem) -> Unit = { item ->
         item.browseId?.let { id ->
-            if (id == "local:all" && !LocalMediaRepository.hasStoragePermission(context)) {
+            if ((id == "local:all" || id == "local:downloads") && !LocalMediaRepository.hasStoragePermission(context)) {
                 mediaPermissionLauncher.launch(mediaPermission)
             }
             // Left set rather than cleared: a card opened from a shelf's
@@ -2249,7 +2258,7 @@ private fun BitChordApp(
                 songActions = song
             },
             onOpenAlbum = { id ->
-                showNowPlaying = false
+                dismissPlayer()
                 viewModel.openDetail(
                     id,
                     song.albumName ?: song.title,
@@ -2259,7 +2268,7 @@ private fun BitChordApp(
                 )
             },
             onOpenArtist = { id ->
-                showNowPlaying = false
+                dismissPlayer()
                 // No artwork: this track's cover isn't the artist's
                 // picture, and the page fills its own in once loaded.
                 viewModel.openDetail(
@@ -2279,7 +2288,7 @@ private fun BitChordApp(
 
                 // A context link is navigation, not another page stacked over
                 // Now Playing. Clear the current route before restoring it.
-                showNowPlaying = false
+                dismissPlayer()
                 viewModel.clearDetail()
                 showSettings = false
                 showAccountScrobbling = false
@@ -2335,7 +2344,7 @@ private fun BitChordApp(
             onListenTogether = {
                 // The player is a sheet over the page, so it has to come down
                 // for the page to be read at all.
-                showNowPlaying = false
+                dismissPlayer()
                 showSettings = true
                 showListenTogether = true
             },
@@ -3157,6 +3166,127 @@ private fun BitChordApp(
                     }
                 }
 
+                // ---- Settings sub-screen overlays ----
+                // When a sub-screen is opened from Settings, AnimatedContent keeps
+                // "settings" as target so SettingsSheet stays mounted with its scroll.
+                // Each overlay is wrapped in an opaque Surface so it fully obscures
+                // the preserved SettingsSheet beneath — without it, both screens bleed
+                // through each other and text becomes unreadable.
+                //
+                // Composed ahead of the top bar, inside the page's own Box: out at
+                // the root they were drawn over the bar and swallowed its taps, so
+                // these pages had no status-bar scrim, title or back button, and
+                // Discord (pushed over Account) was covered by the page it opened
+                // from — hence skipped while it is up.
+                when (settingsSubScreen.takeUnless { showDiscord }) {
+                    "account_scrobbling" -> {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background,
+                        ) {
+                            AccountAndScrobblingScreen(
+                                signedIn = signedIn,
+                                account = account,
+                                channelName = selectedChannelName,
+                                onSignIn = {
+                                    settingsSubScreen = null
+                                    showSettings = false
+                                    webSession = WebSessionMode.SIGN_IN
+                                },
+                                onSwitchChannel = {
+                                    viewModel.loadChannels()
+                                    showAccountSelector = true
+                                },
+                                onSignOut = { viewModel.signOut() },
+                                onOpenListenBrainzLogin = { showListenBrainzLogin = true },
+                                onOpenLastfmLogin = { showLastfmLogin = true },
+                                onOpenDiscord = { showDiscord = true },
+                                contentPadding = listPadding,
+                            )
+                        }
+                    }
+                    "sources" -> {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background,
+                        ) {
+                            SourcesScreen(
+                                contentPadding = listPadding,
+                                onEditSource = { editingSource = it },
+                                onEditWebDav = { showWebDavEditor = true },
+                                onEditSmb = { showSmbEditor = true },
+                                onConfirmJioSaavn = { confirmJioSaavn = true },
+                            )
+                        }
+                    }
+                    "listen_together" -> {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background,
+                        ) {
+                            ListenTogetherScreen(
+                                signedIn = signedIn,
+                                inviteCode = activeJamInviteCode,
+                                inviteServer = activeJamInviteServer,
+                                onInviteHandled = {
+                                    activeJamInviteCode = null
+                                    activeJamInviteServer = null
+                                },
+                                onSignIn = {
+                                    settingsSubScreen = null
+                                    showSettings = false
+                                    webSession = WebSessionMode.SIGN_IN
+                                },
+                                contentPadding = listPadding,
+                                onEditServer = { editingPartyServer = true },
+                            )
+                        }
+                    }
+                    "equalizer" -> {
+                        Surface(
+                            modifier = Modifier.fillMaxSize(),
+                            color = MaterialTheme.colorScheme.background,
+                        ) {
+                            EqualizerScreen(contentPadding = listPadding)
+                        }
+                    }
+                    "replay" -> {
+                        if (showReplay && !showReplayShare) {
+                            Surface(
+                                modifier = Modifier.fillMaxSize(),
+                                color = MaterialTheme.colorScheme.background,
+                            ) {
+                                ReplayScreen(
+                                    state = replay,
+                                    holder = account?.name.orEmpty(),
+                                    onPeriodChange = setReplayPeriod,
+                                    onOpenStory = { replayStory = it },
+                                    onPlaySong = { song ->
+                                        playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
+                                    },
+                                    onOpenArtist = { id, name ->
+                                        settingsSubScreen = null
+                                        showReplay = false
+                                        openByName(id, name, null, BrowseType.ARTIST)
+                                    },
+                                    onOpenAlbum = { id, title, artist, art ->
+                                        settingsSubScreen = null
+                                        showReplay = false
+                                        openByName(id, title, artist, BrowseType.ALBUM, art)
+                                    },
+                                    onShare = {
+                                        replaySharePage = null
+                                        showReplayShare = true
+                                    },
+                                    contentPadding = listPadding,
+                                    listState = replayListState,
+                                    landingPage = replayLandingPage,
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // The top-bar footprint is transparent on every page so the
                 // shared app-level gradient is continuous; its controls float
                 // as separate circles in both the glass and blur materials.
@@ -3674,7 +3804,18 @@ private fun BitChordApp(
                 // sides. Unspecified opts out of the cap entirely, so the
                 // sheet always spans the full window this app draws it for.
                 sheetMaxWidth = Dp.Unspecified,
+                // Back is the app's to carry out, like every other close — see
+                // the handler below. Left to M3, a back press is the one close
+                // that never asks `confirmValueChange`: the sheet hides itself
+                // straight away on its own curve, then the window leaves on its
+                // exit animation with the artwork still drawn in it.
+                properties = ModalBottomSheetProperties(shouldDismissOnBackPress = reducePlayerMotion),
             ) {
+                // With M3's own back off, the dialog's dispatcher ends here.
+                // Composed ahead of the player, so the player's own handlers —
+                // the lyrics and the queue putting themselves away first — are
+                // newer and are asked before this one.
+                BackHandler(enabled = !reducePlayerMotion) { playerSheetMotion.close() }
                 // Keeps a sheet still "settling" after a lyrics or queue
                 // scroll from taking the next touch meant for that list.
                 // See [PlayerSheetMotion.attachWindow].
@@ -3716,121 +3857,6 @@ private fun BitChordApp(
                 ) {
                     CompositionLocalProvider(LocalPlayerDock provides activeDock) {
                         nowPlaying(playerSong)
-                    }
-                }
-            }
-        }
-
-        // ---- Settings sub-screen overlays ----
-        // When a sub-screen is opened from Settings, AnimatedContent keeps
-        // "settings" as target so SettingsSheet stays mounted with its scroll.
-        // Each overlay is wrapped in an opaque Surface so it fully obscures
-        // the preserved SettingsSheet beneath — without it, both screens bleed
-        // through each other and text becomes unreadable.
-        when (settingsSubScreen) {
-            "account_scrobbling" -> {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    AccountAndScrobblingScreen(
-                        signedIn = signedIn,
-                        account = account,
-                        channelName = selectedChannelName,
-                        onSignIn = {
-                            settingsSubScreen = null
-                            showSettings = false
-                            webSession = WebSessionMode.SIGN_IN
-                        },
-                        onSwitchChannel = {
-                            viewModel.loadChannels()
-                            showAccountSelector = true
-                        },
-                        onSignOut = { viewModel.signOut() },
-                        onOpenListenBrainzLogin = { showListenBrainzLogin = true },
-                        onOpenLastfmLogin = { showLastfmLogin = true },
-                        onOpenDiscord = { showDiscord = true },
-                        contentPadding = listPadding,
-                    )
-                }
-            }
-            "sources" -> {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    SourcesScreen(
-                        contentPadding = listPadding,
-                        onEditSource = { editingSource = it },
-                        onEditWebDav = { showWebDavEditor = true },
-                        onEditSmb = { showSmbEditor = true },
-                        onConfirmJioSaavn = { confirmJioSaavn = true },
-                    )
-                }
-            }
-            "listen_together" -> {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    ListenTogetherScreen(
-                        signedIn = signedIn,
-                        inviteCode = activeJamInviteCode,
-                        inviteServer = activeJamInviteServer,
-                        onInviteHandled = {
-                            activeJamInviteCode = null
-                            activeJamInviteServer = null
-                        },
-                        onSignIn = {
-                            settingsSubScreen = null
-                            showSettings = false
-                            webSession = WebSessionMode.SIGN_IN
-                        },
-                        contentPadding = listPadding,
-                        onEditServer = { editingPartyServer = true },
-                    )
-                }
-            }
-            "equalizer" -> {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
-                ) {
-                    EqualizerScreen(contentPadding = listPadding)
-                }
-            }
-            "replay" -> {
-                if (showReplay && !showReplayShare) {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background,
-                    ) {
-                        ReplayScreen(
-                            state = replay,
-                            holder = account?.name.orEmpty(),
-                            onPeriodChange = setReplayPeriod,
-                            onOpenStory = { replayStory = it },
-                            onPlaySong = { song ->
-                                playRadio(song, QueueSource(replayLabel, PlaybackSourceType.REPLAY))
-                            },
-                            onOpenArtist = { id, name ->
-                                settingsSubScreen = null
-                                showReplay = false
-                                openByName(id, name, null, BrowseType.ARTIST)
-                            },
-                            onOpenAlbum = { id, title, artist, art ->
-                                settingsSubScreen = null
-                                showReplay = false
-                                openByName(id, title, artist, BrowseType.ALBUM, art)
-                            },
-                            onShare = {
-                                replaySharePage = null
-                                showReplayShare = true
-                            },
-                            contentPadding = listPadding,
-                            listState = replayListState,
-                            landingPage = replayLandingPage,
-                        )
                     }
                 }
             }
@@ -3903,7 +3929,7 @@ private fun BitChordApp(
             // artist's picture — that page loads its own.
             val openPage: (String, String, String, BrowseType) -> Unit = { id, title, sub, type ->
                 songActions = null
-                showNowPlaying = false
+                dismissPlayer()
                 val art = song.thumbnailUrl.takeUnless { type == BrowseType.ARTIST }
                 viewModel.openDetail(id, title, sub, art, type)
             }
