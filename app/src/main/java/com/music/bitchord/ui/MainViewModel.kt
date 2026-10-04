@@ -2414,6 +2414,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var subscription: SubscriptionState? = null
             val localPlaylist = com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId)
             val remote = remoteLibrary(browseId)
+            // A release downloaded whole and opened by its YouTube id — the
+            // Playlists shelf, a search hit — used to wait on the network for
+            // tracks already on the device, and showed an error with no
+            // connection at all. Its downloaded copy goes up first; the
+            // online listing replaces it if and when that arrives.
+            val onDevice = if (localPlaylist == null && remote == null && !browseId.startsWith("local:")) {
+                downloadedCopyOf(browseId)
+            } else {
+                emptyList()
+            }
+            if (onDevice.isNotEmpty()) {
+                _detailStack.value = _detailStack.value.map {
+                    if (it.browseId == browseId && it.songs is UiState.Loading) it.copy(songs = UiState.Success(onDevice)) else it
+                }
+            }
             val state = when {
                 localPlaylist != null -> {
                     name = localPlaylist.title
@@ -2503,8 +2518,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             // Update by id — the user may have pushed another page meanwhile.
+            // A page showing its downloaded copy takes only a real listing: a
+            // failed or empty fetch leaves the downloaded tracks up.
             _detailStack.value = _detailStack.value.map {
-                if (it.browseId == browseId && it.songs is UiState.Loading) {
+                if (it.browseId == browseId &&
+                    (it.songs is UiState.Loading || (onDevice.isNotEmpty() && state is UiState.Success))
+                ) {
                     it.copy(
                         songs = state,
                         sections = sections,
@@ -2664,6 +2683,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun downloadedPlaylist(browseId: String): List<Song> {
         val id = Downloads.recordIdOf(browseId) ?: return emptyList()
+        return Downloads.getCollectionSongs(getApplication(), id)
+    }
+
+    /**
+     * The downloaded copy of the release YouTube calls [browseId], if there
+     * is one. A playlist is filed under whichever id it was downloaded from,
+     * which may or may not carry the `VL` its page id does.
+     */
+    private suspend fun downloadedCopyOf(browseId: String): List<Song> {
+        val bare = browseId.removePrefix("VL")
+        val id = Downloads.collections.value.keys.firstOrNull { it.removePrefix("VL") == bare } ?: return emptyList()
         return Downloads.getCollectionSongs(getApplication(), id)
     }
 
