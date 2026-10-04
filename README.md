@@ -189,6 +189,12 @@ We welcome contributions to BitChord! Please review our [Contributing Guide](CON
 
 [**Contributing Guide**](CONTRIBUTING.md) · [**Code of Conduct**](CODE_OF_CONDUCT.md) · [**Maintainers**](MAINTAINERS.md) · [**Additional Docs**](ADDITIONAL.md)
 
+### Thanks to all contributors ❤
+
+<a href="https://github.com/kushagrasinghx/BitChord/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=kushagrasinghx/BitChord" />
+</a>
+
 </div>
 
 ---
