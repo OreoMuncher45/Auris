@@ -2553,6 +2553,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (it.browseId == browseId) it.copy(songs = songs) else it
                 }
             }
+            // The list only had a thumbnail; the full-size cover replaces it
+            // once this page has asked for it.
+            launch {
+                val cover = runCatching { SpotifyLibrary.cover(playlistId) }.getOrNull() ?: return@launch
+                _detailStack.value = _detailStack.value.map {
+                    if (it.browseId == browseId) it.copy(thumbnailUrl = cover) else it
+                }
+            }
             val tracks = runCatching {
                 SpotifyLibrary.tracks(playlistId) { soFar ->
                     setSongs(UiState.Success(soFar.map { it.asPendingSong() }))

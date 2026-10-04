@@ -131,6 +131,23 @@ object SpotifyLibrary {
         return parseTrackPage(gql("fetchPlaylist", PLAYLIST, variables, headers))
     }
 
+    /**
+     * The playlist's cover at its largest. The library list only carries a
+     * thumbnail, which looks soft once it fills a playlist page's header, so
+     * the page asks for the real image after it opens.
+     */
+    suspend fun cover(playlistId: String): String? = withContext(Dispatchers.IO) {
+        if (playlistId == LIKED_ID) return@withContext LIKED_COVER
+        val variables = buildJsonObject {
+            put("uri", "spotify:playlist:$playlistId")
+            put("offset", 0)
+            put("limit", 1)
+            put("enableWatchFeedEntrypoint", false)
+        }
+        val root = gql("fetchPlaylist", PLAYLIST, variables, authHeaders())
+        largestSource(root.obj("data")?.obj("playlistV2")?.obj("images"))
+    }
+
     private fun likedPage(headers: Map<String, String>, offset: Int): Triple<List<SpotifyTrack>, Int, Int> {
         val variables = buildJsonObject {
             put("offset", offset)
@@ -259,10 +276,21 @@ internal fun parseLikedPage(root: JsonObject): Triple<List<SpotifyTrack>, Int, I
     return Triple(items, tracks.int("totalCount") ?: rawItems.size, rawItems.size)
 }
 
-private fun coverUrl(images: JsonObject?): String? =
-    images?.arr("items").orEmpty()
-        .mapNotNull { it.jsonObject.arr("sources")?.lastUrl() }
-        .lastOrNull()
+/**
+ * The widest source of an image's first entry. Spotify lists a playlist's
+ * sizes in no fixed order — a 60px thumbnail can come last — so the list is
+ * read by width rather than by position.
+ */
+private fun largestSource(images: JsonObject?): String? =
+    images?.arr("items")?.firstOrNull()?.jsonObject?.arr("sources")
+        ?.mapNotNull { source ->
+            val url = source.jsonObject.str("url") ?: return@mapNotNull null
+            url to (source.jsonObject.int("width") ?: 0)
+        }
+        ?.maxByOrNull { it.second }
+        ?.first
+
+private fun coverUrl(images: JsonObject?): String? = largestSource(images)
 
 private fun JsonArray.lastUrl(): String? =
     mapNotNull { it.jsonObject.str("url") }.lastOrNull()
