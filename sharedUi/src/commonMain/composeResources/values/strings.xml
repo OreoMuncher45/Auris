@@ -198,4 +198,6 @@
     <string name="your_listening_experience">Your listening experience</string>
     <string name="default_replay_holder">BitChord listener</string>
     <string name="member_since">Member since</string>
+    <string name="import_spotify">Import Spotify</string>
+    <string name="import_spotify_subtitle">From a playlist link</string>
 </resources>

@@ -143,6 +143,7 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.ui.components.AccountProfileSelector
+import com.music.bitchord.ui.components.SpotifyImportAlert
 import com.music.bitchord.ui.screens.AccountAndScrobblingScreen
 import com.music.bitchord.ui.screens.DiscordDialog
 import com.music.bitchord.ui.screens.DiscordDialogHost
@@ -616,6 +617,7 @@ private fun BitChordApp(
     // The picker opened from the Library tab, where there is no track and
     // creating the playlist is the whole errand.
     var creatingPlaylist by remember { mutableStateOf(false) }
+    var showSpotifyImportDialog by remember { mutableStateOf(false) }
     // Which album or playlist the collection menu is open on, or null when it
     // is shut. One slot for every surface that can open it — the shelves on
     // three tabs, the search rows, the artist page's carousels, the release
@@ -801,6 +803,18 @@ private fun BitChordApp(
     val downloadedReleases = remember(savedCollections, savedDownloads) {
         Downloads.savedReleases()
     }
+    // Playlists imported without (or instead of) a YouTube Music account live
+    // in the app's own store, and sit on the same shelf as the downloaded ones.
+    val localPlaylists by com.music.bitchord.data.spotify.LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
+    val localPlaylistItems = localPlaylists.map { playlist ->
+        ShelfItem(
+            title = playlist.title,
+            subtitle = stringResource(R.string.local_playlist_subtitle, playlist.songs.size),
+            thumbnailUrl = playlist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl,
+            videoId = null,
+            browseId = playlist.browseId,
+        )
+    }
     // What a browse id is recorded under in Downloads.collections, when it names
     // a release downloaded whole — see BrowseTarget.downloadId. A downloaded
     // playlist's own page and its card both carry the id under the
@@ -816,12 +830,9 @@ private fun BitChordApp(
         // stale for the same reasons — and it is the one page a delete can empty
         // out entirely, which is worth saying rather than leaving rows behind
         // that play nothing.
-        // openDetail is already taking the initial snapshot while the page is
-        // Loading. Starting reloadLocalDetail at the same time used to perform
-        // the same disk work twice on every open, which was especially visible
-        // for large download libraries and slow content providers.
         if (openPage.songs !is UiState.Loading &&
-            (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null)
+            (open == "local:downloads" || open == CACHE_FOLDER_BROWSE_ID || Downloads.recordIdOf(open) != null ||
+                com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(open) != null)
         ) {
             viewModel.reloadLocalDetail(open)
         }
@@ -3141,6 +3152,7 @@ private fun BitChordApp(
                             // does nothing; see [onBrowseLongPress].
                             onShelfItemLongPress = onBrowseLongPress,
                             onNewPlaylist = { creatingPlaylist = true },
+                            onImportSpotifyPlaylist = { showSpotifyImportDialog = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
                             replay = {
                                 LibraryReplayEntry(
@@ -3161,7 +3173,7 @@ private fun BitChordApp(
                             pullState = libraryPull,
                             contentPadding = listPadding,
                             links = libraryLinks(),
-                            deviceItems = libraryDeviceItems(downloadedReleases),
+                            deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
                         )
                     }
                 }
@@ -4295,6 +4307,34 @@ private fun BitChordApp(
                     },
                 )
             }
+        }
+
+        if (showSpotifyImportDialog) {
+            BackHandler { showSpotifyImportDialog = false }
+            SpotifyImportAlert(
+                hazeState = hazeState,
+                signedIn = signedIn,
+                onImported = { title, privacy, songs ->
+                    viewModel.createPlaylistWithVideoIds(
+                        title,
+                        privacy,
+                        songs.map { it.videoId },
+                        songs,
+                    ) { browseId, pTitle, savedLocally ->
+                        showQueueNotice(
+                            context.getString(
+                                if (savedLocally && signedIn) R.string.spotify_import_local_fallback
+                                else R.string.spotify_import_done,
+                                pTitle,
+                            ),
+                        )
+                        browseId?.let { id ->
+                            viewModel.openDetail(id, pTitle, "${songs.size} songs", songs.firstOrNull()?.thumbnailUrl)
+                        }
+                    }
+                },
+                onDismiss = { showSpotifyImportDialog = false },
+            )
         }
 
         // ---- Album / playlist actions ----

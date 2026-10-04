@@ -4,6 +4,8 @@ import com.music.bitchord.ui.components.contextClick
 import com.music.bitchord.ui.AppUi
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.painterResource
+import org.jetbrains.compose.resources.DrawableResource
+import androidx.compose.foundation.Image
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -878,6 +880,8 @@ internal fun NewShelfCard(
     subtitle: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier.width(SHELF_CARD_WIDTH),
+    /** A full-colour mark drawn in place of [icon], for a card that stands for a brand. */
+    logo: DrawableResource? = null,
 ) {
     Column(
         modifier = modifier.clickable(onClick = onClick),
@@ -890,12 +894,25 @@ internal fun NewShelfCard(
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(34.dp),
-            )
+            if (logo != null) {
+                // The mark is a white disc with the bars cut out, so it needs
+                // its own brand-green ground to read as the logo.
+                Image(
+                    painter = painterResource(logo),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF1ED760)),
+                )
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(34.dp),
+                )
+            }
         }
         Spacer(Modifier.height(10.dp))
         Text(
