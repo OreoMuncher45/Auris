@@ -152,6 +152,7 @@ import com.music.bitchord.ui.screens.EqualizerScreen
 import com.music.bitchord.ui.screens.HistoryScreen
 import com.music.bitchord.ui.screens.LibraryReplayEntry
 import com.music.bitchord.ui.screens.libraryDeviceItems
+import com.music.bitchord.ui.screens.SPOTIFY_BROWSE_ID
 import com.music.bitchord.ui.screens.libraryLinks
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.ui.screens.ListenTogetherScreen
@@ -159,7 +160,9 @@ import com.music.bitchord.ui.screens.PartyServerEditor
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
+import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
+import com.music.bitchord.ui.screens.SpotifyLibraryScreen
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
@@ -578,6 +581,7 @@ private fun BitChordApp(
     // The alerts live out here rather than on the page because their scrim has
     // to cover the tab bar and mini player, which are drawn after it.
     var showDiscord by remember { mutableStateOf(false) }
+    var showSpotify by remember { mutableStateOf(false) }
     var showDiscordLogin by remember { mutableStateOf(false) }
     var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
@@ -715,6 +719,7 @@ private fun BitChordApp(
         showEqualizer = false
         showHistory = false
         showDiscord = false
+        showSpotify = false
         libraryShowAll = null
         viewModel.clearDetail()
         webSession = null
@@ -778,6 +783,7 @@ private fun BitChordApp(
     LaunchedEffect(showSettings) {
         if (!showSettings) {
             showAccountScrobbling = false
+            showSpotify = false
         }
     }
 
@@ -1896,6 +1902,10 @@ private fun BitChordApp(
     // card opens the same way from either.
     val onLibraryItemClick: (ShelfItem) -> Unit = { item ->
         item.browseId?.let { id ->
+            if (id == SPOTIFY_BROWSE_ID) {
+                showSpotify = true
+                return@let
+            }
             if ((id == "local:all" || id == "local:downloads") && !LocalMediaRepository.hasStoragePermission(context)) {
                 mediaPermissionLauncher.launch(mediaPermission)
             }
@@ -2310,6 +2320,7 @@ private fun BitChordApp(
                 settingsSubScreen = null
                 showHistory = false
                 showDiscord = false
+                showSpotify = false
                 libraryShowAll = null
 
                 when (sourceType) {
@@ -2400,7 +2411,10 @@ private fun BitChordApp(
         BackHandler(enabled = showDiscord) {
             showDiscord = false
         }
-        BackHandler(enabled = showAccountScrobbling && !showDiscord) {
+        BackHandler(enabled = showSpotify) {
+            showSpotify = false
+        }
+        BackHandler(enabled = showAccountScrobbling && !showDiscord && !showSpotify) {
             showAccountScrobbling = false
             if (settingsSubScreen == "account_scrobbling") settingsSubScreen = null
         }
@@ -2455,6 +2469,7 @@ private fun BitChordApp(
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 AnimatedContent(
                     targetState = when {
+                        showSpotify -> "spotify"
                         showDiscord -> "discord"
                         showHistory -> "history"
                         // `&& detail == null`: a card opened from the grid
@@ -2622,6 +2637,40 @@ private fun BitChordApp(
                             listState = replayListState,
                             landingPage = replayLandingPage,
                         )
+                    } else if (key == "spotify") {
+                        SpotifyLibraryScreen(
+                            onPlay = { track ->
+                                scope.launch {
+                                    val query = listOf(track.title, track.artist)
+                                        .filter { it.isNotBlank() }
+                                        .joinToString(" ")
+                                    val songs = YtMusicRepository.search(query, SearchFilter.SONGS)
+                                        .getOrNull()
+                                        ?.filterIsInstance<SearchResult.Track>()
+                                        ?.map { it.song }
+                                        .orEmpty()
+                                    val match = TrackMatcher.best(
+                                        songs,
+                                        TrackMatcher.Target(
+                                            title = track.title,
+                                            artist = track.artist,
+                                            durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
+                                            album = track.album,
+                                        ),
+                                    ) ?: songs.firstOrNull()
+                                    if (match == null) {
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.spotify_track_unavailable),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    } else {
+                                        playRadio(match, QueueSource("Spotify", PlaybackSourceType.SEARCH, track.id))
+                                    }
+                                }
+                            },
+                            contentPadding = listPadding,
+                        )
                     } else if (key == "discord") {
                         DiscordScreen(
                             song = player.song,
@@ -2649,6 +2698,7 @@ private fun BitChordApp(
                             onOpenListenBrainzLogin = { showListenBrainzLogin = true },
                             onOpenLastfmLogin = { showLastfmLogin = true },
                             onOpenDiscord = { showDiscord = true },
+                            onOpenSpotify = { showSpotify = true },
                             contentPadding = listPadding,
                         )
                     } else if (key == "sources") {
@@ -3213,6 +3263,7 @@ private fun BitChordApp(
                                 onOpenListenBrainzLogin = { showListenBrainzLogin = true },
                                 onOpenLastfmLogin = { showLastfmLogin = true },
                                 onOpenDiscord = { showDiscord = true },
+                                onOpenSpotify = { showSpotify = true },
                                 contentPadding = listPadding,
                             )
                         }
@@ -3306,7 +3357,7 @@ private fun BitChordApp(
                     (detail.type == BrowseType.ALBUM ||
                         detail.type == BrowseType.PLAYLIST ||
                         detail.type == BrowseType.ARTIST) &&
-                    !isLocalDetail && !showDiscord && !showHistory && !showSettings &&
+                    !isLocalDetail && !showSpotify && !showDiscord && !showHistory && !showSettings &&
                     !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay
                 val chromePageColor = if (isDetailVisible) {
                     detailPalette.background
@@ -3345,6 +3396,7 @@ private fun BitChordApp(
 
                 FrostedTopBar(
                     title = when {
+                        showSpotify -> stringResource(R.string.spotify)
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
@@ -3385,6 +3437,7 @@ private fun BitChordApp(
                     refreshing = currentFeed != null && currentFeed in refreshing,
                     pullFraction = { currentPull?.distanceFraction ?: 0f },
                     onBack = when {
+                        showSpotify -> ({ showSpotify = false })
                         showDiscord -> ({ showDiscord = false })
                         showHistory -> ({ showHistory = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })

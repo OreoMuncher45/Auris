@@ -1,6 +1,13 @@
 package com.music.bitchord.ui.screens
 
 import com.music.bitchord.sharedui.resources.*
+import org.jetbrains.compose.resources.DrawableResource
+import org.jetbrains.compose.resources.painterResource
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -223,7 +230,8 @@ fun LibraryScreen(
 }
 
 /** One of the Library's folder rows: the page [item] opens, behind [icon]. */
-data class LibraryLink(val item: ShelfItem, val icon: ImageVector)
+/** [logo], when set, is drawn in place of [icon] — a service's own mark. */
+data class LibraryLink(val item: ShelfItem, val icon: ImageVector, val logo: DrawableResource? = null)
 
 /**
  * The folders as a plain list — icon, name, chevron, hairlines between — the
@@ -242,12 +250,23 @@ private fun LibraryLinkList(links: List<LibraryLink>, onClick: (ShelfItem) -> Un
                     .clickable { onClick(link.item) }
                     .padding(horizontal = PAGE_GUTTER),
             ) {
-                Icon(
-                    imageVector = link.icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(LINK_ICON_SIZE),
-                )
+                if (link.logo != null) {
+                    Image(
+                        painter = painterResource(link.logo),
+                        contentDescription = null,
+                        modifier = Modifier
+                            .size(LINK_ICON_SIZE)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1ED760)),
+                    )
+                } else {
+                    Icon(
+                        imageVector = link.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(LINK_ICON_SIZE),
+                    )
+                }
                 Spacer(Modifier.width(LINK_ICON_GAP))
                 Text(
                     text = link.item.title,

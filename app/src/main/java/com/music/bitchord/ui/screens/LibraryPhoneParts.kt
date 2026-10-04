@@ -16,6 +16,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
+import com.music.bitchord.sharedui.resources.Res
+import com.music.bitchord.sharedui.resources.spotify_logo
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.download.Downloads
@@ -40,6 +42,7 @@ fun libraryLinks(): List<LibraryLink> {
     val smbHost by AppSettings.smbHost.collectAsStateWithLifecycle()
     val smbShare by AppSettings.smbShare.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
+    val spotifyConnected by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
     fun link(icon: ImageVector, title: String, subtitle: String, browseId: String) = LibraryLink(
         item = ShelfItem(
             title = title,
@@ -84,6 +87,14 @@ fun libraryLinks(): List<LibraryLink> {
             stringResource(R.string.smb_subtitle),
             com.music.bitchord.data.smb.SmbConfig.BROWSE_ID,
         ).takeIf { smbHost.isNotBlank() && smbShare.isNotBlank() },
+        // Only while signed in to Spotify in Settings → Accounts; it opens that
+        // account's playlists rather than a browse page.
+        link(
+            Icons.Rounded.Cloud,
+            stringResource(R.string.spotify),
+            stringResource(R.string.spotify_library_subtitle),
+            SPOTIFY_BROWSE_ID,
+        ).takeIf { spotifyConnected.isNotBlank() }?.copy(logo = Res.drawable.spotify_logo),
     )
 }
 
@@ -112,6 +123,9 @@ fun libraryDeviceItems(downloadedReleases: List<SavedCollection>): List<ShelfIte
         )
     }
 }
+
+/** The Library row that opens the connected Spotify account; handled by the app, not a browse page. */
+const val SPOTIFY_BROWSE_ID = "app:spotify"
 
 /** The Cached songs folder's page id — one of the `local:` device folders. */
 const val CACHE_FOLDER_BROWSE_ID = "local:cache"
