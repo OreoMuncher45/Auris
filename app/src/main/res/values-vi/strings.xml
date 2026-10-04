@@ -451,6 +451,10 @@
     <string name="remove_from_liked">Xóa khỏi Nhạc đã thích</string>
     <string name="remove_from_playlist">Xóa khỏi danh sách phát này</string>
     <string name="rename_playlist">Đổi tên danh sách phát</string>
+    <string name="reorder_songs">Sắp xếp lại bài hát</string>
+    <string name="reorder_failed">Không thể lưu thứ tự mới</string>
+    <string name="playlist_reordered">Đã lưu thứ tự danh sách phát</string>
+    <string name="save_order">Lưu</string>
     <string name="reset_to_default">Đặt lại về mặc định</string>
     <string name="rich_presence_footer">Hiển thị những gì bạn đang nghe trên hồ sơ Discord của bạn.</string>
     <string name="save_name">Lưu tên</string>

@@ -383,6 +383,10 @@
     <string name="remove_from_liked">Usuń z Polubionych Utworów</string>
     <string name="remove_from_playlist">Usuń z tej playlisty</string>
     <string name="rename_playlist">Zmień nazwę playlisty</string>
+    <string name="reorder_songs">Zmień kolejność utworów</string>
+    <string name="reorder_failed">Nie udało się zapisać nowej kolejności</string>
+    <string name="playlist_reordered">Zapisano kolejność playlisty</string>
+    <string name="save_order">Zapisz</string>
     <string name="reset_to_default">Przywróć domyślne</string>
     <string name="rich_presence_footer">Pokaż w co grasz na swoim profilu na Discordzie.</string>
     <string name="save_name">Zapisz nazwę</string>

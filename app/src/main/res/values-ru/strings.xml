@@ -440,6 +440,10 @@
     <string name="remove_from_liked">Удалить из понравившейся музыки</string>
     <string name="remove_from_playlist">Удалить из этого плейлиста</string>
     <string name="rename_playlist">Переименовать плейлист</string>
+    <string name="reorder_songs">Изменить порядок треков</string>
+    <string name="reorder_failed">Не удалось сохранить новый порядок</string>
+    <string name="playlist_reordered">Порядок плейлиста сохранён</string>
+    <string name="save_order">Сохранить</string>
     <string name="reset_to_default">Сбросить по умолчанию</string>
     <string name="rich_presence_footer">Показывать, что вы слушаете, в вашем профиле Discord.</string>
     <string name="save_name">Сохранить название</string>

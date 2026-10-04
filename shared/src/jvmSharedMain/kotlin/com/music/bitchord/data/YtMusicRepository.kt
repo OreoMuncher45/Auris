@@ -12,6 +12,7 @@ import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.MoodGenreSection
+import com.music.bitchord.data.model.playlistMoves
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
@@ -885,6 +886,53 @@ object YtMusicRepository {
     ): Result<Unit> = call("playlist:remove") {
         Innertube.removeFromPlaylist(playlistId, entries)
     }
+
+    /**
+     * A playlist's entries in their current order, every page of them, for
+     * rearranging.
+     *
+     * Fetched fresh rather than read off the open page, because a reorder is
+     * sent as moves relative to neighbours (see [playlistMoves]) and a list
+     * that stops short of the end — the open page while it is still filling
+     * in — would send the last row it has "to the end" past rows it never saw.
+     * Fails when an entry comes back without the set-video-id a move has to
+     * name, rather than offering to reorder something it can't.
+     */
+    suspend fun playlistEntries(browseId: String): Result<List<Song>> = call("entries:$browseId") {
+        val out = LinkedHashMap<String, Song>()
+        var response = Innertube.browse(browseId)
+        var page = 1
+        while (true) {
+            val shelf = InnertubeParser.parsePlaylistShelf(response) ?: break
+            shelf.songs.forEach { song ->
+                val setVideoId = song.setVideoId ?: error("playlist entry without an id")
+                out.putIfAbsent(setVideoId, song)
+            }
+            val token = shelf.continuation ?: break
+            // Same cap as [songsPaged] — a playlist past it can't be listed
+            // whole, and a partial list can't be reordered safely.
+            if (page++ >= MAX_PAGES) error("playlist too long to reorder")
+            response = Innertube.browseContinuation(token)
+        }
+        out.values.toList()
+    }
+
+    /**
+     * Rearranges a playlist from [current] to [target], both its entries'
+     * set-video-ids — see [playlistMoves]. Sent in batches so a large
+     * rearrangement doesn't become one oversized request.
+     */
+    suspend fun reorderPlaylist(
+        playlistId: String,
+        current: List<String>,
+        target: List<String>,
+    ): Result<Unit> = call("playlist:reorder") {
+        playlistMoves(current, target).chunked(MOVE_BATCH).forEach { batch ->
+            Innertube.movePlaylistItems(playlistId, batch)
+        }
+    }
+
+    private const val MOVE_BATCH = 50
 
     suspend fun renamePlaylist(playlistId: String, title: String): Result<Unit> =
         call("playlist:rename") { Innertube.renamePlaylist(playlistId, title) }

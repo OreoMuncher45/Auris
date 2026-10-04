@@ -421,6 +421,10 @@
     <string name="remove_from_liked">Aus „Gefällt mir“-Musik entfernen</string>
     <string name="remove_from_playlist">Aus dieser Playlist entfernen</string>
     <string name="rename_playlist">Playlist umbenennen</string>
+    <string name="reorder_songs">Titel neu anordnen</string>
+    <string name="reorder_failed">Neue Reihenfolge konnte nicht gespeichert werden</string>
+    <string name="playlist_reordered">Reihenfolge der Playlist gespeichert</string>
+    <string name="save_order">Speichern</string>
     <string name="reset_to_default">Auf Standard zurücksetzen</string>
     <string name="rich_presence_footer">Zeige, was du gerade hörst, auf deinem Discord-Profil.</string>
     <string name="save_name">Namen speichern</string>

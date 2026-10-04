@@ -387,6 +387,10 @@
     <string name="remove_from_liked">Remover de Músicas Curtidas</string>
     <string name="remove_from_playlist">Remover desta playlist</string>
     <string name="rename_playlist">Renomear playlist</string>
+    <string name="reorder_songs">Reordenar músicas</string>
+    <string name="reorder_failed">Não foi possível salvar a nova ordem</string>
+    <string name="playlist_reordered">Ordem da playlist salva</string>
+    <string name="save_order">Salvar</string>
     <string name="reset_to_default">Redefinir para o padrão</string>
     <string name="rich_presence_footer">Mostre o que você está jogando em seu perfil do Discord.</string>
     <string name="save_name">Salvar nome</string>

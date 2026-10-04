@@ -421,6 +421,10 @@
     <string name="remove_from_liked">पसंदीदा संगीत से हटाएं</string>
     <string name="remove_from_playlist">इस प्लेलिस्ट से हटाएं</string>
     <string name="rename_playlist">प्लेलिस्ट का नाम बदलें</string>
+    <string name="reorder_songs">गानों का क्रम बदलें</string>
+    <string name="reorder_failed">नया क्रम सेव नहीं हो सका</string>
+    <string name="playlist_reordered">प्लेलिस्ट का क्रम सेव हो गया</string>
+    <string name="save_order">सेव करें</string>
     <string name="reset_to_default">डिफ़ॉल्ट पर रीसेट करें</string>
     <string name="rich_presence_footer">अपनी Discord प्रोफ़ाइल पर दिखाएं कि आप क्या चला रहे हैं।</string>
     <string name="save_name">नाम सेव करें</string>

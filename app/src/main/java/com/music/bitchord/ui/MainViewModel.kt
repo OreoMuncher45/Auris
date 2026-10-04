@@ -1207,6 +1207,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * The playlist's entries as they stand on YouTube, for the reorder sheet —
+     * see [YtMusicRepository.playlistEntries] for why not the open page's list.
+     */
+    fun loadPlaylistEntries(playlist: UserPlaylist, onResult: (Result<List<Song>>) -> Unit) {
+        if (!requireSignIn()) return onResult(Result.failure(IllegalStateException("signed out")))
+        viewModelScope.launch {
+            onResult(YtMusicRepository.playlistEntries(playlist.browseId))
+        }
+    }
+
+    /**
+     * Saves a new running order for [playlist], sent as the fewest moves that
+     * get from [original] to [reordered], and puts the open page — if this
+     * playlist's is — into that order straight away rather than after a
+     * re-fetch the feed may answer with the old order.
+     */
+    fun reorderPlaylist(
+        playlist: UserPlaylist,
+        original: List<Song>,
+        reordered: List<Song>,
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        if (!requireSignIn()) return onResult(false)
+        viewModelScope.launch {
+            YtMusicRepository.reorderPlaylist(
+                playlist.playlistId,
+                current = original.mapNotNull { it.setVideoId },
+                target = reordered.mapNotNull { it.setVideoId },
+            ).fold(
+                onSuccess = {
+                    libraryStale = true
+                    _detailStack.value = _detailStack.value.map { page ->
+                        if (page.browseId != playlist.browseId || page.songs !is UiState.Success) {
+                            page
+                        } else {
+                            page.copy(songs = UiState.Success(reordered.withArtwork(page.thumbnailUrl)))
+                        }
+                    }
+                    onResult(true)
+                },
+                onFailure = { onResult(false) },
+            )
+        }
+    }
+
     fun deletePlaylist(playlist: UserPlaylist) {
         if (!requireSignIn()) return
         viewModelScope.launch {

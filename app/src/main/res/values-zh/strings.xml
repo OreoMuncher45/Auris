@@ -407,6 +407,10 @@
     <string name="remove_from_liked">从喜欢的音乐中移除</string>
     <string name="remove_from_playlist">从此播放列表中移除</string>
     <string name="rename_playlist">重命名播放列表</string>
+    <string name="reorder_songs">重新排序歌曲</string>
+    <string name="reorder_failed">无法保存新的顺序</string>
+    <string name="playlist_reordered">已保存播放列表顺序</string>
+    <string name="save_order">保存</string>
     <string name="reset_to_default">恢复默认设置</string>
     <string name="rich_presence_footer">在你的 Discord 个人资料中显示正在播放的内容。</string>
     <string name="save_name">保存名称</string>

@@ -386,6 +386,10 @@
     <string name="remove_from_liked">הסר ממוזיקה שאהבתי</string>
     <string name="remove_from_playlist">הסר מרשימת השמעה זו</string>
     <string name="rename_playlist">שנה שם רשימת ההשמעה</string>
+    <string name="reorder_songs">שנה סדר שירים</string>
+    <string name="reorder_failed">לא ניתן לשמור את הסדר החדש</string>
+    <string name="playlist_reordered">סדר הפלייליסט נשמר</string>
+    <string name="save_order">שמור</string>
     <string name="reset_to_default">אפס לברירת מחדל</string>
     <string name="rich_presence_footer">הראה במה אתה משחק בפרופיל דיסקורד שלך.</string>
     <string name="save_name">שמור שם</string>

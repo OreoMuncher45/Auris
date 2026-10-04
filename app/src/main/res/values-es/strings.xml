@@ -434,6 +434,10 @@
     <string name="remove_from_liked">Quitar de canciones favoritas</string>
     <string name="remove_from_playlist">Quitar de esta playlist</string>
     <string name="rename_playlist">Cambiar nombre de la playlist</string>
+    <string name="reorder_songs">Reordenar canciones</string>
+    <string name="reorder_failed">No se pudo guardar el nuevo orden</string>
+    <string name="playlist_reordered">Orden de la playlist guardado</string>
+    <string name="save_order">Guardar</string>
     <string name="reset_to_default">Restablecer valores predeterminados</string>
     <string name="rich_presence_footer">Muestra lo que estás escuchando en tu perfil de Discord.</string>
     <string name="save_name">Guardar nombre</string>

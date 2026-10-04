@@ -407,6 +407,10 @@
     <string name="remove_from_liked">高く評価した音楽から削除</string>
     <string name="remove_from_playlist">このプレイリストから削除</string>
     <string name="rename_playlist">プレイリスト名を変更</string>
+    <string name="reorder_songs">曲を並べ替え</string>
+    <string name="reorder_failed">新しい順序を保存できませんでした</string>
+    <string name="playlist_reordered">プレイリストの順序を保存しました</string>
+    <string name="save_order">保存</string>
     <string name="reset_to_default">デフォルトに戻す</string>
     <string name="rich_presence_footer">Discordのプロフィールに再生中の曲を表示します。</string>
     <string name="save_name">名前を保存</string>

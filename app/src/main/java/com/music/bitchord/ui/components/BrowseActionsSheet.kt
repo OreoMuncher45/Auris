@@ -21,6 +21,7 @@ import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -155,6 +156,12 @@ fun BrowseActionsSheet(
     isPinned: Boolean = false,
     onTogglePin: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
+    /**
+     * Opens the reorder sheet for one of the account's own playlists — set
+     * under the same rule as [onRename], since YouTube refuses to rearrange a
+     * playlist the account only saved.
+     */
+    onReorder: (() -> Unit)? = null,
     onDelete: (() -> Unit)? = null,
     /**
      * Removes the files this release was downloaded as, when it was downloaded
@@ -283,6 +290,9 @@ fun BrowseActionsSheet(
                         renaming = true
                     }
                 }
+            }
+            onReorder?.let {
+                ActionRow(Icons.Rounded.SwapVert, stringResource(R.string.reorder_songs), onClick = it)
             }
             if (onDelete != null) {
                 if (confirmingDelete) {

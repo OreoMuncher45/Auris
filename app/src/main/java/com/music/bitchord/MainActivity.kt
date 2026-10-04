@@ -134,6 +134,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.UserPlaylist
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import kotlinx.coroutines.Dispatchers
@@ -203,6 +204,7 @@ import com.music.bitchord.ui.components.BrowseTarget
 import com.music.bitchord.ui.components.ConfirmationAlert
 import com.music.bitchord.ui.components.DownloadManagerSheet
 import com.music.bitchord.ui.components.PlaylistPickerSheet
+import com.music.bitchord.ui.components.ReorderPlaylistSheet
 import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
@@ -634,6 +636,11 @@ private fun BitChordApp(
     var browseMenuOrigin by remember { mutableStateOf<HeldItem?>(null) }
     /** Rename asked for from the popup, which hands it on to the sheet's form. */
     var browseRenameInSheet by remember { mutableStateOf(false) }
+    /** The playlist being rearranged, or null when the reorder sheet is shut. */
+    var reorderTarget by remember { mutableStateOf<UserPlaylist?>(null) }
+    /** Its entries as YouTube has them now — fetched fresh when the sheet opens. */
+    var reorderEntries by remember { mutableStateOf<UiState<List<Song>>>(UiState.Loading) }
+    var reorderSaving by remember { mutableStateOf(false) }
     /** Holding an album or playlist: the popup when it was a hold, else the sheet. */
     val openBrowseMenu: (BrowseTarget) -> Unit = { target ->
         browseMenuOrigin = LongPressOrigin.consume()
@@ -4529,6 +4536,21 @@ private fun BitChordApp(
                         viewModel.renamePlaylist(p, name)
                     }
                 },
+                onReorder = playlist?.let { p ->
+                    {
+                        browseActions = null
+                        reorderTarget = p
+                        reorderEntries = UiState.Loading
+                        reorderSaving = false
+                        viewModel.loadPlaylistEntries(p) { result ->
+                            if (reorderTarget != p) return@loadPlaylistEntries
+                            reorderEntries = result.fold(
+                                onSuccess = { UiState.Success(it) },
+                                onFailure = { UiState.Error(context.getString(R.string.failed)) },
+                            )
+                        }
+                    }
+                },
                 onDelete = playlist?.let { p ->
                     {
                         browseActions = null
@@ -4577,6 +4599,38 @@ private fun BitChordApp(
             if (browseActions == null) {
                 browseMenuOrigin = null
                 browseRenameInSheet = false
+            }
+        }
+
+        // ---- Reorder playlist ----
+        // Full height, and the sheet's own drag turned off: every vertical
+        // drag inside it is meant for a row, and one that pulled the sheet
+        // down instead would throw the new order away.
+        reorderTarget?.let { target ->
+            val close = { reorderTarget = null }
+            ModalBottomSheet(
+                onDismissRequest = close,
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                sheetGesturesEnabled = false,
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                ReorderPlaylistSheet(
+                    playlist = target,
+                    entries = reorderEntries,
+                    saving = reorderSaving,
+                    onClose = close,
+                    onSave = { reordered ->
+                        val original = (reorderEntries as? UiState.Success)?.data.orEmpty()
+                        reorderSaving = true
+                        viewModel.reorderPlaylist(target, original, reordered) { saved ->
+                            reorderSaving = false
+                            showQueueNotice(
+                                context.getString(if (saved) R.string.playlist_reordered else R.string.reorder_failed),
+                            )
+                            if (saved && reorderTarget == target) reorderTarget = null
+                        }
+                    },
+                )
             }
         }
 
