@@ -108,6 +108,15 @@ fun AccountAndScrobblingScreen(
                 ),
                 onClick = onOpenSpotify,
             )
+            if (spotifyConnected.isNotBlank()) {
+                DestructiveRow(
+                    label = stringResource(R.string.spotify_disconnect),
+                    onClick = {
+                        clearSpotifyWebSession()
+                        AppSettings.setSpotifySpdcToken("")
+                    },
+                )
+            }
         }
 
         SettingsGroup(

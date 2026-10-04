@@ -14,6 +14,12 @@ import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.LikeState
 import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.data.model.SPOTIFY_MISSING_PREFIX
+import com.music.bitchord.data.model.SPOTIFY_PENDING_PREFIX
+import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
+import com.music.bitchord.data.spotify.SpotifyImporter
+import com.music.bitchord.data.spotify.SpotifyLibrary
+import com.music.bitchord.data.spotify.SpotifyTrack
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
@@ -2237,6 +2243,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     companion object {
+        /** How many Spotify tracks are looked up on YouTube Music at once. */
+        private const val SPOTIFY_MATCH_PARALLELISM = 6
+
         /**
          * How long a keystroke waits before the typeahead is asked about it.
          *
@@ -2361,6 +2370,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 it.browseId == browseId && it.songs is UiState.Loading
             } == true
         ) return
+        if (browseId.startsWith(SPOTIFY_PAGE_PREFIX)) {
+            openSpotifyPage(browseId, title, subtitle, thumbnailUrl)
+            return
+        }
         val resolved = browseTypeOf(browseId, type)
         _detailStack.value += DetailPage(
             browseId = browseId,
@@ -2514,6 +2527,78 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             more?.let { fillIn(browseId, it, thumbnailUrl ?: artwork) }
         }
     }
+
+    /**
+     * A Spotify playlist opened as an ordinary playlist page.
+     *
+     * Spotify's rows go up as soon as they are read, each marked as still
+     * waiting on its YouTube Music version (see [isMatchPending]); the matches
+     * then arrive in order and swap the rows in place, so the page is usable
+     * before the last song has been found.
+     */
+    private fun openSpotifyPage(browseId: String, title: String, subtitle: String, thumbnailUrl: String?) {
+        _detailStack.value += DetailPage(
+            browseId = browseId,
+            title = title,
+            subtitle = subtitle,
+            thumbnailUrl = thumbnailUrl,
+            songs = UiState.Loading,
+            type = BrowseType.PLAYLIST,
+        )
+        viewModelScope.launch {
+            val playlistId = browseId.removePrefix(SPOTIFY_PAGE_PREFIX)
+            fun open() = _detailStack.value.any { it.browseId == browseId }
+            fun setSongs(songs: UiState<List<Song>>) {
+                _detailStack.value = _detailStack.value.map {
+                    if (it.browseId == browseId) it.copy(songs = songs) else it
+                }
+            }
+            val tracks = runCatching {
+                SpotifyLibrary.tracks(playlistId) { soFar ->
+                    setSongs(UiState.Success(soFar.map { it.asPendingSong() }))
+                }
+            }.getOrElse {
+                setSongs(UiState.Error(it.message ?: text(R.string.failed)))
+                return@launch
+            }
+            if (tracks.isEmpty()) {
+                setSongs(UiState.Error(text(R.string.spotify_empty_tracks)))
+                return@launch
+            }
+            val gate = Semaphore(SPOTIFY_MATCH_PARALLELISM)
+            coroutineScope {
+                tracks.forEachIndexed { index, track ->
+                    launch {
+                        gate.withPermit {
+                            if (!open()) return@withPermit
+                            val match = runCatching { SpotifyImporter.matchTrack(track) }.getOrNull()
+                            val found = match?.copy(thumbnailUrl = match.thumbnailUrl ?: track.imageUrl)
+                                ?: track.asPendingSong().let {
+                                    it.copy(videoId = SPOTIFY_MISSING_PREFIX + track.id)
+                                }
+                            _detailStack.value = _detailStack.value.map { page ->
+                                val list = (page.songs as? UiState.Success<List<Song>>)?.data
+                                if (page.browseId == browseId && list != null && index < list.size) {
+                                    page.copy(songs = UiState.Success(list.toMutableList().also { it[index] = found }))
+                                } else page
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun SpotifyTrack.asPendingSong() = Song(
+        videoId = SPOTIFY_PENDING_PREFIX + id,
+        title = title,
+        artist = artist,
+        thumbnailUrl = imageUrl,
+        durationText = durationMs.takeIf { it > 0 }?.let { ms ->
+            "%d:%02d".format(ms / 60000, ms / 1000 % 60)
+        },
+        albumName = album,
+    )
 
     fun reloadLocalDetail(browseId: String) {
         viewModelScope.launch {

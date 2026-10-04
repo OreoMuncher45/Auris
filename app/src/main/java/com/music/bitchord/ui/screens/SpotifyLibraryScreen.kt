@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,28 +74,27 @@ private const val LOGIN_LAYOUT_FIX = """
     })();
 """
 
+/**
+ * The signed-in Spotify account's playlists. A tap opens one as an ordinary
+ * playlist page ([onOpenPlaylist]) — this screen is only the way in.
+ */
 @Composable
 fun SpotifyLibraryScreen(
-    onPlay: (SpotifyTrack) -> Unit,
+    onOpenPlaylist: (SpotifyPlaylist) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
     val cookie by AppSettings.spotifySpdcToken.collectAsStateWithLifecycle()
     var showLogin by remember { mutableStateOf(false) }
     var playlists by remember { mutableStateOf<List<SpotifyPlaylist>>(emptyList()) }
-    var opened by remember { mutableStateOf<SpotifyPlaylist?>(null) }
-    var tracks by remember { mutableStateOf<List<SpotifyTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
     BackHandler(enabled = showLogin) { showLogin = false }
-    BackHandler(enabled = opened != null && !showLogin) { opened = null }
 
     LaunchedEffect(cookie) {
         if (cookie.isBlank()) {
             playlists = emptyList()
-            opened = null
-            tracks = emptyList()
             error = null
             return@LaunchedEffect
         }
@@ -104,17 +102,6 @@ fun SpotifyLibraryScreen(
         error = null
         runCatching { SpotifyLibrary.playlists() }
             .onSuccess { playlists = it }
-            .onFailure { error = it.message }
-        loading = false
-    }
-
-    LaunchedEffect(opened?.id) {
-        val playlist = opened ?: return@LaunchedEffect
-        loading = true
-        error = null
-        tracks = emptyList()
-        runCatching { SpotifyLibrary.tracks(playlist.id) { tracks = it } }
-            .onSuccess { tracks = it }
             .onFailure { error = it.message }
         loading = false
     }
@@ -130,14 +117,13 @@ fun SpotifyLibraryScreen(
         return
     }
 
-    val playlist = opened
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = contentPadding,
     ) {
         item {
             Text(
-                text = playlist?.name ?: stringResource(R.string.spotify),
+                text = stringResource(R.string.spotify),
                 style = MaterialTheme.typography.displayLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
@@ -158,17 +144,6 @@ fun SpotifyLibraryScreen(
                 }
             }
         } else {
-            item {
-                TextButton(
-                    onClick = {
-                        clearSpotifyWebSession()
-                        AppSettings.setSpotifySpdcToken("")
-                    },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                ) {
-                    Text(stringResource(R.string.spotify_disconnect))
-                }
-            }
             if (loading) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -185,44 +160,13 @@ fun SpotifyLibraryScreen(
                     )
                 }
             }
-            if (!loading && error == null && playlist == null && playlists.isEmpty()) {
-                item {
-                    Text(
-                        text = stringResource(R.string.spotify_empty_playlists),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp),
-                    )
-                }
-            }
-            if (playlist == null) {
-                items(playlists, key = { it.id }) { item ->
-                    LibraryRow(
-                        title = item.name,
-                        subtitle = item.owner.orEmpty(),
-                        imageUrl = item.imageUrl,
-                        onClick = { opened = item },
-                    )
-                }
-            } else {
-                if (!loading && error == null && tracks.isEmpty()) {
-                    item {
-                        Text(
-                            text = stringResource(R.string.spotify_empty_tracks),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(horizontal = 20.dp),
-                        )
-                    }
-                }
-                // Indexed, because a playlist may hold the same song twice and a
-                // lazy list refuses duplicate keys.
-                itemsIndexed(tracks, key = { index, track -> "$index:${track.id}" }) { _, track ->
-                    LibraryRow(
-                        title = track.title,
-                        subtitle = track.artist,
-                        imageUrl = track.imageUrl,
-                        onClick = { onPlay(track) },
-                    )
-                }
+            items(playlists, key = { it.id }) { item ->
+                LibraryRow(
+                    title = item.name,
+                    subtitle = item.owner.orEmpty(),
+                    imageUrl = item.imageUrl,
+                    onClick = { onOpenPlaylist(item) },
+                )
             }
         }
     }
@@ -297,7 +241,7 @@ private fun isLoginHost(uri: Uri?) = hostMatches(uri, LOGIN_HOST_SUFFIXES)
  * "Sign in" straight back in. Only Spotify's cookies go — the same jar holds
  * the YouTube Music sign-in.
  */
-private fun clearSpotifyWebSession() {
+fun clearSpotifyWebSession() {
     val cookies = CookieManager.getInstance()
     for (url in SPOTIFY_COOKIE_URLS) {
         val names = cookies.getCookie(url)?.split(";")

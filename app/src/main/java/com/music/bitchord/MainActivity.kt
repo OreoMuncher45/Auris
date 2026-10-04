@@ -132,6 +132,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.model.isUnresolvedSpotify
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
@@ -163,6 +164,7 @@ import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
+import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.LinkRequest
 import com.music.bitchord.playback.MusicLink
@@ -1245,7 +1247,12 @@ private fun BitChordApp(
         }
     }
 
-    val playFrom: (List<Song>, Int, QueueSource) -> Unit = { songs, index, source ->
+    val playFrom: (List<Song>, Int, QueueSource) -> Unit = playFrom@{ allSongs, allIndex, source ->
+        // A Spotify page lists songs it has not found on YouTube Music yet (or
+        // never will); those can't be queued, so play the rest in their order.
+        if (allSongs.getOrNull(allIndex)?.isUnresolvedSpotify == true) return@playFrom
+        val songs = allSongs.filterNot { it.isUnresolvedSpotify }
+        val index = songs.indexOf(allSongs.getOrNull(allIndex)).coerceAtLeast(0)
         playRequestGeneration++
         activeRadioSeed = null
         scope.launch {
@@ -2411,7 +2418,7 @@ private fun BitChordApp(
         BackHandler(enabled = showDiscord) {
             showDiscord = false
         }
-        BackHandler(enabled = showSpotify) {
+        BackHandler(enabled = showSpotify && detail == null) {
             showSpotify = false
         }
         BackHandler(enabled = showAccountScrobbling && !showDiscord && !showSpotify) {
@@ -2469,7 +2476,7 @@ private fun BitChordApp(
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 AnimatedContent(
                     targetState = when {
-                        showSpotify -> "spotify"
+                        showSpotify && detail == null -> "spotify"
                         showDiscord -> "discord"
                         showHistory -> "history"
                         // `&& detail == null`: a card opened from the grid
@@ -2639,35 +2646,14 @@ private fun BitChordApp(
                         )
                     } else if (key == "spotify") {
                         SpotifyLibraryScreen(
-                            onPlay = { track ->
-                                scope.launch {
-                                    val query = listOf(track.title, track.artist)
-                                        .filter { it.isNotBlank() }
-                                        .joinToString(" ")
-                                    val songs = YtMusicRepository.search(query, SearchFilter.SONGS)
-                                        .getOrNull()
-                                        ?.filterIsInstance<SearchResult.Track>()
-                                        ?.map { it.song }
-                                        .orEmpty()
-                                    val match = TrackMatcher.best(
-                                        songs,
-                                        TrackMatcher.Target(
-                                            title = track.title,
-                                            artist = track.artist,
-                                            durationSec = track.durationMs.takeIf { it > 0 }?.div(1000),
-                                            album = track.album,
-                                        ),
-                                    ) ?: songs.firstOrNull()
-                                    if (match == null) {
-                                        Toast.makeText(
-                                            context,
-                                            context.getString(R.string.spotify_track_unavailable),
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                    } else {
-                                        playRadio(match, QueueSource("Spotify", PlaybackSourceType.SEARCH, track.id))
-                                    }
-                                }
+                            onOpenPlaylist = { playlist ->
+                                viewModel.openDetail(
+                                    browseId = SPOTIFY_PAGE_PREFIX + playlist.id,
+                                    title = playlist.name,
+                                    subtitle = playlist.owner ?: context.getString(R.string.spotify),
+                                    thumbnailUrl = playlist.imageUrl,
+                                    type = BrowseType.PLAYLIST,
+                                )
                             },
                             contentPadding = listPadding,
                         )
@@ -3357,7 +3343,7 @@ private fun BitChordApp(
                     (detail.type == BrowseType.ALBUM ||
                         detail.type == BrowseType.PLAYLIST ||
                         detail.type == BrowseType.ARTIST) &&
-                    !isLocalDetail && !showSpotify && !showDiscord && !showHistory && !showSettings &&
+                    !isLocalDetail && !showDiscord && !showHistory && !showSettings &&
                     !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay
                 val chromePageColor = if (isDetailVisible) {
                     detailPalette.background
@@ -3396,7 +3382,7 @@ private fun BitChordApp(
 
                 FrostedTopBar(
                     title = when {
-                        showSpotify -> stringResource(R.string.spotify)
+                        showSpotify && detail == null -> stringResource(R.string.spotify)
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
@@ -3437,7 +3423,7 @@ private fun BitChordApp(
                     refreshing = currentFeed != null && currentFeed in refreshing,
                     pullFraction = { currentPull?.distanceFraction ?: 0f },
                     onBack = when {
-                        showSpotify -> ({ showSpotify = false })
+                        showSpotify && detail == null -> ({ showSpotify = false })
                         showDiscord -> ({ showDiscord = false })
                         showHistory -> ({ showHistory = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
