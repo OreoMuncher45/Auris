@@ -251,13 +251,13 @@ private fun LibraryLinkList(links: List<LibraryLink>, onClick: (ShelfItem) -> Un
                     .padding(horizontal = PAGE_GUTTER),
             ) {
                 if (link.logo != null) {
-                    Image(
+                    // A mark, not a glyph: white on dark, black on light, with
+                    // its cut-outs left clear.
+                    Icon(
                         painter = painterResource(link.logo),
                         contentDescription = null,
-                        modifier = Modifier
-                            .size(LINK_ICON_SIZE)
-                            .clip(CircleShape)
-                            .background(Color(0xFF1ED760)),
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(LINK_ICON_SIZE),
                     )
                 } else {
                     Icon(

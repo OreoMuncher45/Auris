@@ -895,15 +895,13 @@ internal fun NewShelfCard(
             contentAlignment = Alignment.Center,
         ) {
             if (logo != null) {
-                // The mark is a white disc with the bars cut out, so it needs
-                // its own brand-green ground to read as the logo.
-                Image(
+                // The mark is a disc with the bars cut out, so tinting it
+                // leaves the bars clear: white on dark, black on light.
+                Icon(
                     painter = painterResource(logo),
                     contentDescription = null,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF1ED760)),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(44.dp),
                 )
             } else {
                 Icon(

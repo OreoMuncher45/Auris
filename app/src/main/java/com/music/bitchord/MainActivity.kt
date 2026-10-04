@@ -3226,7 +3226,7 @@ private fun BitChordApp(
                 // these pages had no status-bar scrim, title or back button, and
                 // Discord (pushed over Account) was covered by the page it opened
                 // from — hence skipped while it is up.
-                when (settingsSubScreen.takeUnless { showDiscord }) {
+                when (settingsSubScreen.takeUnless { showDiscord || showSpotify }) {
                     "account_scrobbling" -> {
                         Surface(
                             modifier = Modifier.fillMaxSize(),

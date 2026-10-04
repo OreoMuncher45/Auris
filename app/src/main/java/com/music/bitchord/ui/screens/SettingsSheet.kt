@@ -1791,13 +1791,22 @@ internal fun AccountCard(
     account: Account?,
     onSignIn: () -> Unit,
     onClick: (() -> Unit)? = null,
+    /** Sits inside a [SettingsGroup] that already supplies the card, so draws none of its own. */
+    grouped: Boolean = false,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = GROUP_INSET)
-            .clip(GroupShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .then(
+                if (grouped) {
+                    Modifier
+                } else {
+                    Modifier
+                        .padding(horizontal = GROUP_INSET)
+                        .clip(GroupShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                },
+            )
             .then(
                 when {
                     signedIn && onClick != null -> Modifier.clickable(onClick = onClick)

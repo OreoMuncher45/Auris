@@ -1,6 +1,10 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.material3.HorizontalDivider
+import com.music.bitchord.sharedui.resources.Res
+import com.music.bitchord.sharedui.resources.spotify_logo
+import org.jetbrains.compose.resources.painterResource
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -77,21 +81,28 @@ fun AccountAndScrobblingScreen(
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
         )
 
-        AccountCard(signedIn = signedIn, account = account, onSignIn = onSignIn, onClick = onSwitchChannel)
-
-        if (signedIn) {
-            SettingsGroup(
-                footer = stringResource(R.string.account_profiles_help),
-            ) {
+        // One card: who is signed in, which profile is listening, and the way
+        // out, with the explanation of profiles underneath.
+        SettingsGroup(
+            footer = if (signedIn) stringResource(R.string.account_profiles_help) else null,
+            topSpacing = 0.dp,
+        ) {
+            AccountCard(
+                signedIn = signedIn,
+                account = account,
+                onSignIn = onSignIn,
+                onClick = onSwitchChannel,
+                grouped = true,
+            )
+            if (signedIn) {
+                FullWidthDivider()
                 SettingsRow(
                     icon = Icons.Rounded.SwitchAccount,
                     title = stringResource(R.string.listen_as),
                     subtitle = channelName ?: stringResource(R.string.default_youtube_profile),
                     onClick = onSwitchChannel,
                 )
-            }
-
-            SettingsGroup {
+                FullWidthDivider()
                 DestructiveRow(label = stringResource(R.string.sign_out), onClick = onSignOut)
             }
         }
@@ -101,7 +112,7 @@ fun AccountAndScrobblingScreen(
             footer = stringResource(R.string.spotify_connect_subtitle),
         ) {
             SettingsRow(
-                icon = Icons.Rounded.LibraryMusic,
+                iconPainter = painterResource(Res.drawable.spotify_logo),
                 title = stringResource(R.string.spotify),
                 subtitle = stringResource(
                     if (spotifyConnected.isNotBlank()) R.string.connected else R.string.tap_to_connect,
@@ -109,6 +120,7 @@ fun AccountAndScrobblingScreen(
                 onClick = onOpenSpotify,
             )
             if (spotifyConnected.isNotBlank()) {
+                FullWidthDivider()
                 DestructiveRow(
                     label = stringResource(R.string.spotify_disconnect),
                     onClick = {
@@ -340,4 +352,10 @@ fun AccountAndScrobblingScreen(
 
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/** A hairline across the whole card, for setting a destructive row apart from the rows above it. */
+@Composable
+private fun FullWidthDivider() {
+    HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
 }
