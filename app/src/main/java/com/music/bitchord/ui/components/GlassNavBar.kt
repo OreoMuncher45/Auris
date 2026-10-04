@@ -313,35 +313,40 @@ private fun GlassNowPlaying(
         // couple of dp above the pill's centre line. Expanded the Box wraps its
         // content, so centring is a no-op there.
         contentAlignment = Alignment.Center,
+        // The gestures and the tap belong to the whole glass surface, not the
+        // row centred in it. Inline, that row is shorter than the pill it sits
+        // in, and a pull started in the strip above or below it went nowhere —
+        // on a bar only 45dp tall to begin with.
         modifier = Modifier
+            // Outside the press scale, which it lifts along with everything else.
+            .miniPlayerGestures(
+                pull = pull,
+                onNext = {
+                    haptics.play(Haptic.SkipNext)
+                    onNext()
+                },
+                onPrevious = {
+                    haptics.play(Haptic.SkipPrevious)
+                    onPrevious()
+                },
+                locked = controlsLocked,
+                onBlocked = onBlockedControl,
+            )
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .then(modifier),
+            .then(modifier)
+            .clickable(
+                interactionSource = pressSource,
+                indication = null,
+                onClick = onExpand,
+            ),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(
-                    interactionSource = pressSource,
-                    indication = null,
-                    onClick = onExpand,
-                )
-                .miniPlayerPull(pull)
-                .miniPlayerTrackSwipe(
-                    onNext = {
-                        haptics.play(Haptic.SkipNext)
-                        onNext()
-                    },
-                    onPrevious = {
-                        haptics.play(Haptic.SkipPrevious)
-                        onPrevious()
-                    },
-                    locked = controlsLocked,
-                    onBlocked = onBlockedControl,
-                )
                 .padding(
                     horizontal = if (isInline) 8.dp else 12.dp,
                     vertical = if (isInline) 4.dp else 8.dp,
