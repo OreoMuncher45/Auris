@@ -195,4 +195,9 @@
     <string name="your_listening_experience">ประสบการณ์การฟังของคุณ</string>
     <string name="default_replay_holder">ผู้ฟัง BitChord</string>
     <string name="member_since">สมาชิกตั้งแต่</string>
+    <string name="import_spotify">นำเข้าจาก Spotify</string>
+    <string name="import_spotify_subtitle">จากลิงก์เพลย์ลิสต์</string>
+    <string name="search_library_empty">ค้นหาเพลงในโฟลเดอร์เพลงในเครื่องของคุณ</string>
+    <string name="search_library_hint">เพลง ศิลปิน และอัลบั้ม</string>
+    <string name="search_library_no_results">ไม่มีอะไรในเพลงในเครื่องตรงกับ “%1$s”</string>
 </resources>

@@ -140,6 +140,12 @@ internal class DesktopDecodeAhead(
                 lock.withLock {
                     // A seek came in while this block was being read; it belongs to the old position.
                     if (decodingFor != generation) return@withLock
+                    // Close came in while this block was being read. Committing it would leave the
+                    // queue non-empty after close, and the caller's very next readSamples() — which
+                    // the contract says is null — would return this block instead. Seen on Windows
+                    // CI, where scheduling lets the caller's close win this race consistently;
+                    // Linux's timing hides it. The block dies with the closed reader.
+                    if (closed) return@withLock
                     if (decoded == null) {
                         ended = true
                     } else if (decoded.isNotEmpty()) {

@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Ваш опыт прослушивания</string>
     <string name="default_replay_holder">Слушатель BitChord</string>
     <string name="member_since">Участник с</string>
+    <string name="import_spotify">Импорт из Spotify</string>
+    <string name="import_spotify_subtitle">Из ссылки на плейлист</string>
+    <string name="search_library_empty">Поиск треков в папке локальной музыки.</string>
+    <string name="search_library_hint">Треки, исполнители и альбомы</string>
+    <string name="search_library_no_results">В локальной музыке нет ничего, совпадающего с «%1$s».</string>
 </resources>

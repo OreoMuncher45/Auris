@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Dein Hörerlebnis</string>
     <string name="default_replay_holder">BitChord-Hörer</string>
     <string name="member_since">Mitglied seit</string>
+    <string name="import_spotify">Aus Spotify importieren</string>
+    <string name="import_spotify_subtitle">Über einen Playlist-Link</string>
+    <string name="search_library_empty">Durchsuche die Songs in deinem Ordner für lokale Musik.</string>
+    <string name="search_library_hint">Songs, Künstler und Alben</string>
+    <string name="search_library_no_results">Nichts in der lokalen Musik passt zu „%1$s“.</string>
 </resources>

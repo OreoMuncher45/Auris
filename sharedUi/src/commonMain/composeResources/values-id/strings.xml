@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Pengalaman mendengarkan Anda</string>
     <string name="default_replay_holder">Pendengar BitChord</string>
     <string name="member_since">Anggota sejak</string>
+    <string name="import_spotify">Impor dari Spotify</string>
+    <string name="import_spotify_subtitle">Dari tautan playlist</string>
+    <string name="search_library_empty">Cari lagu di folder Musik Lokal Anda.</string>
+    <string name="search_library_hint">Lagu, Artis, dan Album</string>
+    <string name="search_library_no_results">Tidak ada di Musik Lokal yang cocok dengan “%1$s”.</string>
 </resources>

@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Dinleme deneyimin</string>
     <string name="default_replay_holder">BitChord dinleyicisi</string>
     <string name="member_since">Üyelik başlangıcı</string>
+    <string name="import_spotify">Spotify’den içe aktar</string>
+    <string name="import_spotify_subtitle">Bir çalma listesi bağlantısından</string>
+    <string name="search_library_empty">Yerel Müzik klasörünüzdeki şarkıları arar.</string>
+    <string name="search_library_hint">Şarkılar, Sanatçılar ve Albümler</string>
+    <string name="search_library_no_results">Yerel Müzik’te “%1$s” ile eşleşen bir şey yok.</string>
 </resources>
