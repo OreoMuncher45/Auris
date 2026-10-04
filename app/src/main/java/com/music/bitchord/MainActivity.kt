@@ -216,6 +216,7 @@ import com.music.bitchord.playback.setQueueDragActive
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.SearchSource
 import com.music.bitchord.ui.components.BottomFadeScrim
+import com.music.bitchord.ui.components.FloatingBarsTapGuard
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
@@ -3679,6 +3680,14 @@ private fun BitChordApp(
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
 
+                // Whichever bar is drawing reports its height here, for the
+                // guard to read at layout — never in composition, see the guard.
+                val floatingBarsHeight = remember { mutableIntStateOf(0) }
+                FloatingBarsTapGuard(
+                    barsHeight = { floatingBarsHeight.intValue },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+
                 // One tab handler, whichever bar is drawing it.
                 val onTabSelected: (Int) -> Unit = { index ->
                     viewModel.clearDetail()
@@ -3706,7 +3715,8 @@ private fun BitChordApp(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .onSizeChanged { floatingBarsHeight.intValue = it.height },
                 ) {
                     QueueActionNoticeHost(queueNotice)
                     // Liquid glass replaces the two stacked bars with the single
@@ -3747,7 +3757,8 @@ private fun BitChordApp(
                         // on a phone. Before fillMaxWidth, so the fill has
                         // already been bounded by the time it is applied.
                         .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .onSizeChanged { floatingBarsHeight.intValue = it.height },
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     QueueActionNoticeHost(queueNotice)

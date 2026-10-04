@@ -15,6 +15,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 
 /**
@@ -102,5 +105,61 @@ fun BottomFadeScrim(
             .fillMaxWidth()
             .height(height)
             .background(brush),
+    )
+}
+
+/**
+ * How far above the floating bars the page stops taking touches. A tap that
+ * just misses the top of the mini player belongs to it, not to whatever row
+ * the feed happens to have scrolled under there.
+ */
+private val TAP_GUARD_MARGIN = 8.dp
+
+/**
+ * A dead strip across the foot of the screen, as tall as the floating bars
+ * plus [TAP_GUARD_MARGIN], so a thumb that misses a tab or the mini player
+ * lands on nothing rather than on a song or an album passing under the bars —
+ * which played it, or opened it, out of a tap meant for the bar.
+ *
+ * Drawn after the page and before the bars, so the bars still take their own
+ * touches and the page gets none here. Full width, gaps included: the space
+ * beside the pill and between the bars is where a near miss lands. Scrolls
+ * started on the strip are swallowed too — the page scrolls from anywhere
+ * above it — which is how a tab bar behaves on iOS as well.
+ *
+ * Only the bottom: the fade at the top, over the status bar, guards nothing.
+ *
+ * [barsHeight] is read in layout only. The glass bar changes height on every
+ * frame of its fold, and read in composition that would recompose the whole
+ * app root along with it.
+ */
+@Composable
+fun FloatingBarsTapGuard(
+    barsHeight: () -> Int,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .layout { measurable, constraints ->
+                val bars = barsHeight()
+                val height = if (bars <= 0) 0 else (bars + TAP_GUARD_MARGIN.roundToPx())
+                val placeable = measurable.measure(
+                    Constraints.fixed(
+                        width = constraints.maxWidth,
+                        height = height.coerceAtMost(constraints.maxHeight),
+                    ),
+                )
+                layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+            }
+            .pointerInput(Unit) {
+                // Being hit at all is what keeps the page underneath from
+                // being hit. Consumed as well, so nothing above it in the tree
+                // reads a tap out of it either.
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                }
+            },
     )
 }
