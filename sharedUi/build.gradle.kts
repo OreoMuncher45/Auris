@@ -8,8 +8,21 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
  * 1.10.x -> androidx 1.10.x, material3 1.7.3 -> androidx material3 1.3.1), so
  * depending on this module never moves the phone's Compose underneath it. The
  * desktop resolves its own newer versions over these at the top of its graph.
+ *
+ * The pin is the *Android* anchor only. On the JVM it is a floor, not a
+ * ceiling — and there it matters which version compiles this module, because
+ * the desktop resolves ui-desktop 1.12.0 / skiko 0.150.x at runtime. Skia's
+ * Matrix33 became an inline float[9] between skiko 0.9 and 0.15
+ * (`makeTranslate` went from returning a Matrix33 to a name-mangled float[]
+ * overload), so bytecode compiled against 0.9 linked its object call and
+ * crashed with NoSuchMethodError on the desktop the first time a lyric line
+ * grew. Compiling the module against the version the desktop actually
+ * resolves keeps the compile-time link and the runtime link the same.
  */
 val cmp = "1.10.3"
+
+/** What the desktop graph resolves; see the comment above. */
+val CMP_DESKTOP = "1.12.0"
 
 plugins {
     id("org.jetbrains.kotlin.multiplatform")
@@ -62,6 +75,13 @@ kotlin {
             api("dev.chrisbanes.haze:haze-materials:1.3.1")
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+        }
+        // Compiled against what the desktop actually resolves, not the phone's
+        // pin — see the CMP_DESKTOP comment at the top of this file. Skia's
+        // Matrix33 changed shape between skiko 0.9 and 0.15, and bytecode built
+        // against 0.9 NoSuchMethodError'd the desktop's 0.15 at draw time.
+        jvmMain.dependencies {
+            api("org.jetbrains.compose.ui:ui-desktop:$CMP_DESKTOP")
         }
         jvmTest.dependencies {
             implementation(kotlin("test"))

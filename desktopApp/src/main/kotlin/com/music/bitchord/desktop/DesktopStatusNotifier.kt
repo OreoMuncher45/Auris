@@ -114,8 +114,25 @@ internal class DesktopStatusNotifierController(
                     started = false
                 }
                 // A session with no watcher is the ordinary case on plenty of desktops; say so once
-                // rather than treating it as a fault.
-                DesktopTrackLog.log("tray unavailable: ${failure.message}")
+                // rather than treating it as a fault. The cause chain matters here: a bare
+                // "Failed to connect to bus: null" has said nothing useful while the reason sat in
+                // a nested throwable.
+                DesktopTrackLog.log(
+                    buildString {
+                        append("tray unavailable: ")
+                        append(failure::class.java.simpleName)
+                        append(": ")
+                        append(failure.message ?: "no message")
+                        var cause = failure.cause
+                        while (cause != null) {
+                            append(" | caused by ")
+                            append(cause::class.java.simpleName)
+                            append(": ")
+                            append(cause.message ?: "no message")
+                            cause = cause.cause
+                        }
+                    },
+                )
             }
         }
     }

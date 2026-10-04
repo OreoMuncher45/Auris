@@ -75,6 +75,31 @@ class DesktopPlaybackEngine(
         }
     }
 
+    init {
+        // Windows' endpoint watcher bumps the same signal from the OS's own push; Linux asks the
+        // kernel on a poll — see [DesktopLinuxAudioWatcher]. A device change reconfigures a
+        // playing line only when the line was opened on a per-device mixer that is no longer
+        // there; the plain `default` mixer follows the desktop's routing on its own under
+        // PipeWire, so it needs no help.
+        DesktopLinuxAudioWatcher.ensureStarted()
+        scope.launch {
+            DesktopAudioDevices.changes.collect {
+                if (DesktopPlatform.isWindows) return@collect // its native side moves the stream itself
+                observedOutputDevice.let { chosen ->
+                    if (chosen != DesktopAudioDevices.SYSTEM_DEFAULT &&
+                        DesktopAudioDevices.mixerFor(chosen) == null
+                    ) {
+                        // The stored device is gone: fall back to the system default rather than
+                        // leaving playback pointed at a mixer that no longer exists.
+                        DesktopAudioDevices.select(DesktopAudioDevices.SYSTEM_DEFAULT)
+                        observedOutputDevice = DesktopAudioDevices.SYSTEM_DEFAULT
+                        commands += Command.Reconfigure
+                    }
+                }
+            }
+        }
+    }
+
     private var resolveJob: Job? = null
     private var upgradeJob: Job? = null
     private var nextResolveJob: Job? = null
