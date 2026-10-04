@@ -27,6 +27,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import org.jetbrains.compose.resources.painterResource
+import com.music.bitchord.sharedui.resources.spotify_logo
+import com.music.bitchord.sharedui.resources.Res
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -122,12 +127,23 @@ fun SpotifyLibraryScreen(
         contentPadding = contentPadding,
     ) {
         item {
-            Text(
-                text = stringResource(R.string.spotify),
-                style = MaterialTheme.typography.displayLarge,
-                color = MaterialTheme.colorScheme.onBackground,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
-            )
+            ) {
+                Icon(
+                    painter = painterResource(Res.drawable.spotify_logo),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.size(38.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = stringResource(R.string.spotify),
+                    style = MaterialTheme.typography.displayLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            }
         }
         if (cookie.isBlank()) {
             item {
