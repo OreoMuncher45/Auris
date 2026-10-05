@@ -194,13 +194,18 @@ object TrackMatcher {
         if (wanted.core != got.core) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
-        // the album cut. The one exception is a marker living on the release
-        // rather than the row — Tidal files the KALYANI remix single as title
-        // "KALYANI" + album "KALYANI (Remix)". A wanted marker found there
-        // completes the row's versions; a plain request never looks at the
-        // album, so today's strict behavior for it is unchanged.
-        val effectiveVersions = got.versions +
-            (if (wanted.versions.isNotEmpty()) albumVersionMarkers(candidate.albumName) else emptySet())
+        // the album cut. Markers living on the release rather than the row come
+        // in two kinds. A wanted take found on the album completes the row
+        // (Tidal's "KALYANI" + "KALYANI (Remix)"), but only ever in that
+        // direction. The no-vocal takes are bidirectional instead: a row from
+        // an "INSTRUMENTAL EDITION" album *is* the instrumental even when its
+        // title says nothing, so it must neither stand in for the vocal nor be
+        // refused its own instrumental request. Anything else on an album
+        // ("Party Mix 2024", "Deluxe Version") is compilation naming and is
+        // rightly ignored in both directions.
+        val albumMarks = albumVersionMarkers(candidate.albumName)
+        val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
+            (if (wanted.versions.isNotEmpty()) albumMarks else emptySet())
         if (wanted.versions != effectiveVersions) return null
 
         val creditedArtist = artistScore(target.artist, candidate.artist)
@@ -685,6 +690,18 @@ object TrackMatcher {
         "インスト", "バージョン", "歌ってみた", "踊ってみた", "弾いてみた",
         "翻唱", "现场", "混音",
         "커버", "라이브", "리믹스",
+    )
+
+    /**
+     * Takes whose absence from the audio is the point: a row filed under an
+     * album declaring one of these *is* that take even when its own title
+     * says nothing ("Am I Dreaming" on "... (METROVERSE INSTRUMENTAL
+     * EDITION)"). Applied from the album in both directions, unlike the
+     * rescue above — which is what stops the 256s instrumental twin from
+     * standing in for the 256s vocal no duration check can separate.
+     */
+    private val NOVOCAL_TAKES = setOf(
+        "instrumental", "karaoke", "acapella", "acappella", "backing", "stems", "stem",
     )
 
     /**

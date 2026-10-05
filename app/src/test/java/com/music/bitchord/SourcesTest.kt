@@ -1446,6 +1446,57 @@ class SourcesTest {
         )
     }
 
+    /** Same title, same length — only the album says this one has no vocals. */
+    @Test
+    fun `rejects the instrumental twin for a vocal request`() {
+        assertFalse(
+            matches(
+                song(
+                    "Am I Dreaming", "Metro Boomin", "4:16",
+                    album = "METRO BOOMIN PRESENTS SPIDER-MAN: ACROSS THE SPIDER-VERSE " +
+                        "(SOUNDTRACK FROM AND INSPIRED BY THE MOTION PICTURE " +
+                        "(METROVERSE INSTRUMENTAL EDITION))",
+                ),
+                title = "Am I Dreaming",
+                artist = "Metro Boomin, A\$AP Rocky & Roisee",
+                durationSec = 257,
+            ),
+        )
+    }
+
+    @Test
+    fun `accepts the instrumental twin for an instrumental request`() {
+        assertTrue(
+            matches(
+                song(
+                    "Am I Dreaming", "Metro Boomin", "4:16",
+                    album = "METRO BOOMIN PRESENTS SPIDER-MAN: ACROSS THE SPIDER-VERSE " +
+                        "(SOUNDTRACK FROM AND INSPIRED BY THE MOTION PICTURE " +
+                        "(METROVERSE INSTRUMENTAL EDITION))",
+                ),
+                title = "Am I Dreaming (Instrumental)",
+                artist = "Metro Boomin",
+                durationSec = 257,
+            ),
+        )
+    }
+
+    @Test
+    fun `still matches the vocal original from the same soundtrack`() {
+        assertTrue(
+            matches(
+                song(
+                    "Am I Dreaming", "Metro Boomin, A\$AP Rocky, Roisee", "4:16",
+                    album = "METRO BOOMIN PRESENTS SPIDER-MAN: ACROSS THE SPIDER-VERSE " +
+                        "(SOUNDTRACK FROM AND INSPIRED BY THE MOTION PICTURE)",
+                ),
+                title = "Am I Dreaming",
+                artist = "Metro Boomin, A\$AP Rocky & Roisee",
+                durationSec = 257,
+            ),
+        )
+    }
+
     // ---- The mid-track swap guard ------------------------------------------
 
     /**
