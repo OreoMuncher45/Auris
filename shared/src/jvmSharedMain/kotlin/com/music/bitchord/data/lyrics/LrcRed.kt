@@ -97,7 +97,7 @@ object LrcRed {
      * Of the hits that pass, the closest in length wins, and the search's own
      * rank breaks a tie.
      */
-    internal fun best(hits: List<Hit>, title: String, artist: String, durationMs: Long): Hit? {
+    fun best(hits: List<Hit>, title: String, artist: String, durationMs: Long): Hit? {
         val wantedTitle = coreOf(title)
         val wantedVersion = versionOf(title)
         val wantedArtists = artistsOf(artist)

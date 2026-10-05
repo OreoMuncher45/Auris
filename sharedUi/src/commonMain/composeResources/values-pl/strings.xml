@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Twoje doświadczenie ze słuchaniem</string>
     <string name="default_replay_holder">Słuchacz BitChord</string>
     <string name="member_since">Członek od</string>
+    <string name="import_spotify">Importuj z Spotify</string>
+    <string name="import_spotify_subtitle">Z linku do playlisty</string>
+    <string name="search_library_empty">Szukaj utworów w folderze muzyki lokalnej.</string>
+    <string name="search_library_hint">Utwory, wykonawcy i albumy</string>
+    <string name="search_library_no_results">NIC w muzyce lokalnej nie pasuje do „%1$s”.</string>
 </resources>

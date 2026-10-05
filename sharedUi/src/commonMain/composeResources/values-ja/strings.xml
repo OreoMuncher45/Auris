@@ -195,4 +195,9 @@
     <string name="your_listening_experience">あなたの再生体験</string>
     <string name="default_replay_holder">BitChordリスナー</string>
     <string name="member_since">登録日</string>
+    <string name="import_spotify">Spotify からインポート</string>
+    <string name="import_spotify_subtitle">プレイリストのリンクから</string>
+    <string name="search_library_empty">ローカル音楽フォルダ内の曲を検索します。</string>
+    <string name="search_library_hint">曲・アーティスト・アルバム</string>
+    <string name="search_library_no_results">ローカル音楽に「%1$s」に一致するものはありません。</string>
 </resources>

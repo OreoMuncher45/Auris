@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Trải nghiệm nghe nhạc của bạn</string>
     <string name="default_replay_holder">Người nghe BitChord</string>
     <string name="member_since">Thành viên từ</string>
+    <string name="import_spotify">Nhập từ Spotify</string>
+    <string name="import_spotify_subtitle">Từ liên kết danh sách phát</string>
+    <string name="search_library_empty">Tìm các bài hát trong thư mục Nhạc cục bộ của bạn.</string>
+    <string name="search_library_hint">Bài hát, nghệ sĩ và album</string>
+    <string name="search_library_no_results">Không có gì trong Nhạc cục bộ khớp với “%1$s”.</string>
 </resources>

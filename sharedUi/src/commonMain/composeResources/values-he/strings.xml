@@ -195,4 +195,9 @@
     <string name="your_listening_experience">חווית ההאזנה שלך</string>
     <string name="default_replay_holder">מאזין BitChord</string>
     <string name="member_since">חבר מאז</string>
+    <string name="import_spotify">ייבוא מ-Spotify</string>
+    <string name="import_spotify_subtitle">מקישור לפלייליסט</string>
+    <string name="search_library_empty">מחפש את השירים בתיקיית המוזיקה המקומית שלכם.</string>
+    <string name="search_library_hint">שירים, אמנים ואלבומים</string>
+    <string name="search_library_no_results">אין דבר במוזיקה המקומית שתואם ל-„%1$s”.</string>
 </resources>

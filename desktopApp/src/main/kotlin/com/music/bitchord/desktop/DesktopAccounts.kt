@@ -85,15 +85,17 @@ internal object DesktopAccounts {
             DesktopYouTubeAuth.adopt(null)
             return null
         }
-        val stored = sessionFor(account, activeProfile())
+        val profile = activeProfile()
+        val stored = sessionFor(account, profile)
         if (stored == null) {
             DesktopTrackLog.log("account '${account.email.ifBlank { account.name }}' has no stored credential any more")
             DesktopYouTubeAuth.adopt(null)
             return null
         }
         DesktopYouTubeSession.adoptSessionScope(stored.cookie)?.let { live ->
-            DesktopYouTubeAuth.adopt(stored)
-            return stored
+            val session = healedIdentity(account, profile, stored, live)
+            DesktopYouTubeAuth.adopt(session)
+            return session
         }
 
         DesktopTrackLog.log("the stored session has expired; looking for a fresh one in the browser it came from")
@@ -104,6 +106,81 @@ internal object DesktopAccounts {
             DesktopYouTubeAuth.adopt(null)
         }
         return renewed
+    }
+
+    /**
+     * The live shell's own answer about who this cookie acts as, unless the
+     * listener deliberately picked a brand channel.
+     *
+     * What activate() used to do was adopt [stored] — the identity captured
+     * when the login was saved — even though it had just gone and read [live],
+     * the same question answered by the shell *now*. Google rotates an
+     * account's `dataSyncId`, so a stored personal identity can silently go
+     * stale; sending it as `onBehalfOfUser` is answered 400 INVALID_ARGUMENT
+     * on every browse and next from then on, and this app's own log caught the
+     * mismatch and still kept the stale side ("server shell identity differs
+     * from selected profile; retaining override"). The feed 400s, radio and
+     * history die, and only luck (a run that installed no override) says the
+     * account is fine.
+     *
+     * For the account's own channel there is nothing to preserve: the shell's
+     * fresh pair *is* the identity, so it is adopted, written back over the
+     * stored profile, and used. A brand channel is different — there the
+     * stored pair is the whole point of the override (the shell offers the
+     * account's default, not the channel the listener chose), so it stands.
+     * Android's equivalent guard is `loadChannels`, which re-detects profiles
+     * and refreshes ids on every account load.
+     */
+    private fun healedIdentity(
+        account: DesktopGoogleAccount,
+        profile: DesktopYouTubeProfile?,
+        stored: DesktopYouTubeAuth.Session,
+        live: DesktopYouTubeAuth.Session,
+    ): DesktopYouTubeAuth.Session {
+        // No stored profile at all, or the listener did not pick a brand one:
+        // the shell's answer wins, and the stored record learns from it.
+        val brand = profile?.pageId?.takeIf { it.isNotBlank() }
+        if (brand == null) {
+            val changed = stored.dataSyncId != live.dataSyncId ||
+                stored.authUser != live.authUser
+            if (changed) {
+                val fresh = profile?.copy(
+                    dataSyncId = live.dataSyncId,
+                    authUser = live.authUser,
+                ) ?: DesktopYouTubeProfile(
+                    profileId = live.dataSyncId ?: account.accountId,
+                    name = account.name.ifBlank { "YouTube Music" },
+                    handle = account.email,
+                    avatar = account.avatar,
+                    pageId = null,
+                    dataSyncId = live.dataSyncId,
+                    authUser = live.authUser,
+                    isBrandAccount = false,
+                )
+                write(
+                    accounts().map {
+                        if (it.accountId == account.accountId) {
+                            it.copy(
+                                profiles = it.profiles.map { existing ->
+                                    if (existing.profileId == fresh.profileId) fresh else existing
+                                },
+                                activeProfileId = fresh.profileId,
+                            )
+                        } else {
+                            it
+                        }
+                    },
+                )
+                DesktopTrackLog.log(
+                    "adopted the shell's fresh channel identity" +
+                        if (stored.dataSyncId != live.dataSyncId) " (the stored one had gone stale)" else "",
+                )
+            }
+            return live
+        }
+        // Brand channel: keep what the listener picked, but take the live
+        // session's fresh cookie context for everything else.
+        return stored
     }
 
     /** Reads the source browser's cookies again and saves them if they are live. */

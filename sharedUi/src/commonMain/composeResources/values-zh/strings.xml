@@ -195,4 +195,9 @@
     <string name="your_listening_experience">你的收听体验</string>
     <string name="default_replay_holder">BitChord 听众</string>
     <string name="member_since">加入时间</string>
+    <string name="import_spotify">从 Spotify 导入</string>
+    <string name="import_spotify_subtitle">从播放列表链接</string>
+    <string name="search_library_empty">搜索本地音乐文件夹中的歌曲。</string>
+    <string name="search_library_hint">歌曲、艺人和专辑</string>
+    <string name="search_library_no_results">本地音乐中没有与「%1$s」匹配的内容。</string>
 </resources>

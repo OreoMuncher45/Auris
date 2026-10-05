@@ -195,4 +195,9 @@
     <string name="your_listening_experience">Tu experiencia musical</string>
     <string name="default_replay_holder">Oyente de BitChord</string>
     <string name="member_since">Miembro desde</string>
+    <string name="import_spotify">Importar de Spotify</string>
+    <string name="import_spotify_subtitle">Desde un enlace de playlist</string>
+    <string name="search_library_empty">Busca las canciones de tu carpeta de Música local.</string>
+    <string name="search_library_hint">Canciones, artistas y álbumes</string>
+    <string name="search_library_no_results">Nada en Música local coincide con “%1$s”.</string>
 </resources>

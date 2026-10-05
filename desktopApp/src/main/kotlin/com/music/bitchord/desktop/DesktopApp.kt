@@ -3610,6 +3610,10 @@ fun BitChordDesktopApp() {
                             query = query,
                             onQueryChange = ::editQuery,
                             filter = searchFilter,
+                            // The playing row's indicator, as the phone passes it: the engine's
+                            // live state, not the selection a track change publishes behind it.
+                            currentSong = playback.song,
+                            isPlaying = playback.isPlaying,
                             onFilterChange = {
                                 searchFilter = it
                                 if (query.isNotBlank()) search()
