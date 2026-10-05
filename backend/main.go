@@ -23,6 +23,7 @@ import (
 	"github.com/KabirSinghBhatia/BitChord/backend/config"
 	"github.com/KabirSinghBhatia/BitChord/backend/hub"
 	"github.com/KabirSinghBhatia/BitChord/backend/party"
+	"github.com/KabirSinghBhatia/BitChord/backend/presence"
 	"github.com/KabirSinghBhatia/BitChord/backend/protocol"
 )
 
@@ -30,6 +31,11 @@ var (
 	store    = party.NewPartyStore()
 	hubInst  = hub.NewHub()
 	createLimiter = newIPRateLimiter(time.Minute, config.CreateRatePerMinute, config.RateLimitMaxEntries)
+	presenceTracker = presence.NewTracker(
+		time.Duration(config.PresenceIntervalSec+config.PresenceGraceSec)*time.Second,
+		config.PresenceMaxEntries,
+	)
+	presenceLimiter = newIPRateLimiter(time.Minute, config.PresencePingsPerMinute, config.PresenceRateLimitMaxIPs)
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
@@ -40,6 +46,7 @@ var (
 
 func main() {
 	go startHeartbeatTicker()
+	go startPresenceSweeper()
 
 	mux := http.NewServeMux()
 
@@ -52,6 +59,10 @@ func main() {
 	mux.HandleFunc("GET /api/parties/{code}", handleGetParty)
 	mux.HandleFunc("GET /api/parties/{code}/preview", handlePreviewParty)
 	mux.HandleFunc("POST /api/parties/{code}/leave", handleLeaveParty)
+
+	// Open-app counter
+	mux.HandleFunc("POST /api/presence", handlePresence)
+	mux.HandleFunc("GET /api/stats/live", handleLiveStats)
 
 	// Web invite endpoint
 	mux.HandleFunc("GET /invite/{code}", handleInviteLanding)
@@ -103,6 +114,7 @@ type ipRateLimiter struct {
 	limit   int
 	maxKeys int
 	entries map[string]ipRateEntry
+	swept   time.Time
 }
 
 type ipRateEntry struct {
@@ -121,10 +133,15 @@ func (l *ipRateLimiter) Allow(ip string) bool {
 	now := time.Now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for key, entry := range l.entries {
-		if now.Sub(entry.started) >= l.window {
-			delete(l.entries, key)
+	// Expired entries are also reset on lookup below, so a full sweep only needs
+	// to run about once a second, or when the table is full and needs the room.
+	if now.Sub(l.swept) >= time.Second || (l.maxKeys > 0 && len(l.entries) >= l.maxKeys) {
+		for key, entry := range l.entries {
+			if now.Sub(entry.started) >= l.window {
+				delete(l.entries, key)
+			}
 		}
+		l.swept = now
 	}
 	entry := l.entries[ip]
 	if entry.started.IsZero() || now.Sub(entry.started) >= l.window {
@@ -223,6 +240,57 @@ func handleTime(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, map[string]interface{}{
 		"serverMs": clock.NowMs(),
 	})
+}
+
+// handlePresence takes the open apps' heartbeat:
+// {"id": "<install uuid>", "platform": "android"|"pc", "open": true|false}.
+func handlePresence(w http.ResponseWriter, r *http.Request) {
+	// Only the apps ping, and they send no Origin. Refusing browsers stops any web
+	// page from making its visitors post made-up installs from their addresses.
+	if r.Header.Get("Origin") != "" {
+		jsonError(w, http.StatusForbidden, "origin_not_allowed", "Presence is only accepted from the apps.")
+		return
+	}
+	if !presenceLimiter.Allow(clientIP(r)) {
+		jsonError(w, http.StatusTooManyRequests, "rate_limited", "Too many presence pings from this address.")
+		return
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Platform string `json:"platform"`
+		Open     *bool  `json:"open"`
+	}
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	id, ok := presence.ParseID(body.ID)
+	if !ok {
+		jsonError(w, http.StatusUnprocessableEntity, "invalid_id", "id must be a UUID.")
+		return
+	}
+	platform, ok := presence.ParsePlatform(body.Platform)
+	if !ok {
+		jsonError(w, http.StatusUnprocessableEntity, "invalid_platform", "platform must be android or pc.")
+		return
+	}
+	if body.Open == nil {
+		jsonError(w, http.StatusUnprocessableEntity, "invalid_open", "open must be true or false.")
+		return
+	}
+	if *body.Open {
+		presenceTracker.Ping(id, platform, clock.NowMs())
+	} else {
+		presenceTracker.Close(id)
+	}
+	jsonResponse(w, http.StatusOK, map[string]int{"intervalSec": config.PresenceIntervalSec})
+}
+
+// handleLiveStats is public on purpose: anyone, including a README badge or
+// another site's script, may read how many apps are open.
+func handleLiveStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "public, max-age=15")
+	jsonResponse(w, http.StatusOK, presenceTracker.Counts())
 }
 
 func handleCreateParty(w http.ResponseWriter, r *http.Request) {
@@ -1148,6 +1216,16 @@ func membersFrame(p *party.Party) map[string]interface{} {
 }
 
 // Background Heartbeat Ticker
+
+// startPresenceSweeper refreshes the live counts. A pass over 10k installs is
+// well under a millisecond, and stats reads never wait on it.
+func startPresenceSweeper() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		presenceTracker.Sweep(clock.NowMs())
+	}
+}
 
 func startHeartbeatTicker() {
 	interval := time.Duration(config.StateHeartbeatMs) * time.Millisecond

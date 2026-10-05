@@ -57,6 +57,9 @@ kotlin {
         commonTest.dependencies {
             implementation(kotlin("test"))
         }
+        jvmTest.dependencies {
+            implementation("com.squareup.okhttp3:mockwebserver:5.3.2")
+        }
     }
 }
 

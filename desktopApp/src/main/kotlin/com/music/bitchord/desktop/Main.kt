@@ -51,6 +51,8 @@ fun main() {
             available = { DesktopPoTokenWebView.available },
         ).asTokenProvider(),
     )
+    // The public "apps open right now" count; see Presence.
+    DesktopPresence.install()
     desktopMain()
 }
 
