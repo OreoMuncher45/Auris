@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources
 
 import com.music.bitchord.data.model.Song
 import kotlin.math.abs
+import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -92,7 +93,7 @@ object TrackMatcher {
 
     /** The first credited artist — who a catalogue is most likely to file the track under. */
     internal fun primaryArtist(artist: String): String =
-        artist.lowercase(Locale.ROOT).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
+        normalize(artist).split(ARTIST_SEPARATORS).firstOrNull()?.trim().orEmpty()
 
     /** Whether both credits name at least one of the same artists. */
     internal fun sharesArtist(wanted: String, got: String): Boolean {
@@ -193,8 +194,14 @@ object TrackMatcher {
         if (wanted.core != got.core) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
-        // the album cut.
-        if (wanted.versions != got.versions) return null
+        // the album cut. The one exception is a marker living on the release
+        // rather than the row — Tidal files the KALYANI remix single as title
+        // "KALYANI" + album "KALYANI (Remix)". A wanted marker found there
+        // completes the row's versions; a plain request never looks at the
+        // album, so today's strict behavior for it is unchanged.
+        val effectiveVersions = got.versions +
+            (if (wanted.versions.isNotEmpty()) albumVersionMarkers(candidate.albumName) else emptySet())
+        if (wanted.versions != effectiveVersions) return null
 
         val creditedArtist = artistScore(target.artist, candidate.artist)
         val duration = durationScore(
@@ -332,7 +339,7 @@ object TrackMatcher {
     internal fun parseTitle(raw: String, artist: String = ""): TitleParts {
         val versions = sortedSetOf<String>()
         val context = mutableSetOf<String>()
-        var text = raw.lowercase(Locale.ROOT).replace("&", " and ")
+        var text = normalize(raw)
 
         // Bracketed asides, innermost first: "(From "Satyamev Jayate")",
         // "[Official Audio]", "(Live at Wembley)".
@@ -354,11 +361,18 @@ object TrackMatcher {
         // "Song | Official Video". The head is normally the title, but the
         // "Artist - Title" upload convention inverts that, so a head that is
         // just the artist's name hands over to the tail instead of eating it.
+        // A mixed-script head with no Latin in it ("第ゼロ感 - Dai Zero Kan")
+        // is the transliteration shape: catalogues file the track under the
+        // Latin tail, so the tail becomes the identity and the head is kept
+        // as context rather than the other way round.
         repeat(DASH_PASSES) {
             val dash = DASH.find(text) ?: return@repeat
             val head = text.substring(0, dash.range.first)
             val tail = text.substring(dash.range.last + 1)
             text = if (isArtistName(head, artist)) {
+                classify(head, versions, context)
+                tail
+            } else if (!containsLatin(head) && containsLatin(tail)) {
                 classify(head, versions, context)
                 tail
             } else {
@@ -423,12 +437,29 @@ object TrackMatcher {
         if (artist.isBlank()) return false
         val words = text.split(WORD_SPLIT).map { it.replace(NON_ALNUM, "") }.filter { it.isNotEmpty() }
         if (words.isEmpty()) return false
-        val credited = artist.lowercase(Locale.ROOT).split(WORD_SPLIT)
+        val credited = normalize(artist).split(WORD_SPLIT)
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() }
             .toSet()
         return words.all { it in credited }
     }
+
+    /**
+     * NFKC + lowercase: full-width alphanumerics fold to ASCII (`Ｄａｉ` to
+     * `dai`, `０-９` to `0-9`, ideographic spaces to spaces) and CJK brackets
+     * fold to ASCII parens so the bracket pass handles `「title」` like
+     * `(title)`. CJK letters themselves survive — stripping them is what kept
+     * every non-Latin catalogue out of matching entirely.
+     */
+    internal fun normalize(text: String): String =
+        Normalizer.normalize(text, Normalizer.Form.NFKC)
+            .lowercase(Locale.ROOT)
+            .replace("&", " and ")
+            .replace(CJK_OPEN, "(")
+            .replace(CJK_CLOSE, ")")
+
+    /** Whether the (already normalized) text carries any ASCII filing — the transliteration signal. */
+    internal fun containsLatin(text: String): Boolean = LATIN.containsMatchIn(text)
 
     // ── Artist ──────────────────────────────────────────────────────────────
 
@@ -463,8 +494,7 @@ object TrackMatcher {
      * "Atif Aslam, Tulsi Kumar". Single letters go — an initialled
      * "A. R. Rahman" and a plain "AR Rahman" are the same person.
      */
-    internal fun artistNames(value: String): Set<List<String>> = value
-        .lowercase(Locale.ROOT)
+    internal fun artistNames(value: String): Set<List<String>> = normalize(value)
         .split(ARTIST_SEPARATORS)
         .map { name ->
             name.split(WORD_SPLIT)
@@ -532,9 +562,17 @@ object TrackMatcher {
         else -> EXPLICIT_EXACT
     }
 
+    /**
+     * Take markers carried by the release rather than the row ("KALYANI
+     * (Remix)" as the album of a plain-titled "KALYANI"). Read with the same
+     * parser, so the same version vocabulary applies on both sides.
+     */
+    internal fun albumVersionMarkers(album: String?): Set<String> =
+        if (album.isNullOrBlank()) emptySet() else parseTitle(album).versions
+
     /** Punctuation, spacing and a trailing edition label are catalogue formatting, not release identity. */
     private fun albumKey(value: String?): String? {
-        var text = value?.lowercase(Locale.ROOT)?.trim().orEmpty()
+        var text = normalize(value.orEmpty()).trim()
         if (text.isEmpty()) return null
         repeat(BRACKET_PASSES) { text = BRACKETED.replace(text, " ") }
         val words = text.split(WORD_SPLIT)
@@ -613,9 +651,17 @@ object TrackMatcher {
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
     private val WORD_SPLIT = Regex("""[\s.·]+""")
-    private val NON_ALNUM = Regex("""[^a-z0-9]""")
+    /**
+     * What survives into identity: any language's letters and digits.
+     * ASCII-only (`[^a-z0-9]`) is what emptied every CJK/Devanagari title to
+     * `""` — and an empty core matches nothing and asks for nothing.
+     */
+    private val NON_ALNUM = Regex("""[^\p{L}\p{N}]""")
+    private val LATIN = Regex("[a-z0-9]")
+    private val CJK_OPEN = Regex("[「『【〈《〔［｛]")
+    private val CJK_CLOSE = Regex("[」』】〉》〕］｝]")
     private val ARTIST_SEPARATORS =
-        Regex("""\s*(?:[,&/;·|]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""")
+        Regex("""\s*(?:[,&/;·|・、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""")
 
     /**
      * What makes a listing a different recording rather than a different
@@ -633,6 +679,12 @@ object TrackMatcher {
         "version", "mix", "dub", "vip", "session", "sessions",
         "sped", "slowed", "reverb", "nightcore", "lofi", "orchestral", "symphonic",
         "part", "pt", "chapter",
+        // Non-Latin spellings of the same takes. Without these a `カバー` or
+        // `カラオケ` row carries no version marker and scores as the original.
+        "カバー", "カラオケ", "リミックス", "ライブ", "アコースティック",
+        "インスト", "バージョン", "歌ってみた", "踊ってみた", "弾いてみた",
+        "翻唱", "现场", "混音",
+        "커버", "라이브", "리믹스",
     )
 
     /**

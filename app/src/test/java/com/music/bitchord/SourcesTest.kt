@@ -213,8 +213,8 @@ class SourcesTest {
 
     // ---- Cross-source matching ---------------------------------------------
 
-    private fun song(title: String, artist: String, duration: String? = null) =
-        Song(videoId = "x", title = title, artist = artist, thumbnailUrl = null, durationText = duration)
+    private fun song(title: String, artist: String, duration: String? = null, album: String? = null) =
+        Song(videoId = "x", title = title, artist = artist, thumbnailUrl = null, durationText = duration, albumName = album)
 
     private fun matches(candidate: Song, title: String, artist: String, durationSec: Int? = null) =
         TrackMatcher.matches(candidate, title, artist, durationSec)
@@ -1353,6 +1353,97 @@ class SourcesTest {
     @Test
     fun `has nothing to ask for without a title`() {
         assertTrue(TrackMatcher.queries(TrackMatcher.Target("", "Atif Aslam")).isEmpty())
+    }
+
+    /** A mixed-script upload is filed under its transliteration, not its original script. */
+    @Test
+    fun `asks for the romaji filing of a mixed-script title`() {
+        assertEquals(
+            listOf("dai zero kan 10-feet", "dai zero kan"),
+            TrackMatcher.queries(TrackMatcher.Target("第ゼロ感 - Dai Zero Kan", "10-FEET")),
+        )
+    }
+
+    /** A pure CJK title is kept rather than emptied into asking for nothing. */
+    @Test
+    fun `keeps a pure CJK title instead of asking for nothing`() {
+        assertEquals(
+            listOf("残響散歌 aimer", "残響散歌"),
+            TrackMatcher.queries(TrackMatcher.Target("残響散歌", "Aimer")),
+        )
+    }
+
+    @Test
+    fun `matches the romaji catalogue row for a mixed-script request`() {
+        assertTrue(
+            matches(
+                song("Dai Zero Kan", "10-FEET", "4:48"),
+                title = "第ゼロ感 - Dai Zero Kan",
+                artist = "10-FEET",
+                durationSec = 288,
+            ),
+        )
+    }
+
+    @Test
+    fun `rejects the cover take of a CJK recording`() {
+        assertFalse(
+            matches(
+                song("第ゼロ感 (Cover)", "Raise A Suilen", "4:49"),
+                title = "第ゼロ感",
+                artist = "10-FEET",
+                durationSec = 288,
+            ),
+        )
+        assertFalse(
+            matches(
+                song("残響散歌 (カバー)", "Aimer", "4:49"),
+                title = "残響散歌",
+                artist = "Aimer",
+                durationSec = 288,
+            ),
+        )
+    }
+
+    /** The take marker may live on the release: title "KALYANI" + album "KALYANI (Remix)". */
+    @Test
+    fun `accepts the remix single whose marker lives on the album`() {
+        assertTrue(
+            matches(
+                song("KALYANI", "ARJN, KDS, FIFTY4, Shreya Ghoshal", "4:29", album = "KALYANI (Remix)"),
+                title = "KALYANI (Remix)",
+                artist = "ARJN, KDS, FIFTY4 & Shreya Ghoshal",
+                durationSec = 270,
+            ),
+        )
+    }
+
+    @Test
+    fun `still rejects the original recording for a remix request`() {
+        // Same artists, same length, but neither row nor release names a take.
+        assertFalse(
+            matches(
+                song("KALYANI", "ARJN, KDS, FIFTY4, Shreya Ghoshal", "4:30", album = "KALYANI"),
+                title = "KALYANI (Remix)",
+                artist = "ARJN, KDS, FIFTY4 & Shreya Ghoshal",
+                durationSec = 270,
+            ),
+        )
+    }
+
+    @Test
+    fun `a plain request ignores the album when the row needs no marker`() {
+        // One-directional rescue: the album only ever completes a wanted
+        // marker, so a plain request keeps today's strict behavior here and
+        // stays accepted rather than gaining a veto it never had.
+        assertTrue(
+            matches(
+                song("KALYANI", "ARJN, KDS, FIFTY4, Shreya Ghoshal", "4:29", album = "KALYANI (Remix)"),
+                title = "KALYANI",
+                artist = "ARJN, KDS, FIFTY4 & Shreya Ghoshal",
+                durationSec = 269,
+            ),
+        )
     }
 
     // ---- The mid-track swap guard ------------------------------------------
