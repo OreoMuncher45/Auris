@@ -5,7 +5,7 @@
 
 <img src="Logo.png" alt="BitChord app icon" width="200" />
 
-# BitChord
+<h1>BitChord<br/><a href="https://api.bitchord.kushagrasingh.in/api/stats/live"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.bitchord.kushagrasingh.in%2Fapi%2Fstats%2Flive&query=%24.online&label=listening%20now&color=1DB954&labelColor=0d1117&style=for-the-badge&cacheSeconds=300" alt="Listening now" /></a></h1>
 
 ### Aesthetic YouTube Music Client
 
