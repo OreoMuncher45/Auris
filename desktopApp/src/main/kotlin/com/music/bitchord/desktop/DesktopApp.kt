@@ -3680,12 +3680,6 @@ fun BitChordDesktopApp() {
                                 emptyList()
                             },
                             typeaheadResults = if (searchTyping && query.isNotBlank()) searchTypeahead else emptyList(),
-                            // Upstream gave SearchScreen these two for the playing
-                            // indicator and did not update this call site, so
-                            // desktopApp stopped compiling on v1.7.1 — their CI
-                            // builds only the Go backend and never saw it.
-                            currentSong = playback.song,
-                            isPlaying = playback.isPlaying,
                             onSubmit = ::search,
                             onSuggestionClick = ::runSearch,
                             onHistoryClick = { entity ->
