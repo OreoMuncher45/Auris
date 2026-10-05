@@ -7,7 +7,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 val appVersion: String = providers.gradleProperty("bitchord.version").orNull
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
-    ?: "1.8"
+    ?: "1.8-beta1"
 
 /** Which platform this build is *for*, which is the host unless told otherwise. */
 val hostIsWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
@@ -20,7 +20,9 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
 
 // Windows installer metadata requires MAJOR.MINOR.BUILD even though the app's public version is
 // intentionally displayed without a patch number (1.7 rather than 1.7.0).
-val nativePackageVersion = if (appVersion.count { it == '.' } == 1) "$appVersion.0" else appVersion
+// The build number is the desktop version code; it also keeps "-beta1" out of the numeric installer version.
+val desktopVersionCode = 26
+val nativePackageVersion = appVersion.substringBefore('-').split('.').take(2).joinToString(".") + ".$desktopVersionCode"
 
 // FFmpeg decodes audio; see DesktopAudioDecoder.
 val javacppVersion = "1.5.12"
