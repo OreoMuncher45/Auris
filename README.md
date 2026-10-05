@@ -111,7 +111,7 @@ We welcome contributions to BitChord! Please review our [Contributing Guide](CON
 ### Thanks to all contributors ❤
 
 <a href="https://github.com/kushagrasinghx/BitChord/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=kushagrasinghx/BitChord" />
+  <img src="https://raw.githubusercontent.com/kushagrasinghx/BitChord/contributors/contributors.svg" />
 </a>
 
 </div>
