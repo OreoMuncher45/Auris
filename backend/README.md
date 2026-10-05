@@ -230,6 +230,14 @@ To keep memory, bandwidth, and latency strictly bounded:
   alongside indices. If concurrent network lag (e.g. 800 ms mobile latency) or
   a track completion shifts indices, the server resolves `fromIndex` from the
   track's `videoId` under the party lock, preventing misplaced drops.
+- **Repeated tracks**: the queue keeps its history, so it can hold the playing
+  track twice. `setQueue` keeps the sender's `queueIndex` when it names the
+  playing track, and `setTrack` without one takes the copy nearest the current
+  index (the next slot first) rather than the first copy from the top.
+- **AutoPlay de-duplication**: `queueAdd` drops `fromAutoplay` tracks already
+  waiting after the current one (or repeated in the batch). A batch that is
+  entirely such tracks succeeds without changing the queue. Hand-queued tracks
+  are never filtered.
 
 ## Deploying to Oracle Cloud (Always Free)
 
