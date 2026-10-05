@@ -539,6 +539,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Added to playlist</string>
     <string name="song_already_in_playlist">Already in playlist</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Add to %1$d playlist</item>
+        <item quantity="other">Add to %1$d playlists</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Added to %1$d playlist</item>
+        <item quantity="other">Added to %1$d playlists</item>
+    </plurals>
     <string name="party_queue_full">Queue is full (maximum %d songs in party)</string>
     <plurals name="log_copied_line_count">
         <item quantity="one">Log copied · %1$d line</item>
@@ -589,9 +597,13 @@
     <string name="remove_from_liked">Remove from Liked Music</string>
     <string name="remove_from_playlist">Remove from this playlist</string>
     <string name="rename_playlist">Rename playlist</string>
+    <string name="reorder_songs">Reorder songs</string>
+    <string name="reorder_failed">Couldn\'t save the new order</string>
+    <string name="playlist_reordered">Playlist order saved</string>
     <string name="reset_to_default">Reset to default</string>
     <string name="rich_presence_footer">Show what you are playing on your Discord profile.</string>
     <string name="save_name">Save name</string>
+    <string name="save_order">Save</string>
     <string name="saved_to_downloads">Saved to Downloads</string>
     <string name="saved_to_youtube_music_account">Saved to your YouTube Music account</string>
     <string name="scrobble_delay">Scrobble delay</string>

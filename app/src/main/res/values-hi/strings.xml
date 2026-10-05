@@ -421,6 +421,10 @@
     <string name="remove_from_liked">पसंदीदा संगीत से हटाएं</string>
     <string name="remove_from_playlist">इस प्लेलिस्ट से हटाएं</string>
     <string name="rename_playlist">प्लेलिस्ट का नाम बदलें</string>
+    <string name="reorder_songs">गानों का क्रम बदलें</string>
+    <string name="reorder_failed">नया क्रम सेव नहीं हो सका</string>
+    <string name="playlist_reordered">प्लेलिस्ट का क्रम सेव हो गया</string>
+    <string name="save_order">सेव करें</string>
     <string name="reset_to_default">डिफ़ॉल्ट पर रीसेट करें</string>
     <string name="rich_presence_footer">अपनी Discord प्रोफ़ाइल पर दिखाएं कि आप क्या चला रहे हैं।</string>
     <string name="save_name">नाम सेव करें</string>
@@ -1213,6 +1217,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">प्लेलिस्ट में जोड़ा गया</string>
     <string name="song_already_in_playlist">पहले से प्लेलिस्ट में है</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">%1$d प्लेलिस्ट में जोड़ें</item>
+        <item quantity="other">%1$d प्लेलिस्ट में जोड़ें</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">%1$d प्लेलिस्ट में जोड़ा गया</item>
+        <item quantity="other">%1$d प्लेलिस्ट में जोड़ा गया</item>
+    </plurals>
     <string name="party_queue_full">कतार भर गई है (पार्टी में अधिकतम %d गाने)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

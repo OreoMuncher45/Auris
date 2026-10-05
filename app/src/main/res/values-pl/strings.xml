@@ -383,6 +383,10 @@
     <string name="remove_from_liked">Usuń z Polubionych Utworów</string>
     <string name="remove_from_playlist">Usuń z tej playlisty</string>
     <string name="rename_playlist">Zmień nazwę playlisty</string>
+    <string name="reorder_songs">Zmień kolejność utworów</string>
+    <string name="reorder_failed">Nie udało się zapisać nowej kolejności</string>
+    <string name="playlist_reordered">Zapisano kolejność playlisty</string>
+    <string name="save_order">Zapisz</string>
     <string name="reset_to_default">Przywróć domyślne</string>
     <string name="rich_presence_footer">Pokaż w co grasz na swoim profilu na Discordzie.</string>
     <string name="save_name">Zapisz nazwę</string>
@@ -1253,6 +1257,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Dodano do playlisty</string>
     <string name="song_already_in_playlist">Już jest na playliście</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Dodaj do %1$d playlisty</item>
+        <item quantity="other">Dodaj do %1$d playlist</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Dodano do %1$d playlisty</item>
+        <item quantity="other">Dodano do %1$d playlist</item>
+    </plurals>
     <string name="party_queue_full">Kolejka jest pełna (maksymalnie %d utworów na imprezie)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

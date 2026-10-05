@@ -407,6 +407,10 @@
     <string name="remove_from_liked">高く評価した音楽から削除</string>
     <string name="remove_from_playlist">このプレイリストから削除</string>
     <string name="rename_playlist">プレイリスト名を変更</string>
+    <string name="reorder_songs">曲を並べ替え</string>
+    <string name="reorder_failed">新しい順序を保存できませんでした</string>
+    <string name="playlist_reordered">プレイリストの順序を保存しました</string>
+    <string name="save_order">保存</string>
     <string name="reset_to_default">デフォルトに戻す</string>
     <string name="rich_presence_footer">Discordのプロフィールに再生中の曲を表示します。</string>
     <string name="save_name">名前を保存</string>
@@ -1193,6 +1197,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">プレイリストに追加しました</string>
     <string name="song_already_in_playlist">すでにプレイリストにあります</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">%1$d件のプレイリストに追加</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">%1$d件のプレイリストに追加しました</item>
+    </plurals>
     <string name="party_queue_full">キューがいっぱいです（パーティーの上限は%d曲）</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

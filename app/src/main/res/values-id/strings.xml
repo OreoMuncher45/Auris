@@ -407,6 +407,10 @@
     <string name="remove_from_liked">Hapus dari Musik yang Disukai</string>
     <string name="remove_from_playlist">Hapus dari playlist ini</string>
     <string name="rename_playlist">Ganti nama playlist</string>
+    <string name="reorder_songs">Atur ulang urutan lagu</string>
+    <string name="reorder_failed">Tidak dapat menyimpan urutan baru</string>
+    <string name="playlist_reordered">Urutan playlist disimpan</string>
+    <string name="save_order">Simpan</string>
     <string name="reset_to_default">Setel ulang ke default</string>
     <string name="rich_presence_footer">Tampilkan apa yang sedang Anda putar di profil Discord Anda.</string>
     <string name="save_name">Simpan nama</string>
@@ -1192,6 +1196,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Ditambahkan ke playlist</string>
     <string name="song_already_in_playlist">Sudah ada di playlist</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">Tambahkan ke %1$d playlist</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">Ditambahkan ke %1$d playlist</item>
+    </plurals>
     <string name="party_queue_full">Antrean penuh (maksimal %d lagu di pesta)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

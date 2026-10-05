@@ -920,47 +920,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Adds [song] to a playlist, from the picker.
+     * Adds [song] to every playlist in [playlists] — the picker's ticked rows —
+     * and reports how each went, once, when they all have.
      *
      * Not optimistic, unlike a rating: the picker closes on the tap and there is
      * nothing left of it to update, and a playlist that shows a track it turned
-     * out not to have taken is worse than one that shows it a moment late.
+     * out not to have taken is worse than one that shows it a moment late. The
+     * playlist's own page is the exception — see [addOne].
      *
-     * The playlist's own page is the exception, because it can be the thing
-     * behind the picker — a row's menu on a playlist offers "Add to playlist" —
-     * and a page that doesn't show what was just added to it is the bug this is
-     * part of fixing. Still after the answer, not ahead of it.
+     * YouTube itself has no objection to a duplicate row, so whether the track
+     * is already there is checked here, against the playlist's open page or a
+     * fresh fetch of it, and a real duplicate is never sent.
      *
-     * [onResult] tells the caller whether the track was already in the
-     * playlist, so it can show the same kind of notice "Add to queue" and
-     * "Play next" do — see [MainActivity]'s `showQueueNotice`. YouTube itself
-     * has no objection to a duplicate row, so that check is made here, against
-     * the playlist's own page if it is open, or a fresh fetch of it otherwise —
-     * and a real duplicate is never sent, rather than added and only reported.
+     * One at a time rather than all at once: each check reads the playlist it
+     * is about, and a burst of parallel edits is exactly what YouTube answers
+     * with a rate limit. The duplicate check is per playlist, so a track
+     * already in one of them is skipped there and still added to the rest.
      */
-    fun addToPlaylist(playlist: UserPlaylist, song: Song, onResult: (alreadyInPlaylist: Boolean) -> Unit = {}) {
-        if (!requireSignIn()) return
+    fun addToPlaylists(
+        playlists: List<UserPlaylist>,
+        song: Song,
+        onResult: (added: Int, alreadyThere: Int, failed: Int) -> Unit = { _, _, _ -> },
+    ) {
+        if (!requireSignIn() || playlists.isEmpty()) return
         viewModelScope.launch {
-            val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
-                ?.songs as? UiState.Success)?.data
-            val known = openSongs
-                ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
-            if (known?.any { it.videoId == song.videoId } == true) {
-                onResult(true)
-                return@launch
-            }
-            YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId)).fold(
-                onSuccess = { added ->
-                    libraryStale = true
-                    // The playlist's page may be open behind the picker — it is
-                    // reachable from a row's own menu on it — so the track goes
-                    // into it for the same reason [addSuggestedSong] does.
-                    appendToOpenPlaylist(playlist.browseId, song, added[song.videoId])
-                    onResult(false)
-                },
-                onFailure = {},
+            val outcomes = playlists.map { addOne(it, song) }
+            onResult(
+                outcomes.count { it == AddOutcome.ADDED },
+                outcomes.count { it == AddOutcome.ALREADY_THERE },
+                outcomes.count { it == AddOutcome.FAILED },
             )
         }
+    }
+
+    private enum class AddOutcome { ADDED, ALREADY_THERE, FAILED }
+
+    private suspend fun addOne(playlist: UserPlaylist, song: Song): AddOutcome {
+        val openSongs = (_detailStack.value.firstOrNull { it.browseId == playlist.browseId }
+            ?.songs as? UiState.Success)?.data
+        val known = openSongs
+            ?: YtMusicRepository.allSongs(playlist.browseId).getOrNull()
+        if (known?.any { it.videoId == song.videoId } == true) return AddOutcome.ALREADY_THERE
+        return YtMusicRepository.addToPlaylist(playlist.playlistId, listOf(song.videoId)).fold(
+            onSuccess = { added ->
+                libraryStale = true
+                // The playlist's page may be open behind the picker — it is
+                // reachable from a row's own menu on it — so the track goes
+                // into it for the same reason [addSuggestedSong] does.
+                appendToOpenPlaylist(playlist.browseId, song, added[song.videoId])
+                AddOutcome.ADDED
+            },
+            onFailure = { AddOutcome.FAILED },
+        )
     }
 
     /**
@@ -1203,6 +1214,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     libraryStale = true
                 },
                 onFailure = {},
+            )
+        }
+    }
+
+    /**
+     * The playlist's entries as they stand on YouTube, for the reorder sheet —
+     * see [YtMusicRepository.playlistEntries] for why not the open page's list.
+     */
+    fun loadPlaylistEntries(playlist: UserPlaylist, onResult: (Result<List<Song>>) -> Unit) {
+        if (!requireSignIn()) return onResult(Result.failure(IllegalStateException("signed out")))
+        viewModelScope.launch {
+            onResult(YtMusicRepository.playlistEntries(playlist.browseId))
+        }
+    }
+
+    /**
+     * Saves a new running order for [playlist], sent as the fewest moves that
+     * get from [original] to [reordered], and puts the open page — if this
+     * playlist's is — into that order straight away rather than after a
+     * re-fetch the feed may answer with the old order.
+     */
+    fun reorderPlaylist(
+        playlist: UserPlaylist,
+        original: List<Song>,
+        reordered: List<Song>,
+        onResult: (Boolean) -> Unit = {},
+    ) {
+        if (!requireSignIn()) return onResult(false)
+        viewModelScope.launch {
+            YtMusicRepository.reorderPlaylist(
+                playlist.playlistId,
+                current = original.mapNotNull { it.setVideoId },
+                target = reordered.mapNotNull { it.setVideoId },
+            ).fold(
+                onSuccess = {
+                    libraryStale = true
+                    _detailStack.value = _detailStack.value.map { page ->
+                        if (page.browseId != playlist.browseId || page.songs !is UiState.Success) {
+                            page
+                        } else {
+                            page.copy(songs = UiState.Success(reordered.withArtwork(page.thumbnailUrl)))
+                        }
+                    }
+                    onResult(true)
+                },
+                onFailure = { onResult(false) },
             )
         }
     }

@@ -387,6 +387,10 @@
     <string name="remove_from_liked">Remover de Músicas Curtidas</string>
     <string name="remove_from_playlist">Remover desta playlist</string>
     <string name="rename_playlist">Renomear playlist</string>
+    <string name="reorder_songs">Reordenar músicas</string>
+    <string name="reorder_failed">Não foi possível salvar a nova ordem</string>
+    <string name="playlist_reordered">Ordem da playlist salva</string>
+    <string name="save_order">Salvar</string>
     <string name="reset_to_default">Redefinir para o padrão</string>
     <string name="rich_presence_footer">Mostre o que você está jogando em seu perfil do Discord.</string>
     <string name="save_name">Salvar nome</string>
@@ -1218,6 +1222,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Adicionada à playlist</string>
     <string name="song_already_in_playlist">Já está na playlist</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Adicionar a %1$d playlist</item>
+        <item quantity="other">Adicionar a %1$d playlists</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Adicionada a %1$d playlist</item>
+        <item quantity="other">Adicionada a %1$d playlists</item>
+    </plurals>
     <string name="party_queue_full">A fila está cheia (máximo de %d músicas na festa)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

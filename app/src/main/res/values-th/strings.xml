@@ -435,6 +435,10 @@
     <string name="remove_from_liked">นำออกจากเพลงที่ถูกใจ</string>
     <string name="remove_from_playlist">นำออกจากเพลย์ลิสต์นี้</string>
     <string name="rename_playlist">เปลี่ยนชื่อเพลย์ลิสต์</string>
+    <string name="reorder_songs">จัดลำดับเพลงใหม่</string>
+    <string name="reorder_failed">ไม่สามารถบันทึกลำดับใหม่ได้</string>
+    <string name="playlist_reordered">บันทึกลำดับเพลย์ลิสต์แล้ว</string>
+    <string name="save_order">บันทึก</string>
     <string name="reset_to_default">รีเซ็ตเป็นค่าเริ่มต้น</string>
     <string name="rich_presence_footer">แสดงสิ่งที่คุณกำลังเล่นบนโปรไฟล์ Discord ของคุณ</string>
     <string name="save_name">บันทึกชื่อ</string>
@@ -1018,6 +1022,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">เพิ่มลงในเพลย์ลิสต์แล้ว</string>
     <string name="song_already_in_playlist">อยู่ในเพลย์ลิสต์แล้ว</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">เพิ่มลงใน %1$d เพลย์ลิสต์</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">เพิ่มลงใน %1$d เพลย์ลิสต์แล้ว</item>
+    </plurals>
     <string name="party_queue_full">คิวเต็มแล้ว (ปาร์ตี้มีได้สูงสุด %d เพลง)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

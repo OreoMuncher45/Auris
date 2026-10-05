@@ -450,6 +450,10 @@
     <string name="remove_from_liked">Beğenilen Müzikten kaldır</string>
     <string name="remove_from_playlist">Bu çalma listesinden kaldır</string>
     <string name="rename_playlist">Çalma listesini yeniden adlandır</string>
+    <string name="reorder_songs">Şarkıları yeniden sırala</string>
+    <string name="reorder_failed">Yeni sıralama kaydedilemedi</string>
+    <string name="playlist_reordered">Çalma listesi sıralaması kaydedildi</string>
+    <string name="save_order">Kaydet</string>
     <string name="reset_to_default">Varsayılana sıfırla</string>
     <string name="rich_presence_footer">Discord profilinde ne çaldığını göster.</string>
     <string name="save_name">Adı kaydet</string>
@@ -1170,6 +1174,14 @@
     <string name="song_added_to_queue">Şarkı sıraya eklendi</string>
     <string name="song_added_to_playlist">Çalma listesine eklendi</string>
     <string name="song_already_in_playlist">Zaten çalma listesinde</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">%1$d çalma listesine ekle</item>
+        <item quantity="other">%1$d çalma listesine ekle</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">%1$d çalma listesine eklendi</item>
+        <item quantity="other">%1$d çalma listesine eklendi</item>
+    </plurals>
     <string name="party_queue_full">Sıra dolu (partide en fazla %d şarkı)</string>
 
     <string name="paxsenix_api_key">PaxSenix API anahtarı</string>

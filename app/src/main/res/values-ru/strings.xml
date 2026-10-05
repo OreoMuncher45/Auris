@@ -440,6 +440,10 @@
     <string name="remove_from_liked">Удалить из понравившейся музыки</string>
     <string name="remove_from_playlist">Удалить из этого плейлиста</string>
     <string name="rename_playlist">Переименовать плейлист</string>
+    <string name="reorder_songs">Изменить порядок треков</string>
+    <string name="reorder_failed">Не удалось сохранить новый порядок</string>
+    <string name="playlist_reordered">Порядок плейлиста сохранён</string>
+    <string name="save_order">Сохранить</string>
     <string name="reset_to_default">Сбросить по умолчанию</string>
     <string name="rich_presence_footer">Показывать, что вы слушаете, в вашем профиле Discord.</string>
     <string name="save_name">Сохранить название</string>
@@ -1241,6 +1245,18 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Добавлено в плейлист</string>
     <string name="song_already_in_playlist">Уже в плейлисте</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Добавить в %1$d плейлист</item>
+        <item quantity="few">Добавить в %1$d плейлиста</item>
+        <item quantity="many">Добавить в %1$d плейлистов</item>
+        <item quantity="other">Добавить в %1$d плейлиста</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Добавлено в %1$d плейлист</item>
+        <item quantity="few">Добавлено в %1$d плейлиста</item>
+        <item quantity="many">Добавлено в %1$d плейлистов</item>
+        <item quantity="other">Добавлено в %1$d плейлиста</item>
+    </plurals>
     <string name="party_queue_full">Очередь заполнена (максимум %d песен на вечеринке)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

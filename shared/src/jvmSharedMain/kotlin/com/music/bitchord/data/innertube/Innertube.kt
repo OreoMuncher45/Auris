@@ -20,6 +20,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import com.music.bitchord.data.model.LikeStatus
+import com.music.bitchord.data.model.PlaylistMove
 import com.music.bitchord.data.model.PlaylistPrivacy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -1052,6 +1053,24 @@ object Innertube {
                     put("action", "ACTION_REMOVE_VIDEO")
                     put("setVideoId", setVideoId)
                     put("removedVideoId", videoId)
+                }
+            }
+        }
+    }
+
+    /**
+     * Rearranges a playlist, one [PlaylistMove] after another in the order
+     * given — see [com.music.bitchord.data.model.playlistMoves] for building
+     * them. A move with no successor goes to the end.
+     */
+    suspend fun movePlaylistItems(playlistId: String, moves: List<PlaylistMove>) {
+        if (moves.isEmpty()) return
+        editPlaylist(playlistId) {
+            moves.forEach { move ->
+                addJsonObject {
+                    put("action", "ACTION_MOVE_VIDEO_BEFORE")
+                    put("setVideoId", move.setVideoId)
+                    move.before?.let { put("movedSetVideoIdSuccessor", it) }
                 }
             }
         }
