@@ -1503,9 +1503,10 @@ class SourcesTest {
     fun `matches the plain Mayonaka row across the wave-dash spellings`() {
         // Mixed kanji+kana titles keep their two as-written queries: the
         // transliteration is partial (kanji has no reading) and is not asked.
-        // ("with me" is eaten as a feat. marker on both sides alike.)
+        // ("with me" is eaten as a feat. marker on both sides alike; the wave
+        // dash is a word break, so the query keeps "stay" a separate word.)
         assertEquals(
-            listOf("真夜中のドアstay miki matsubara", "真夜中のドアstay"),
+            listOf("真夜中のドア stay miki matsubara", "真夜中のドア stay"),
             TrackMatcher.queries(
                 TrackMatcher.Target(
                     "真夜中のドア〜stay with me - Mayonaka no Door~stay with me",
@@ -1546,11 +1547,25 @@ class SourcesTest {
         )
     }
 
+    /** One extra query in the other script, without the artist — never a second pair. */
     @Test
     fun `asks both scripts for a transliterated pair`() {
         assertEquals(
-            listOf("koikogare mugi", "koikogare", "コイコガレ mugi", "コイコガレ"),
+            listOf("koikogare mugi", "koikogare", "コイコガレ"),
             TrackMatcher.queries(TrackMatcher.Target("コイコガレ - koikogare", "MUGI")),
+        )
+        assertEquals(
+            listOf("コイコガレ mugi", "コイコガレ", "koikogare"),
+            TrackMatcher.queries(TrackMatcher.Target("コイコガレ", "MUGI")),
+        )
+    }
+
+    /** "Title - Artist" in two scripts is not a transliteration. */
+    @Test
+    fun `keeps a CJK title whose dash tail is the artist`() {
+        assertEquals(
+            listOf("紅蓮華 lisa", "紅蓮華"),
+            TrackMatcher.queries(TrackMatcher.Target("紅蓮華 - LiSA", "LiSA")),
         )
     }
 
@@ -1629,6 +1644,49 @@ class SourcesTest {
         // Kanji passes through (kana around it still resolves); English loans don't.
         assertEquals("第zero感", TrackMatcher.romajiOf("第ゼロ感"))
         assertEquals("doa", TrackMatcher.romajiOf("ドア"))
+        // sh/ch/j carry the glide themselves.
+        assertEquals("sharuru", TrackMatcher.romajiOf("シャルル"))
+        assertEquals("janki", TrackMatcher.romajiOf("ジャンキ"))
+        assertEquals("chotto", TrackMatcher.romajiOf("ちょっと"))
+        assertEquals("jetto", TrackMatcher.romajiOf("ジェット"))
+        // No apostrophe after ん: catalogue romaji doesn't write one.
+        assertEquals("renai", TrackMatcher.romajiOf("レンアイ"))
+    }
+
+    @Test
+    fun `matches the romaji row of a kana title with a syllabic n`() {
+        assertTrue(matches(song("Renai", "A", "3:30"), "レンアイ", "A", 210))
+    }
+
+    /** The album only ever supplies markers the request asked for, never extra ones. */
+    @Test
+    fun `album naming beyond the wanted take does not refuse the row`() {
+        assertTrue(
+            matches(song("Song (Remix)", "Artist", "3:30", album = "Song (Remixes)"), "Song (Remix)", "Artist", 210),
+        )
+        assertTrue(
+            matches(song("Song (Live)", "Artist", "3:30", album = "MTV Unplugged"), "Song (Live)", "Artist", 210),
+        )
+        assertTrue(
+            matches(
+                song("Song (Acoustic)", "Artist", "3:30", album = "Acoustic Sessions"),
+                "Song (Acoustic)", "Artist", 210,
+            ),
+        )
+    }
+
+    /** A version word that is the title's last word is still the title. */
+    @Test
+    fun `a title ending in a version word does not take the live recording`() {
+        assertFalse(matches(song("Let Me Live (Live)", "Queen", "4:45"), "Let Me Live", "Queen", 285))
+        assertTrue(matches(song("Let Me Live", "Queen", "4:45"), "Let Me Live", "Queen", 285))
+    }
+
+    /** The katakana middle dot joins a transliterated name; it doesn't separate artists. */
+    @Test
+    fun `a katakana full name is one artist`() {
+        assertFalse(TrackMatcher.sharesArtist("ジョン・レノン", "ジョン・ウィリアムズ"))
+        assertTrue(TrackMatcher.sharesArtist("ジョン・レノン", "ジョン・レノン、オノ・ヨーコ"))
     }
 
     // ---- The mid-track swap guard ------------------------------------------

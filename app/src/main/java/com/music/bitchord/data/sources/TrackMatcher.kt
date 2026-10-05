@@ -77,30 +77,26 @@ object TrackMatcher {
      *
      * Two queries, not one: the second drops the artist, for the catalogues
      * that credit a track to the composer or the film rather than the singer
-     * and would otherwise score every result down.
+     * and would otherwise score every result down. A kana title gets a third,
+     * in the other script (below).
      */
     fun queries(target: Target): List<String> {
         val title = searchableTitle(target.title, target.artist)
         if (title.isBlank()) return emptyList()
         val artist = primaryArtist(target.artist)
-        fun withArtist(t: String) = if (artist.isBlank()) listOf(t) else listOf("$t $artist", t)
-        val out = mutableListOf<String>()
-        out += withArtist(title)
-        // Kana spelling asked after the as-written one: a pure-katakana
-        // title ("コイコガレ") never meets its romaji-filed row ("Koi
-        // Kogare") when only one script is asked for. Skipped when kana
-        // leaves non-Latin behind (kanji has no reading) — a half-garbled
-        // query helps nobody.
+        val out = if (artist.isBlank()) mutableListOf(title) else mutableListOf("$title $artist", title)
+        // The other script, asked once and without the artist: a pure-katakana
+        // title ("コイコガレ") never meets its romaji-filed row ("Koi Kogare")
+        // when only one script is asked for, and neither index answers the
+        // other script of a transliterated pair ("コイコガレ - koikogare").
+        // One extra query, not a second pair: every query is a search on every
+        // source, and the download lookup budget is sized off the count.
+        // Romaji is skipped when kana leaves non-Latin behind (kanji has no
+        // reading) — a half-garbled query helps nobody.
         val latin = romajiOf(title).trim()
-        if (latin.isNotBlank() && latin != title && latin.all { it in "abcdefghijklmnopqrstuvwxyz0123456789 '" }) {
-            out += withArtist(latin)
-        }
-        // Original-script mate of a transliterated pair ("コイコガレ -
-        // koikogare"): neither index answers the other script, so the mate
-        // the query above didn't ask for goes last.
-        scriptMates(target.title).forEach { mate ->
-            if (mate.isNotBlank() && mate != title && mate != latin) out += withArtist(mate)
-        }
+        val otherScript = latin.takeIf { it.isNotBlank() && it != title && it.all { c -> c in LATIN_QUERY_CHARS } }
+            ?: scriptMates(target.title).firstOrNull { it.isNotBlank() && it != title }
+        otherScript?.let { out += it }
         return out.distinct()
     }
 
@@ -225,9 +221,12 @@ object TrackMatcher {
         // refused its own instrumental request. Anything else on an album
         // ("Party Mix 2024", "Deluxe Version") is compilation naming and is
         // rightly ignored in both directions.
+        // Only markers the request asked for are taken from the album: the
+        // rest of an album name ("Song (Remixes)", "MTV Unplugged") describes
+        // the release, and adding it would refuse the right row.
         val albumMarks = albumVersionMarkers(candidate.albumName)
         val effectiveVersions = got.versions + (albumMarks intersect NOVOCAL_TAKES) +
-            (if (wanted.versions.isNotEmpty()) albumMarks else emptySet())
+            (albumMarks intersect wanted.versions)
         if (wanted.versions != effectiveVersions) return null
 
         val creditedArtist = artistScore(target.artist, candidate.artist)
@@ -399,7 +398,10 @@ object TrackMatcher {
             text = if (isArtistName(head, artist)) {
                 classify(head, versions, context)
                 tail
-            } else if (!hasFilingLatin(head) && hasFilingLatin(tail)) {
+            } else if (!hasFilingLatin(head) && hasFilingLatin(tail) && !isArtistName(tail, artist)) {
+                // "紅蓮華 - LiSA" is the title and its artist, not a
+                // transliteration: the Latin tail only takes over when it
+                // isn't just the credit.
                 classify(head, versions, context)
                 tail
             } else {
@@ -416,15 +418,18 @@ object TrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
         // "Paniyon Sa Full Song", "Tum Hi Ho Audio" — an upload's trailing
-        // label, printed without brackets to hang it on. Take markers get the
-        // same treatment ("Kizuna No Kiseki Instrumental"): they belong in
-        // versions, so the bracketed and unbracketed spellings of one take
-        // meet instead of missing each other. Never stripped down to
-        // nothing: a track really called "Song" keeps its name.
+        // label, printed without brackets to hang it on. The unambiguous take
+        // markers get the same treatment ("Kizuna No Kiseki Instrumental"):
+        // they belong in versions, so the bracketed and unbracketed spellings
+        // of one take meet instead of missing each other. Only those —
+        // "Let Me Live" and "Take Cover" end in a version word that is the
+        // title, and moving it would make the live take the studio one.
+        // Never stripped down to nothing: a track really called "Song" keeps
+        // its name.
         while (words.size > 1) {
             val last = words.last()
             if (last in TRAILING_NOISE) words = words.dropLast(1)
-            else if (last in VERSION_WORDS) {
+            else if (last in TRAILING_TAKES) {
                 versions += last
                 words = words.dropLast(1)
             } else break
@@ -493,9 +498,6 @@ object TrackMatcher {
             .replace(CJK_OPEN, "(")
             .replace(CJK_CLOSE, ")")
 
-    /** Whether the (already normalized) text carries any ASCII filing — the transliteration signal. */
-    internal fun containsLatin(text: String): Boolean = LATIN.containsMatchIn(text)
-
     /**
      * Latin that actually files the track. A head holding nothing but a take
      * marker ("絆ノ奇跡 -instrumental-") carries no filing — without this the
@@ -562,13 +564,10 @@ object TrackMatcher {
                         val fc = if (nc in 'ァ'..'ヶ') (nc.code - 0x60).toChar() else nc
                         KANA_ROMAJI[fc]?.firstOrNull()
                     }
-                    emit(
-                        when {
-                            peek == 'b' || peek == 'm' || peek == 'p' -> "m"
-                            peek != null && peek in "aiueoy" -> "n'"
-                            else -> "n"
-                        },
-                    )
+                    // No "n'" before a vowel: catalogue romaji drops the
+                    // apostrophe ("Renai" for レンアイ) and identity strips
+                    // punctuation anyway, so writing it only ever misses.
+                    emit(if (peek == 'b' || peek == 'm' || peek == 'p') "m" else "n")
                     i++
                 }
                 else -> {
@@ -584,7 +583,10 @@ object TrackMatcher {
                             val cons = CONS_OVERRIDES.entries
                                 .firstOrNull { base.startsWith(it.key) }?.value
                                 ?: base.dropLast(1)
-                            emit(cons + small)
+                            // sh/ch/j already carry the glide: しゃ is "sha",
+                            // ジャ is "ja", not "shya"/"jya".
+                            val glide = if (cons == "sh" || cons == "ch" || cons == "j") small.removePrefix("y") else small
+                            emit(cons + glide)
                             i += 2
                         } else {
                             emit(base); i++
@@ -785,7 +787,8 @@ object TrackMatcher {
     private val BRACKETED = Regex("""[(\[]([^()\[\]]*)[)\]]""")
     private val DASH = Regex("""\s+[-–—|]+\s+""")
     private val FEATURING = Regex("""\b(feat|ft|featuring|with)\b.*""")
-    private val WORD_SPLIT = Regex("""[\s.·]+""")
+    /** `~` and the wave dash `〜` join words in Japanese titles ("真夜中のドア〜stay"). */
+    private val WORD_SPLIT = Regex("""[\s.·~〜]+""")
     /**
      * What survives into identity: any language's letters and digits.
      * ASCII-only (`[^a-z0-9]`) is what emptied every CJK/Devanagari title to
@@ -793,6 +796,7 @@ object TrackMatcher {
      */
     private val NON_ALNUM = Regex("""[^\p{L}\p{N}]""")
     private val LATIN = Regex("[a-z0-9]")
+    private const val LATIN_QUERY_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789 "
     private val KANA_ROMAJI: Map<Char, String> = run {
         fun row(consonant: String, kana: String, vowels: String = "aiueo"): Map<Char, String> =
             kana.toList().zip(vowels.toList()).associate { (k, v) -> k to "$consonant$v" }
@@ -823,8 +827,10 @@ object TrackMatcher {
     )
     private val CJK_OPEN = Regex("[「『【〈《〔［｛]")
     private val CJK_CLOSE = Regex("[」』】〉》〕］｝]")
+    // Not the katakana middle dot `・`: it sits *inside* a transliterated
+    // name (ジョン・レノン), and splitting there makes two Johns one artist.
     private val ARTIST_SEPARATORS =
-        Regex("""\s*(?:[,&/;·|・、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""")
+        Regex("""\s*(?:[,&/;·|、，×]|\band\b|\bx\b|\bvs\.?\b|\bfeat\.?\b|\bft\.?\b|\bfeaturing\b|\bwith\b)\s*""")
 
     /**
      * What makes a listing a different recording rather than a different
@@ -848,6 +854,17 @@ object TrackMatcher {
         "インスト", "バージョン", "歌ってみた", "踊ってみた", "弾いてみた",
         "翻唱", "现场", "混音",
         "커버", "라이브", "리믹스",
+    )
+
+    /**
+     * The [VERSION_WORDS] that are a take even printed bare at the end of a
+     * title ("Kizuna No Kiseki Instrumental"). The rest are real title words
+     * often enough ("Let Me Live", "Take Cover", "The Final Chapter") that
+     * reading them as a take would let the live or cover recording stand in
+     * for the original.
+     */
+    private val TRAILING_TAKES = setOf(
+        "instrumental", "karaoke", "acapella", "acappella", "remix", "rmx", "nightcore",
     )
 
     /**
