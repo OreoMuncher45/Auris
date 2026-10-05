@@ -83,8 +83,25 @@ object TrackMatcher {
         val title = searchableTitle(target.title, target.artist)
         if (title.isBlank()) return emptyList()
         val artist = primaryArtist(target.artist)
-        if (artist.isBlank()) return listOf(title)
-        return listOf("$title $artist", title)
+        fun withArtist(t: String) = if (artist.isBlank()) listOf(t) else listOf("$t $artist", t)
+        val out = mutableListOf<String>()
+        out += withArtist(title)
+        // Kana spelling asked after the as-written one: a pure-katakana
+        // title ("コイコガレ") never meets its romaji-filed row ("Koi
+        // Kogare") when only one script is asked for. Skipped when kana
+        // leaves non-Latin behind (kanji has no reading) — a half-garbled
+        // query helps nobody.
+        val latin = romajiOf(title).trim()
+        if (latin.isNotBlank() && latin != title && latin.all { it in "abcdefghijklmnopqrstuvwxyz0123456789 '" }) {
+            out += withArtist(latin)
+        }
+        // Original-script mate of a transliterated pair ("コイコガレ -
+        // koikogare"): neither index answers the other script, so the mate
+        // the query above didn't ask for goes last.
+        scriptMates(target.title).forEach { mate ->
+            if (mate.isNotBlank() && mate != title && mate != latin) out += withArtist(mate)
+        }
+        return out.distinct()
     }
 
     /** The title with the packaging taken off, version markers kept. */
@@ -191,7 +208,12 @@ object TrackMatcher {
         val wanted = parseTitle(target.title, target.artist)
         val got = parseTitle(candidate.title, candidate.artist)
         if (wanted.core.isEmpty() || got.core.isEmpty()) return null
-        if (wanted.core != got.core) return null
+        // Same word, different script: katakana コイコガレ vs romaji
+        // koikogare. Hepburn transliteration bridges kana; kanji has no
+        // algorithmic reading and stays exact-only (mixed titles carry their
+        // romaji tail instead, and English loans like ドア/door don't
+        // transliterate to each other either).
+        if (wanted.core != got.core && romajiOf(wanted.core) != romajiOf(got.core)) return null
         // Direction matters both ways round: asking for the album cut must not
         // land on the live take, and asking for the live take must not land on
         // the album cut. Markers living on the release rather than the row come
@@ -377,7 +399,7 @@ object TrackMatcher {
             text = if (isArtistName(head, artist)) {
                 classify(head, versions, context)
                 tail
-            } else if (!containsLatin(head) && containsLatin(tail)) {
+            } else if (!hasFilingLatin(head) && hasFilingLatin(tail)) {
                 classify(head, versions, context)
                 tail
             } else {
@@ -394,10 +416,18 @@ object TrackMatcher {
             .map { it.replace(NON_ALNUM, "") }
             .filter { it.isNotEmpty() && it !in JOINING_WORDS }
         // "Paniyon Sa Full Song", "Tum Hi Ho Audio" — an upload's trailing
-        // label, printed without brackets to hang it on. Never stripped down
-        // to nothing: a track really called "Song" keeps its name.
-        while (words.size > 1 && words.last() in TRAILING_NOISE) {
-            words = words.dropLast(1)
+        // label, printed without brackets to hang it on. Take markers get the
+        // same treatment ("Kizuna No Kiseki Instrumental"): they belong in
+        // versions, so the bracketed and unbracketed spellings of one take
+        // meet instead of missing each other. Never stripped down to
+        // nothing: a track really called "Song" keeps its name.
+        while (words.size > 1) {
+            val last = words.last()
+            if (last in TRAILING_NOISE) words = words.dropLast(1)
+            else if (last in VERSION_WORDS) {
+                versions += last
+                words = words.dropLast(1)
+            } else break
         }
 
         return TitleParts(
@@ -465,6 +495,106 @@ object TrackMatcher {
 
     /** Whether the (already normalized) text carries any ASCII filing — the transliteration signal. */
     internal fun containsLatin(text: String): Boolean = LATIN.containsMatchIn(text)
+
+    /**
+     * Latin that actually files the track. A head holding nothing but a take
+     * marker ("絆ノ奇跡 -instrumental-") carries no filing — without this the
+     * marker alone would keep the unmatchable script as the identity.
+     */
+    internal fun hasFilingLatin(text: String): Boolean =
+        text.split(WORD_SPLIT)
+            .map { it.replace(NON_ALNUM, "") }
+            .filter { it.isNotEmpty() }
+            .any {
+                LATIN.containsMatchIn(it) && it !in VERSION_WORDS && it !in NOISE_WORDS &&
+                    it !in TRAILING_NOISE && it !in JOINING_WORDS
+            }
+
+    /**
+     * Both spellings when a dash joins the same word in two scripts
+     * ("コイコガレ - koikogare", either order). Empty unless the two sides
+     * transliterate to each other, so a film packaging ("Paniyon Sa -
+     * Satyamev Jayate") never qualifies.
+     */
+    internal fun scriptMates(raw: String): List<String> {
+        val text = normalize(raw)
+        val dash = DASH.find(text) ?: return emptyList()
+        val head = searchableTitle(text.substring(0, dash.range.first))
+        val tail = searchableTitle(text.substring(dash.range.last + 1))
+        if (head.isBlank() || tail.isBlank() || head == tail) return emptyList()
+        return if (romajiOf(head) == tail || romajiOf(tail) == head) listOf(head, tail)
+        else emptyList()
+    }
+
+    /**
+     * Hepburn transliteration for kana; anything else (kanji, Latin, digits)
+     * passes through untouched. Bridges コイコガレ/koikogare and
+     * アブナイキオク/abunaikioku — but deliberately not kanji (no algorithmic
+     * reading) nor English loans (ドア reads "doa", not "door").
+     */
+    internal fun romajiOf(text: String): String {
+        val out = StringBuilder()
+        var i = 0
+        var geminate = false
+        var lastVowel: Char? = null
+        fun emit(roma: String) {
+            var r = roma
+            if (geminate) {
+                geminate = false
+                r = when {
+                    r.startsWith("ch") -> "t$r"
+                    r.startsWith("sh") -> "s$r"
+                    r.startsWith("ts") -> "t$r"
+                    else -> "${r[0]}$r"
+                }
+            }
+            out.append(r)
+            lastVowel = r.lastOrNull { it in "aeiou" }
+        }
+        while (i < text.length) {
+            var c = text[i]
+            if (c in 'ァ'..'ヶ') c = (c.code - 0x60).toChar()
+            when (c) {
+                'っ' -> { geminate = true; i++ }
+                'ー' -> { lastVowel?.let(out::append); i++ }
+                'ん' -> {
+                    val peek = text.getOrNull(i + 1)?.let { nc ->
+                        val fc = if (nc in 'ァ'..'ヶ') (nc.code - 0x60).toChar() else nc
+                        KANA_ROMAJI[fc]?.firstOrNull()
+                    }
+                    emit(
+                        when {
+                            peek == 'b' || peek == 'm' || peek == 'p' -> "m"
+                            peek != null && peek in "aiueoy" -> "n'"
+                            else -> "n"
+                        },
+                    )
+                    i++
+                }
+                else -> {
+                    val base = KANA_ROMAJI[c]
+                    if (base == null) {
+                        out.append(c); lastVowel = null; geminate = false; i++
+                    } else {
+                        val n1 = text.getOrNull(i + 1)?.let { nc ->
+                            if (nc in 'ァ'..'ヶ') (nc.code - 0x60).toChar() else nc
+                        }
+                        val small = n1?.let { SMALL_Y[it] ?: SMALL_V[it] }
+                        if (small != null) {
+                            val cons = CONS_OVERRIDES.entries
+                                .firstOrNull { base.startsWith(it.key) }?.value
+                                ?: base.dropLast(1)
+                            emit(cons + small)
+                            i += 2
+                        } else {
+                            emit(base); i++
+                        }
+                    }
+                }
+            }
+        }
+        return out.toString()
+    }
 
     // ── Artist ──────────────────────────────────────────────────────────────
 
@@ -663,6 +793,34 @@ object TrackMatcher {
      */
     private val NON_ALNUM = Regex("""[^\p{L}\p{N}]""")
     private val LATIN = Regex("[a-z0-9]")
+    private val KANA_ROMAJI: Map<Char, String> = run {
+        fun row(consonant: String, kana: String, vowels: String = "aiueo"): Map<Char, String> =
+            kana.toList().zip(vowels.toList()).associate { (k, v) -> k to "$consonant$v" }
+        buildMap {
+            putAll(row("", "あいうえお"))
+            putAll(row("k", "かきくけこ")); putAll(row("g", "がぎぐげご"))
+            putAll(row("s", "さしすせそ")); put('し', "shi")
+            putAll(row("z", "ざじずぜぞ")); put('じ', "ji")
+            putAll(row("t", "たちつてと")); put('ち', "chi"); put('つ', "tsu")
+            putAll(row("d", "だぢづでど")); put('ぢ', "ji"); put('づ', "zu")
+            putAll(row("n", "なにぬねの"))
+            putAll(row("h", "はひふへほ")); put('ふ', "fu")
+            putAll(row("b", "ばびぶべぼ")); putAll(row("p", "ぱぴぷぺぽ"))
+            putAll(row("m", "まみむめも"))
+            put('や', "ya"); put('ゆ', "yu"); put('よ', "yo")
+            putAll(row("r", "らりるれろ"))
+            put('わ', "wa"); put('を', "wo"); put('ん', "n")
+            put('ゔ', "vu")
+            put('ぁ', "a"); put('ぃ', "i"); put('ぅ', "u"); put('ぇ', "e"); put('ぉ', "o")
+            put('ゃ', "ya"); put('ゅ', "yu"); put('ょ', "yo"); put('ゎ', "wa")
+            put('ゕ', "ka"); put('ゖ', "ke")
+        }
+    }
+    private val SMALL_Y = mapOf('ゃ' to "ya", 'ゅ' to "yu", 'ょ' to "yo")
+    private val SMALL_V = mapOf('ぁ' to "a", 'ぃ' to "i", 'ぅ' to "u", 'ぇ' to "e", 'ぉ' to "o")
+    private val CONS_OVERRIDES = mapOf(
+        "shi" to "sh", "chi" to "ch", "tsu" to "ts", "fu" to "f", "ji" to "j", "zu" to "z",
+    )
     private val CJK_OPEN = Regex("[「『【〈《〔［｛]")
     private val CJK_CLOSE = Regex("[」』】〉》〕］｝]")
     private val ARTIST_SEPARATORS =

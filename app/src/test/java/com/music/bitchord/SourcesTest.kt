@@ -1497,6 +1497,140 @@ class SourcesTest {
         )
     }
 
+    // ---- Non-Latin script accuracy -----------------------------------------
+
+    @Test
+    fun `matches the plain Mayonaka row across the wave-dash spellings`() {
+        // Mixed kanji+kana titles keep their two as-written queries: the
+        // transliteration is partial (kanji has no reading) and is not asked.
+        // ("with me" is eaten as a feat. marker on both sides alike.)
+        assertEquals(
+            listOf("真夜中のドアstay miki matsubara", "真夜中のドアstay"),
+            TrackMatcher.queries(
+                TrackMatcher.Target(
+                    "真夜中のドア〜stay with me - Mayonaka no Door~stay with me",
+                    "Miki Matsubara",
+                ),
+            ),
+        )
+        assertTrue(
+            matches(
+                song("真夜中のドア〜stay with me", "miki matsubara", "5:12", album = "松原みき ベスト・コレクション"),
+                title = "真夜中のドア〜stay with me - Mayonaka no Door~stay with me",
+                artist = "Miki Matsubara",
+                durationSec = 312,
+            ),
+        )
+    }
+
+    @Test
+    fun `matches the club mix take for a club mix request`() {
+        assertTrue(
+            matches(
+                song(
+                    "真夜中のドア〜stay with me (Original club mix)", "miki matsubara", "5:46",
+                    album = "POCKET PARK (Remastered)",
+                ),
+                title = "真夜中のドア〜stay with me (Original club mix)",
+                artist = "Miki Matsubara",
+                durationSec = 346,
+            ),
+        )
+        assertFalse(
+            matches(
+                song("真夜中のドア〜stay with me", "miki matsubara", "5:12"),
+                title = "真夜中のドア〜stay with me (Original club mix)",
+                artist = "Miki Matsubara",
+                durationSec = 346,
+            ),
+        )
+    }
+
+    @Test
+    fun `asks both scripts for a transliterated pair`() {
+        assertEquals(
+            listOf("koikogare mugi", "koikogare", "コイコガレ mugi", "コイコガレ"),
+            TrackMatcher.queries(TrackMatcher.Target("コイコガレ - koikogare", "MUGI")),
+        )
+    }
+
+    @Test
+    fun `matches the katakana row for a romaji-queried Koi Kogare`() {
+        assertTrue(
+            matches(
+                song("コイコガレ", "MUGI", "2:39", album = "LAST KISS"),
+                title = "コイコガレ - koikogare",
+                artist = "MUGI",
+                durationSec = 159,
+            ),
+        )
+        // Same title, different recording (Demon Slayer ED): duration vetoes.
+        assertFalse(
+            matches(
+                song("Koi Kogare", "milet, MAN WITH A MISSION", "3:36"),
+                title = "コイコガレ - koikogare",
+                artist = "MUGI",
+                durationSec = 159,
+            ),
+        )
+    }
+
+    @Test
+    fun `matches the instrumental twin for an instrumental Kizuna request`() {
+        assertTrue(
+            matches(
+                song(
+                    "Kizuna No Kiseki Instrumental", "MAN WITH A MISSION, milet", "3:43",
+                    album = "Kizuna No Kiseki / Koi Kogare",
+                ),
+                title = "絆ノ奇跡 -Instrumental- - Kizuna No Kiseki Instrumental",
+                artist = "MAN WITH A MISSION & milet",
+                durationSec = 223,
+            ),
+        )
+        assertFalse(
+            matches(
+                song("Kizuna No Kiseki", "MAN WITH A MISSION, milet", "3:43", album = "Kizuna No Kiseki"),
+                title = "絆ノ奇跡 -Instrumental- - Kizuna No Kiseki Instrumental",
+                artist = "MAN WITH A MISSION & milet",
+                durationSec = 223,
+            ),
+        )
+    }
+
+    @Test
+    fun `separates vocal from instrumental blue`() {
+        assertTrue(
+            matches(
+                song("blue (instrumental)", "yung kai", "3:36", album = "shades of blue (instrumental)"),
+                title = "blue (instrumental)",
+                artist = "yung kai",
+                durationSec = 216,
+            ),
+        )
+        assertFalse(
+            matches(
+                song("blue", "yung kai", "3:36", album = "shades of blue"),
+                title = "blue (instrumental)",
+                artist = "yung kai",
+                durationSec = 216,
+            ),
+        )
+    }
+
+    @Test
+    fun `transliterates kana to romaji`() {
+        assertEquals("koikogare", TrackMatcher.romajiOf("コイコガレ"))
+        assertEquals("abunaikioku", TrackMatcher.romajiOf("アブナイキオク"))
+        assertEquals("kiseki", TrackMatcher.romajiOf("きせき"))
+        assertEquals("gakkou", TrackMatcher.romajiOf("がっこう"))
+        assertEquals("shimbun", TrackMatcher.romajiOf("しんぶん"))
+        assertEquals("kyou", TrackMatcher.romajiOf("きょう"))
+        // Kanji passes through (kana around it still resolves); English loans don't.
+        assertEquals("第zero感", TrackMatcher.romajiOf("第ゼロ感"))
+        assertEquals("doa", TrackMatcher.romajiOf("ドア"))
+    }
+
     // ---- The mid-track swap guard ------------------------------------------
 
     /**
