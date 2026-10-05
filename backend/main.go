@@ -63,6 +63,7 @@ func main() {
 	// Open-app counter
 	mux.HandleFunc("POST /api/presence", handlePresence)
 	mux.HandleFunc("GET /api/stats/live", handleLiveStats)
+	mux.HandleFunc("GET /api/stats/live/badge.svg", handleLiveBadge)
 
 	// Web invite endpoint
 	mux.HandleFunc("GET /invite/{code}", handleInviteLanding)
@@ -291,6 +292,26 @@ func handleLiveStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "public, max-age=15")
 	jsonResponse(w, http.StatusOK, presenceTracker.Counts())
+}
+
+// handleLiveBadge draws the README's "listening now" badge itself. Going
+// through shields.io meant its 2-5 minute cache stacked on GitHub's camo
+// proxy, so the README trailed the real count by minutes. no-cache here is
+// what camo honours, so every README view gets the current number.
+//
+// The geometry copies shields' for-the-badge render byte for byte: a fixed
+// 124.25px label, bold Verdana digits at 8.25px each, 12px padding a side.
+func handleLiveBadge(w http.ResponseWriter, r *http.Request) {
+	value := fmt.Sprint(presenceTracker.Counts().Online)
+	valueWidth := 8.25*float64(len(value)) + 24
+	width := 124.25 + valueWidth
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%g" height="28" role="img" aria-label="LISTENING NOW: %s"><title>LISTENING NOW: %s</title><g shape-rendering="crispEdges"><rect width="124.25" height="28" fill="#0d1117"/><rect x="124.25" width="%g" height="28" fill="#fb4f67"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="100"><text transform="scale(.1)" x="621.25" y="175" textLength="1002.5">LISTENING NOW</text><text transform="scale(.1)" x="%g" y="175" textLength="%g" font-weight="bold">%s</text></g></svg>`,
+		width, value, value, valueWidth, (124.25+valueWidth/2)*10, 82.5*float64(len(value)), value)
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "image/svg+xml;charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate, max-age=0")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(svg))
 }
 
 func handleCreateParty(w http.ResponseWriter, r *http.Request) {

@@ -30,6 +30,7 @@ func setupTestServer() *httptest.Server {
 	mux.HandleFunc("POST /api/parties/{code}/leave", handleLeaveParty)
 	mux.HandleFunc("POST /api/presence", handlePresence)
 	mux.HandleFunc("GET /api/stats/live", handleLiveStats)
+	mux.HandleFunc("GET /api/stats/live/badge.svg", handleLiveBadge)
 	mux.HandleFunc("GET /invite/{code}", handleInviteLanding)
 	mux.HandleFunc("GET /ws/parties/{code}", handleWebSocket)
 
@@ -355,6 +356,32 @@ func TestPresenceRateLimit(t *testing.T) {
 	postPresence(t, ts, body, "")
 	if res := postPresence(t, ts, body, ""); res.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("third ping in a minute: status %d, want 429", res.StatusCode)
+	}
+}
+
+func TestLiveBadge(t *testing.T) {
+	presenceTracker = presence.NewTracker(6*time.Minute, 1000)
+	presenceLimiter = newIPRateLimiter(time.Minute, 100, 100)
+	ts := setupTestServer()
+	defer ts.Close()
+
+	postPresence(t, ts, `{"id":"3f2b8c1e-9a4d-4e6f-8b7a-1c2d3e4f5a6b","platform":"android","open":true}`, "")
+	presenceTracker.Sweep(clock.NowMs())
+
+	res, err := http.Get(ts.URL + "/api/stats/live/badge.svg")
+	if err != nil || res.StatusCode != http.StatusOK {
+		t.Fatalf("GET badge failed: status %v, err %v", res.StatusCode, err)
+	}
+	// GitHub's camo proxy only refetches when the origin says not to cache.
+	if got := res.Header.Get("Cache-Control"); !strings.Contains(got, "no-cache") {
+		t.Fatalf("badge must not be cached, got Cache-Control %q", got)
+	}
+	var body bytes.Buffer
+	_, _ = body.ReadFrom(res.Body)
+	// shields.io's own render of "LISTENING NOW: 1", so the badge looks unchanged.
+	want := `<svg xmlns="http://www.w3.org/2000/svg" width="156.5" height="28" role="img" aria-label="LISTENING NOW: 1"><title>LISTENING NOW: 1</title><g shape-rendering="crispEdges"><rect width="124.25" height="28" fill="#0d1117"/><rect x="124.25" width="32.25" height="28" fill="#fb4f67"/></g><g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" text-rendering="geometricPrecision" font-size="100"><text transform="scale(.1)" x="621.25" y="175" textLength="1002.5">LISTENING NOW</text><text transform="scale(.1)" x="1403.75" y="175" textLength="82.5" font-weight="bold">1</text></g></svg>`
+	if body.String() != want {
+		t.Fatalf("badge svg differs from shields:\n got %s\nwant %s", body.String(), want)
 	}
 }
 
