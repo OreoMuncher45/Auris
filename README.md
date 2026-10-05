@@ -5,7 +5,7 @@
 
 <img src="Logo.png" alt="BitChord app icon" width="200" />
 
-<h1>BitChord<br/><a href="https://api.bitchord.kushagrasingh.in/api/stats/live"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.bitchord.kushagrasingh.in%2Fapi%2Fstats%2Flive&query=%24.online&label=listening%20now&color=1DB954&labelColor=0d1117&style=for-the-badge&cacheSeconds=300" alt="Listening now" /></a></h1>
+# BitChord
 
 ### Aesthetic YouTube Music Client
 
@@ -14,6 +14,7 @@
 [![Latest release](https://img.shields.io/github/v/release/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/releases)
 [![License](https://img.shields.io/github/license/kushagrasinghx/BitChord?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/blob/main/LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/kushagrasinghx/BitChord/total?style=for-the-badge&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord/releases)
+[![Listening now](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.bitchord.kushagrasingh.in%2Fapi%2Fstats%2Flive&query=%24.online&label=listening%20now&color=fb4f67&labelColor=0d1117&style=for-the-badge&cacheSeconds=300)](https://api.bitchord.kushagrasingh.in/api/stats/live)
 
 <br/>
 
