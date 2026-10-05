@@ -27,6 +27,13 @@ internal class DesktopTrackAnalyzer(
      * change takes effect on the next track rather than the next launch.
      */
     private val performance: () -> AutomixPerformanceMode = { AutomixPerformanceMode.BALANCED },
+    /**
+     * True while analysis has no use — in a party, where Automix is off. Checked on request, before
+     * a queued pass starts, and between and during its decodes, as Android's `TrackAnalyzer` does:
+     * a request made a moment before the party started would otherwise run a whole-track decode
+     * and a model pass for a transition that cannot happen. A stopped pass records nothing.
+     */
+    private val stopped: () -> Boolean = { false },
     private val onAnalysed: (String) -> Unit = {},
 ) {
     /** One analysis at a time, on a thread of this class's own making. */
@@ -96,6 +103,7 @@ internal class DesktopTrackAnalyzer(
         val trackId = song.videoId
         if (trackId.isBlank()) return
         if (durationSeconds <= 0) return
+        if (stopped()) return
         if (!DesktopAnalysisRuntime.available) {
             if (warnedNoAnalyser.compareAndSet(false, true)) {
                 DesktopTrackLog.log("automix: this build has no analyser, so nothing will be measured")
@@ -115,6 +123,10 @@ internal class DesktopTrackAnalyzer(
 
         worker.execute {
             run {
+                if (stopped()) {
+                    running.remove(trackId)
+                    return@execute
+                }
                 // Android's rule: the lowest rung yields to playback rather than competing for a
                 // core, and the thread count stays the speed knob for the other two.
                 Thread.currentThread().priority =
@@ -125,6 +137,11 @@ internal class DesktopTrackAnalyzer(
                 }
                     .onFailure { DesktopTrackLog.log("analysis of '${song.title}' failed: ${it.message}") }
                     .getOrNull()
+                if (analysis == null && stopped()) {
+                    // Called off, not failed: it is free to be measured once the party ends.
+                    running.remove(trackId)
+                    return@execute
+                }
                 if (analysis == null) {
                     failed += trackId
                     failedAt[trackId] = System.currentTimeMillis()
@@ -170,6 +187,7 @@ internal class DesktopTrackAnalyzer(
             ?.let { TrackFeatures.analyze(it, durationSeconds) }
             ?: return null
 
+        if (stopped()) return null
         // The model runs at its own rate, so it gets its own decode rather than a resample of the
         // analyser's.
         val grid = decode(stream, MelSpectrogram.sampleRate)?.let { beats.track(it) }
@@ -222,6 +240,7 @@ internal class DesktopTrackAnalyzer(
             val out = ArrayList<FloatArray>()
             var total = 0
             while (true) {
+                if (stopped()) return null
                 val block = decoder.readSamples() ?: break
                 val count = decoder.sampleCount
                 if (count <= 0) continue

@@ -1,5 +1,6 @@
 package com.music.bitchord.desktop
 
+import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -99,27 +100,98 @@ class DesktopQueueTest {
         assertEquals("b", queue.current?.videoId)
     }
 
-    @Test
-    fun theMixStartsBelowEverythingTheListenerQueued() {
-        val queue = DesktopQueue(songs("a", "b") + mix("m1", "m2"), index = 0)
+    private fun queued(vararg ids: String) =
+        ids.map { Song(it, it.uppercase(), "Artist", null, queueTier = QueueTier.USER_QUEUE) }
 
-        assertEquals(2, queue.autoplaySectionStart)
+    private fun DesktopQueue.ids() = songs.map { it.videoId }
+
+    @Test
+    fun addToQueueEndsTheListenersOwnSectionAboveTheAlbumAndTheMix() {
+        val queue = DesktopQueue(songs("cur", "ctx") + mix("m1"), index = 0)
+            .enqueue(songs("x").single(), playNext = false)
+            .enqueue(songs("y").single(), playNext = false)
+
+        assertEquals(listOf("cur", "x", "y", "ctx", "m1"), queue.ids())
+        assertEquals(QueueTier.USER_QUEUE, queue.songs[1].queueTier)
+        assertTrue(queue.songs[1].queueEntryId != null)
     }
 
     @Test
-    fun theMixSectionStartsAgainBelowTheNeedleWhileItIsPlaying() {
-        // Tracks of the mix already behind you count as played, so a track queued by hand belongs
-        // above what is left of it.
-        val queue = DesktopQueue(songs("a") + mix("m1", "m2", "m3"), index = 2)
+    fun playNextHeadsTheListenersOwnSection() {
+        val queue = DesktopQueue(songs("cur") + queued("q1") + songs("ctx"), index = 0)
+            .enqueue(songs("x").single(), playNext = true)
 
-        assertEquals(3, queue.autoplaySectionStart)
+        assertEquals(listOf("cur", "x", "q1", "ctx"), queue.ids())
     }
 
     @Test
-    fun withNoMixTheSectionStartsPastTheEnd() {
-        val queue = DesktopQueue(songs("a", "b"), index = 0)
+    fun clearTakesOnlyWhatWasQueuedByHand() {
+        val queue = DesktopQueue(songs("cur") + queued("q1", "q2") + songs("ctx") + mix("m1"), index = 0)
+            .withoutUserQueue()
 
-        assertEquals(2, queue.autoplaySectionStart)
+        assertEquals(listOf("cur", "ctx", "m1"), queue.ids())
+    }
+
+    @Test
+    fun jumpingIntoTheAlbumKeepsTheTracksQueuedByHand() {
+        val queue = DesktopQueue(songs("cur") + queued("q1") + songs("c1", "c2", "c3") + mix("m1"), index = 0)
+            .jumpTo(3)
+
+        // The phone's buildJumpQueue: the pick, the hand-queued track, the rest of the album, the mix.
+        assertEquals(listOf("cur", "c2", "q1", "c3", "m1"), queue.ids())
+        assertEquals("c2", queue.current?.videoId)
+    }
+
+    @Test
+    fun jumpingIntoTheMixPromotesThePickAndKeepsTheRestOfTheMix() {
+        val queue = DesktopQueue(songs("cur") + queued("q1") + mix("m1", "m2", "m3"), index = 0)
+            .jumpTo(3)
+
+        assertEquals(listOf("cur", "m2", "q1", "m3"), queue.ids())
+        assertEquals(QueueTier.CONTEXT, queue.current?.queueTier)
+    }
+
+    @Test
+    fun handQueuedTracksAreConsumedOncePlaybackIsBackInTheAlbum() {
+        val queue = DesktopQueue(songs("a") + queued("q1") + songs("b"), index = 1).next()
+
+        assertEquals(listOf("a", "b"), queue.ids())
+        assertEquals("b", queue.current?.videoId)
+    }
+
+    @Test
+    fun shuffleNeverMovesWhatTheListenerQueued() {
+        val queue = DesktopQueue(songs("cur") + queued("q1", "q2") + songs("c1", "c2", "c3"), index = 0)
+            .shuffledAhead()
+
+        assertEquals(listOf("cur", "q1", "q2"), queue.ids().take(3))
+        assertEquals(setOf("c1", "c2", "c3"), queue.ids().drop(3).toSet())
+    }
+
+    @Test
+    fun aPartysUpcomingTracksReplaceOnlyWhatIsStillToCome() {
+        val local = DesktopQueue(songs("old", "cur", "ctx1", "ctx2"), index = 1)
+
+        val aligned = local.withPartyUpcoming(queued("p1") + mix("m1", "m2"))
+
+        assertEquals(listOf("old", "cur", "p1", "m1", "m2"), aligned.ids())
+        assertEquals(1, aligned.index)
+        assertEquals(
+            listOf(QueueTier.USER_QUEUE, QueueTier.AUTOPLAY, QueueTier.AUTOPLAY),
+            aligned.upcoming.map { it.queueTier },
+        )
+        // Already in line: the same object back, so nothing redraws.
+        assertTrue(aligned.withPartyUpcoming(queued("p1") + mix("m1", "m2")) === aligned)
+    }
+
+    @Test
+    fun aTrackInThePartyQueueTwiceStaysTwoRows() {
+        val local = DesktopQueue(songs("cur") + mix("m1"), index = 0)
+
+        val aligned = local.withPartyUpcoming(mix("m1", "m1"))
+
+        assertEquals(listOf("cur", "m1", "m1"), aligned.ids())
+        assertTrue(aligned.songs[1] !== aligned.songs[2])
     }
 
     @Test

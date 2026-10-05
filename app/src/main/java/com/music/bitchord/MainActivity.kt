@@ -124,6 +124,7 @@ import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.listentogether.JamInviteLink
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.partyQueueIndexOf
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -1277,7 +1278,7 @@ private fun BitChordApp(
                 val selectedSong = songs.getOrNull(index) ?: return@launch
                 val party = ListenTogether.state.value
                 val partyQueue = party.queue.items
-                val partyIndex = partyQueue.indexOfFirst { it.videoId == party.playback.track?.videoId }
+                val partyIndex = partyQueueIndexOf(party.queue, party.playback, party.playback.track?.videoId)
                 val upcomingPartyTracks = if (partyIndex >= 0) {
                     partyQueue.drop(partyIndex + 1)
                 } else {

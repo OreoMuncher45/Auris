@@ -58,7 +58,12 @@ class DesktopPlaybackEngine(
     private val sink = DesktopAudioSink()
 
     /** Automix's evidence. */
-    private val analyzer = DesktopTrackAnalyzer(performance = { automixPerformance })
+    private val analyzer = DesktopTrackAnalyzer(
+        performance = { automixPerformance },
+        // Automix is off in a party, so whatever was queued for it before the party began is
+        // dropped rather than run to completion.
+        stopped = { DesktopListenTogether.state.value.inParty },
+    )
     private val commands = ConcurrentLinkedQueue<Command>()
     private val running = AtomicBoolean(true)
 

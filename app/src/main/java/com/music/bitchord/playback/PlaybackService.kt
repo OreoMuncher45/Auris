@@ -90,6 +90,8 @@ import com.music.bitchord.playback.audio.bluetooth.BluetoothAudioTracker
 import com.music.bitchord.playback.audio.bluetooth.BluetoothTelemetry
 import com.music.bitchord.MainActivity
 import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.listentogether.partyQueueIndexOf
+import com.music.bitchord.data.listentogether.partyUpcomingAfter
 import com.music.bitchord.R
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -2415,8 +2417,13 @@ class PlaybackService : MediaLibraryService() {
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
         if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
-        val queuedAutoplay = (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
-            .count { exoPlayer.getMediaItemAt(it).fromAutoplay }
+        // In a party the server's queue is the one being topped up, and this
+        // player's copy of it lags behind by however long reconcile is held off
+        // — read from the copy, a batch that had already landed counted as
+        // missing and the same station was sent again.
+        val queuedAutoplay = partyAutoplayWaiting(party, current.videoId)
+            ?: (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
+                .count { exoPlayer.getMediaItemAt(it).fromAutoplay }
         val needed = MAX_QUEUED_AUTOPLAY - queuedAutoplay
         if (needed <= 0) return
         if (autoplaySeed == current.videoId) return
@@ -2435,7 +2442,8 @@ class PlaybackService : MediaLibraryService() {
                     return@launch
                 }
                 val queueSongs = (0 until activePlayer.mediaItemCount)
-                    .map { activePlayer.getMediaItemAt(it).toSong() }
+                    .map { activePlayer.getMediaItemAt(it).toSong() } +
+                    activeParty.queue.items.takeIf { activeParty.inParty }.orEmpty().map { it.toSong() }
                 val existing = if (AppSettings.dontRepeatSuggestions.value) {
                     queueSongs + sessionSongHistory
                 } else {
@@ -2465,24 +2473,7 @@ class PlaybackService : MediaLibraryService() {
                         // state broadcast reconciles every device atomically,
                         // including this one, and keeps the AutoPlay section
                         // identical for all listeners.
-                        ListenTogether.queueAdd(resolved.map { it.toPartyTrack(0L) })
-                        // A party control is a request, not a write, and the
-                        // server does refuse these: a queue already at its
-                        // upcoming limit, or a party locked to a host this
-                        // device is not. The refusal comes back on a frame
-                        // nothing here is waiting for, so a refused top-up was
-                        // indistinguishable from a successful one — and
-                        // [autoplaySeed] stayed latched to this track either
-                        // way, which is what left AutoPlay visibly on and
-                        // silently doing nothing until the queue moved on by
-                        // itself. The party's own copy of the queue is the
-                        // only confirmation available.
-                        val added = resolved.first().videoId
-                        val landed = withTimeoutOrNull(PARTY_QUEUE_ECHO_TIMEOUT_MS) {
-                            ListenTogether.state.first { state ->
-                                state.queue.items.any { it.videoId == added }
-                            }
-                        } != null
+                        val landed = topUpPartyAutoplay(current.videoId, resolved)
                         if (!landed) {
                             TrackLog.w(
                                 "BitChord",
@@ -2515,6 +2506,52 @@ class PlaybackService : MediaLibraryService() {
             }
         }
     }
+
+    /**
+     * How many AutoPlay tracks the party already has waiting after [videoId],
+     * or null outside a party or while its queue does not hold that track yet.
+     */
+    private fun partyAutoplayWaiting(party: ListenTogether.State, videoId: String): Int? {
+        if (!party.inParty) return null
+        if (partyQueueIndexOf(party.queue, party.playback, videoId) < 0) return null
+        return partyUpcomingAfter(party.queue, party.playback, videoId).count { it.fromAutoplay }
+    }
+
+    /** One party top-up at a time; see [topUpPartyAutoplay]. */
+    private val partyAutoplayLock = Mutex()
+
+    /**
+     * Sends [suggestions] to the party and waits for them to come back.
+     *
+     * A control is a request, not a write, and the server does refuse these: a
+     * queue already at its upcoming limit, or a party locked to a host this
+     * device is not. The refusal comes back on a frame nothing here is waiting
+     * for, so the party's own copy of the queue is the only confirmation — and
+     * what this returns.
+     *
+     * Serialised, and the send-and-wait not cancellable, because a track change
+     * cancels the load in flight and starts another: the second used to read
+     * the party before the first batch had echoed, find nothing waiting, and
+     * send the same station again — every suggestion twice, on every device.
+     * Holding the lock until the echo means the next top-up reads a queue that
+     * already has these in it, and filters against it.
+     */
+    private suspend fun topUpPartyAutoplay(currentId: String, suggestions: List<Song>): Boolean =
+        partyAutoplayLock.withLock {
+            withContext(NonCancellable) {
+                val party = ListenTogether.state.value
+                val waiting = partyUpcomingAfter(party.queue, party.playback, currentId)
+                val waitingIds = waiting.mapTo(HashSet()) { it.videoId }
+                val room = MAX_QUEUED_AUTOPLAY - waiting.count { it.fromAutoplay }
+                val fresh = suggestions.filterNot { it.videoId in waitingIds }.take(room.coerceAtLeast(0))
+                if (fresh.isEmpty()) return@withContext true
+                ListenTogether.queueAdd(fresh.map { it.toPartyTrack(0L) })
+                val added = fresh.first().videoId
+                withTimeoutOrNull(PARTY_QUEUE_ECHO_TIMEOUT_MS) {
+                    ListenTogether.state.first { state -> state.queue.items.any { it.videoId == added } }
+                } != null
+            }
+        }
 
     /** Re-arms AutoPlay when an external queue edit exposes an empty tail. */
     private fun refreshAutoplayIfQueueEmpty() {
