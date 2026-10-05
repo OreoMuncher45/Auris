@@ -1275,9 +1275,10 @@ object Downloads {
      *
      * Sized off what it actually bounds, therefore, rather than off the playback
      * timeout it used to be matched to. One patient search is 25s, the matcher
-     * offers up to two queries (`TrackMatcher.queries`), and [streamBest] may
-     * then open up to `STREAM_ATTEMPTS` stream endpoints on the winner. Sixty
-     * seconds covers a slow-but-working index; it is still finite, because the
+     * offers up to three queries (`TrackMatcher.queries` — the third only for a
+     * kana title, in the other script), and [streamBest] may then open up to
+     * `STREAM_ATTEMPTS` stream endpoints on the winner. Eighty-five seconds
+     * covers a slow-but-working index; it is still finite, because the
      * alternative is the queue stalled per track on modules that simply do not
      * have the recording.
      *
@@ -1292,7 +1293,7 @@ object Downloads {
      * turn: a fast source queued behind a slow one would spend this budget
      * waiting for a module and never be asked.
      */
-    private const val SOURCE_LOOKUP_MS = 60_000L
+    private const val SOURCE_LOOKUP_MS = 85_000L
 
     /**
      * The extensions a file in Music can carry that say, on their own, that a
