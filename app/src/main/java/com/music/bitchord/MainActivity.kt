@@ -48,7 +48,10 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyListState
@@ -4612,18 +4615,26 @@ private fun BitChordApp(
         }
 
         // ---- Reorder playlist ----
-        // Full height, and the sheet's own drag turned off: every vertical
-        // drag inside it is meant for a row, and one that pulled the sheet
-        // down instead would throw the new order away.
+        // Full height, and the list never hands its leftover scroll to the
+        // sheet: every vertical drag inside it is meant for a row or the list,
+        // and one that pulled the sheet down instead would throw the new order
+        // away. (Material3 1.3 has no sheetGesturesEnabled; the row drags
+        // consume their own events, so the list's overscroll is the only path.)
         reorderTarget?.let { target ->
             val close = { reorderTarget = null }
+            val keepSheetStill = remember {
+                object : NestedScrollConnection {
+                    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource) = available
+                    override suspend fun onPostFling(consumed: Velocity, available: Velocity) = available
+                }
+            }
             ModalBottomSheet(
                 onDismissRequest = close,
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-                sheetGesturesEnabled = false,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
                 ReorderPlaylistSheet(
+                    modifier = Modifier.nestedScroll(keepSheetStill),
                     playlist = target,
                     entries = reorderEntries,
                     saving = reorderSaving,

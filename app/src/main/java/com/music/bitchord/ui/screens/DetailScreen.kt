@@ -1446,17 +1446,6 @@ private fun CircleIconButton(
     }
 }
 
-/** Track count and running time, the way a release page signs off. */
-@Composable
-private fun ReleaseFooter(songs: List<Song>, palette: ArtworkPalette) {
-    Text(
-        text = songs.playtimeSummary(),
-        style = MaterialTheme.typography.labelMedium,
-        color = palette.onBackgroundVariant,
-        modifier = Modifier.padding(start = HEADER_GUTTER, end = HEADER_GUTTER, top = 18.dp),
-    )
-}
-
 /** "1.2M subscribers" and "3.4M monthly listeners", off the artist header. */
 @Composable
 private fun ArtistStatsRow(
