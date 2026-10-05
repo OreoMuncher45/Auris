@@ -21,7 +21,7 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
 // Windows installer metadata requires MAJOR.MINOR.BUILD even though the app's public version is
 // intentionally displayed without a patch number (1.7 rather than 1.7.0).
 // The build number is the desktop version code; it also keeps "-beta1" out of the numeric installer version.
-val desktopVersionCode = 26
+val desktopVersionCode = 28
 val nativePackageVersion = appVersion.substringBefore('-').split('.').take(2).joinToString(".") + ".$desktopVersionCode"
 
 // FFmpeg decodes audio; see DesktopAudioDecoder.
@@ -543,7 +543,7 @@ compose.desktop {
                 upgradeUuid = "8f3c1d24-6a2b-4f5e-9c17-2b8d54e0a913"
                 menuGroup = "BitChord"
                 shortcut = true
-                dirChooser = true
+                dirChooser = false
                 perUserInstall = true
             }
         }
