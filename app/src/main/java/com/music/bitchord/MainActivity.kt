@@ -4345,14 +4345,23 @@ private fun BitChordApp(
                     loading = playlistsLoading,
                     song = target,
                     startCreating = target == null,
-                    onPick = { playlist ->
+                    onAdd = { picked ->
                         target?.let { song ->
-                            viewModel.addToPlaylist(playlist, song) { alreadyInPlaylist ->
+                            viewModel.addToPlaylists(picked, song) { added, alreadyThere, failed ->
+                                // One line for the whole batch, saying the
+                                // outcome that matters most: what went in, else
+                                // that it was all there already, else that it
+                                // didn't work.
                                 showQueueNotice(
-                                    context.getString(
-                                        if (alreadyInPlaylist) R.string.song_already_in_playlist
-                                        else R.string.song_added_to_playlist,
-                                    ),
+                                    when {
+                                        added > 1 -> context.resources.getQuantityString(
+                                            R.plurals.added_to_playlists_notice, added, added,
+                                        )
+                                        added == 1 -> context.getString(R.string.song_added_to_playlist)
+                                        alreadyThere > 0 && failed == 0 ->
+                                            context.getString(R.string.song_already_in_playlist)
+                                        else -> context.getString(R.string.failed)
+                                    },
                                 )
                             }
                         }

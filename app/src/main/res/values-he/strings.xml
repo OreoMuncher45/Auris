@@ -1222,6 +1222,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">נוסף לרשימת ההשמעה</string>
     <string name="song_already_in_playlist">כבר ברשימת ההשמעה</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">הוסף לרשימת השמעה %1$d</item>
+        <item quantity="other">הוסף ל-%1$d רשימות השמעה</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">נוסף לרשימת השמעה %1$d</item>
+        <item quantity="other">נוסף ל-%1$d רשימות השמעה</item>
+    </plurals>
     <string name="party_queue_full">התור מלא (עד %d שירים במסיבה)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

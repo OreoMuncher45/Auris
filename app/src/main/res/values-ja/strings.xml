@@ -1197,6 +1197,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">プレイリストに追加しました</string>
     <string name="song_already_in_playlist">すでにプレイリストにあります</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">%1$d件のプレイリストに追加</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">%1$d件のプレイリストに追加しました</item>
+    </plurals>
     <string name="party_queue_full">キューがいっぱいです（パーティーの上限は%d曲）</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

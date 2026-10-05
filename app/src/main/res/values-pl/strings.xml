@@ -1257,6 +1257,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Dodano do playlisty</string>
     <string name="song_already_in_playlist">Już jest na playliście</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Dodaj do %1$d playlisty</item>
+        <item quantity="other">Dodaj do %1$d playlist</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Dodano do %1$d playlisty</item>
+        <item quantity="other">Dodano do %1$d playlist</item>
+    </plurals>
     <string name="party_queue_full">Kolejka jest pełna (maksymalnie %d utworów na imprezie)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

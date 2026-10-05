@@ -1196,6 +1196,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">已添加到播放列表</string>
     <string name="song_already_in_playlist">已在播放列表中</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">添加到 %1$d 个播放列表</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">已添加到 %1$d 个播放列表</item>
+    </plurals>
     <string name="party_queue_full">队列已满（派对最多 %d 首歌曲）</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

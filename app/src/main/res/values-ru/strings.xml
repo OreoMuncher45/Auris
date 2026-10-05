@@ -1245,6 +1245,18 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">Добавлено в плейлист</string>
     <string name="song_already_in_playlist">Уже в плейлисте</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">Добавить в %1$d плейлист</item>
+        <item quantity="few">Добавить в %1$d плейлиста</item>
+        <item quantity="many">Добавить в %1$d плейлистов</item>
+        <item quantity="other">Добавить в %1$d плейлиста</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">Добавлено в %1$d плейлист</item>
+        <item quantity="few">Добавлено в %1$d плейлиста</item>
+        <item quantity="many">Добавлено в %1$d плейлистов</item>
+        <item quantity="other">Добавлено в %1$d плейлиста</item>
+    </plurals>
     <string name="party_queue_full">Очередь заполнена (максимум %d песен на вечеринке)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

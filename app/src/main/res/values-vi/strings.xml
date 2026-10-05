@@ -1133,6 +1133,12 @@
     <string name="audio_pipeline_subtitle">Live signal path, decoder to output</string>
     <string name="song_added_to_playlist">Added to playlist</string>
     <string name="song_already_in_playlist">Already in playlist</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">Thêm vào %1$d danh sách phát</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">Đã thêm vào %1$d danh sách phát</item>
+    </plurals>
     <string name="listen_together_server_online_fallback">Trực tuyến (dự phòng mặc định) · %1$d ms</string>
     <string name="listen_together_ping">%1$d ms</string>
     <string name="listen_together_server_offline_dash">—</string>

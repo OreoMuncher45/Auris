@@ -129,6 +129,7 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SubscriptionState
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.DownloadedBadge
@@ -745,7 +746,7 @@ private fun ReleaseHeader(
     onArtistClick: (String, String) -> Unit,
     onToggleLibrary: (() -> Unit)?,
 ) {
-    val (credit, meta) = page.headerLines(trackCount)
+    val (credit, meta) = page.headerLines(trackCount, songs.playtime())
     // Every row on a release carries the same credit — see [pageCredit] — so
     // the first one speaks for the whole page, the same source the rows'
     // own long-press "Open artist" already reads from.
@@ -1975,7 +1976,7 @@ private fun ArtistShelfGridPage(
  * and a home card frequently knows neither.
  */
 @Composable
-private fun DetailPage.headerLines(trackCount: Int): Pair<String, String> {
+private fun DetailPage.headerLines(trackCount: Int, playtime: String? = null): Pair<String, String> {
     val parts = subtitle.split("•", "·").map { it.trim() }.filter { it.isNotEmpty() }
     val year = parts.lastOrNull { it.length == 4 && it.all(Char::isDigit) }
     val kind = parts.firstOrNull { it.lowercase(Locale.ROOT) in KIND_WORDS }
@@ -1986,6 +1987,7 @@ private fun DetailPage.headerLines(trackCount: Int): Pair<String, String> {
         trackCount.takeIf { it > 0 }?.let {
             pluralStringResource(R.plurals.track_count_plural, it, it)
         },
+        playtime,
     ).joinToString(" • ").uppercase(Locale.getDefault())
     return credit to meta
 }
@@ -2003,33 +2005,17 @@ private fun BrowseType.localizedLabel(): String? = when (this) {
         BrowseType.OTHER -> null
     }
 
-/** "12 songs, 41 minutes" — omitting the time when the rows carry no durations. */
+/**
+ * How long the page plays for — "41 min", "1h 25m" — summed over the rows
+ * on it, or null when none of them carry a duration. A playlist still filling
+ * in counts up with it, so the figure is never ahead of the list it sits over.
+ */
 @Composable
-private fun List<Song>.playtimeSummary(): String {
-    val count = pluralStringResource(R.plurals.song_count_plural, size, size)
-    val minutes = sumOf { it.durationText.toSeconds() } / 60
+private fun List<Song>.playtime(): String? {
+    val minutes = sumOf { it.durationMillis() } / 60_000
     return when {
-        minutes <= 0 -> count
-        minutes < 60 -> stringResource(R.string.song_count_with_minutes, count, minutes)
-        else -> {
-            val hours = minutes / 60
-            val rest = minutes % 60
-            val hourLabel = pluralStringResource(R.plurals.hour_count, hours.toInt(), hours)
-            if (rest == 0) {
-                stringResource(R.string.song_count_with_duration, count, hourLabel)
-            } else {
-                stringResource(R.string.song_count_with_hours_minutes, count, hourLabel, rest)
-            }
-        }
-    }
-}
-
-/** "3:45" or "1:02:33" as seconds; 0 for anything that isn't a duration. */
-private fun String?.toSeconds(): Int {
-    val parts = this?.split(":")?.map { it.trim().toIntOrNull() ?: return 0 } ?: return 0
-    return when (parts.size) {
-        2 -> parts[0] * 60 + parts[1]
-        3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]
-        else -> 0
+        minutes <= 0 -> null
+        minutes < 60 -> stringResource(R.string.minutes_short, minutes.toInt())
+        else -> stringResource(R.string.hours_minutes_short, (minutes / 60).toInt(), (minutes % 60).toInt())
     }
 }

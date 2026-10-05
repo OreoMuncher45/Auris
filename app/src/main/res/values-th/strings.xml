@@ -1022,6 +1022,12 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">เพิ่มลงในเพลย์ลิสต์แล้ว</string>
     <string name="song_already_in_playlist">อยู่ในเพลย์ลิสต์แล้ว</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="other">เพิ่มลงใน %1$d เพลย์ลิสต์</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="other">เพิ่มลงใน %1$d เพลย์ลิสต์แล้ว</item>
+    </plurals>
     <string name="party_queue_full">คิวเต็มแล้ว (ปาร์ตี้มีได้สูงสุด %d เพลง)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>

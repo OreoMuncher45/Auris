@@ -1217,6 +1217,14 @@
     <string name="song_added_to_queue">Song added to queue</string>
     <string name="song_added_to_playlist">प्लेलिस्ट में जोड़ा गया</string>
     <string name="song_already_in_playlist">पहले से प्लेलिस्ट में है</string>
+    <plurals name="add_to_playlists_count">
+        <item quantity="one">%1$d प्लेलिस्ट में जोड़ें</item>
+        <item quantity="other">%1$d प्लेलिस्ट में जोड़ें</item>
+    </plurals>
+    <plurals name="added_to_playlists_notice">
+        <item quantity="one">%1$d प्लेलिस्ट में जोड़ा गया</item>
+        <item quantity="other">%1$d प्लेलिस्ट में जोड़ा गया</item>
+    </plurals>
     <string name="party_queue_full">कतार भर गई है (पार्टी में अधिकतम %d गाने)</string>
 
     <string name="paxsenix_api_key">PaxSenix API key</string>
