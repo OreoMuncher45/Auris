@@ -4,6 +4,9 @@
 #
 #   sudo DOMAIN=jam.bitchord.kushagrasingh.in bash deploy/setup.sh
 #
+# First run on a fresh VM also takes DEPLOY_PUBKEY (the public half of the
+# GitHub Actions deploy key) to create the restricted `deploy` user.
+#
 # Run it from the backend/ directory of a checkout on the VM. The DNS A record
 # for $DOMAIN must already point at this VM, or Caddy cannot get a certificate.
 set -euo pipefail
@@ -42,9 +45,12 @@ install -m 644 "$BACKEND_DIR/deploy/bitchord-jam.service" /etc/systemd/system/bi
 systemctl daemon-reload
 systemctl enable bitchord-jam
 systemctl restart bitchord-jam
-install -m 644 "$BACKEND_DIR/deploy/bitchord-keepalive.service" /etc/systemd/system/bitchord-keepalive.service
-systemctl daemon-reload
-systemctl enable --now bitchord-keepalive
+# The CPU keepalive burner is retired; clean it off VMs that still have it.
+if [ -f /etc/systemd/system/bitchord-keepalive.service ]; then
+  systemctl disable --now bitchord-keepalive || true
+  rm -f /etc/systemd/system/bitchord-keepalive.service
+  systemctl daemon-reload
+fi
 
 echo "== caddy (HTTPS + WebSocket proxy)"
 if ! command -v caddy >/dev/null; then
@@ -61,6 +67,17 @@ fi
 echo "== deploy hook"
 echo "$DOMAIN" > /etc/bitchord-domain
 install -m 755 "$BACKEND_DIR/deploy/bitchord-deploy.sh" /usr/local/sbin/bitchord-deploy
+
+if [ -n "${DEPLOY_PUBKEY:-}" ]; then
+  echo "== deploy user"
+  # The GitHub Actions key may only run the deploy hook (forced command).
+  id deploy >/dev/null 2>&1 || useradd --create-home --shell /bin/bash deploy
+  install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
+  printf 'command="sudo /usr/local/sbin/bitchord-deploy",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty %s\n' "$DEPLOY_PUBKEY" > /home/deploy/.ssh/authorized_keys
+  chown deploy:deploy /home/deploy/.ssh/authorized_keys && chmod 600 /home/deploy/.ssh/authorized_keys
+  echo 'deploy ALL=(root) NOPASSWD: /usr/local/sbin/bitchord-deploy' > /etc/sudoers.d/bitchord-deploy
+  chmod 440 /etc/sudoers.d/bitchord-deploy && visudo -cf /etc/sudoers.d/bitchord-deploy
+fi
 
 echo "== firewall"
 # Oracle's Ubuntu images ship an iptables REJECT rule that blocks everything
