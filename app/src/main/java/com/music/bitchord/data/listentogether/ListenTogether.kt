@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
+import android.net.NetworkCapabilities
 import com.music.bitchord.BitChordApplication
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.DebugLog as Log
@@ -450,7 +451,6 @@ object ListenTogether {
 
     private var isScreenActive: Boolean = false
     private var healthMonitorJob: Job? = null
-    private var lastHealthProbeMs = 0L
     private val resolutionMutex = Mutex()
     private var activeResolutionJob: Job? = null
     private var resolutionGeneration = 0L
@@ -466,10 +466,9 @@ object ListenTogether {
         healthMonitorJob?.cancel()
         healthMonitorJob = scope.launch {
             while (isActive) {
-                delay(HEALTH_POLL_INTERVAL_MS)
-                // Nobody is looking at the status row unless the screen is open,
-                // and every poll is a request to a server shared by every install.
-                if (isScreenActive) refreshServerHealth(showChecking = false)
+                val delayMs = if (isScreenActive) 10_000L else 30_000L
+                delay(delayMs)
+                refreshServerHealth(showChecking = false)
             }
         }
     }
@@ -545,9 +544,6 @@ object ListenTogether {
     }
 
     fun refreshServerHealth(showChecking: Boolean = false) {
-        val now = clock.nowMs()
-        if (!showChecking && now - lastHealthProbeMs < HEALTH_MIN_GAP_MS) return
-        lastHealthProbeMs = now
         scope.launch {
             val (job, _) = resolutionMutex.withLock {
                 activeResolutionJob?.cancel()
@@ -654,9 +650,14 @@ object ListenTogether {
                             _serverConnectionState.value = ServerConnectionState.Offline
                             _serverStatus.value = ServerStatus(Health.OFFLINE)
                         }
-                        // onCapabilitiesChanged is deliberately not handled: it fires on
-                        // every signal-strength change, and each one used to cost a
-                        // /healthz request. onAvailable covers a real network switch.
+                        override fun onCapabilitiesChanged(
+                            network: Network,
+                            capabilities: NetworkCapabilities,
+                        ) {
+                            if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                                refreshServerHealth(showChecking = false)
+                            }
+                        }
                     }
                 )
             }
@@ -1657,8 +1658,6 @@ object ListenTogether {
     private const val KICK_BLOCK_MS = 24L * 60 * 60 * 1000
 
     private const val PING_INTERVAL_MS = 15_000L
-    private const val HEALTH_POLL_INTERVAL_MS = 10_000L
-    private const val HEALTH_MIN_GAP_MS = 5_000L
     private const val REPORT_INTERVAL_MS = 10_000L
     private const val HEALTH_TIMEOUT_MS = 45_000L
 }
