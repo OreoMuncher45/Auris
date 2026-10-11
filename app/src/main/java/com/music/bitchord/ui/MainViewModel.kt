@@ -3258,6 +3258,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _flowQueue = MutableStateFlow<UiState<List<Song>>>(UiState.Success(emptyList()))
     val flowQueue: StateFlow<UiState<List<Song>>> = _flowQueue.asStateFlow()
 
+    // Yesterday's mix, restored: Flow opens resumed, never re-rolled, until
+    // the snapshot is a day old — at which point the next use rebuilds.
+    init {
+        FlowStore.readSnapshot()?.let { (songs, builtAt) ->
+            if (System.currentTimeMillis() - builtAt < FlowStore.FLOW_TTL_MS) {
+                _flowQueue.value = UiState.Success(songs)
+            }
+        }
+    }
+
     private val _flowLoading = MutableStateFlow(false)
     val flowLoading: StateFlow<Boolean> = _flowLoading.asStateFlow()
 
@@ -3316,7 +3326,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             _flowLoading.value = true
             _flowQueue.value = UiState.Loading
             runCatching { buildFlowQueue(limit) }.fold(
-                onSuccess = { _flowQueue.value = UiState.Success(it) },
+                onSuccess = {
+                    _flowQueue.value = UiState.Success(it)
+                    FlowStore.saveSnapshot(it)
+                },
                 onFailure = { _flowQueue.value = UiState.Error(it.friendly()) },
             )
             _flowLoading.value = false
@@ -3344,6 +3357,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val built = buildFlowQueue(limit)
         _flowQueue.value = UiState.Success(built)
         _flowSaved.value = false
+        FlowStore.saveSnapshot(built)
         return built
     }
 
@@ -3357,6 +3371,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 onSuccess = {
                     _flowQueue.value = UiState.Success(it)
                     _flowSaved.value = false
+                    FlowStore.saveSnapshot(it)
                 },
                 onFailure = { _flowQueue.value = UiState.Error(it.friendly()) },
             )
@@ -3396,7 +3411,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 out.distinctBy { it.videoId }
             }.fold(
-                onSuccess = { _flowQueue.value = UiState.Success(it) },
+                onSuccess = {
+                    _flowQueue.value = UiState.Success(it)
+                    FlowStore.saveSnapshot(it)
+                },
                 onFailure = { /* keep current list; growing is best-effort */ },
             )
             _flowLoading.value = false

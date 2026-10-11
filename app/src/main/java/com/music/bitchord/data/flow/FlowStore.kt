@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import com.music.bitchord.data.flow.FlowConfig
 import com.music.bitchord.data.flow.FlowMood
 import com.music.bitchord.data.flow.FlowTuner
+import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +50,55 @@ object FlowStore {
     /** Rotating radio-seed cursor for endless top-ups. */
     var seedCursor: Int = 0
         private set
+
+    // ── Persisted queue ─────────────────────────────────────────────
+    //
+    // The mix itself survives restarts: videoId + display fields per
+    // track, capped so the prefs file stays small. Streams are resolved
+    // at play time from the id, so nothing playback needs is stored.
+    // Fresh for a day; older snapshots rebuild on next use.
+
+    private const val KEY_FLOW_SNAPSHOT = "flow_snapshot"
+    private const val KEY_FLOW_BUILT_AT = "flow_built_at"
+
+    /** A snapshot older than this rebuilds instead of restoring. */
+    const val FLOW_TTL_MS = 24L * 60 * 60 * 1000
+
+    private const val SNAPSHOT_MAX_TRACKS = 200
+
+    fun saveSnapshot(songs: List<Song>) {
+        if (!this::prefs.isInitialized || songs.isEmpty()) return
+        val text = songs.take(SNAPSHOT_MAX_TRACKS).joinToString("\u001e") { s ->
+            listOf(
+                s.videoId, s.title, s.artist,
+                s.albumName.orEmpty(), s.thumbnailUrl.orEmpty(),
+            ).joinToString("\u001f") { it.replace("\u001e", " ").replace("\u001f", " ") }
+        }
+        prefs.edit()
+            .putString(KEY_FLOW_SNAPSHOT, text)
+            .putLong(KEY_FLOW_BUILT_AT, System.currentTimeMillis())
+            .apply()
+    }
+
+    /** The stored mix and when it was built, or null when there is none. */
+    fun readSnapshot(): Pair<List<Song>, Long>? {
+        if (!this::prefs.isInitialized) return null
+        val text = prefs.getString(KEY_FLOW_SNAPSHOT, null)?.takeIf { it.isNotEmpty() }
+            ?: return null
+        val songs = text.split("\u001e").mapNotNull { row ->
+            val f = row.split("\u001f")
+            val id = f.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            Song(
+                videoId = id,
+                title = f.getOrNull(1).orEmpty(),
+                artist = f.getOrNull(2).orEmpty(),
+                thumbnailUrl = f.getOrNull(4)?.takeIf { it.isNotBlank() },
+                albumName = f.getOrNull(3)?.takeIf { it.isNotBlank() },
+            )
+        }
+        if (songs.isEmpty()) return null
+        return songs to prefs.getLong(KEY_FLOW_BUILT_AT, 0L)
+    }
 
     fun init(context: Context) {
         if (this::prefs.isInitialized) return

@@ -1566,6 +1566,14 @@ private fun BitChordApp(
                 if (request != playRequestGeneration || activeManualQueue != originalManualQueue) {
                     return@launch
                 }
+                // Same mix already queued: resume it, never restart from the
+                // top. Pressing Flow while Flow plays keeps its place.
+                if (activeManualQueue.isNotEmpty() &&
+                    activeManualQueue.toSet() == tracks.map { it.videoId }.toSet()
+                ) {
+                    if (request == playRequestGeneration) activeController.play()
+                    return@launch
+                }
                 activeController.beginRadioQueue()
                 activeController.playSongs(tracks, 0)
                 activeController.commitRadioQueue()
