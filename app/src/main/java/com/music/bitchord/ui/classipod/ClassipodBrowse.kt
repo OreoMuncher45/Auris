@@ -138,13 +138,15 @@ fun ClassipodTrackList(
 }
 
 /**
- * A self-paging track list for long playlists. Opens on the first page
- * (~100 rows) and follows continuations as the cursor nears the end, so
- * a 1,200-song Liked list never waits on all twelve round trips up
- * front. The header prints the feed's own total when the header names
- * one ("1,247 songs"), a growing floor with "+" while pages remain, and
- * the exact count once the last page lands. [onTotal] fires only with
- * exact figures, for menu badges that must never show the cap.
+ * A self-paging track list for long playlists, backed by [PlaylistCache]:
+ * the first open pages in batches behind an instant first screen, every
+ * reopen shows what is already loaded without refetching, and the cache
+ * keeps filling until the feed is exhausted. The header prints the
+ * feed's own total when the header names one ("1,247 songs"), a growing
+ * floor with "+" while pages remain, and the exact count once the last
+ * page lands. [onTotal] fires only with exact figures, for menu badges
+ * that must never show the cap. [offlineSongs] is the no-network
+ * fallback (downloaded tracks), shown only when the feed failed empty.
  */
 @Composable
 fun ClassipodPagedTracks(
@@ -159,36 +161,29 @@ fun ClassipodPagedTracks(
     onBack: () -> Unit,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
+    /** First page the host already holds (Liked arrives in the library feed). */
+    seed: com.music.bitchord.data.YtMusicRepository.SongPage? = null,
+    /** No-network fallback: downloaded tracks, shown only if the feed failed empty. */
+    offlineSongs: List<Song> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
-    var songs by remember(browseId) { mutableStateOf(emptyList<Song>()) }
-    var token by remember(browseId) { mutableStateOf<String?>(FIRST_PAGE) }
-    var loading by remember(browseId) { mutableStateOf(false) }
-    var total by remember(browseId) { mutableStateOf<Int?>(null) }
-    val exhausted = token == null && songs.isNotEmpty()
-
-    fun loadMore() {
-        val t = token ?: return
-        if (loading) return
-        loading = true
-        scope.launch {
-            val page = if (t == FIRST_PAGE) {
-                com.music.bitchord.data.YtMusicRepository.browseSongs(browseId)
-            } else {
-                com.music.bitchord.data.YtMusicRepository.moreSongs(t)
-            }.getOrNull()
-            if (page != null) {
-                songs = (songs + page.songs).distinctBy { it.videoId }
-                token = page.continuation
-                page.header?.subtitle?.let { parsePlaylistCount(it)?.let { n -> total = n } }
-                if (page.continuation == null) total = songs.size
-                total?.let(onTotal)
-            }
-            loading = false
+    val entry = remember(browseId) { PlaylistCache.entry(browseId) }
+    // First paint from the cache, then page behind until exhausted. Leaving
+    // cancels the prefetch; what landed stays for the next open.
+    LaunchedEffect(browseId) {
+        seed?.let { PlaylistCache.seed(entry, it) }
+        if (!entry.started) PlaylistCache.loadFirst(entry)
+        while (PlaylistCache.entry(browseId).token != null) {
+            if (!PlaylistCache.loadMore(entry)) break
         }
     }
-    LaunchedEffect(browseId) { loadMore() }
+    val songs = entry.songs
+    val offline = entry.songs.isEmpty() && entry.failedFirst && offlineSongs.isNotEmpty()
+    val shown: List<Song> = if (offline) offlineSongs else songs
+    LaunchedEffect(entry.total, entry.token) {
+        PlaylistCache.exactTotal(entry)?.let(onTotal)
+    }
 
     var selected by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
@@ -196,36 +191,35 @@ fun ClassipodPagedTracks(
         pageKey,
         WheelHandlers(
             onStep = { dir ->
-                if (songs.isNotEmpty()) selected = ((selected + dir) % songs.size + songs.size) % songs.size
+                if (shown.isNotEmpty()) selected = ((selected + dir) % shown.size + shown.size) % shown.size
             },
-            onCenter = { songs.getOrNull(selected)?.let(onLongPress) },
+            onCenter = { shown.getOrNull(selected)?.let(onLongPress) },
         ),
     )
     LaunchedEffect(selected) {
-        if (songs.isNotEmpty()) listState.animateScrollToItem(selected)
+        if (shown.isNotEmpty()) listState.animateScrollToItem(selected)
     }
     val lastVisible by remember {
         derivedStateOf { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0 }
     }
-    LaunchedEffect(lastVisible, songs.size) {
-        if (songs.isNotEmpty() && lastVisible >= songs.size - 8) loadMore()
+    LaunchedEffect(lastVisible, shown.size) {
+        if (!offline && shown.isNotEmpty() && lastVisible >= shown.size - 8) {
+            scope.launch { PlaylistCache.loadMore(entry) }
+        }
     }
 
-    val headerTitle = when {
-        total != null -> "$title · $total"
-        token == null -> "$title · ${songs.size}"
-        else -> "$title · ${songs.size}+"
-    }
+    val headerTitle = "$title · " + PlaylistCache.countLabel(entry) +
+        (if (offline) " · offline" else "")
     Column(modifier = modifier.fillMaxSize().background(lcd.bg)) {
         ClassipodBar(title = headerTitle, lcd = lcd, onBack = onBack)
         LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-            itemsIndexed(songs, key = { index, song -> "${song.videoId}:$index" }) { index, song ->
+            itemsIndexed(shown, key = { index, song -> "${song.videoId}:$index" }) { index, song ->
                 val current = song.isSameTrackAs(currentSong)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(if (index == selected) lcd.selectedBg else Color.Transparent)
-                        .clickable { onPlay(songs, index) }
+                        .clickable { onPlay(shown, index) }
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -269,24 +263,21 @@ fun ClassipodPagedTracks(
                     )
                 }
             }
-            if (loading || songs.isEmpty()) {
+            if (entry.loading || shown.isEmpty()) {
                 item(key = "paged:loading") { LoadingRow(lcd = lcd) }
+            }
+            if (entry.failedFirst && shown.isEmpty() && offlineSongs.isEmpty()) {
+                item(key = "paged:failed") {
+                    ClassipodRow(
+                        title = "Couldn't load — check connection",
+                        selected = false,
+                        lcd = lcd,
+                    )
+                }
             }
         }
     }
 }
-
-/** First-page sentinel: null token means the feed is exhausted. */
-private const val FIRST_PAGE = "__first__"
-
-/** "Playlist · 1,247 songs" → 1247. Null when the header names no count. */
-private fun parsePlaylistCount(subtitle: String): Int? =
-    Regex("""(\d[\d,]*)\s+songs?\b""", RegexOption.IGNORE_CASE)
-        .find(subtitle)
-        ?.groupValues
-        ?.get(1)
-        ?.filter(Char::isDigit)
-        ?.toIntOrNull()
 
 /**
  * Search, 1-for-1 from Classipod's SearchScreen:
