@@ -36,7 +36,6 @@ import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
-import com.music.bitchord.data.model.isSameTrackAs
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AppUi
 import com.music.bitchord.data.settings.AudioQuality
@@ -45,7 +44,6 @@ import com.music.bitchord.download.Downloads
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.playback.QueueSource
-import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.MainViewModel
@@ -167,18 +165,28 @@ fun ClassipodHost(
     val eqOn by AppSettings.equalizerEnabled.collectAsStateWithLifecycle()
 
     val likedSongs = (library as? UiState.Success)?.data?.likedSongs.orEmpty()
-    // The library tab only carries Liked Music's first page (~100 rows).
-    // Liked libraries run past that, so the full list is paged once per
-    // session — otherwise everything past row 100 silently vanishes.
-    var fullLiked by remember { mutableStateOf<List<Song>?>(null) }
+    val likedContinuation = (library as? UiState.Success)?.data?.likedContinuation
+    // Liked lives in the session cache: the library feed seeds the first
+    // page, the list pages itself behind, and reopening never refetches.
+    // This replaces the old launch-time walk of every continuation.
+    val likedEntry = remember {
+        PlaylistCache.entry(com.music.bitchord.data.YtMusicRepository.LIKED_MUSIC)
+    }
+    val likedSeed = likedSongs.takeIf { it.isNotEmpty() }?.let {
+        com.music.bitchord.data.YtMusicRepository.SongPage(it, likedContinuation)
+    }
     LaunchedEffect(library) {
-        if (likedSongs.isNotEmpty() && fullLiked == null) {
-            fullLiked = com.music.bitchord.data.YtMusicRepository.allSongs(
-                com.music.bitchord.data.YtMusicRepository.LIKED_MUSIC,
-            ).getOrNull()?.takeIf { it.isNotEmpty() }
+        likedSeed?.let { PlaylistCache.seed(likedEntry, it) }
+    }
+    // Dead-network fallback: downloaded tracks the user liked.
+    var offlineLiked by remember { mutableStateOf<List<Song>?>(null) }
+    LaunchedEffect(library, likeStatuses) {
+        if (offlineLiked == null && likeStatuses.isNotEmpty()) {
+            offlineLiked = Downloads.getDownloadedSongs(context)
+                .filter { likeStatuses[it.videoId] == LikeStatus.LIKE }
         }
     }
-    val likedAll = fullLiked ?: likedSongs
+    val likedAll: List<Song> = if (likedEntry.songs.isNotEmpty()) likedEntry.songs else likedSongs
     var likedTotal by remember { mutableStateOf<Int?>(null) }
     val librarySongs = (library as? UiState.Success)?.data?.librarySongs.orEmpty()
     val allKnown = (likedAll + librarySongs).distinctBy { it.videoId }
@@ -734,7 +742,7 @@ fun ClassipodHost(
 
 
     // Root menu, rebuilt as feeds land.
-    val root = remember(home, likedAll, likedTotal, librarySongs, playlists, flowStatus, player.song) {
+    val root = remember(home, likedAll, likedTotal, librarySongs, playlists, flowStatus, flowQueue, player.song) {
         ClassipodPage.Menu(
             title = "Music",
             items = listOf(
@@ -749,7 +757,11 @@ fun ClassipodHost(
                         ),
                     )
                 },
-                MenuItem("Flow", value = if (flowStatus.unlocked) null else "🔒") {
+                MenuItem(
+                    "Flow",
+                    value = if (flowStatus.unlocked) null else "🔒",
+                    artUrl = (flowQueue as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl,
+                ) {
                     push(ClassipodPage.FlowHome)
                 },
                 MenuItem("Search") { push(ClassipodPage.Search) },
@@ -800,7 +812,6 @@ fun ClassipodHost(
         stack = stack,
         onPush = ::push,
         onPop = ::pop,
-        onPopToRoot = { stack = listOf(stack.first()) },
         wheel = wheel,
         modifier = modifier,
         content = { page ->
@@ -836,6 +847,8 @@ fun ClassipodHost(
                 shuffleOn = shuffleOn,
                 repeatMode = repeatMode,
                 scope = scope,
+                likedSeed = likedSeed,
+                likedOffline = offlineLiked.orEmpty(),
                 onPop = ::pop,
                 )
                 QueueActionNoticeHost(
@@ -891,6 +904,8 @@ private fun ClassipodPageContent(
     repeatMode: Int,
     scope: kotlinx.coroutines.CoroutineScope,
     onLikedTotal: (Int) -> Unit,
+    likedSeed: com.music.bitchord.data.YtMusicRepository.SongPage?,
+    likedOffline: List<Song>,
     onPop: () -> Unit,
 ) {
     when (page) {
@@ -924,6 +939,8 @@ private fun ClassipodPageContent(
                 },
                 onLongPress = openPodSongMenu,
                 onTotal = { if (page.reportTotal) onLikedTotal(it) },
+                seed = if (page.reportTotal) likedSeed else null,
+                offlineSongs = if (page.reportTotal) likedOffline else emptyList(),
                 onBack = onPop,
                 currentSong = player.song,
                 isPlaying = player.isPlaying,

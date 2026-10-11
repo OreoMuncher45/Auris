@@ -85,13 +85,16 @@ sealed interface ClassipodPage {
 data class MenuItem(
     val title: String,
     val value: String? = null,
-    val onSelect: () -> Unit = {},
     /**
      * Center-button action. Null means center does [onSelect]: menus keep
      * that. Song rows pass the song menu and playlist rows the collection
      * options, so the middle button is the three-dot menu everywhere.
      */
     val onCenter: (() -> Unit)? = null,
+    /** Optional leading artwork (the Flow entry wears its mix art). */
+    val artUrl: String? = null,
+    /** Trailing-lambda position is load-bearing: tap handlers bind here. */
+    val onSelect: () -> Unit = {},
 )
 
 /**
@@ -138,6 +141,7 @@ fun ClassipodMenuPage(
                     selected = index == selected,
                     lcd = lcd,
                     onClick = item.onSelect,
+                    artUrl = item.artUrl,
                 )
             }
         }

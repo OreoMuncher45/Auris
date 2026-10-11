@@ -50,6 +50,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import coil3.compose.AsyncImage
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -95,7 +97,6 @@ fun ClassipodRoot(
     stack: List<ClassipodPage>,
     onPush: (ClassipodPage) -> Unit,
     onPop: () -> Unit,
-    onPopToRoot: () -> Unit,
     wheel: ClassipodWheelState,
     content: @Composable (ClassipodPage) -> Unit,
     modifier: Modifier = Modifier,
@@ -238,9 +239,6 @@ fun ClassipodWheelState.claim(key: Any, handlers: WheelHandlers) {
     DisposableEffect(key) { onDispose { unregister(key) } }
     register(key, handlers)
 }
-
-/** Which wheel zone was tapped. */
-enum class WheelZone { MENU, PREV, NEXT, PLAY_PAUSE, CENTER }
 
 /** Per-page wheel behavior. See [ClassipodWheelState]. */
 data class WheelHandlers(
@@ -509,6 +507,7 @@ fun ClassipodRow(
     lcd: ClassipodTheme.Lcd,
     onClick: () -> Unit = {},
     modifier: Modifier = Modifier,
+    artUrl: String? = null,
 ) {
     Row(
         modifier = modifier
@@ -535,6 +534,18 @@ fun ClassipodRow(
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (artUrl != null) {
+            AsyncImage(
+                model = artUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(lcd.bar),
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         PodMarquee(
             text = title,
             color = if (selected) Color.White else lcd.text,
