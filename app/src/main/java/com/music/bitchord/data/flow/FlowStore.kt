@@ -64,18 +64,10 @@ object FlowStore {
     /** A snapshot older than this rebuilds instead of restoring. */
     const val FLOW_TTL_MS = 24L * 60 * 60 * 1000
 
-    private const val SNAPSHOT_MAX_TRACKS = 200
-
     fun saveSnapshot(songs: List<Song>) {
         if (!this::prefs.isInitialized || songs.isEmpty()) return
-        val text = songs.take(SNAPSHOT_MAX_TRACKS).joinToString("\u001e") { s ->
-            listOf(
-                s.videoId, s.title, s.artist,
-                s.albumName.orEmpty(), s.thumbnailUrl.orEmpty(),
-            ).joinToString("\u001f") { it.replace("\u001e", " ").replace("\u001f", " ") }
-        }
         prefs.edit()
-            .putString(KEY_FLOW_SNAPSHOT, text)
+            .putString(KEY_FLOW_SNAPSHOT, encodeFlowSnapshot(songs))
             .putLong(KEY_FLOW_BUILT_AT, System.currentTimeMillis())
             .apply()
     }
@@ -85,17 +77,7 @@ object FlowStore {
         if (!this::prefs.isInitialized) return null
         val text = prefs.getString(KEY_FLOW_SNAPSHOT, null)?.takeIf { it.isNotEmpty() }
             ?: return null
-        val songs = text.split("\u001e").mapNotNull { row ->
-            val f = row.split("\u001f")
-            val id = f.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            Song(
-                videoId = id,
-                title = f.getOrNull(1).orEmpty(),
-                artist = f.getOrNull(2).orEmpty(),
-                thumbnailUrl = f.getOrNull(4)?.takeIf { it.isNotBlank() },
-                albumName = f.getOrNull(3)?.takeIf { it.isNotBlank() },
-            )
-        }
+        val songs = decodeFlowSnapshot(text)
         if (songs.isEmpty()) return null
         return songs to prefs.getLong(KEY_FLOW_BUILT_AT, 0L)
     }
@@ -213,5 +195,34 @@ object FlowStore {
 
     private fun writeSkips(map: Map<String, Int>) {
         prefs.edit().putString(KEY_SKIPS, map.entries.joinToString(";") { "${it.key}=${it.value}" }).apply()
+    }
+}
+
+/**
+ * The persisted mix as plain text, split from the prefs IO so it unit
+ * tests on the JVM: control separators can never appear in a field
+ * because encoding blanks them, so splitting never misparses.
+ */
+fun encodeFlowSnapshot(songs: List<Song>): String =
+    songs.take(200).joinToString("\u001e") { s ->
+        listOf(
+            s.videoId, s.title, s.artist,
+            s.albumName.orEmpty(), s.thumbnailUrl.orEmpty(),
+        ).joinToString("\u001f") { it.replace("\u001e", " ").replace("\u001f", " ") }
+    }
+
+/** Inverse of [encodeFlowSnapshot]: rows without an id are dropped. */
+fun decodeFlowSnapshot(text: String): List<Song> {
+    if (text.isBlank()) return emptyList()
+    return text.split("\u001e").mapNotNull { row ->
+        val f = row.split("\u001f")
+        val id = f.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        Song(
+            videoId = id,
+            title = f.getOrNull(1).orEmpty(),
+            artist = f.getOrNull(2).orEmpty(),
+            thumbnailUrl = f.getOrNull(4)?.takeIf { it.isNotBlank() },
+            albumName = f.getOrNull(3)?.takeIf { it.isNotBlank() },
+        )
     }
 }

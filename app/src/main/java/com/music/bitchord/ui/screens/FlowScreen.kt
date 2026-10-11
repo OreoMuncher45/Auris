@@ -1,10 +1,6 @@
 package com.music.bitchord.ui.screens
 
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -62,8 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -73,7 +67,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.R
@@ -153,7 +146,6 @@ fun FlowScreen(
     ) {
         item(key = "flow:hero") {
             FlowHero(
-                listState = listState,
                 mood = draftMood,
                 trackCount = songs.size,
                 isSaved = isSaved,
@@ -265,74 +257,14 @@ fun FlowScreen(
     }
 }
 
-private val FLOW_ART_HEIGHT = 340.dp
-private val FLOW_HEADER_DROP = 44.dp
-
 /**
- * The hero backdrop: two color blobs drifting on a deep base, drawn on
- * canvas with radial falloff — no blur pass, no image decode, no network.
- * The animation values are read only inside this composable's own
- * drawBehind, so each frame redraws this box and nothing else.
- */
-@Composable
-private fun FlowGradientBackdrop(modifier: Modifier = Modifier) {
-    val drift = rememberInfiniteTransition(label = "flowDrift")
-    val t1 by drift.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(14000), RepeatMode.Reverse),
-        label = "flowDriftA",
-    )
-    val t2 by drift.animateFloat(
-        initialValue = 1f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(tween(19000), RepeatMode.Reverse),
-        label = "flowDriftB",
-    )
-    Box(
-        modifier.fillMaxSize().drawBehind {
-            drawRect(Color(0xFF14101F))
-            val r = size.maxDimension * 0.75f
-            drawCircle(
-                brush = Brush.radialGradient(
-                    0f to Color(0xFF7C4DFF).copy(alpha = 0.85f),
-                    1f to Color.Transparent,
-                    center = Offset(size.width * (0.15f + 0.35f * t1), size.height * (0.25f + 0.2f * t2)),
-                    radius = r,
-                ),
-                radius = r,
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    0f to Color(0xFF00BCD4).copy(alpha = 0.55f),
-                    1f to Color.Transparent,
-                    center = Offset(size.width * (0.85f - 0.3f * t2), size.height * (0.7f - 0.25f * t1)),
-                    radius = r,
-                ),
-                radius = r,
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    0f to Color(0xFFFF6E40).copy(alpha = 0.35f),
-                    1f to Color.Transparent,
-                    center = Offset(size.width * (0.5f + 0.25f * (t1 - t2)), size.height * 0.55f),
-                    radius = r * 0.7f,
-                ),
-                radius = r * 0.7f,
-            )
-        },
-    )
-}
-
-/**
- * Left-aligned hero over the gradient: FLOW masthead top-left, big title
- * with ∞, mood subtitle, meta line, white Play pill + Shuffle / Like /
- * Tune glass circles. Everything on the gradient is white — fixed, never
- * themed.
+ * Compact header with no artwork: the mix art lives on the Listen Now
+ * card outside. Masthead, title with ∞, mood subtitle, meta line, Play
+ * pill + Shuffle / Like / Tune circles — everything kept, everything in
+ * theme colors so it reads on light and dark alike.
  */
 @Composable
 private fun FlowHero(
-    listState: LazyListState,
     mood: FlowMood,
     trackCount: Int,
     isSaved: Boolean,
@@ -347,181 +279,146 @@ private fun FlowHero(
     onToggleLike: () -> Unit,
     onTune: () -> Unit,
 ) {
-    Box(Modifier.fillMaxWidth().clipToBounds()) {
-        // Parallax gradient, parked far up once scrolled past.
-        val artPx = with(androidx.compose.ui.platform.LocalDensity.current) {
-            FLOW_ART_HEIGHT.toPx()
-        }
-        val top = if (listState.firstVisibleItemIndex == 0) {
-            -listState.firstVisibleItemScrollOffset.toFloat()
-        } else {
-            -artPx * 2f
-        }
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(FLOW_ART_HEIGHT)
-                .offset { IntOffset(0, top.roundToInt()) },
+    val fg = MaterialTheme.colorScheme.onBackground
+    val dim = MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 14.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(
+            text = stringResource(R.string.flow).uppercase(),
+            style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 3.sp),
+            color = dim,
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+        )
+        Spacer(Modifier.height(2.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
         ) {
-            FlowGradientBackdrop()
-            // The ∞ mark, then the page wash taking over at the foot.
+            Text(
+                text = stringResource(R.string.flow),
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                color = fg,
+            )
+            Spacer(Modifier.width(8.dp))
             Icon(
-                Icons.Rounded.AllInclusive, null, tint = Color.White.copy(alpha = 0.92f),
-                modifier = Modifier.size(64.dp).align(Alignment.Center),
-            )
-            Box(
-                Modifier.matchParentSize().background(
-                    Brush.verticalGradient(
-                        0.55f to Color.Transparent,
-                        1.00f to MaterialTheme.colorScheme.background.copy(alpha = 0.92f),
-                    ),
-                ),
-            )
-            // FLOW, top left, small caps — the page's own masthead.
-            Text(
-                text = stringResource(R.string.flow).uppercase(),
-                style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 3.sp),
-                color = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.align(Alignment.TopStart).padding(start = PAGE_GUTTER, top = 12.dp),
+                Icons.Rounded.AllInclusive, null, tint = dim,
+                modifier = Modifier.size(30.dp),
             )
         }
-
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(bottom = 14.dp),
-            horizontalAlignment = Alignment.Start,
+        Text(
+            text = if (mood == FlowMood.FLOW) {
+                stringResource(R.string.flow_subtitle)
+            } else {
+                mood.label + " · " + stringResource(R.string.flow_subtitle)
+            },
+            style = MaterialTheme.typography.bodyLarge,
+            color = dim,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+        )
+        Spacer(Modifier.height(4.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
         ) {
-            Spacer(Modifier.fillMaxWidth().height(FLOW_ART_HEIGHT - 190.dp + FLOW_HEADER_DROP))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-            ) {
-                Text(
-                    text = stringResource(R.string.flow),
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                )
-                Spacer(Modifier.width(8.dp))
-                Icon(
-                    Icons.Rounded.AllInclusive, null, tint = Color.White.copy(alpha = 0.75f),
-                    modifier = Modifier.size(30.dp),
-                )
-            }
             Text(
-                text = if (mood == FlowMood.FLOW) {
-                    stringResource(R.string.flow_subtitle)
-                } else {
-                    mood.label + " · " + stringResource(R.string.flow_subtitle)
+                text = when {
+                    isSaved -> stringResource(R.string.saved)
+                    trackCount > 0 -> stringResource(R.string.flow_temp_meta, trackCount)
+                    else -> stringResource(R.string.flow_temp_playlist)
                 },
-                style = MaterialTheme.typography.bodyLarge,
-                color = Color.White.copy(alpha = 0.72f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
+                color = dim,
             )
-            Spacer(Modifier.height(4.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-            ) {
+            if (isGrowing && !isSaved && trackCount > 0) {
+                Box(Modifier.size(5.dp).clip(CircleShape).background(dim))
                 Text(
-                    text = when {
-                        isSaved -> stringResource(R.string.saved)
-                        trackCount > 0 -> stringResource(R.string.flow_temp_meta, trackCount)
-                        else -> stringResource(R.string.flow_temp_playlist)
-                    },
+                    text = stringResource(R.string.flow_growing),
                     style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = dim,
                 )
-                if (isGrowing && !isSaved && trackCount > 0) {
-                    Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.8f)))
-                    Text(
-                        text = stringResource(R.string.flow_growing),
-                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.7.sp),
-                        color = Color.White.copy(alpha = 0.8f),
-                    )
-                }
-                if (rebuilding) {
-                    CircularProgressIndicator(
-                        Modifier.size(12.dp),
-                        strokeWidth = 1.5.dp,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
-                }
             }
-            Spacer(Modifier.height(14.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = PAGE_GUTTER),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            if (rebuilding) {
+                CircularProgressIndicator(
+                    Modifier.size(12.dp),
+                    strokeWidth = 1.5.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = PAGE_GUTTER),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Button(
+                onClick = onPlay,
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                ),
+                contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp),
+                modifier = Modifier.weight(1f),
             ) {
-                // The white Play pill. Theme-proof on purpose: white pill +
-                // black content reads on every gradient, in every theme.
-                Button(
-                    onClick = onPlay,
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black,
-                    ),
-                    contentPadding = PaddingValues(horizontal = 28.dp, vertical = 14.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(22.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        stringResource(R.string.play),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-                FlowGlassCircle(
-                    icon = Icons.Rounded.Shuffle,
-                    description = stringResource(R.string.shuffle),
-                    onClick = onShuffle,
+                Icon(Icons.Rounded.PlayArrow, null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    stringResource(R.string.play),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
+            }
+            FlowGlassCircle(
+                icon = Icons.Rounded.Shuffle,
+                description = stringResource(R.string.shuffle),
+                onClick = onShuffle,
+            )
+            FlowGlassCircle(
+                icon = if (currentLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                description = stringResource(R.string.like),
+                onClick = onToggleLike,
+                filled = currentLiked,
+            )
+            Box(contentAlignment = Alignment.TopEnd) {
                 FlowGlassCircle(
-                    icon = if (currentLiked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                    description = stringResource(R.string.like),
-                    onClick = onToggleLike,
-                    filled = currentLiked,
+                    icon = Icons.Rounded.Tune,
+                    description = stringResource(R.string.flow_tuner),
+                    onClick = onTune,
+                    selected = tunerOpen,
                 )
-                Box(contentAlignment = Alignment.TopEnd) {
-                    FlowGlassCircle(
-                        icon = Icons.Rounded.Tune,
-                        description = stringResource(R.string.flow_tuner),
-                        onClick = onTune,
-                        selected = tunerOpen,
+                if (tunerDirty) {
+                    Box(
+                        Modifier
+                            .padding(top = 2.dp, end = 2.dp)
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape),
                     )
-                    if (tunerDirty) {
-                        Box(
-                            Modifier
-                                .padding(top = 2.dp, end = 2.dp)
-                                .size(9.dp)
-                                .clip(CircleShape)
-                                .background(Color.White)
-                                .border(1.5.dp, Color.Black.copy(alpha = 0.4f), CircleShape),
-                        )
-                    }
                 }
             }
-            if (!isSaved) {
-                Spacer(Modifier.height(10.dp))
-                TextButton(onClick = onSave, modifier = Modifier.padding(horizontal = PAGE_GUTTER - 12.dp)) {
-                    Text(
-                        stringResource(R.string.flow_save),
-                        color = Color.White.copy(alpha = 0.85f),
-                    )
-                }
+        }
+        if (!isSaved) {
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = onSave, modifier = Modifier.padding(horizontal = PAGE_GUTTER - 12.dp)) {
+                Text(
+                    stringResource(R.string.flow_save),
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
         }
     }
 }
 
-/** Frosted-glass circle: white wash, hairline rim, white glyph. */
+/** Tonal circle: surface wash, hairline rim, theme glyph. Red heart when loved. */
 @Composable
 private fun FlowGlassCircle(
     icon: ImageVector,
@@ -532,18 +429,22 @@ private fun FlowGlassCircle(
     filled: Boolean = false,
     size: Dp = 50.dp,
 ) {
+    val glyph = MaterialTheme.colorScheme.onSurfaceVariant
     Box(
         modifier = Modifier
             .size(size)
             .clip(CircleShape)
-            .background(Color.White.copy(alpha = if (selected) 0.22f else 0.12f))
-            .border(0.5.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+            )
+            .border(0.5.dp, glyph.copy(alpha = 0.3f), CircleShape)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             icon, description,
-            tint = if (filled) Color(0xFFFF5B6E) else Color.White.copy(alpha = if (enabled) 1f else 0.4f),
+            tint = if (filled) Color(0xFFFF5B6E) else glyph.copy(alpha = if (enabled) 1f else 0.4f),
             modifier = Modifier.size(22.dp),
         )
     }

@@ -518,6 +518,7 @@ object Downloads {
     }
 
     private fun recordCollections(update: (Map<String, SavedCollection>) -> Map<String, SavedCollection>) {
+        listingGeneration++
         synchronized(collectionLock) {
             val map = update(_collections.value)
             _collections.value = map
@@ -618,6 +619,7 @@ object Downloads {
         saved: (Map<String, String>) -> Map<String, String>,
         meta: (Map<String, SavedSongMetadata>) -> Map<String, SavedSongMetadata>,
     ) {
+        listingGeneration++
         val savedMap = _saved.updateAndGet(saved)
         val metaMap = _savedMetadata.updateAndGet(meta)
         if (!::prefs.isInitialized) return
@@ -631,8 +633,25 @@ object Downloads {
 
     private val recordLock = Any()
 
+    /**
+     * Mutation counter for everything below that reads the disk. Verifying
+     * every recorded file means opening every one of them — a 1,600-track
+     * folder costs ten seconds of file opens — so verified listings are
+     * memoized per generation: reopening is instant, and any mutation
+     * (save, delete, prune) transparently rebuilds on next read.
+     */
+    private var listingGeneration = 0
+    private var allSongsCache: Pair<Int, List<Song>>? = null
+    private val collectionSongsCache = HashMap<String, Pair<Int, List<Song>>>()
+
     /** Returns all downloaded songs whose files still exist on disk. */
     suspend fun getDownloadedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
+        val gen = listingGeneration
+        allSongsCache?.takeIf { it.first == gen }?.let { return@withContext it.second }
+        verifiedDownloadedSongs(context).also { allSongsCache = gen to it }
+    }
+
+    private suspend fun verifiedDownloadedSongs(context: Context): List<Song> = withContext(Dispatchers.IO) {
         val metaMap = _savedMetadata.value
         val result = mutableListOf<Song>()
         val seenUris = mutableSetOf<String>()
@@ -713,6 +732,16 @@ object Downloads {
      * files can belong here, so only those files need to be verified.
      */
     suspend fun getCollectionSongs(context: Context, collectionId: String): List<Song> =
+        withContext(Dispatchers.IO) {
+            val gen = listingGeneration
+            collectionSongsCache[collectionId]?.takeIf { it.first == gen }
+                ?.let { return@withContext it.second }
+            verifiedCollectionSongs(context, collectionId).also {
+                collectionSongsCache[collectionId] = gen to it
+            }
+        }
+
+    private suspend fun verifiedCollectionSongs(context: Context, collectionId: String): List<Song> =
         withContext(Dispatchers.IO) {
             val record = _collections.value[collectionId] ?: return@withContext emptyList()
             val metadata = _savedMetadata.value

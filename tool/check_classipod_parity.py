@@ -14,6 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CLS = ROOT / "app/src/main/java/com/music/bitchord/ui/classipod"
 APP = ROOT / "app/src/main/java/com/music/bitchord"
+TST = ROOT / "app/src/test/java/com/music/bitchord"
 
 CHECKS = [  # list of (name, file, required patterns — ALL must match)
     # (name, file, required patterns — ALL must match)
@@ -71,6 +72,11 @@ CHECKS = [  # list of (name, file, required patterns — ALL must match)
     ("flow/resume not restart", APP / "MainActivity.kt", ["never restart from the"]),
     ("flow/row art", CLS / "ClassipodHost.kt", ["artUrl = (flowQueue as?"]),
     ("menu/art rows", CLS / "ClassipodRoot.kt", ["artUrl"]),
+    ("flow/card art outside", APP / "MainActivity.kt", ["flowArt", "thumbnailUrl = flowArt"]),
+    ("flow/no inside image", APP / "ui/screens/FlowScreen.kt", ["Compact header with no artwork"]),
+    ("downloads/memoized", APP / "download/Downloads.kt", ["listingGeneration", "allSongsCache"]),
+    ("verify/snapshot tests", TST / "FlowSnapshotTest.kt", ["encodeFlowSnapshot", "decodeFlowSnapshot"]),
+    ("verify/cache tests", TST / "PlaylistCacheTest.kt", ["exactTotal", "countLabel"]),
     ("advanced/all settings", CLS / "ClassipodHost.kt", ["advancedPage", "discordPage", "advAudioPage", "advStoragePage", "onOpenEqualizer", "onQueueSongs"]),
     ("now-playing/blue bar", CLS / "ClassipodTheme.kt", ["PROGRESS_FILL", "3D89EB"]),
     ("now-playing/counter", CLS / "ClassipodHost.kt", ["queueIndex", "queue.size"]),
