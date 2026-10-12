@@ -176,6 +176,24 @@ enum class SourceKind(
     ),
 
     /**
+     * Community Hi-Res FLAC through a downloader backend: Lossless catalogue
+     * search with Deezer ISRC precision matching, conversions up to
+     * 24-bit/192kHz. No account, no key, no URL — the backend holds whatever
+     * it holds. Conversion is a queued job rather than an instant URL, so it
+     * resolves slowly and loses races it cannot win in time; that is a miss,
+     * not a fault. On by default; the toggle is the off switch.
+     */
+    HIRES(
+        label = "Hi-Res Lossless",
+        detail = "Community FLAC up to 24-bit/192kHz with automatic quality fallback. Slow to resolve; disable anytime.",
+        labels = listOf("FLAC", "Lossless", "Hi-Res"),
+        needsServer = false,
+        canServeLossless = true,
+        worthPrefetching = true,
+        rank = 1,
+    ),
+
+    /**
      * The source the app was built on, listed here so it always has a fixed
      * place: second, behind the module source. It cannot be removed — see
      * [SourceRegistry]. Nothing else in the app can supply a home feed, a

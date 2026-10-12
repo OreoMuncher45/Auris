@@ -865,6 +865,7 @@ private fun SourceRow(
                 SourceKind.MODULE -> Icons.Rounded.Extension
                 SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
                 SourceKind.TIDAL -> Icons.Rounded.MusicNote
+                SourceKind.HIRES -> Icons.Rounded.MusicNote
                 SourceKind.OCTAVE -> Icons.Rounded.Album
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },

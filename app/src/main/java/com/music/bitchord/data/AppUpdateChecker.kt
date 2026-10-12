@@ -43,7 +43,7 @@ object AppUpdateChecker {
     private const val CACHE_SUBDIR = "updates"
 
     private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/kushagrasinghx/BitChord/releases/latest"
+        "https://api.github.com/repos/OreoMuncher45/BitChord/releases/latest"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -94,19 +94,29 @@ object AppUpdateChecker {
     }
 
     /**
-     * The release usually carries exactly one `.apk`; take its direct download
-     * URL. A release without one (source-only draft, renamed asset) leaves
+     * This fork ships one `.apk` per ABI; take the direct download URL for
+     * the device's own ABI, falling back to the first uploaded `.apk`.
+     * A release without one (source-only draft, renamed asset) leaves
      * [UpdateInfo.apkUrl] null and the UI falls back to opening the releases
      * page as before.
      */
     private fun apkAssetUrl(release: JsonObject): String? = runCatching {
-        release["assets"]?.jsonArray
+        val apks = release["assets"]?.jsonArray
             ?.mapNotNull { it as? JsonObject }
-            ?.firstOrNull { asset ->
+            ?.filter { asset ->
                 asset["name"]?.jsonPrimitive?.contentOrNull?.endsWith(".apk", ignoreCase = true) == true &&
                     asset["state"]?.jsonPrimitive?.contentOrNull == "uploaded"
-            }
-            ?.get("browser_download_url")
+            }.orEmpty()
+        if (apks.isEmpty()) return@runCatching null
+        val nameOf = { asset: JsonObject ->
+            asset["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        }
+        val abis = android.os.Build.SUPPORTED_ABIS.toList()
+        val match = abis.firstNotNullOfOrNull { abi ->
+            apks.firstOrNull { asset -> nameOf(asset).contains(abi, ignoreCase = true) }
+        } ?: apks.firstOrNull { asset -> nameOf(asset).contains("universal", ignoreCase = true) }
+        (match ?: apks.first())
+            .get("browser_download_url")
             ?.jsonPrimitive
             ?.contentOrNull
     }.getOrNull()
