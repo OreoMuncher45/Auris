@@ -74,6 +74,8 @@ CHECKS = [  # list of (name, file, required patterns — ALL must match)
     ("menu/art rows", CLS / "ClassipodRoot.kt", ["artUrl"]),
     ("hires/source wired", APP / "data/sources/SourceRegistry.kt", ["HIRES", "ConversionBackendSource", "HIRES_DISPLAY_NAME"]),
     ("hires/challenge backoff", APP / "data/sources/ConversionBackendApi.kt", ["tokenBlockedUntilMs", "prepareToken"]),
+    ("hires/sp session", APP / "data/sources/ConversionBackendApi.kt", ["loadSp", "AppSettings.conversionSp"]),
+    ("hires/unlock sheet", APP / "ui/components/ConversionUnlockSheet.kt", ["localStorage", "fd_sp"]),
     ("automix/v2 setting", APP / "data/settings/AppSettings.kt", ["automixEngine", "setAutomixEngine"]),
     ("flow/card art outside", APP / "MainActivity.kt", ["flowArt", "thumbnailUrl = flowArt"]),
     ("flow/no inside image", APP / "ui/screens/FlowScreen.kt", ["Compact header with no artwork"]),

@@ -643,6 +643,13 @@ object AppSettings {
     val listenBrainzPrimaryArtistOnly = MutableStateFlow(false)
     val spotifySpdcToken = MutableStateFlow("")
 
+    /**
+     * The downloader session captured by the one-tap guided unlock: an
+     * anonymous session token for a free site, not anyone's credential.
+     * Empty means locked; the Hi-Res health line says so.
+     */
+    val conversionSp = MutableStateFlow("")
+
     // ── Discord Rich Presence ───────────────────────────────────────────
 
     /**
@@ -903,6 +910,7 @@ object AppSettings {
         scrobbleDelaySeconds.value = prefs.getInt(KEY_SCROBBLE_DELAY_SECONDS, 180)
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
+        conversionSp.value = prefs.getString(KEY_CONVERSION_SP, "").orEmpty()
         listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
         spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
@@ -1599,6 +1607,11 @@ object AppSettings {
         prefs.edit().putString(KEY_LISTENBRAINZ_TOKEN, value).apply()
     }
 
+    fun setConversionSp(value: String) {
+        conversionSp.value = value
+        prefs.edit().putString(KEY_CONVERSION_SP, value).apply()
+    }
+
     fun setListenBrainzPrimaryArtistOnly(value: Boolean) {
         listenBrainzPrimaryArtistOnly.value = value
         prefs.edit().putBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, value).apply()
@@ -2078,6 +2091,7 @@ object AppSettings {
     private const val KEY_SCROBBLE_DELAY_SECONDS = "scrobble_delay_seconds"
     private const val KEY_LISTENBRAINZ_ENABLED = "listenbrainz_enabled"
     private const val KEY_LISTENBRAINZ_TOKEN = "listenbrainz_token"
+    private const val KEY_CONVERSION_SP = "conversion_sp"
     private const val KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY = "listenbrainz_primary_artist_only"
     private const val KEY_SPOTIFY_SPDC_TOKEN = "spotify_spdc_token"
 
