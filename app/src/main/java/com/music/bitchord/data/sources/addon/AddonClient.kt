@@ -340,6 +340,9 @@ class AddonClient(
             val request = Request.Builder().url(url)
                 .header("Accept", "application/json")
                 .header("User-Agent", USER_AGENT)
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Sec-Fetch-Site", "none")
+                .header("Sec-Fetch-Mode", "no-cors")
                 .build()
 
             val wait = client.newCall(request).execute().use { response ->
