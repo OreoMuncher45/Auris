@@ -185,7 +185,7 @@ enum class SourceKind(
      */
     HIRES(
         label = "Hi-Res Lossless",
-        detail = "Community FLAC up to 24-bit/192kHz with automatic quality fallback. Slow to resolve; disable anytime.",
+        detail = "Community FLAC up to 24-bit/192kHz, with direct-FLAC fallback when conversions are gated. Slow to resolve; disable anytime.",
         labels = listOf("FLAC", "Lossless", "Hi-Res"),
         needsServer = false,
         canServeLossless = true,
