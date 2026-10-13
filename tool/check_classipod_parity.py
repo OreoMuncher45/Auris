@@ -81,6 +81,7 @@ CHECKS = [  # list of (name, file, required patterns — ALL must match)
     ("hires/queue parity", APP / "data/sources/ConversionBackendApi.kt", ["queuePayload", "lastFailure", "same-origin"]),
     ("hires/parallel search", APP / "data/sources/ConversionBackendSource.kt", ["coroutineScope", "async"]),
     ("hires/row badges", ROOT / "sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/components/SongText.kt", ["qualityBadge", "LOSSLESS"]),
+    ("hires/url encoding", APP / "data/sources/ConversionBackendApi.kt", ["encodeSegment", "encodeSegment(file)"]),
     ("automix/v2 setting", APP / "data/settings/AppSettings.kt", ["automixEngine", "setAutomixEngine"]),
     ("flow/card art outside", APP / "MainActivity.kt", ["flowArt", "thumbnailUrl = flowArt"]),
     ("flow/no inside image", APP / "ui/screens/FlowScreen.kt", ["Compact header with no artwork"]),
