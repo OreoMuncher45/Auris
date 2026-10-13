@@ -577,6 +577,8 @@ class PlaybackService : MediaLibraryService() {
      */
     private val spatialAudioProcessorA = SpatialAudioProcessor()
     private val spatialAudioProcessorB = SpatialAudioProcessor()
+    private val singProcessorA = VocalCutProcessor()
+    private val singProcessorB = VocalCutProcessor()
     private val equalizerProcessorA = EqualizerProcessor()
     private val equalizerProcessorB = EqualizerProcessor()
     private val transitionFilterA = TransitionFilterProcessor()
@@ -1110,6 +1112,7 @@ class PlaybackService : MediaLibraryService() {
             )
             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
             applySpatialAudioEnabled()
+            applySingLevel()
             publishNerdStats()
             currentAudioInputFormat = format
             applyOutputRoute()
@@ -1582,6 +1585,7 @@ class PlaybackService : MediaLibraryService() {
 
         configuredFloatOutput = shouldEnableFloatOutput()
         val exoPlayer = buildPlayer(
+            singProcessorA,
             spatialAudioProcessorA,
             equalizerProcessorA,
             transitionFilterA,
@@ -1589,6 +1593,7 @@ class PlaybackService : MediaLibraryService() {
             ownsSession = true,
         )
         val sparePlayer = buildPlayer(
+            singProcessorB,
             spatialAudioProcessorB,
             equalizerProcessorB,
             transitionFilterB,
@@ -2672,13 +2677,14 @@ class PlaybackService : MediaLibraryService() {
      * re-resolving a stream URL for audio that is already local.
      */
     private fun buildPlayer(
+        sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
         equalizer: EqualizerProcessor,
         filter: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
         ownsSession: Boolean,
     ): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(spatial, equalizer, filter, loudness))
+        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, equalizer, filter, loudness))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
@@ -2870,6 +2876,7 @@ class PlaybackService : MediaLibraryService() {
         // corrects it — see [formatListener]'s onAudioInputFormatChanged.
         activeTrackIsDolbyAtmos = NerdStats.declaredFormat(mediaItem?.mediaId)?.isDolbyAtmos == true
         applySpatialAudioEnabled()
+        applySingLevel()
 
         // A genuinely different track, so the gain is re-read for it. A
         // quality upgrade never reaches here — it returns early in
@@ -5489,6 +5496,7 @@ class PlaybackService : MediaLibraryService() {
      * `skipSilenceEnabled` keeps driving it as before.
      */
     private fun silenceSkippingRenderers(
+        sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
         equalizer: EqualizerProcessor,
         transition: TransitionFilterProcessor,
@@ -5603,7 +5611,7 @@ class PlaybackService : MediaLibraryService() {
             // them for the same reason: it belongs to the listener and
             // the whole session, while the transition filter belongs to
             // one handoff and has to have the last word on it.
-            val dspChain = DspChain(spatial, equalizer, transition, loudness)
+            val dspChain = DspChain(sing, spatial, equalizer, transition, loudness)
             return PrecisionAudioSink(
                 delegate = defaultSink,
                 dspChain = dspChain,
@@ -5849,6 +5857,7 @@ class PlaybackService : MediaLibraryService() {
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
         val newActive = buildPlayer(
+            singProcessorA,
             spatialAudioProcessorA,
             equalizerProcessorA,
             transitionFilterA,
@@ -5856,6 +5865,7 @@ class PlaybackService : MediaLibraryService() {
             ownsSession = true,
         )
         val newSpare = buildPlayer(
+            singProcessorB,
             spatialAudioProcessorB,
             equalizerProcessorB,
             transitionFilterB,
@@ -5872,6 +5882,7 @@ class PlaybackService : MediaLibraryService() {
         newActive.shuffleModeEnabled = shuffleMode
         applyEqualizer()
         applySpatialAudioEnabled()
+        applySingLevel()
         if (items.isNotEmpty()) {
             newActive.setMediaItems(items, index.coerceIn(items.indices), position)
             // By hand, because the listener is attached below this: the
@@ -5995,6 +6006,9 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
         }
         scope.launch {
+            AppSettings.singLevel.collect { applySingLevel() }
+        }
+        scope.launch {
             AppSettings.loudnessNormalization.collect {
                 setupLoudness(player?.currentMediaItem?.mediaId)
             }
@@ -6068,6 +6082,18 @@ class PlaybackService : MediaLibraryService() {
         val enabled = AppSettings.spatialAudio.value && !activeTrackIsDolbyAtmos
         spatialAudioProcessorA.enabled = enabled
         spatialAudioProcessorB.enabled = enabled
+    }
+
+    /**
+     * The Sing vocal-cut level, in lockstep on both players for the same
+     * reason as [applyEqualizer]: the idle player starts the next song, and a
+     * blend whose halves cut vocals differently would sweep the cut in over
+     * the crossfade.
+     */
+    private fun applySingLevel() {
+        val level = AppSettings.singLevel.value
+        singProcessorA.level = level
+        singProcessorB.level = level
     }
 
     /**

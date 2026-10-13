@@ -150,6 +150,7 @@ import com.music.bitchord.data.scrobbling.LastFM
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.ConversionBackendApi
 import com.music.bitchord.ui.components.ConversionUnlockSheet
+import com.music.bitchord.ui.components.SingSheet
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.ui.components.AccountProfileSelector
@@ -602,6 +603,7 @@ private fun BitChordApp(
     var discordDialog by remember { mutableStateOf<DiscordDialog?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
     var showLyricsOffset by remember { mutableStateOf(false) }
+    var showSing by remember { mutableStateOf(false) }
     /**
      * Whether the track menu that is up was opened from the player.
      *
@@ -2520,6 +2522,10 @@ private fun BitChordApp(
             lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
             lyricsOffsetOpen = showLyricsOffset,
             onDismissLyricsOffset = { showLyricsOffset = false },
+            onOpenSing = { showSing = true },
+            singActive = AppSettings.singLevel.collectAsStateWithLifecycle().value > 0.001f,
+            spatialAudioOn = AppSettings.spatialAudio.collectAsStateWithLifecycle().value,
+            onToggleSpatial = { AppSettings.setSpatialAudio(!AppSettings.spatialAudio.value) },
             onListenTogether = {
                 // The player is a sheet over the page, so it has to come down
                 // for the page to be read at all.
@@ -4542,6 +4548,32 @@ private fun BitChordApp(
                 } else {
                     null
                 },
+                onOpenSing = if (fromPlayer) {
+                    {
+                        songActions = null
+                        showSing = true
+                    }
+                } else {
+                    null
+                },
+                onOpenReplay = if (fromPlayer) {
+                    {
+                        songActions = null
+                        showReplay = true
+                    }
+                } else {
+                    null
+                },
+                spatialAudioOn = if (fromPlayer) {
+                    AppSettings.spatialAudio.collectAsStateWithLifecycle().value
+                } else {
+                    null
+                },
+                onToggleSpatialAudio = if (fromPlayer) {
+                    { AppSettings.setSpatialAudio(!AppSettings.spatialAudio.value) }
+                } else {
+                    null
+                },
             )
         }
         songActions?.takeIf { songMenuOrigin == null }?.let { song ->
@@ -5229,6 +5261,20 @@ private fun BitChordApp(
                 },
                 onDismiss = { showWebDavEditor = false },
             )
+        }
+
+        // ---- Sing vocal-level sheet ----
+        // Opened from the player's ⋯ menu or the lyrics panel's mic button.
+        // A plain bottom sheet: the slider writes AppSettings.singLevel
+        // live, so the mix follows the finger with no apply step.
+        if (showSing) {
+            BackHandler { showSing = false }
+            ModalBottomSheet(
+                onDismissRequest = { showSing = false },
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                SingSheet(onDismiss = { showSing = false })
+            }
         }
 
         if (showConversionUnlock) {

@@ -199,6 +199,15 @@
     <string name="animated_cover_cellular">Play animated cover over cellular</string>
     <string name="replay">Replay</string>
     <string name="replay_subtitle">Your top songs, artists, albums and genres</string>
+    <string name="sing">Sing</string>
+    <string name="sing_title">Sing</string>
+    <string name="sing_subtitle">Turn the lead vocal down and sing over the track</string>
+    <string name="sing_level_percent">Vocals at %1$d%%</string>
+    <string name="sing_full_vocals">Full vocals</string>
+    <string name="sing_no_vocals">No vocals</string>
+    <string name="sing_duet_note">Halfway down keeps the backing vocals while the lead steps back — that middle is the duet mix.</string>
+    <string name="sing_turn_off">Turn off</string>
+    <string name="your_replay">Your Replay</string>
     <string name="work_out_genres">Work out genres</string>
     <string name="export_data">Export data</string>
     <string name="export_data_subtitle">Settings and listening history, as one JSON file</string>
@@ -737,7 +746,6 @@
     <string name="your_biggest_day">Your biggest day: %1$s</string>
     <string name="your_listening_experience">Your listening experience</string>
     <string name="your_lyrics_card">Your lyrics card</string>
-    <string name="your_replay">Your Replay</string>
     <plurals name="replay_artist_count">
         <item quantity="one">%1$s artist</item>
         <item quantity="other">%1$s artists</item>
@@ -1185,4 +1193,5 @@
     <string name="diagnostics_footer">Recent source errors, newest last. Nothing leaves the device unless you copy it.</string>
     <string name="diagnostics_empty">No errors recorded yet. Play something first — failures land here.</string>
     <string name="diagnostics_refresh">Refresh</string>
+    <string name="on">On</string>
 </resources>
