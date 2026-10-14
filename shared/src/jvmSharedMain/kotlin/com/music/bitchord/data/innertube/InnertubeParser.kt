@@ -624,11 +624,7 @@ object InnertubeParser {
         // batch rather than paging it (see its "Refresh" button, wired to a
         // `reloadContinuationData` token). Only the playlist shelf's own
         // continuation means more real tracks.
-        val token = playlistScope?.let { playlist ->
-            collectRenderers(playlist, "continuationItemRenderer").firstOrNull()
-                .o("continuationEndpoint").o("continuationCommand").s("token")
-                ?: collectRenderers(playlist, "nextContinuationData").firstOrNull().s("continuation")
-        }
+        val token = playlistScope?.let { continuationToken(it) }
         return PlaylistShelfPage(songs, suggested, token)
     }
 
@@ -662,13 +658,27 @@ object InnertubeParser {
 
     /**
      * Token for the next page of a paged response, or null once it has run out.
+     *
+     * Two token formats are in circulation. The older one:
+     *   continuationItemRenderer → continuationEndpoint → continuationCommand → token
+     *
+     * The newer one, where YouTube wraps the command in a commandExecutorCommand
+     * alongside a playlist-voting popup command:
+     *   continuationItemRenderer → continuationEndpoint → commandExecutorCommand
+     *     → commands[n] → continuationCommand → token
+     *
      * Both the modern `continuationItemRenderer` and the older `continuations`
-     * array are in circulation, sometimes within the same account.
+     * array are also in circulation at the same time.
+     *
+     * [collectRenderers] does a depth-first walk, so searching for
+     * "continuationCommand" inside a `continuationItemRenderer` finds the token
+     * under either nesting depth without special-casing either format.
      */
     fun continuationToken(root: JsonElement): String? {
-        collectRenderers(root, "continuationItemRenderer").firstOrNull()
-            .o("continuationEndpoint").o("continuationCommand").s("token")
-            ?.let { return it }
+        for (item in collectRenderers(root, "continuationItemRenderer")) {
+            collectRenderers(item, "continuationCommand").firstOrNull().s("token")
+                ?.let { return it }
+        }
         return collectRenderers(root, "nextContinuationData").firstOrNull().s("continuation")
     }
 
