@@ -144,6 +144,7 @@ import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.data.settings.AutomixPerformanceMode
 import com.music.bitchord.R
 import com.music.bitchord.data.sources.DeviceCodecs
+import com.music.bitchord.data.sources.LosslessApi
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.DownloadQuality
 import com.music.bitchord.data.settings.AppUi
@@ -345,6 +346,7 @@ fun SettingsScreen(
     }
     var showListenBrainzTokenDialog by remember { mutableStateOf(false) }
     var showLastfmLoginDialog by remember { mutableStateOf(false) }
+    var showLosslessLoginDialog by remember { mutableStateOf(false) }
     val scrobbleScope = rememberCoroutineScope()
 
     val version = remember(context) {
@@ -439,6 +441,26 @@ fun SettingsScreen(
                     title = sourceTitle,
                     subtitle = sourceSubtitle,
                     onClick = onSources,
+                )
+            }
+            // Lossless sits with the quality ceilings: it decides which version
+            // of a track gets fetched. Signed in, Hi-Res streams come
+            // straight from Lossless at the account's tier — no converter, no
+            // challenge — so this row states the account and its tier.
+            val losslessEmail by AppSettings.losslessEmail.collectAsStateWithLifecycle()
+            val losslessTier by AppSettings.losslessTier.collectAsStateWithLifecycle()
+            val losslessTitle = stringResource(R.string.lossless_account)
+            row(losslessTitle, "lossless", "lossless", "account", "login") {
+                SettingsRow(
+                    icon = Icons.Rounded.Person,
+                    title = losslessTitle,
+                    subtitle = if (losslessEmail.isNotBlank()) {
+                        "$losslessEmail · ${losslessTier.ifBlank { "…" }}"
+                    } else {
+                        stringResource(R.string.lossless_account_description)
+                    },
+                    value = losslessTier.takeIf { losslessEmail.isNotBlank() && it.isNotBlank() },
+                    onClick = { showLosslessLoginDialog = true },
                 )
             }
             val onWifiTitle = stringResource(R.string.on_wifi)
@@ -1728,6 +1750,111 @@ fun SettingsScreen(
             dismissButton = {
                 TextButton(onClick = { showLastfmLoginDialog = false }, enabled = !lastfmLoading) {
                     Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showLosslessLoginDialog) {
+        val signedInEmail by AppSettings.losslessEmail.collectAsStateWithLifecycle()
+        val signedInTier by AppSettings.losslessTier.collectAsStateWithLifecycle()
+        var emailInput by remember { mutableStateOf(signedInEmail) }
+        var passwordInput by remember { mutableStateOf("") }
+        var losslessError by remember { mutableStateOf<String?>(null) }
+        var losslessLoading by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!losslessLoading) showLosslessLoginDialog = false },
+            title = { Text(stringResource(R.string.lossless_account)) },
+            text = {
+                Column {
+                    if (signedInEmail.isNotBlank()) {
+                        Text(
+                            text = "$signedInEmail · ${signedInTier.ifBlank { "…" }}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                    }
+                    if (losslessError != null) {
+                        Text(
+                            text = losslessError!!,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(bottom = 8.dp),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = emailInput,
+                        onValueChange = { emailInput = it },
+                        label = { Text(stringResource(R.string.email)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = passwordInput,
+                        onValueChange = { passwordInput = it },
+                        label = { Text(stringResource(R.string.password)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        text = stringResource(R.string.lossless_account_description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        losslessLoading = true
+                        losslessError = null
+                        scrobbleScope.launch {
+                            try {
+                                // The password is MD5'd for the wire and never
+                                // stored; only the exchanged token is kept —
+                                // see LosslessApi.login and setLosslessAccount.
+                                val session = LosslessApi.login(emailInput.trim(), passwordInput)
+                                if (session?.userAuthToken.isNullOrBlank()) {
+                                    losslessError = context.getString(R.string.login_failed)
+                                } else {
+                                    AppSettings.setLosslessAccount(
+                                        emailInput.trim(),
+                                        session.userAuthToken!!,
+                                        LosslessApi.tierName(session.user),
+                                    )
+                                    showLosslessLoginDialog = false
+                                }
+                            } catch (e: Exception) {
+                                losslessError = e.message ?: context.getString(R.string.login_failed)
+                            } finally {
+                                losslessLoading = false
+                            }
+                        }
+                    },
+                    enabled = !losslessLoading && emailInput.isNotBlank() && passwordInput.isNotBlank(),
+                ) {
+                    Text(stringResource(if (losslessLoading) R.string.signing_in else R.string.sign_in))
+                }
+            },
+            dismissButton = {
+                Row {
+                    if (signedInEmail.isNotBlank()) {
+                        TextButton(
+                            onClick = {
+                                AppSettings.clearLosslessAccount()
+                                showLosslessLoginDialog = false
+                            },
+                            enabled = !losslessLoading,
+                        ) {
+                            Text(stringResource(R.string.sign_out))
+                        }
+                    }
+                    TextButton(onClick = { showLosslessLoginDialog = false }, enabled = !losslessLoading) {
+                        Text(stringResource(R.string.cancel))
+                    }
                 }
             },
         )

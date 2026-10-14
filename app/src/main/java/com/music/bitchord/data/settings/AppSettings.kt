@@ -660,6 +660,21 @@ object AppSettings {
      */
     val conversionSp = MutableStateFlow("")
 
+    /** Browser cookies captured with the session — see [setConversionCookies]. */
+    val conversionCookies = MutableStateFlow("")
+
+    /**
+     * The listener's own Lossless account, for deterministic streaming without
+     * any converter or challenge in the middle. Email identifies the account;
+     * the token is Lossless's `user_auth_token`, exchanged once from the
+     * password (which is never stored). Tier is the subscription label the
+     * login answered with. All empty means no account — the Hi-Res source
+     * then serves conversions and direct files only.
+     */
+    val losslessEmail = MutableStateFlow("")
+    val losslessToken = MutableStateFlow("")
+    val losslessTier = MutableStateFlow("")
+
     // ── Discord Rich Presence ───────────────────────────────────────────
 
     /**
@@ -922,6 +937,10 @@ object AppSettings {
         listenBrainzEnabled.value = prefs.getBoolean(KEY_LISTENBRAINZ_ENABLED, false)
         listenBrainzToken.value = prefs.getString(KEY_LISTENBRAINZ_TOKEN, "").orEmpty()
         conversionSp.value = prefs.getString(KEY_CONVERSION_SP, "").orEmpty()
+        conversionCookies.value = prefs.getString(KEY_CONVERSION_COOKIES, "").orEmpty()
+        losslessEmail.value = prefs.getString(KEY_LOSSLESS_EMAIL, "").orEmpty()
+        losslessToken.value = prefs.getString(KEY_LOSSLESS_TOKEN, "").orEmpty()
+        losslessTier.value = prefs.getString(KEY_LOSSLESS_TIER, "").orEmpty()
         listenBrainzPrimaryArtistOnly.value = prefs.getBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, false)
         spotifySpdcToken.value = prefs.getString(KEY_SPOTIFY_SPDC_TOKEN, "").orEmpty()
         replayGenres.value = prefs.getBoolean(KEY_REPLAY_GENRES, true)
@@ -1629,6 +1648,30 @@ object AppSettings {
         prefs.edit().putString(KEY_CONVERSION_SP, value).apply()
     }
 
+    /**
+     * Cookies captured from the unlock WebView alongside the session —
+     * the clearance that tells the edge the gated calls that follow come
+     * from the same browser context. Cleared with the session, never typed.
+     */
+    fun setConversionCookies(value: String) {
+        conversionCookies.value = value
+        prefs.edit().putString(KEY_CONVERSION_COOKIES, value).apply()
+    }
+
+    /** Stores the exchanged token, never the password that minted it. */
+    fun setLosslessAccount(email: String, token: String, tier: String) {
+        losslessEmail.value = email
+        losslessToken.value = token
+        losslessTier.value = tier
+        prefs.edit()
+            .putString(KEY_LOSSLESS_EMAIL, email)
+            .putString(KEY_LOSSLESS_TOKEN, token)
+            .putString(KEY_LOSSLESS_TIER, tier)
+            .apply()
+    }
+
+    fun clearLosslessAccount() = setLosslessAccount("", "", "")
+
     fun setListenBrainzPrimaryArtistOnly(value: Boolean) {
         listenBrainzPrimaryArtistOnly.value = value
         prefs.edit().putBoolean(KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY, value).apply()
@@ -2110,6 +2153,10 @@ object AppSettings {
     private const val KEY_LISTENBRAINZ_ENABLED = "listenbrainz_enabled"
     private const val KEY_LISTENBRAINZ_TOKEN = "listenbrainz_token"
     private const val KEY_CONVERSION_SP = "conversion_sp"
+    private const val KEY_CONVERSION_COOKIES = "conversion_cookies"
+    private const val KEY_LOSSLESS_EMAIL = "lossless_email"
+    private const val KEY_LOSSLESS_TOKEN = "lossless_token"
+    private const val KEY_LOSSLESS_TIER = "lossless_tier"
     private const val KEY_LISTENBRAINZ_PRIMARY_ARTIST_ONLY = "listenbrainz_primary_artist_only"
     private const val KEY_SPOTIFY_SPDC_TOKEN = "spotify_spdc_token"
 

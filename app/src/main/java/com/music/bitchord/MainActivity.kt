@@ -5293,8 +5293,9 @@ private fun BitChordApp(
                         .padding(WindowInsets.safeDrawing.asPaddingValues()),
                 ) {
                     ConversionUnlockSheet(
-                        onUnlocked = { sp ->
+                        onUnlocked = { sp, cookies ->
                             AppSettings.setConversionSp(sp)
+                            AppSettings.setConversionCookies(cookies)
                             ConversionBackendApi.loadSp(sp)
                             showQueueNotice("Hi-Res unlocked")
                             showConversionUnlock = false
