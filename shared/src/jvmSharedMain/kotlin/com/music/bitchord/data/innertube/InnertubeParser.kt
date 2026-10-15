@@ -670,15 +670,18 @@ object InnertubeParser {
      * Both the modern `continuationItemRenderer` and the older `continuations`
      * array are also in circulation at the same time.
      *
-     * [collectRenderers] does a depth-first walk, so searching for
-     * "continuationCommand" inside a `continuationItemRenderer` finds the token
-     * under either nesting depth without special-casing either format.
+     * Only the first renderer's endpoint is read, at exactly those two depths.
+     * A page with several shelves can carry several renderers, and a token
+     * found anywhere deeper may page a different shelf than the one asked for.
      */
     fun continuationToken(root: JsonElement): String? {
-        for (item in collectRenderers(root, "continuationItemRenderer")) {
-            collectRenderers(item, "continuationCommand").firstOrNull().s("token")
-                ?.let { return it }
-        }
+        val endpoint = collectRenderers(root, "continuationItemRenderer").firstOrNull()
+            .o("continuationEndpoint")
+        (endpoint.o("continuationCommand")
+            ?: endpoint.o("commandExecutorCommand").a("commands")
+                ?.firstNotNullOfOrNull { it.o("continuationCommand") })
+            .s("token")
+            ?.let { return it }
         return collectRenderers(root, "nextContinuationData").firstOrNull().s("continuation")
     }
 

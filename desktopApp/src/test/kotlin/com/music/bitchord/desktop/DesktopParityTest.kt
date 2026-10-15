@@ -86,5 +86,29 @@ class DesktopParityTest {
         val token = com.music.bitchord.data.innertube.InnertubeParser.continuationToken(json)
         assertEquals("TOKEN_IN_EXECUTOR", token)
     }
-}
 
+    @Test
+    fun continuationTokenIgnoresLaterShelfRenderers() {
+        val json = kotlinx.serialization.json.Json.parseToJsonElement(
+            """
+            {
+              "contents": [
+                { "continuationItemRenderer": { "button": {} } },
+                {
+                  "continuationItemRenderer": {
+                    "continuationEndpoint": {
+                      "continuationCommand": { "token": "OTHER_SHELF" }
+                    }
+                  }
+                }
+              ],
+              "continuations": [
+                { "nextContinuationData": { "continuation": "PAGE_MORE" } }
+              ]
+            }
+            """.trimIndent()
+        )
+        val token = com.music.bitchord.data.innertube.InnertubeParser.continuationToken(json)
+        assertEquals("PAGE_MORE", token)
+    }
+}
