@@ -81,6 +81,7 @@ data class SourceConfig(
             // no address anywhere in the UI. Toggle on/off is the only control.
             if (kind == SourceKind.TIDAL) return SourceRegistry.TIDAL_DISPLAY_NAME
             if (kind == SourceKind.HIRES) return SourceRegistry.HIRES_DISPLAY_NAME
+            if (kind == SourceKind.LOSSLESS) return SourceRegistry.LOSSLESS_DISPLAY_NAME
             return label.ifBlank {
                 baseUrl.takeIf { it.isNotBlank() }
                     ?.let { runCatching { Uri.parse(it).host }.getOrNull() }
@@ -174,7 +175,10 @@ object SourceRegistry {
                     },
                     // Octave without a key answers nothing, so it arrives
                     // off: pasting the key plus the toggle is the setup.
-                    enabled = kind != SourceKind.JIOSAAVN && kind != SourceKind.OCTAVE,
+                    // Lossless without an unlock can search but stream nothing,
+                    // so it arrives off too: one tap plus the toggle.
+                    enabled = kind != SourceKind.JIOSAAVN && kind != SourceKind.OCTAVE &&
+                        kind != SourceKind.LOSSLESS,
                 )
             }
 
@@ -525,6 +529,7 @@ object SourceRegistry {
         SourceKind.JIOSAAVN -> JioSaavnSource(config)
         SourceKind.TIDAL -> TidalSource(config)
         SourceKind.HIRES -> HiresDirectSource(config)
+        SourceKind.LOSSLESS -> LosslessQueueSource(config)
         SourceKind.YOUTUBE -> YouTubeSource(config)
     }
 
@@ -569,13 +574,16 @@ object SourceRegistry {
             .build()
             .toString()
 
-    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.TIDAL, SourceKind.OCTAVE, SourceKind.HIRES, SourceKind.YOUTUBE)
+    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.TIDAL, SourceKind.OCTAVE, SourceKind.HIRES, SourceKind.LOSSLESS, SourceKind.YOUTUBE)
 
     /** The branded name of the sealed lossless source. */
     const val TIDAL_DISPLAY_NAME = "BitChord NEXT Addon"
 
     /** The branded name of the community Hi-Res source. */
     const val HIRES_DISPLAY_NAME = "BitChord Hi-Res Lossless Addon"
+
+    /** The branded name of the Lossless conversion-queue source. */
+    const val LOSSLESS_DISPLAY_NAME = "BitChord Lossless Addon"
 
     private const val KEY_SOURCES = "sources"
     /** One-shot migration: existing users must explicitly opt in again. */
