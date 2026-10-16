@@ -718,6 +718,25 @@ private fun BitChordApp(
             showSupportPopup = true
         }
     }
+    // Lossless session housekeeping, once per launch and fully silent: an
+    // enabled addon with no session renews itself in the background while
+    // the UI comes up. Failures stay invisible — the row still offers the
+    // sheet, which retries silently before showing any browser.
+    LaunchedEffect(Unit) {
+        val lossless = com.music.bitchord.data.sources.SourceRegistry.configs.value.firstOrNull {
+            it.kind == SourceKind.LOSSLESS && it.enabled &&
+                it.settings[com.music.bitchord.data.sources.LosslessQueueSource.SP_KEY].isNullOrBlank()
+        } ?: return@LaunchedEffect
+        when (val outcome = com.music.bitchord.data.lossless.LosslessSilentUnlock.unlock(context)) {
+            is com.music.bitchord.data.lossless.LosslessSilentUnlock.Outcome.Unlocked -> {
+                val next = lossless.settings.toMutableMap()
+                next[com.music.bitchord.data.sources.LosslessQueueSource.SP_KEY] = outcome.session.sp
+                next[com.music.bitchord.data.sources.LosslessQueueSource.TOKEN_KEY] = outcome.session.token
+                com.music.bitchord.data.sources.SourceRegistry.update(lossless.copy(settings = next))
+            }
+            else -> Unit
+        }
+    }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
 
     /**
