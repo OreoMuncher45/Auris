@@ -570,13 +570,13 @@ object SourceRegistry {
     private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.TIDAL, SourceKind.HIRES, SourceKind.LOSSLESS, SourceKind.YOUTUBE)
 
     /** The branded name of the sealed lossless source. */
-    const val TIDAL_DISPLAY_NAME = "BitChord NEXT Addon"
+    const val TIDAL_DISPLAY_NAME = "Auris Addon"
 
     /** The branded name of the community Hi-Res source. */
-    const val HIRES_DISPLAY_NAME = "BitChord Hi-Res Lossless Addon"
+    const val HIRES_DISPLAY_NAME = "Auris Hi-Res Lossless Addon"
 
     /** The branded name of the Lossless conversion-queue source. */
-    const val LOSSLESS_DISPLAY_NAME = "BitChord Lossless Addon"
+    const val LOSSLESS_DISPLAY_NAME = "Auris Lossless Addon"
 
     private const val KEY_SOURCES = "sources"
     /** One-shot migration: existing users must explicitly opt in again. */
