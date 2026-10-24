@@ -24,16 +24,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.ui.player.PlayerSettings
 
 /**
  * Grey stand-ins for content still on the wire, laid out to the same metrics as
@@ -59,16 +65,23 @@ private val SubtitleWidths = listOf(0.34f, 0.44f, 0.27f, 0.38f, 0.31f)
  */
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = BlockShape) {
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
     val base = MaterialTheme.colorScheme.surfaceVariant
     val highlight = MaterialTheme.colorScheme.onSurfaceVariant
         .copy(alpha = 0.16f)
         .compositeOver(base)
-    val sweep = rememberInfiniteTransition(label = "skeleton").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(SHIMMER_PERIOD_MS, easing = LinearEasing)),
-        label = "sweep",
-    )
+    val sweep: State<Float> = if (reduceAnimation) {
+        // Still a block on a loading page, but without a full-width gradient
+        // travelling it on every frame until the network answers.
+        remember { mutableFloatStateOf(0.5f) }
+    } else {
+        rememberInfiniteTransition(label = "skeleton").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(SHIMMER_PERIOD_MS, easing = LinearEasing)),
+            label = "sweep",
+        )
+    }
     Box(
         modifier
             .clip(shape)

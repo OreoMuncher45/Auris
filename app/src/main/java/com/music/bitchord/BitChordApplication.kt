@@ -17,6 +17,7 @@ import com.music.bitchord.data.liked.LikedCache
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.ui.components.backdrop.GlassShaderWarmup
+import com.music.bitchord.ui.components.isLowRamDevice
 import com.music.bitchord.ui.player.AndroidPlayerHost
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.data.canvas.CanvasCache
@@ -71,7 +72,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // animation for a background-priority thread to compete with. See
         // GlassShaderWarmup for why a background thread is safe and what this
         // does and does not warm.
-        GlassShaderWarmup.warmUp()
+        //
+        // Skipped on low-RAM devices: glass is gated off there (see
+        // GlassEffect.isGlassAllowed), so compiling programs no surface will
+        // ever ask for is pure startup burn — a thread, a graphics context and
+        // five shader compiles on the hardware least able to spare them.
+        if (!isLowRamDevice(this)) GlassShaderWarmup.warmUp()
         // The per-app language picker, which YouTube Music's `hl` follows.
         Innertube.appLanguage = { AppCompatDelegate.getApplicationLocales().get(0)?.language }
         LyricsTranslation.cacheDir = cacheDir

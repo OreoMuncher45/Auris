@@ -403,11 +403,22 @@ class PrecisionAudioSinkTest {
      * 200ms. Handing it the same timestamp for each piece grew that gap by a
      * block at a time, so a long enough buffer drifted the position readout
      * away from the audio.
+     *
+     * The equalizer is on so the buffer takes the DSP path: an idle chain
+     * forwards the decoder's buffer whole, which the pass-through test below
+     * covers instead.
      */
     @Test
     fun `split sub-blocks advance the presentation timestamp`() {
         val fakeDelegate = FakeAudioSink()
-        val sink = createSink(fakeDelegate, enableFloatOutput = false)
+        val equalizer = EqualizerProcessor().apply {
+            setTuning(enabled = true, curve = com.music.bitchord.playback.EqCurve.FLAT, balance = 1f)
+        }
+        val sink = createSink(
+            fakeDelegate,
+            enableFloatOutput = false,
+            dspChain = DspChain(equalizer = equalizer),
+        )
         sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
 
         // Two full blocks of stereo 16-bit frames.
@@ -424,6 +435,30 @@ class PrecisionAudioSinkTest {
         )
         assertEquals(2, fakeDelegate.handleBufferCallCount)
         assertEquals(expected, fakeDelegate.lastPresentationTimeUs)
+    }
+
+    /**
+     * With the chain idle and nothing to convert, the decoder's buffer reaches
+     * the delegate in one piece and unchanged. Splitting it would buy nothing,
+     * and the decode-to-float plus re-encode around the split is exactly the
+     * cost this path exists to skip.
+     */
+    @Test
+    fun `idle chain forwards a large decoder buffer in one piece`() {
+        val fakeDelegate = FakeAudioSink()
+        val sink = createSink(fakeDelegate, enableFloatOutput = false)
+        sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+
+        val frames = PrecisionAudioSink.DEFAULT_CAPACITY_FRAMES * 2
+        val input = ByteBuffer.allocate(frames * 2 * 2).order(ByteOrder.nativeOrder())
+        repeat(frames * 2) { input.putShort(0) }
+        input.flip()
+
+        assertTrue(sink.handleBuffer(input, 1_000_000L, 1))
+
+        assertEquals(1, fakeDelegate.handleBufferCallCount)
+        assertEquals(1_000_000L, fakeDelegate.lastPresentationTimeUs)
+        assertSame(input, fakeDelegate.lastHandledBuffer)
     }
 
     /** Switched on, the chain is reached and does colour the audio. */

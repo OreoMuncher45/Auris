@@ -91,6 +91,10 @@ class JamesDspProcessor : FloatAudioProcessor {
     @Volatile
     private var config: JamesDspConfig = JamesDspConfig()
 
+    /** Whether the engine is switched on; [DspChain] stays out of the way when it is not. */
+    val isEnabled: Boolean
+        get() = config.enabled
+
     private var sampleRate: Int = 0
     private var channelCount: Int = 0
     private var engine: Long = 0L

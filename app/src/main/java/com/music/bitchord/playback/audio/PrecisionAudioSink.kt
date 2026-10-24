@@ -32,6 +32,10 @@ import java.nio.ByteOrder
  *   Downstream, custom processors are excluded from [DefaultAudioSink]'s internal processor chain,
  *   guaranteeing ZERO duplicate processing, while SilenceSkipping and Sonic processors remain functional.
  *
+ *   With every DSP stage idle and matching input/output encodings, the decoder's
+ *   buffer is handed to the delegate untouched: the decode and re-encode would
+ *   have reproduced it byte for byte, so the cheapest correct path is no path.
+ *
  * - In Fallback/Legacy Mode (for non-linear PCM sources — a passthrough or offload
  *   bitstream): decoder buffers pass straight through to [DefaultAudioSink]. Nothing
  *   here can process a compressed stream, and nothing here pretends to.
@@ -105,6 +109,19 @@ class PrecisionAudioSink(
     )
 
     private var outputByteBuffer: ByteBuffer = ByteBuffer.allocateDirect(0).order(ByteOrder.nativeOrder())
+
+    /**
+     * A decoder buffer the pass-through below handed to the delegate which the
+     * delegate did not finish taking.
+     *
+     * The renderer hands the same buffer back on the next call, so nothing is
+     * copied here — that would give back the entire cost the pass-through
+     * exists to avoid. It is kept only so [hasPendingData] and [isEnded] can
+     * answer for the bytes the delegate still holds.
+     */
+    private var passthroughBuffer: ByteBuffer? = null
+    private var passthroughPresentationTimeUs: Long = C.TIME_UNSET
+    private var passthroughAccessUnitCount: Int = 0
 
     private var pendingPresentationTimeUs: Long = C.TIME_UNSET
     private var pendingAccessUnitCount: Int = 0
@@ -271,6 +288,19 @@ class PrecisionAudioSink(
             return delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
         }
 
+        // A pass-through buffer the delegate did not finish with last time.
+        // The renderer passes the same buffer again; feeding it here first
+        // leaves the bypass below an empty remainder rather than a second copy.
+        passthroughBuffer?.let { pending ->
+            val accepted = delegate.handleBuffer(
+                pending,
+                passthroughPresentationTimeUs,
+                passthroughAccessUnitCount,
+            )
+            if (!accepted || pending.hasRemaining()) return false
+            passthroughBuffer = null
+        }
+
         val inEncoding = inputPcmEncoding ?: return delegate.handleBuffer(
             inputBuffer,
             presentationTimeUs,
@@ -306,6 +336,27 @@ class PrecisionAudioSink(
         //    presentation time for every piece makes its expected-position check
         //    drift by one block each time, and past 200ms of accumulated drift it
         //    raises UnexpectedDiscontinuityException and resyncs the clock.
+        // Nothing in the chain would alter a sample, and the delegate is already
+        // configured for exactly this encoding: forward the decoder's buffer
+        // instead of decoding to float and encoding it back to identical bytes.
+        // On the 16-bit speaker path this is the whole per-buffer cost of the
+        // app's audio processing.
+        if (inEncoding == outEncoding && dspChain.isBypassed()) {
+            timestampedInputTimeUs = C.TIME_UNSET
+            framesEmittedForInput = 0L
+            if (!inputBuffer.hasRemaining()) return true
+            val accepted = delegate.handleBuffer(inputBuffer, presentationTimeUs, encodedAccessUnitCount)
+            if (!accepted || inputBuffer.hasRemaining()) {
+                // Keep the buffer (not a copy) so isEnded/hasPendingData answer
+                // for the bytes still in the delegate's hands.
+                passthroughBuffer = inputBuffer
+                passthroughPresentationTimeUs = presentationTimeUs
+                passthroughAccessUnitCount = encodedAccessUnitCount
+                return false
+            }
+            return true
+        }
+
         if (presentationTimeUs != timestampedInputTimeUs) {
             timestampedInputTimeUs = presentationTimeUs
             framesEmittedForInput = 0L
@@ -431,6 +482,9 @@ class PrecisionAudioSink(
         pendingAccessUnitCount = 0
         timestampedInputTimeUs = C.TIME_UNSET
         framesEmittedForInput = 0L
+        passthroughBuffer = null
+        passthroughPresentationTimeUs = C.TIME_UNSET
+        passthroughAccessUnitCount = 0
         if (isPrecisionActive) {
             dspChain.flush()
         }
@@ -449,6 +503,9 @@ class PrecisionAudioSink(
         pendingAccessUnitCount = 0
         timestampedInputTimeUs = C.TIME_UNSET
         framesEmittedForInput = 0L
+        passthroughBuffer = null
+        passthroughPresentationTimeUs = C.TIME_UNSET
+        passthroughAccessUnitCount = 0
         if (isPrecisionActive) {
             dspChain.reset()
         }
@@ -473,6 +530,10 @@ class PrecisionAudioSink(
     }
 
     override fun playToEndOfStream() {
+        passthroughBuffer?.let { pending ->
+            delegate.handleBuffer(pending, passthroughPresentationTimeUs, passthroughAccessUnitCount)
+            if (!pending.hasRemaining()) passthroughBuffer = null
+        }
         if (isPrecisionActive && outputByteBuffer.hasRemaining()) {
             delegate.handleBuffer(outputByteBuffer, pendingPresentationTimeUs, pendingAccessUnitCount)
         }
@@ -480,6 +541,9 @@ class PrecisionAudioSink(
     }
 
     override fun isEnded(): Boolean {
+        if (passthroughBuffer?.hasRemaining() == true) {
+            return false
+        }
         if (isPrecisionActive && outputByteBuffer.hasRemaining()) {
             return false
         }
@@ -487,6 +551,9 @@ class PrecisionAudioSink(
     }
 
     override fun hasPendingData(): Boolean {
+        if (passthroughBuffer?.hasRemaining() == true) {
+            return true
+        }
         if (isPrecisionActive && outputByteBuffer.hasRemaining()) {
             return true
         }

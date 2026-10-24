@@ -29,7 +29,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,6 +55,7 @@ import com.music.bitchord.ui.components.ShimmerBox
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.player.CanvasContentMode
+import com.music.bitchord.ui.player.PlayerSettings
 import com.music.bitchord.ui.player.rememberFlowVideo
 
 /**
@@ -170,6 +173,7 @@ fun RadioScreen(
  */
 @Composable
 private fun RadioFeatureCard(item: ShelfItem?, onClick: () -> Unit) {
+    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     val shape = RoundedCornerShape(18.dp)
     Box(
         modifier = Modifier
@@ -201,7 +205,7 @@ private fun RadioFeatureCard(item: ShelfItem?, onClick: () -> Unit) {
         }
         // Flow's own clip plays over whichever still is underneath, so a slow
         // decode leaves the sleeve or the gradient up rather than a hole.
-        rememberFlowVideo(square = false)?.let { clip ->
+        if (animatedCanvas) rememberFlowVideo(square = false)?.let { clip ->
             CanvasArtworkPlayer(
                 canvas = clip,
                 isPlaying = true,

@@ -1,6 +1,7 @@
 package com.music.bitchord.data.settings
 
 import com.music.bitchord.data.webdav.update
+import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
 import android.content.SharedPreferences
@@ -1099,9 +1100,22 @@ object AppSettings {
      * each open of the encrypted store is a keystore round trip, and a second
      * one here was a measurable slice of cold start.
      */
+    /**
+     * Whether Android classifies this device as low-RAM, read once at startup.
+     *
+     * Used only as the default for the motion and blur switches, so the app
+     * arrives already lean on hardware that cannot afford to draw it — and a
+     * listener who wants the effects back still can, because an explicit choice
+     * written to disk always wins over this.
+     */
+    private var lowEndDevice = false
+
     fun init(context: Context, authStore: AuthStore) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         this.authStore = authStore
+        lowEndDevice = runCatching {
+            context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        }.getOrDefault(false)
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
@@ -1217,7 +1231,7 @@ object AppSettings {
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
-        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
+        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
@@ -1229,14 +1243,14 @@ object AppSettings {
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
-        reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
+        reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, lowEndDevice)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         foldingNavBar.value = prefs.getBoolean(KEY_FOLDING_NAV_BAR, true)
         losslessHelpDismissed.value = prefs.getBoolean(KEY_LOSSLESS_HELP_DISMISSED, false)
         liquidGlassIntensity.value = prefs.getFloat(KEY_LIQUID_GLASS_INTENSITY, 1f)
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
-        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
-        textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, true)
+        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
+        textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
@@ -1245,7 +1259,7 @@ object AppSettings {
             reduceAnimation.value = false
             reduceDynamicBlur.value = false
         }
-        animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
+        animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, !lowEndDevice)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)

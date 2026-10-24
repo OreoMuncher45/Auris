@@ -963,7 +963,12 @@ fun NowPlayingScreen(
     // with it every few seconds. What keeps that affordable is the size of each
     // read, not the number of them: the frame comes back at `frameCapturePx`
     // rather than full-bleed, and is averaged on a stride off the main thread.
-    val meshRefreshMs = MESH_REFRESH_MS
+    //
+    // Off with "reduce animation", which low-RAM devices now default to: each
+    // read stalls the GPU to copy a texture, and the mesh it re-tints is a
+    // subtle background wash nobody is watching frame by frame.
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val meshRefreshMs = if (reduceAnimation) null else MESH_REFRESH_MS
 
     val scrub = rememberPlayerScrub(song.videoId, position, durationMs)
     // Read by the scrubber itself — see [PlayerScrubber.shown].

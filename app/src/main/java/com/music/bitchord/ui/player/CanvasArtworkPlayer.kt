@@ -265,13 +265,18 @@ internal fun AndroidCanvasArtworkPlayer(
     // because "the page is only up while it's being read": true of a page being
     // looked at, not of one left open behind a locked screen.
     //
+    // Paused audio stops it too. A paused track's clip is a still as far as the
+    // listener is concerned, and looping it off-screen is a decoder, a GPU
+    // upload and a surface composite spent on a frame that is not changing —
+    // the single largest thing the UI did while the phone sat paused in a
+    // pocket. The last frame stays on the surface, so resuming picks up where
+    // it stopped with nothing to repaint.
+    //
     // Held inside this component rather than asked of each caller, so no call
-    // site can forget it. The player now runs continuously in the foreground
-    // regardless of playback state, so coming back from background always has
-    // a surface ready and `onRenderedFirstFrame()` fires naturally.
+    // site can forget it.
     val foreground = rememberIsForeground()
-    LaunchedEffect(foreground, pausedForTransition) {
-        player.playWhenReady = foreground && !pausedForTransition
+    LaunchedEffect(foreground, isPlaying, pausedForTransition) {
+        player.playWhenReady = foreground && isPlaying && !pausedForTransition
     }
 
     // Repaint onto a surface that has just been handed back. A TextureView's
@@ -316,10 +321,12 @@ internal fun AndroidCanvasArtworkPlayer(
     // folded into the one above: that one is keyed on [rendered] so it fires
     // again on every fade-in, and this one only needs to start once a fade-in
     // has actually happened and then keep going for as long as it holds.
-    LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx, clipAspect, contentMode, alignPortraitTop, foreground) {
+    LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx, clipAspect, contentMode, alignPortraitTop, foreground, isPlaying) {
         val interval = refreshFrameEveryMs ?: return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$interval")
-        if (!rendered || !foreground) return@LaunchedEffect
+        // A paused clip has no new colours to follow; re-reading the same
+        // frame off the GPU would only stall it.
+        if (!rendered || !foreground || !isPlaying) return@LaunchedEffect
         while (isActive) {
             delay(interval)
             val view = textureView ?: continue

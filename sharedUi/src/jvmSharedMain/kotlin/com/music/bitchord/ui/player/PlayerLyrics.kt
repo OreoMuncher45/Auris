@@ -1489,14 +1489,22 @@ private fun Modifier.lyricParticles(
  */
 @Composable
 private fun LyricsSkeleton(modifier: Modifier = Modifier) {
-    val sweep = rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            tween(SKELETON_PERIOD_MS, easing = LinearEasing),
-        ),
-        label = "sweep",
-    )
+    // Under "reduce animation" the bars are still there, with one fixed
+    // highlight instead of a full-width band sweeping the panel on every frame
+    // for as long as the lookup takes.
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val sweep: State<Float> = if (reduceAnimation) {
+        remember { mutableStateOf(0.5f) }
+    } else {
+        rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(SKELETON_PERIOD_MS, easing = LinearEasing),
+            ),
+            label = "sweep",
+        )
+    }
     BoxWithConstraints(
         // No gutter of its own: the list this stands in for bleeds out to the
         // panel's full width and puts the gutter back as content padding, so

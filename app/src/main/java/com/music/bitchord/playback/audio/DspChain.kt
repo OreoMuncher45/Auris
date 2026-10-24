@@ -33,10 +33,12 @@ import com.music.bitchord.playback.VocalCutProcessor
  * ## Staying out of the way
  *
  * Every stage here self-bypasses when its own setting is off, returning before
- * it reads a single sample rather than multiplying through by unity. With all
- * three idle the block leaves this class byte-identical to how it arrived,
+ * it reads a single sample rather than multiplying through by unity. With every
+ * stage idle the block leaves this class byte-identical to how it arrived,
  * which is what lets [PcmBoundary]'s power-of-two scaling round-trip 16- and
  * 24-bit integers unchanged — see `PrecisionAudioSink.publishOutputExactness`.
+ * [isBypassed] lets the sink skip the decode-and-re-encode around that
+ * byte-identical trip entirely.
  */
 class DspChain(
     val sing: VocalCutProcessor = VocalCutProcessor(),
@@ -64,6 +66,22 @@ class DspChain(
     fun onStreamBoundary() {
         loudness.onStreamBoundary()
     }
+
+    /**
+     * Whether [process] would return the block byte-identical, i.e. every stage
+     * is idle. Read on the audio thread once per decoder buffer; when true and
+     * the input and output encodings already match, the sink hands the decoder's
+     * buffer straight to the delegate instead of decoding it to float and
+     * encoding it back.
+     */
+    fun isBypassed(): Boolean =
+        currentSampleRate > 0 &&
+            sing.level <= 0.001f &&
+            !spatial.enabled &&
+            !equalizer.isEnabled &&
+            !jamesDsp.isEnabled &&
+            !transition.isEngaged &&
+            loudness.isParked()
 
     override fun process(block: AudioBlock) {
         if (block.frameCount == 0) return

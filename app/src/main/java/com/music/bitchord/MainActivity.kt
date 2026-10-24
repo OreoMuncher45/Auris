@@ -247,6 +247,7 @@ import com.music.bitchord.ui.components.LocalGlassEffectConfig
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
+import com.music.bitchord.ui.components.isGlassAllowed
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
@@ -514,7 +515,11 @@ private fun BitChordApp(
     val hazeState = remember { HazeState() }
     // Recording the backdrop layer costs a draw pass, so it only runs when a
     // liquid-glass surface (the nav bar or artwork-page back button) can sample it.
-    val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
+    // [isGlassAllowed] also rules out low-RAM devices. Without that term the
+    // nav bar asked for glass and the per-surface gate refused it, so the
+    // expensive part — recording the whole backdrop into a layer every frame —
+    // ran anyway on the hardware least able to afford it.
+    val glassActive = LocalLiquidGlassEnabled.current && isGlassAllowed()
     // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
     // now-playing-and-tabs component is a layout, not an effect, and dropping
     // back to the two stacked bars would be answering a question about material

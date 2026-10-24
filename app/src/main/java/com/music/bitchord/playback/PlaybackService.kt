@@ -7079,9 +7079,12 @@ class PlaybackService : MediaLibraryService() {
     private fun startLyricsTicker() {
         if (lyricsTickerJob?.isActive == true) return
         lyricsTickerJob = scope.launch(Dispatchers.Main) {
+            // The subtitle is read on the notification and lock screen, where a
+            // line a second late is invisible; twice a second was a wake-up per
+            // half second for a string that changes every few seconds at best.
             while (isActive) {
                 updateLyricSubtitle()
-                delay(500L)
+                delay(1_000L)
             }
         }
     }

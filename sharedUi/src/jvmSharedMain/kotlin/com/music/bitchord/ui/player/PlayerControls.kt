@@ -61,6 +61,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -1640,16 +1641,24 @@ private fun ShimmerText(
     baseAlpha: Float = LocalPlayerAlphas.current.secondary,
 ) {
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
-    val transition = rememberInfiniteTransition(label = "lossless-shimmer")
-    val progress = transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "lossless-shimmer-progress",
-    )
+    // Under "reduce animation" the band parks mid-word rather than sweeping:
+    // the badge still reads as special, but a lossless track no longer keeps
+    // an offscreen text layer redrawing for as long as it plays.
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val progress: State<Float> = if (reduceAnimation) {
+        remember { mutableFloatStateOf(0.5f) }
+    } else {
+        val transition = rememberInfiniteTransition(label = "lossless-shimmer")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 3_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "lossless-shimmer-progress",
+        )
+    }
     val baseColor = ink.copy(alpha = baseAlpha)
     // The glyphs are laid out and drawn once, in plain white, and the moving
     // band is painted over them in the draw phase with SrcIn — which keeps the

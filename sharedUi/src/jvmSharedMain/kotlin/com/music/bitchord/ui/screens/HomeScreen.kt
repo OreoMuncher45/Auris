@@ -92,6 +92,7 @@ import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.player.CanvasContentMode
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
+import com.music.bitchord.ui.player.PlayerSettings
 import com.music.bitchord.ui.player.rememberFlowVideo
 
 /** How far the Listen now heading and feed sit above the shared top inset. */
@@ -1026,10 +1027,12 @@ private fun ServiceCard(colors: List<Color>, trackKey: String, icon: ImageVector
             .clip(RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center,
     ) {
+        // One settle on arrival, not an orbit: a blurred layer redrawn at
+        // refresh rate is the most expensive thing on this screen, and there
+        // can be several of these tiles visible at once on a potato.
         MeshGradientBackground(
             palette = palette,
             trackKey = trackKey,
-            continuous = true,
             blurRadius = 24.dp,
         )
         Icon(
@@ -1115,6 +1118,7 @@ internal fun ShelfCard(
     isCurrent: Boolean = false,
     isPlaying: Boolean = false,
 ) {
+    val animatedCanvas by PlayerSettings.animatedCanvas.collectAsStateWithLifecycle()
     Column(
         modifier = modifier
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
@@ -1145,7 +1149,10 @@ internal fun ShelfCard(
                     )
                     // The square cut of Flow's clip, over the gradient and note
                     // while it decodes — so the tile keeps its identity either way.
-                    rememberFlowVideo(square = true)?.let { clip ->
+                    // Off with the animated-canvas switch: a tile is decoration,
+                    // and a looping decoder per tile is the first thing to go on
+                    // a device that cannot afford it.
+                    if (animatedCanvas) rememberFlowVideo(square = true)?.let { clip ->
                         CanvasArtworkPlayer(
                             canvas = clip,
                             isPlaying = true,
@@ -1167,7 +1174,6 @@ internal fun ShelfCard(
                     MeshGradientBackground(
                         palette = palette,
                         trackKey = "local:downloads",
-                        continuous = true,
                         blurRadius = 24.dp,
                     )
                     Icon(

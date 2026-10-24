@@ -70,6 +70,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -1186,6 +1187,15 @@ private fun PageBackground(
     val softenFoot = canvas == null && !reduceDynamicBlur &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val art = heroUrl ?: page.thumbnailUrl.artworkAt(HEADER_ART_PX)
+    // The clip only runs while the header it belongs to is on screen. Once the
+    // track list has carried the artwork away the decoder is looping a picture
+    // nobody can see, which is exactly the kind of always-on work that keeps a
+    // slow phone warm while the user reads a track list.
+    val density = LocalDensity.current
+    val artHeightPx = with(density) { artHeight.toPx() }
+    val headerVisible by remember(artHeightPx) {
+        derivedStateOf { listState.headerTop(artHeightPx) + artHeightPx > 0f }
+    }
 
     Box(modifier.clipToBounds()) {
         Box(
@@ -1204,13 +1214,13 @@ private fun PageBackground(
             )
 
             // Above the still art but below the scrim, so the scrim that
-            // settles the header into the page still sits over it. Always
-            // running: unlike the player's sleeve there is no transport here
-            // to follow, and the page is only up while it's being read.
+            // settles the header into the page still sits over it. It follows
+            // the header's visibility rather than the page's: paused once
+            // scrolled away and resumed when it comes back.
             canvas?.let { clip ->
                 CanvasArtworkPlayer(
                     canvas = clip,
-                    isPlaying = true,
+                    isPlaying = headerVisible,
                     modifier = Modifier.matchParentSize(),
                 )
             }

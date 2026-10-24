@@ -1003,6 +1003,66 @@ this to be recorded here because the beta is now in a bug-fix-only phase:
   so the two offsets stacked and the pill landed around the middle of the
   screen. Resize leaves the offset to the inset the bar is written against.
 
+### Performance pass: potato hardware (2026-10-24)
+
+Owner report: the app heats and lags a low-end phone in the foreground *and*
+in the background, with "something constantly running". This pass is authorized
+to cut corners; desktop/Linux stay out of scope. This section is the checkpoint
+for the pass — keep it current.
+
+**Done (working tree, compiled):**
+
+- **Audio path.** `DspChain.isBypassed()` probes every stage; when all are idle
+  and the sink's input/output encodings match, `PrecisionAudioSink` forwards
+  the decoder's buffer straight to the delegate instead of decoding to float,
+  running the DSP and encoding it back to identical bytes.
+  `VocalCutProcessor` stops scanning samples when Sing is off.
+  `TransitionFilterProcessor.isEngaged` (renamed because
+  `BaseAudioProcessor` already owns `isActive`) covers filters and echo;
+  `JamesDspProcessor.isEnabled` and `LoudnessProcessor.isParked()` feed the
+  probe.
+- **Canvas / clip.** `CanvasArtworkPlayer` decodes only while the app is
+  foreground, the caller says the track is playing, and no panel transition is
+  in flight; the periodic GPU readback follows the same gate. The detail page's
+  header clip now pauses once the header is scrolled away instead of looping
+  behind a track list. Home's Flow tile and the Radio banner's Flow clip obey
+  the animated-canvas switch.
+- **Home.** The downloads tile and `ServiceCard` no longer request a
+  `continuous` mesh orbit.
+- **Low-RAM policy.** `AppSettings` reads `ActivityManager.isLowRamDevice`
+  once at init. On such devices the first-run defaults are reduce animation,
+  reduce dynamic blur, no lyrics blur, no text glow, no animated canvas; an
+  explicit saved choice still wins. `isGlassAllowed()` includes the low-RAM
+  check and `MainActivity`/`BitChordApplication` use it, so no backdrop
+  recording and no shader warmup happen on hardware that refuses the glass.
+- **Always-on decoration.** Now Playing's 3 s mesh readback is off under reduce
+  animation; `SearchPlayingBars`, lossless `ShimmerText`, the lyrics skeleton
+  and `ShimmerBox` park their infinite transitions under the same switch. The
+  notification lyric ticker is 1 s (was 500 ms) and still runs only while
+  playing.
+- **Verified.** `./gradlew :app:compileDevDebugKotlin` passes for the whole
+  batch. `PrecisionAudioSinkTest` passes after teaching the pass-through to
+  retain a partly-consumed buffer for `hasPendingData`/`isEnded`, and the
+  split-timestamp test now runs with the equalizer on so it still covers the
+  DSP path. `FlowTest` and `QueueBuilderTest` (the CI subset) pass. The full
+  local suite still reports the pre-existing `LocaleStringsTest` gaps (118
+  translation keys missing in every locale) and one live Genius lookup; neither
+  is touched by this pass and CI does not run them.
+
+**Next:**
+
+1. `./gradlew :app:testDevDebugUnitTest`.
+2. New commit (no `--no-verify`, no amend), push `convx-fresh`.
+3. Dispatch `Flow Debug APK` for an artifact only — no tag, no GitHub Release.
+4. Owner device test. The in-flight run `40128448399` (commit `4595b875`) does
+   **not** contain this pass; leave it alone.
+
+**Deliberately left alone:** Equalizer puck handling, Classipod marquee and
+party-sheet breathing are foreground-only and bounded; startup work was
+already covered in the section above. If background heat survives on device,
+measure the playback DSP path first (now bypassed) and the canvas decoders
+(now transport- and foreground-gated) before widening the pass.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
