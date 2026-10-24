@@ -1100,6 +1100,37 @@ ink follow the **secondary** colour instead.
   `lib/arm64-v8a/libbitchord_jamesdsp.so` and the baseline profile packaged.
   No tag and no GitHub Release were created, per the owner.
 
+### Seamless quality upgrades (2026-10-24)
+
+Owner report: a mid-track upgrade from YouTube Opus to lossless/hi-res cuts the
+audio for roughly 0.5-2s. `swapIn` already found, auditioned and pre-warmed the
+better copy, then still finished with `replaceMediaItem` + `seekTo` +
+`prepare()` on the session player — a fresh connection, container parse and
+decoder, heard as a hole.
+
+- `PlaybackService`: when the owner opts in, `crossfadeUpgradeIn` stages the
+  proved item on the idle standby, seeks it to the live position and blends the
+  two over `UPGRADE_CROSSFADE_MS` (2s) on equal-power curves with the usual
+  `1/sqrt(in+out)` headroom trim. `adoptPlayerForQualityUpgrade` moves focus,
+  listeners, filters, the session and the decoder facts across, but deliberately
+  does **not** run `onTrackBecameCurrent`: it is the same song, and rerunning it
+  would double-scrobble, rewrite history, resubmit ListenBrainz, reread gain and
+  cancel the running upgrade job. `swappingMediaId`/`swapCutAt` are cleared by
+  hand because no transition will fire to clear them.
+- Every failure path gives back the untouched active player: prepare/start
+  timeout or a long pause falls back to today's direct swap; the queue moving on
+  shelves the proved stream; a standby error forgets it and discards the
+  rendition. Listen Together keeps the direct swap — `PartySync` assumes one
+  continuous session player.
+- `CrossfadeController.rebind()` re-points its listener at the session player
+  after a service-made swap (quality upgrade and version switch), closing a
+  latent "next ARMING loads under a demoted player" hole.
+- Settings -> Playback -> **Seamless quality upgrades** is **off by default**.
+  Turning it on opens a risk dialog (possible doubling/phasing between different
+  masters, a brief extra decoder); only **Enable** writes the preference. The
+  switch stays off while the dialog is open.
+- Not yet device-tested in this session.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.

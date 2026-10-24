@@ -280,6 +280,10 @@
     <string name="skip_silence">Skip silence</string>
     <string name="skip_silence_subtitle">Trim gaps longer than a second</string>
     <string name="skip_silence_float_subtitle">Unavailable on 32-bit float output</string>
+    <string name="seamless_quality_upgrades">Seamless quality upgrades</string>
+    <string name="seamless_quality_upgrades_subtitle">Blend into lossless when a better copy of the playing song is found</string>
+    <string name="enable_seamless_upgrades_title">Enable seamless quality upgrades?</string>
+    <string name="enable_seamless_upgrades_confirmation">Auris will start the better copy on a second decoder and blend the last two seconds instead of briefly pausing. If the two recordings come from different masters, the overlap can sound doubled or phased. The extra decoder also costs a little CPU for those two seconds. This is off by default; leave it off if you would rather keep the plain, silent swap.</string>
     <string name="prefer_music_only">Prefer music-only version</string>
     <string name="prefer_music_only_subtitle">For music videos, show the video details while finding and loading the catalogue audio version</string>
     <string name="smart_version_alignment">Smart audio alignment</string>

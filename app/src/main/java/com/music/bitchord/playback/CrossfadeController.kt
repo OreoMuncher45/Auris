@@ -674,6 +674,17 @@ class CrossfadeController(
     }
 
     /**
+     * Re-points the controller at the session player after the service swapped
+     * the two roles itself — a version swap or a quality-upgrade fade. Without
+     * this the listener stays on the demoted player, and the next arm loads a
+     * queue under a listener that reads it as the queue being replaced.
+     */
+    fun rebind() {
+        listenTo(active())
+        if (active().isPlaying || phase != Phase.IDLE) ensureTicker()
+    }
+
+    /**
      * The ticker is only worth running while one of the players is producing
      * audio, or a transition is in flight. An idle, paused session was still
      * waking four times a second to rediscover that there was nothing to do.

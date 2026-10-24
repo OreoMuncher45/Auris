@@ -259,6 +259,14 @@ object AppSettings {
      */
     val smartFadeEnabled = MutableStateFlow(false)
 
+    /**
+     * Blends a proved lossless copy in over the lossy stream it replaces,
+     * instead of cutting the audio while the player rebuilds its source.
+     * Off by default: the two masters can differ enough to double or phase
+     * during the overlap, so it is only turned on after a confirmation.
+     */
+    val seamlessQualityUpgrade = MutableStateFlow(false)
+
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
 
@@ -1153,6 +1161,7 @@ object AppSettings {
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -1595,6 +1604,11 @@ object AppSettings {
     fun setSmartFadeEnabled(value: Boolean) {
         smartFadeEnabled.value = value
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
+    }
+
+    fun setSeamlessQualityUpgrade(value: Boolean) {
+        seamlessQualityUpgrade.value = value
+        prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
     }
 
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
@@ -2582,6 +2596,7 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"

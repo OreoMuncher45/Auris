@@ -72,6 +72,7 @@ import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
@@ -203,6 +204,7 @@ fun SettingsScreen(
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val seamlessQualityUpgrade by AppSettings.seamlessQualityUpgrade.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val automixEngine by AppSettings.automixEngine.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
@@ -307,6 +309,7 @@ fun SettingsScreen(
     var showJamesDsp by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
+    var showSeamlessUpgradeConfirmation by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
 
     val batterySettingsLauncher = rememberLauncherForActivityResult(
@@ -747,6 +750,40 @@ fun SettingsScreen(
                     subtitle = stringResource(R.string.automix_performance_subtitle),
                     value = automixPerformance.localizedLabel(),
                     onClick = { pickingAutomixPerformance = true },
+                )
+            }
+            // Off by default and behind a confirmation, because the blend can
+            // be heard as doubling when the two masters differ. The switch only
+            // asks; nothing is written until the dialog is confirmed.
+            val seamlessUpgradeTitle = stringResource(R.string.seamless_quality_upgrades)
+            row(seamlessUpgradeTitle, "lossless", "flac", "quality", "upgrade", "crossfade", "gapless") {
+                SettingsRow(
+                    icon = Icons.Rounded.SwapHoriz,
+                    title = seamlessUpgradeTitle,
+                    subtitle = stringResource(R.string.seamless_quality_upgrades_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = seamlessQualityUpgrade,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    showSeamlessUpgradeConfirmation = true
+                                } else {
+                                    AppSettings.setSeamlessQualityUpgrade(false)
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = {
+                        if (seamlessQualityUpgrade) {
+                            AppSettings.setSeamlessQualityUpgrade(false)
+                        } else {
+                            showSeamlessUpgradeConfirmation = true
+                        }
+                    },
                 )
             }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
@@ -1820,6 +1857,29 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showPerformanceConfirmation = false }) {
+                    Text(stringResource(R.string.not_yet))
+                }
+            },
+        )
+    }
+
+    if (showSeamlessUpgradeConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showSeamlessUpgradeConfirmation = false },
+            title = { Text(stringResource(R.string.enable_seamless_upgrades_title)) },
+            text = { Text(stringResource(R.string.enable_seamless_upgrades_confirmation)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSeamlessUpgradeConfirmation = false
+                        AppSettings.setSeamlessQualityUpgrade(true)
+                    },
+                ) {
+                    Text(stringResource(R.string.enable))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSeamlessUpgradeConfirmation = false }) {
                     Text(stringResource(R.string.not_yet))
                 }
             },
