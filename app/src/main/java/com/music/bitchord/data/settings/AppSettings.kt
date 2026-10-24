@@ -548,6 +548,9 @@ object AppSettings {
     /** Draws the bloom behind lyrics and the shadow behind player text. */
     val textGlow = MutableStateFlow(true)
 
+    /** Shows the current lyric line above the player's controls. */
+    val showNowPlayingLyrics = MutableStateFlow(true)
+
     /** Positive values delay synced lyrics; negative values bring them forward. */
     val lyricsOffsetMs = MutableStateFlow(0)
 
@@ -1234,6 +1237,7 @@ object AppSettings {
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, true)
+        showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
@@ -1860,6 +1864,11 @@ object AppSettings {
     fun setTextGlow(value: Boolean) {
         textGlow.value = value
         prefs.edit().putBoolean(KEY_TEXT_GLOW, value).apply()
+    }
+
+    fun setShowNowPlayingLyrics(value: Boolean) {
+        showNowPlayingLyrics.value = value
+        prefs.edit().putBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, value).apply()
     }
 
     fun setLyricsOffsetMs(value: Int) {
@@ -2627,6 +2636,7 @@ object AppSettings {
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_TEXT_GLOW = "text_glow"
+    private const val KEY_SHOW_NOW_PLAYING_LYRICS = "show_now_playing_lyrics"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"

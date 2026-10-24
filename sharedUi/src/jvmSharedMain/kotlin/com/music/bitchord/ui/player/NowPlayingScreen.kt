@@ -899,6 +899,9 @@ fun NowPlayingScreen(
     val openListenTogetherMembers: () -> Unit = { showListenTogetherMembers = true }
 
     val syncedLyricsEnabled by PlayerSettings.syncedLyrics.collectAsStateWithLifecycle()
+    // Display only: lyrics keep loading so the full panel still works, but the
+    // one-line strip can be switched off for a minimal player.
+    val lyricLineEnabled by PlayerSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
     val lyricsOffsetMs by PlayerSettings.lyricsOffsetMs.collectAsStateWithLifecycle()
     // A lambda, not a value: read by the lyric strip and panel in scopes of
     // their own, so a tick recomposes them and not the player around them.
@@ -2003,7 +2006,7 @@ fun NowPlayingScreen(
                                 onOpenArtist = onOpenArtist,
                             )
                         },
-                        lyricStrip = if (syncedLyricsEnabled) {
+                        lyricStrip = if (syncedLyricsEnabled && lyricLineEnabled) {
                             {
                                 CurrentLyricStrip(
                                     lines = lyricsTranslation.displayedLyrics,
@@ -3743,12 +3746,14 @@ fun NowPlayingScreen(
             // fading it away behind the queue left this the one place in the
             // player where the current line simply vanished.
             //
-            // Switched off in Settings it goes entirely, rather than sitting
-            // there saying no lyrics were found: none were looked for. It is
-            // accompanied by a dedicated lyrics button in the bottom row. Its
-            // one-line slot remains, invisibly, so opening lyrics cannot grow
-            // the half-player merely to make room for the source label.
-            if (!lyricsOpen && syncedLyricsEnabled) {
+            // Off means off: with synced lyrics disabled in Settings, or the
+            // line switched off in Customization, the slot goes with it. A
+            // placeholder kept "for the layout" is exactly the empty row this
+            // preference exists to remove, and the deck is anchored to the foot
+            // of the player, so it closes up rather than leaving a hole. The
+            // dedicated lyrics button in the bottom row is still the way into
+            // the full panel.
+            if (!lyricsOpen && syncedLyricsEnabled && lyricLineEnabled) {
                 CurrentLyricStrip(
                     lines = lyricsTranslation.displayedLyrics,
                     trackKey = song.videoId,
@@ -3762,17 +3767,6 @@ fun NowPlayingScreen(
                     // the queue behind it the same way the "Up next" glyph
                     // closes lyrics behind the queue.
                     onClick = openLyrics,
-                )
-            }
-            if (!lyricsOpen && !syncedLyricsEnabled) {
-                Text(
-                    text = "\u00A0",
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .offset(y = 6.dp)
-                        .padding(vertical = 4.dp),
                 )
             }
             if (lyricsOpen) {
@@ -3829,20 +3823,18 @@ fun NowPlayingScreen(
                 smoothness = transportSmoothness,
             )
 
-            // Keep the volume slot's full footprint when its contents are
-            // hidden. Removing the slot itself shortened the controls by 50dp
-            // and moved every control below it. A display preference should not
-            // change the half-player's geometry.
             Spacer(Modifier.height(12.dp + controlSpread / 2))
 
+            // Hidden means gone: no placeholder slot. The deck is anchored to
+            // the foot of the player, so the rows above it close down into the
+            // space instead of leaving the empty band a hidden bar used to sit
+            // in — which read as a gap between the transport and the action row.
             if (!hideVolumeBar) {
                 VolumeRow(
                     value = { volume.level.value },
                     onValueChange = onVolumeChange,
                     onValueChangeFinished = onVolumeChangeFinished,
                 )
-            } else {
-                Spacer(Modifier.height(VOLUME_ROW_HEIGHT))
             }
 
             // The volume slider already has 13dp below its drawn track.

@@ -493,9 +493,6 @@ internal fun TransportRow(
     }
 }
 
-/** ThinSlider's fixed touch target at the volume bar's size: 10dp + 22dp. */
-internal val VOLUME_ROW_HEIGHT = 32.dp
-
 /** The volume bar between its two speaker glyphs. */
 @Composable
 internal fun VolumeRow(

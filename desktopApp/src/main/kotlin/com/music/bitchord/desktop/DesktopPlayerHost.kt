@@ -212,6 +212,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val smartTransitionWindow = MutableStateFlow<TransitionWindow?>(null)
     override val spotifyCanvasAutoHide = MutableStateFlow(true)
     override val syncedLyrics = MutableStateFlow(true)
+    override val showNowPlayingLyrics = MutableStateFlow(true)
     override val translationLanguage = MutableStateFlow("")
     override val versionAlignmentInProgress = MutableStateFlow(false)
 
