@@ -632,8 +632,6 @@ class SourcesTest {
 
         val builtIns = listOf(
             SourceKind.JIOSAAVN,
-            SourceKind.TIDAL,
-            SourceKind.HIRES,
             SourceKind.LOSSLESS,
             SourceKind.YOUTUBE,
         )
@@ -641,47 +639,40 @@ class SourcesTest {
             assertEquals(1, seeded.count { it.kind == kind && it.stock })
         }
         assertEquals(
-            SourceRegistry.TIDAL_DISPLAY_NAME,
-            seeded.single { it.kind == SourceKind.TIDAL }.displayName,
-        )
-        assertEquals(
-            SourceRegistry.HIRES_DISPLAY_NAME,
-            seeded.single { it.kind == SourceKind.HIRES }.displayName,
-        )
-        assertEquals(
             SourceRegistry.LOSSLESS_DISPLAY_NAME,
             seeded.single { it.kind == SourceKind.LOSSLESS }.displayName,
         )
     }
 
     /**
-     * The reported bug: pasting a Tidal-compatible URL produced a second row
-     * that was branded like the bundled source and could not be deleted.
+     * The reported bug: pasting a URL that spoke a built-in protocol produced
+     * a second row that was branded like the bundled source and could not be
+     * deleted.
      */
     @Test
     fun `a user-added duplicate of a built-in kind becomes non-stock and keeps its own name`() {
         val seeded = SourceRegistry.sourcesForInit(emptyList(), forceJioSaavnOff = true)
-        val stockTidal = seeded.single { it.kind == SourceKind.TIDAL }
+        val stockLossless = seeded.single { it.kind == SourceKind.LOSSLESS }
         val pasted = SourceConfig(
-            kind = SourceKind.TIDAL,
-            label = "tracks.monochrome.st",
-            baseUrl = "https://tracks.monochrome.st",
+            kind = SourceKind.LOSSLESS,
+            label = "flac.example",
+            baseUrl = "https://flac.example",
         )
 
         val migrated = SourceRegistry.sourcesForInit(seeded + pasted, forceJioSaavnOff = false)
 
-        assertEquals(1, migrated.count { it.kind == SourceKind.TIDAL && it.stock })
-        assertEquals(stockTidal.id, migrated.single { it.stock && it.kind == SourceKind.TIDAL }.id)
+        assertEquals(1, migrated.count { it.kind == SourceKind.LOSSLESS && it.stock })
+        assertEquals(stockLossless.id, migrated.single { it.stock && it.kind == SourceKind.LOSSLESS }.id)
         val duplicate = migrated.single { it.id == pasted.id }
         assertFalse(duplicate.stock)
-        assertEquals("tracks.monochrome.st", duplicate.displayName)
+        assertEquals("flac.example", duplicate.displayName)
     }
 
     @Test
     fun `a user-added source cannot display one of the Auris names`() {
         val impostor = SourceConfig(
             kind = SourceKind.ADDON,
-            label = SourceRegistry.TIDAL_DISPLAY_NAME,
+            label = SourceRegistry.LOSSLESS_DISPLAY_NAME,
             baseUrl = "https://addon.unified.dpdns.org",
         )
 
@@ -693,19 +684,19 @@ class SourcesTest {
     fun `a user-added duplicate can be removed while the stock row stays`() {
         val seeded = SourceRegistry.sourcesForInit(emptyList(), forceJioSaavnOff = true)
         val pasted = SourceConfig(
-            kind = SourceKind.TIDAL,
-            baseUrl = "https://tracks.example.com",
+            kind = SourceKind.LOSSLESS,
+            baseUrl = "https://flac.example",
         )
         val before = SourceRegistry.configs.value
         try {
             SourceRegistry.configs.value = seeded + pasted
 
             SourceRegistry.remove(pasted.id)
-            assertEquals(1, SourceRegistry.configs.value.count { it.kind == SourceKind.TIDAL })
-            assertTrue(SourceRegistry.configs.value.single { it.kind == SourceKind.TIDAL }.stock)
+            assertEquals(1, SourceRegistry.configs.value.count { it.kind == SourceKind.LOSSLESS })
+            assertTrue(SourceRegistry.configs.value.single { it.kind == SourceKind.LOSSLESS }.stock)
 
-            SourceRegistry.remove(seeded.single { it.kind == SourceKind.TIDAL }.id)
-            assertEquals(1, SourceRegistry.configs.value.count { it.kind == SourceKind.TIDAL })
+            SourceRegistry.remove(seeded.single { it.kind == SourceKind.LOSSLESS }.id)
+            assertEquals(1, SourceRegistry.configs.value.count { it.kind == SourceKind.LOSSLESS })
         } finally {
             SourceRegistry.configs.value = before
         }
