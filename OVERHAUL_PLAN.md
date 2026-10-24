@@ -1091,7 +1091,14 @@ ink follow the **secondary** colour instead.
   be red although the sleeve is 85% blue, a one-colour fallback, a 2% speck
   that must not tint the ink, and the light/dark flip on bright vs dark
   covers.
-- Artifact: pending.
+- Artifact: committed `081b81e0` and ran the `Flow Debug APK` workflow on
+  `convx-fresh` — run `40141363552`, success. Artifact
+  `bitchord-next-release` holds arm64/armeabi-v7a/x86_64/universal dev-release
+  APKs; all four passed 16 KB `zipalign`. Verified `com.dev.bitchord`,
+  versionCode 80, versionName 2.2.18, signed by `CN=BitChord Next Fork`
+  (SHA-256 `385af3b4…` unchanged), with
+  `lib/arm64-v8a/libbitchord_jamesdsp.so` and the baseline profile packaged.
+  No tag and no GitHub Release were created, per the owner.
 
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
