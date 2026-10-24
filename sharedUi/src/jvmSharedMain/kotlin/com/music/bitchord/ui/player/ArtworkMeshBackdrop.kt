@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.ui.graphics.ColorUtils
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
@@ -191,17 +192,6 @@ fun rememberArtworkMesh(
      * second copy of the same cover comes over the wire.
      */
     artPx: Int = CARD_ART_PX,
-    /**
-     * The highest OKLCH lightness a mesh cell may use. Comes from
-     * [computeNowPlayingPalette] so the backdrop and the foreground are
-     * clamped by one decision rather than two.
-     */
-    backgroundCap: Float = MAX_BACKGROUND_L,
-    /**
-     * The brightest a cell may be, from the same palette. Cells over it are
-     * tone-mapped individually rather than the whole mesh being darkened.
-     */
-    backgroundLuminanceLimit: Float = 1f,
 ): ArtworkMesh? {
     val context = LocalPlatformContext.current
     // The last mesh that was on screen, whatever it was read from. A cover
@@ -211,7 +201,7 @@ fun rememberArtworkMesh(
     // its own thumbnail. Wrong colour for one decode is the trade; absent
     // colour was the flicker.
     val heldMesh = remember { mutableStateOf<ArtworkMesh?>(null) }
-    val cacheKey = imageUrl?.let { meshKey(it, backgroundCap, backgroundLuminanceLimit) }
+    val cacheKey = imageUrl?.let(::meshKey)
     // Seeded from the cache so a cover that has been seen before is on colour
     // in its first frame, with nothing to fade in from — and from
     // [heldMesh] otherwise, carried over for the reason above.
@@ -227,9 +217,9 @@ fun rememberArtworkMesh(
     }
     LaunchedEffect(mesh) { heldMesh.value = mesh }
 
-    LaunchedEffect(cacheKey, artPx) {
-        val key = cacheKey ?: return@LaunchedEffect
+    LaunchedEffect(imageUrl, artPx) {
         val url = imageUrl ?: return@LaunchedEffect
+        val key = meshKey(url)
         if (meshUrl == key) return@LaunchedEffect
         val request = ImageRequest.Builder(context)
             .data(url.artworkAt(artPx))
@@ -248,7 +238,7 @@ fun rememberArtworkMesh(
             val bitmap = (result as? SuccessResult)?.image?.toImageBitmap()
             if (bitmap != null) {
                 val found = withContext(Dispatchers.Default) {
-                    meshOf(bitmap, url.hashCode(), backgroundCap, backgroundLuminanceLimit)
+                    meshOf(bitmap, url.hashCode())
                 }
                 if (found != null) {
                     meshCache[key] = found
@@ -262,7 +252,7 @@ fun rememberArtworkMesh(
         }
     }
 
-    LaunchedEffect(canvasFrame, backgroundCap, backgroundLuminanceLimit) {
+    LaunchedEffect(canvasFrame) {
         val frame = canvasFrame ?: return@LaunchedEffect
         // Reject frames that are too dark or uniform — they are almost always
         // the first read after a surface recreation, before ExoPlayer has
@@ -270,7 +260,7 @@ fun rememberArtworkMesh(
         // threshold is discarded; the last valid mesh is kept instead.
         if (isLikelyBlackFrame(frame)) return@LaunchedEffect
         mesh = withContext(Dispatchers.Default) {
-            meshOf(frame, cacheKey?.hashCode() ?: 0, backgroundCap, backgroundLuminanceLimit)
+            meshOf(frame, cacheKey?.hashCode() ?: 0)
         } ?: mesh
         meshUrl = cacheKey
     }
@@ -392,6 +382,19 @@ fun ArtworkMeshBackdrop(
         // Read here rather than in composition: an Animatable read inside a
         // draw lambda invalidates the drawing and leaves composition out of it.
         incoming?.let { drawMesh(it, seamY, alpha = fade.value) }
+
+        // Enough of a scrim to keep white text off a bright sleeve, and no
+        // more. The mesh keeps the sleeve's own lightness now, so a bright
+        // cover needs this underneath the controls; a sleeve that ends dark
+        // leaves a dark screen.
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.Black.copy(alpha = 0.06f),
+                    Color.Black.copy(alpha = 0.30f),
+                ),
+            ),
+        )
     }
 }
 
@@ -510,8 +513,7 @@ private val meshCache = object : LinkedHashMap<String, ArtworkMesh>(0, 0.75f, tr
     override fun removeEldestEntry(eldest: Map.Entry<String, ArtworkMesh>) = size > MESH_CACHE_ENTRIES
 }
 
-private fun meshKey(url: String, backgroundCap: Float, backgroundLuminanceLimit: Float): String =
-    "$url@$backgroundCap@$backgroundLuminanceLimit"
+private fun meshKey(url: String): String = url
 
 /** A session's worth of covers, at four kilobytes of texture each. */
 private const val MESH_CACHE_ENTRIES = 64
@@ -599,8 +601,6 @@ private const val MESH_SAMPLE = 128
 private fun meshOf(
     source: ImageBitmap,
     seed: Int,
-    backgroundCap: Float,
-    backgroundLuminanceLimit: Float,
 ): ArtworkMesh? {
     val width = source.width
     val height = source.height
@@ -643,7 +643,7 @@ private fun meshOf(
     val grid = IntArray(cells) { cell ->
         val n = count[cell].coerceAtLeast(1)
         argb((red[cell] / n).toInt(), (green[cell] / n).toInt(), (blue[cell] / n).toInt())
-            .lifted(backgroundCap, backgroundLuminanceLimit)
+            .lifted()
     }
     val texels = grid.rotatedBelowSeam(cols, rows, seed).resampled(cols, rows, MESH_TEX)
     return ArtworkMesh(imageBitmapOf(texels, MESH_TEX, MESH_TEX))
@@ -739,14 +739,21 @@ private fun argb(red: Int, green: Int, blue: Int): Int =
     (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
 
 /**
- * The one liberty taken with the artwork's colours, and it is now a ceiling
- * rather than a lift.
+ * The one liberty taken with the artwork's colours.
  *
- * A cell's hue is kept; its OKLCH lightness is pressed into the player's dark
- * band, and its chroma into a band narrow enough that a saturated patch of the
- * sleeve cannot become a neon blot behind the controls. Averaging blocks of
- * pixels still greys them, so a small chroma floor keeps a tint where the
- * sleeve had one — but near-greys are left neutral rather than invented.
+ * Saturation is nudged because averaging a block of pixels greys it — the mean
+ * of a red stripe and the black around it is a dull maroon, and this puts back
+ * roughly what the averaging took, not more. Lightness is only floored, off
+ * pure black, which is not so much a colour choice as somewhere for the blur to
+ * find an edge. Neither touches the *proportions*, which is the whole point of
+ * this backdrop: a sleeve that is mostly black stays mostly black.
  */
-private fun Int.lifted(backgroundCap: Float, backgroundLuminanceLimit: Float): Int =
-    backgroundStopArgb(this, backgroundCap, backgroundLuminanceLimit)
+private fun Int.lifted(): Int {
+    val hsl = FloatArray(3).also { ColorUtils.colorToHSL(this, it) }
+    hsl[1] = (hsl[1] * MESH_VIBRANCE).coerceAtMost(1f)
+    hsl[2] = hsl[2].coerceAtLeast(MESH_FLOOR)
+    return ColorUtils.HSLToColor(hsl)
+}
+
+private const val MESH_VIBRANCE = 1.12f
+private const val MESH_FLOOR = 0.045f

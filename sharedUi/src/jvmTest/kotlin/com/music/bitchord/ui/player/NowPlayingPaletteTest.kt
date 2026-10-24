@@ -5,13 +5,12 @@ import androidx.compose.ui.graphics.toArgb
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Locale
 import kotlin.math.pow
 
 /**
- * The six covers the old colour engine got wrong or nearly wrong. Each one is
- * scored at the dimmest text role and the dimmest icon role, over the lightest
- * background stop — the worst place on the screen.
+ * The player's automatic ink now follows the sleeve's secondary colour, with
+ * lightness chosen by how bright the cover is. These are the cases that made
+ * the previous engines land on grey or on the wrong colour.
  */
 class NowPlayingPaletteTest {
     private data class Cover(val name: String, val pixels: List<Int>)
@@ -21,91 +20,73 @@ class NowPlayingPaletteTest {
 
     private fun argb(value: Long) = value.toInt()
 
+    private fun fg(name: String) = computeNowPlayingPalette(
+        covers.first { it.name == name }.pixels,
+    ).fg
+
     private val covers = listOf(
         cover(
-            "dark blue/purple",
-            argb(0xFF141433) to 600,
-            argb(0xFF2B1B5A) to 300,
-            argb(0xFF4A3B9E) to 100,
+            "blue sleeve with red second colour",
+            argb(0xFF1E3A8A) to 850,
+            argb(0xFFE53935) to 150,
         ),
         cover(
-            "white/grey with red accent",
-            argb(0xFFF2F2F2) to 780,
-            argb(0xFFBDBDBD) to 120,
-            argb(0xFFD32F2F) to 100,
+            "blue sleeve with a rare red speck",
+            argb(0xFF1E3A8A) to 980,
+            argb(0xFFE53935) to 20,
         ),
+        cover("pure red", argb(0xFFE53935) to 1000),
+        cover("bright yellow", argb(0xFFFFEB3B) to 1000),
         cover("all white", argb(0xFFFFFFFF) to 1000),
         cover("all black", argb(0xFF000000) to 1000),
-        cover("bright yellow", argb(0xFFFFEB3B) to 1000),
-        cover("pure red", argb(0xFFE53935) to 1000),
     )
 
     @Test
-    fun everyCoverPassesTextAndIconContrast() {
-        covers.forEach { cover ->
-            val palette = computeNowPlayingPalette(cover.pixels)
-            val text = minTextContrast(palette)
-            val icon = minIconContrast(palette)
-            println(
-                String.format(
-                    Locale.US,
-                    "%-26s text %.2f:1  icons %.2f:1  bg cap %.2f  luminance limit %.3f",
-                    cover.name, text, icon,
-                    palette.backgroundLightnessCap, palette.backgroundLuminanceLimit,
-                ),
-            )
-            assertTrue(
-                "${cover.name}: text contrast $text:1 is below 4.5:1",
-                text >= 4.5f,
-            )
-            assertTrue(
-                "${cover.name}: icon contrast $icon:1 is below 3:1",
-                icon >= 3f,
-            )
-        }
+    fun secondaryColourCarriesTheInk() {
+        val ink = fg("blue sleeve with red second colour")
+        println("secondary ink = $ink")
+        // The cover is mostly blue; a primary-colour ink would be blue. The
+        // secondary red has to be the one tinting the controls.
+        assertTrue("expected red-tinted ink, got $ink", ink.red > ink.blue)
+        assertTrue("the red tint should be visible, not a hint: $ink", ink.red - ink.blue > 0.12f)
     }
 
     @Test
-    fun neutralSleevesShareOneNeutralInk() {
-        val white = computeNowPlayingPalette(covers.first { it.name == "all white" }.pixels)
-        val black = computeNowPlayingPalette(covers.first { it.name == "all black" }.pixels)
-
-        assertEquals(white.fg, black.fg)
-        assertEquals(white.fg.red, white.fg.green, 0.001f)
-        assertEquals(white.fg.green, white.fg.blue, 0.001f)
-        // Once the accent is gone the backdrop loses its tint, not just its chroma.
-        white.backgroundStops.forEach { stop ->
-            assertEquals(stop.red, stop.green, 0.01f)
-            assertEquals(stop.green, stop.blue, 0.01f)
-        }
+    fun rareColourDoesNotCarryTheInk() {
+        val ink = fg("blue sleeve with a rare red speck")
+        // Two percent is too little of the cover to speak for it, so the
+        // single real colour remains the source.
+        assertTrue("a 2% speck should not tint the ink red: $ink", ink.blue > ink.red)
     }
 
     @Test
-    fun brightCoversKeepAMidTonedBackdrop() {
-        // The old check darkened every stop until the lightest passed, which
-        // turned a pale cover's blur almost black. Only individual cells above
-        // the luminance ceiling may be toned down now.
-        listOf("white/grey with red accent", "all white", "bright yellow", "pure red").forEach { name ->
-            val palette = computeNowPlayingPalette(covers.first { it.name == name }.pixels)
-            assertEquals(MAX_BACKGROUND_L, palette.backgroundLightnessCap, 0f)
-            val brightest = palette.backgroundStops.maxOf { luminance(it) }
-            println(String.format(Locale.US, "%-26s brightest stop Y %.3f", name, brightest))
-            assertTrue("$name: backdrop crushed to $brightest luminance", brightest > 0.04f)
-        }
-    }
-
-    @Test
-    fun chromaticSleevesKeepTheirHueInTheInk() {
-        fun fg(name: String) = computeNowPlayingPalette(covers.first { it.name == name }.pixels).fg
-
+    fun singleColourSleeveReflectsItsOwnHue() {
         val red = fg("pure red")
-        assertTrue("red accent should tint the ink red", red.red > red.green && red.red > red.blue)
+        assertTrue("red should tint the ink red", red.red > red.green && red.red > red.blue)
+        assertTrue("a dark red sleeve needs light ink", luminance(red) >= 0.5f)
 
         val yellow = fg("bright yellow")
         assertTrue(
-            "yellow accent should tint the ink yellow",
+            "yellow should tint the ink yellow",
             yellow.red > yellow.blue && yellow.green > yellow.blue,
         )
+        assertTrue("a bright yellow sleeve needs dark ink", luminance(yellow) < 0.5f)
+    }
+
+    @Test
+    fun neutralSleevesChooseLegibleNeutralInk() {
+        val white = fg("all white")
+        val black = fg("all black")
+
+        // Neutral in, neutral out: no hue is invented for a grey sleeve.
+        assertEquals(white.red, white.green, 0.01f)
+        assertEquals(white.green, white.blue, 0.01f)
+        assertEquals(black.red, black.green, 0.01f)
+        assertEquals(black.green, black.blue, 0.01f)
+
+        // But the lightness still follows the sleeve, so both stay legible.
+        assertTrue("white sleeve should take dark ink", luminance(white) < 0.5f)
+        assertTrue("black sleeve should take light ink", luminance(black) >= 0.5f)
     }
 
     private fun luminance(color: Color): Float {

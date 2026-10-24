@@ -944,11 +944,12 @@ this to be recorded here because the beta is now in a bug-fix-only phase:
   Library and Theme.
 - Now Playing colour roles (buttons, seekbar, text, lyrics) can be pinned; an
   unpinned role follows the artwork.
-- The automatic player ink now uses the cover's **average hue, lifted for
-  legibility**, instead of its complement (`PlayerInk.kt`,
-  `artworkAverageInk`). Dark sleeves get a brighter same-hue tint; bright
-  sleeves get the same hue deepened, since nothing lighter is legible on them.
-  The Customisation help text says this.
+- The automatic player ink follows the cover's **secondary colour** — the
+  most present colour that is not the one the sleeve is mostly made of — and
+  darkens or lightens it according to the cover's brightness
+  (`NowPlayingPalette.kt`). The background keeps the artwork's own cells
+  rather than being tone-mapped to grey. The Customisation help text says
+  this.
 - Replay's "Your Listening Experience" cards were removed; Replay is shown in
   Library through a Customisation -> Library toggle instead.
 - Ko-fi removed; crypto only. Community card (Discord / Reddit / GitHub) is at
@@ -1062,6 +1063,35 @@ party-sheet breathing are foreground-only and bounded; startup work was
 already covered in the section above. If background heat survives on device,
 measure the playback DSP path first (now bypassed) and the canvas decoders
 (now transport- and foreground-gated) before widening the pass.
+
+### Player colour: secondary artwork ink (2026-10-24)
+
+Owner report: the latest player pass put an ugly grey overlay over the blurred
+mesh; the automatic "Use artwork" ink had been derived from the artwork's
+primary colour. This restores the pre-rework backdrop and makes the automatic
+ink follow the **secondary** colour instead.
+
+- `NowPlayingPalette.kt`: the backdrop is no longer tone-mapped into a dark
+  OKLCH band. `computeNowPlayingPalette` ranks the chromatic clusters by
+  share x chroma, keeps the leader as the primary (the colour the blur already
+  carries), then takes the next ranked cluster at least 30 degrees away in hue
+  — with at least 4% of the sleeve — as the secondary. One-colour sleeves fall
+  back to their own hue; neutral sleeves keep neutral ink.
+- Ink lightness follows the cover: a bright control band (relative luminance
+  >= 0.50) takes dark ink (L 0.18-0.34), a darker one takes light ink
+  (L 0.72-0.82). Chroma is floored at 0.09 so a muted secondary still reads as
+  colour rather than grey.
+- `ArtworkMeshBackdrop.kt`: cells keep the sleeve's own lightness again, with
+  v2.2.17's 1.12 saturation nudge and 0.045 floor, and the 6% -> 30% black
+  legibility scrim is back. `backgroundCap` / `backgroundLuminanceLimit` and
+  the palette's background fields, clamp search and contrast helpers are gone.
+- `PlayerInk.kt`: the now-unused `contrastRatio` helper was removed.
+- Customisation help text now says "secondary colour".
+- Tests: `:sharedUi:jvmTest` green, including a two-colour cover whose ink must
+  be red although the sleeve is 85% blue, a one-colour fallback, a 2% speck
+  that must not tint the ink, and the light/dark flip on bright vs dark
+  covers.
+- Artifact: pending.
 
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a

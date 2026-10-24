@@ -24,10 +24,3 @@ internal val LocalPlayerInkGlow = staticCompositionLocalOf { Color.Transparent }
 /** Light ink needs the dark glow, and the reverse. */
 internal fun Color.isLightInk(): Boolean =
     ColorUtils.calculateLuminance(toArgb()) >= 0.5f
-
-/** WCAG's contrast ratio, from two relative luminances. */
-internal fun contrastRatio(one: Float, two: Float): Float {
-    val lighter = maxOf(one, two)
-    val darker = minOf(one, two)
-    return (lighter + 0.05f) / (darker + 0.05f)
-}

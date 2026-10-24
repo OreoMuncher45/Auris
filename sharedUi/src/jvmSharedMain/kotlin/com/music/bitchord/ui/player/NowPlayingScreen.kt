@@ -845,10 +845,10 @@ fun NowPlayingScreen(
     // every surface below reads the same value rather than each triggering
     // its own extraction.
     val remoteArt = rememberRemoteArtworkUrl(song)
-    // Every cover takes the same route: a light tint of its accent on a
-    // backdrop clamped dark. The old average-and-lift engine could land ink
-    // and background on the same tone for low-colour sleeves; this one has
-    // no path that puts them there. See [computeNowPlayingPalette].
+    // The ink follows the sleeve's secondary colour, lightened or deepened by
+    // how bright the cover is. The backdrop keeps the artwork's own colours,
+    // so the two do not collapse into one grey wash. See
+    // [computeNowPlayingPalette].
     val nowPlayingPalette = rememberNowPlayingPalette(remoteArt, ART_PX)
     val playerInkTarget = nowPlayingPalette.fg
     val playerInk by animateColorAsState(
@@ -1458,8 +1458,6 @@ fun NowPlayingScreen(
                 remoteArt,
                 canvasFrame,
                 ART_PX,
-                backgroundCap = nowPlayingPalette.backgroundLightnessCap,
-                backgroundLuminanceLimit = nowPlayingPalette.backgroundLuminanceLimit,
             )
         }
     // Whether the banner is the presentation at all: full-bleed is on, and there

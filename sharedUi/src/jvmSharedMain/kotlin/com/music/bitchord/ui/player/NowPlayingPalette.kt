@@ -3,6 +3,7 @@ package com.music.bitchord.ui.player
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.pow
@@ -12,29 +13,22 @@ import kotlin.math.sqrt
 /**
  * The expanded player's colours, derived from the artwork alone.
  *
- * Every cover follows one path: a light tint of the artwork's accent hue on a
- * background clamped dark. That is the fix for covers whose own colours used
- * to become their foreground — a white sleeve with a red accent produced a
- * mid-grey ink on a light background, and the controls disappeared. Lightness
- * here is OKLCH L, so "0.92 on 0.40" means what it says to the eye rather than
- * only to a luminance formula.
+ * The ink is a legible tint of the sleeve's *secondary* colour — a colour the
+ * cover really uses but is not made of. The dominant colour is also what the
+ * blurred backdrop is mostly made of, so ink built from it disappears into the
+ * wash; a supporting colour is the note that reads as "this record" without
+ * echoing the background. A sleeve with only one colour falls back to that
+ * colour, and a neutral sleeve keeps neutral ink.
+ *
+ * Lightness follows the artwork's own brightness rather than forcing the
+ * backdrop dark: dark ink on a bright sleeve, light ink on a dark one. That is
+ * what keeps the text readable while the backdrop keeps the sleeve's colours.
  */
 @Immutable
 internal data class NowPlayingPalette(
-    /** The mesh's stops after clamping, darkest-safe first. */
-    val backgroundStops: List<Color>,
     /** Title, transport, filled progress, and every icon at rest. */
     val fg: Color,
     val alphas: NowPlayingAlphas = NowPlayingAlphas(),
-    /** The highest OKLCH L the backdrop's mesh may use. */
-    val backgroundLightnessCap: Float = MAX_BACKGROUND_L,
-    /**
-     * The highest WCAG luminance any backdrop cell may reach. Only the cells
-     * that exceed it are darkened — a bright yellow patch is toned down while
-     * the rest of the sleeve keeps the lightness it had. This is what keeps
-     * the blur from collapsing to near-black on a pale cover.
-     */
-    val backgroundLuminanceLimit: Float = 1f,
 )
 
 /**
@@ -57,119 +51,93 @@ internal data class NowPlayingAlphas(
 
 /** The palette before any artwork has been read: neutral, dark, near-white ink. */
 internal val DefaultNowPlayingPalette = NowPlayingPalette(
-    backgroundStops = listOf(Oklch(0.36f, 0f, 0f).toColor()),
     fg = Oklch(0.92f, 0f, 0f).toColor(),
-    backgroundLuminanceLimit = backgroundLuminanceLimit(Oklch(0.92f, 0f, 0f).toColor()),
 )
 
 /**
- * [art] is a sampled set of the sleeve's ARGB pixels. The function is pure so
- * the six awkward covers — dark, bright, grey, mono, saturated and neutral —
- * can be scored in a unit test with nothing composable involved.
+ * [art] is a sampled set of the sleeve's ARGB pixels, in reading order (the
+ * last samples are the lower half of the cover). The function is pure so the
+ * awkward covers — dark, bright, grey, mono, saturated, two-colour and
+ * neutral — can be scored in a unit test with nothing composable involved.
  */
 internal fun computeNowPlayingPalette(art: List<Int>): NowPlayingPalette {
-    val buckets = cluster(art.filter { (it ushr 24) != 0 })
+    val visible = art.filter { (it ushr 24) != 0 }
+    val buckets = cluster(visible)
     if (buckets.isEmpty()) return DefaultNowPlayingPalette
 
     val total = buckets.sumOf { it.count }.coerceAtLeast(1)
-    val accent = buckets
-        .map { it to Oklch.fromArgb(it.color.toArgb()) }
-        .filter { (bucket, oklch) ->
-            oklch.chroma >= MIN_ACCENT_CHROMA &&
-                oklch.l in MIN_ACCENT_L..MAX_ACCENT_L &&
-                bucket.count.toFloat() / total >= MIN_ACCENT_SHARE
-        }
-        .maxByOrNull { (bucket, oklch) ->
-            oklch.chroma * (bucket.count.toFloat() / total)
-        }
-        ?.second
+    val accent = secondaryAccent(buckets, total)
+    val brightBackdrop = controlLuminance(visible) >= BRIGHT_BACKDROP_LUMINANCE
 
-    // Always light: the hue is the artwork's, the lightness is the player's.
-    // Chroma is reduced only as far as sRGB needs, never L or H.
-    val fg = Oklch(
-        l = FOREGROUND_L,
-        chroma = minOf(accent?.chroma ?: 0f, MAX_FOREGROUND_CHROMA),
-        hue = accent?.hue ?: 0f,
-    ).toColor()
+    val fg = when {
+        accent == null -> if (brightBackdrop) DARK_NEUTRAL_INK else LIGHT_NEUTRAL_INK
+        brightBackdrop -> accent.copy(
+            l = (accent.l - DARK_INK_DROP).coerceIn(DARK_INK_MIN_L, DARK_INK_MAX_L),
+            chroma = accent.chroma.coerceIn(MIN_INK_CHROMA, MAX_INK_CHROMA),
+        ).toColor()
+        else -> accent.copy(
+            l = (accent.l + LIGHT_INK_LIFT).coerceIn(LIGHT_INK_MIN_L, LIGHT_INK_MAX_L),
+            chroma = accent.chroma.coerceIn(MIN_INK_CHROMA, MAX_INK_CHROMA),
+        ).toColor()
+    }
 
-    // One stop per leading colour; the mesh keeps their spatial arrangement
-    // separately, but every cell is clamped by the same rule.
-    val cap = MAX_BACKGROUND_L
-    val luminanceLimit = backgroundLuminanceLimit(fg)
-    val stops = buckets
-        .sortedByDescending { it.count }
-        .take(BACKGROUND_STOP_COUNT)
-        .map { backgroundColor(it.color, cap, luminanceLimit) }
-
-    return NowPlayingPalette(
-        backgroundStops = stops,
-        fg = fg,
-        backgroundLightnessCap = cap,
-        backgroundLuminanceLimit = luminanceLimit,
-    )
+    return NowPlayingPalette(fg = fg)
 }
 
+private class Accent(val oklch: Oklch, val weight: Float)
+
 /**
- * The brightest a backdrop cell may be while every text and icon role still
- * clears its contrast target over it.
+ * The colour the automatic ink should follow: the second colour the sleeve is
+ * really made of, not the one that owns it.
  *
- * A role with opacity `a` over a backdrop of luminance `Yb` composites to
- * `a*Yf + (1-a)*Yb`, and WCAG contrast against that backdrop is
- * `(composite + 0.05) / (Yb + 0.05)`. Solving for `Yb` gives the ceiling.
- * Only the cell is darkened, so a sleeve that is mostly mid-toned stays
- * mid-toned; one bright patch no longer drags the whole blur down with it.
+ * Colours are ranked by how much of the cover they take up against how vivid
+ * they are. The leader is the primary colour — the one the backdrop already
+ * carries — and the next-ranked colour far enough away in hue is the
+ * secondary. A sleeve with a single chromatic colour returns that colour so
+ * the ink still comes from the record; a grey sleeve returns null.
  */
-internal fun backgroundLuminanceLimit(fg: Color): Float {
-    val roles = NowPlayingAlphas()
-    val ink = relativeLuminance(fg.toArgb())
-    fun limit(alpha: Float, target: Float): Float =
-        (alpha * ink + 0.05f * (1f - target)) / (target - 1f + alpha)
-    return minOf(
-        limit(roles.secondary, MIN_TEXT_CONTRAST + CONTRAST_MARGIN),
-        limit(roles.tertiary, MIN_ICON_CONTRAST + CONTRAST_MARGIN),
-        1f,
-    ).coerceAtLeast(0f)
+private fun secondaryAccent(buckets: List<Bucket>, total: Int): Oklch? {
+    val accents = buckets.mapNotNull { bucket ->
+        val oklch = Oklch.fromArgb(bucket.color.toArgb())
+        val share = bucket.count.toFloat() / total
+        if (
+            share < MIN_SECONDARY_SHARE ||
+            oklch.chroma < MIN_ACCENT_CHROMA ||
+            oklch.l < MIN_ACCENT_L ||
+            oklch.l > MAX_ACCENT_L
+        ) {
+            return@mapNotNull null
+        }
+        Accent(oklch, oklch.chroma * share)
+    }.sortedByDescending { it.weight }
+
+    val primary = accents.firstOrNull() ?: return null
+    val secondary = accents.firstOrNull {
+        hueGap(it.oklch.hue, primary.oklch.hue) >= SECONDARY_MIN_HUE_GAP
+    }
+    return (secondary ?: primary).oklch
 }
-
-/** Text is scored at the dimmest text role — the artist line. */
-internal fun minTextContrast(fg: Color, stops: List<Color>): Float =
-    minContrast(fg, stops, NowPlayingAlphas().secondary)
-
-/** Icons are scored at the dimmest icon role — the action row. */
-internal fun minIconContrast(fg: Color, stops: List<Color>): Float =
-    minContrast(fg, stops, NowPlayingAlphas().tertiary)
-
-internal fun minTextContrast(palette: NowPlayingPalette): Float =
-    minTextContrast(palette.fg, palette.backgroundStops)
-
-internal fun minIconContrast(palette: NowPlayingPalette): Float =
-    minIconContrast(palette.fg, palette.backgroundStops)
 
 /**
- * The worst case anywhere on the backdrop: each role composited over the
- * lightest stop, since that is the stop that leaves the least room.
+ * Relative luminance of the artwork's lower half, where the transport and
+ * action icons sit. Samples arrive in reading order, so the back half of the
+ * list is the bottom of the sleeve.
  */
-private fun minContrast(fg: Color, stops: List<Color>, alpha: Float): Float {
-    if (stops.isEmpty()) return contrastRatio(relativeLuminance(fg.toArgb()), 0f)
-    return stops.minOf { stop ->
-        val composite = fg.compositeOver(stop, alpha)
-        contrastRatio(relativeLuminance(composite.toArgb()), relativeLuminance(stop.toArgb()))
+private fun controlLuminance(samples: List<Int>): Float {
+    if (samples.isEmpty()) return 0f
+    val lower = if (samples.size > 1) {
+        samples.subList(samples.size / 2, samples.size)
+    } else {
+        samples
     }
+    var sum = 0f
+    lower.forEach { sum += relativeLuminance(it) }
+    return sum / lower.size
 }
 
-private fun Color.compositeOver(background: Color, alpha: Float): Color {
-    val fgArgb = toArgb()
-    val bgArgb = background.toArgb()
-    fun channel(shift: Int): Float {
-        val fg = srgbToLinear(((fgArgb shr shift) and 0xFF) / 255f)
-        val bg = srgbToLinear(((bgArgb shr shift) and 0xFF) / 255f)
-        return fg * alpha + bg * (1f - alpha)
-    }
-    return Color(
-        red = linearToSrgb(channel(16)),
-        green = linearToSrgb(channel(8)),
-        blue = linearToSrgb(channel(0)),
-    )
+private fun hueGap(one: Float, two: Float): Float {
+    val gap = abs(one - two) % 360f
+    return if (gap > 180f) 360f - gap else gap
 }
 
 /** WCAG relative luminance, gamma-decoded rather than read off the bytes. */
@@ -177,39 +145,6 @@ private fun relativeLuminance(argb: Int): Float {
     fun linear(shift: Int) = srgbToLinear(((argb shr shift) and 0xFF) / 255f)
     return 0.2126f * linear(16) + 0.7152f * linear(8) + 0.0722f * linear(0)
 }
-
-private fun backgroundColor(source: Color, cap: Float, luminanceLimit: Float): Color =
-    Oklch.fromArgb(source.toArgb()).clampedBackground(cap, luminanceLimit).toColor()
-
-private fun Oklch.clampedBackground(cap: Float, luminanceLimit: Float): Oklch {
-    val floor = minOf(MIN_BACKGROUND_L, cap)
-    val chroma = if (this.chroma < MIN_BACKGROUND_CHROMA) {
-        0f
-    } else {
-        this.chroma.coerceIn(MIN_BACKGROUND_CHROMA, MAX_BACKGROUND_CHROMA)
-    }
-    val base = Oklch(l = l.coerceIn(floor, cap), chroma = chroma, hue = hue)
-    if (luminanceLimit >= 1f) return base
-    if (relativeLuminance(base.toColor().toArgb()) <= luminanceLimit) return base
-
-    // Luminance rises with L at a fixed hue and chroma, so the brightest
-    // admissible cell is a search along L — hue and chroma stay untouched.
-    var low = 0f
-    var high = base.l
-    repeat(LUMINANCE_STEPS) {
-        val mid = (low + high) / 2f
-        val lit = relativeLuminance(base.copy(l = mid).toColor().toArgb())
-        if (lit <= luminanceLimit) low = mid else high = mid
-    }
-    return base.copy(l = low)
-}
-
-/**
- * The same clamp the palette says it used, for the mesh's own cells — see
- * [computeNowPlayingPalette] and `meshOf`.
- */
-internal fun backgroundStopArgb(argb: Int, cap: Float, luminanceLimit: Float = 1f): Int =
-    Oklch.fromArgb(argb).clampedBackground(cap, luminanceLimit).toColor().toArgb()
 
 /** One colour's share of the sleeve, averaged rather than quantised to its bin. */
 private class Bucket {
@@ -292,7 +227,8 @@ private data class Oklch(val l: Float, val chroma: Float, val hue: Float) {
         fun inGamut(rgb: FloatArray) = rgb.all { it in -0.0001f..1.0001f }
 
         // Out of gamut, give up chroma and nothing else: changing L would
-        // break the contrast promise, and changing H would change the record.
+        // break the legibility the ink was chosen for, and changing H would
+        // change the record.
         var chroma = this.chroma.coerceAtLeast(0f)
         if (!inGamut(linear(chroma))) {
             var low = 0f
@@ -323,29 +259,39 @@ private fun linearToSrgb(channel: Float): Float =
 private fun cbrt(value: Float): Float =
     if (value < 0f) -(-value).pow(1f / 3f) else value.pow(1f / 3f)
 
-/** Pixels below this share are too rare to read as the sleeve's colour. */
-private const val MIN_ACCENT_SHARE = 0.02f
+/** A colour below this share of the cover is too rare to carry the ink. */
+private const val MIN_SECONDARY_SHARE = 0.04f
 /** A near-grey has no hue worth tinting the ink with. */
 private const val MIN_ACCENT_CHROMA = 0.04f
 private const val MIN_ACCENT_L = 0.10f
 private const val MAX_ACCENT_L = 0.95f
+/** A supporting colour has to be visibly different, not a shade of the lead. */
+private const val SECONDARY_MIN_HUE_GAP = 30f
 
-private const val FOREGROUND_L = 0.92f
-private const val MAX_FOREGROUND_CHROMA = 0.09f
+/** Above this the sleeve is bright enough to need dark ink. */
+private const val BRIGHT_BACKDROP_LUMINANCE = 0.50f
 
-private const val MIN_BACKGROUND_L = 0.28f
-internal const val MAX_BACKGROUND_L = 0.46f
-private const val MIN_BACKGROUND_CHROMA = 0.03f
-private const val MAX_BACKGROUND_CHROMA = 0.16f
-private const val BACKGROUND_STOP_COUNT = 6
+/** Bright sleeve: deepen the colour onto the backdrop rather than lighten it. */
+private const val DARK_INK_DROP = 0.55f
+private const val DARK_INK_MIN_L = 0.18f
+private const val DARK_INK_MAX_L = 0.34f
 
-/** WCAG AA for the artist line; 3:1 for controls and icons. */
-private const val MIN_TEXT_CONTRAST = 4.5f
-private const val MIN_ICON_CONTRAST = 3f
-/** A hair of headroom so 8-bit rounding cannot land a stop just under target. */
-private const val CONTRAST_MARGIN = 0.05f
-/** Search steps for the brightest admissible L; well below a JND. */
-private const val LUMINANCE_STEPS = 14
+/** Dark sleeve: lift the colour clear of the backdrop. */
+private const val LIGHT_INK_LIFT = 0.42f
+private const val LIGHT_INK_MIN_L = 0.72f
+private const val LIGHT_INK_MAX_L = 0.82f
+
+/**
+ * A floor on the ink's chroma, so a muted secondary still reads as its colour
+ * rather than as grey, and a ceiling so a vivid patch cannot land as neon.
+ * The ceiling is generous because OKLCH chroma is capped by the gamut at these
+ * lightnesses anyway; the floor is what keeps the ink from going grey.
+ */
+private const val MIN_INK_CHROMA = 0.09f
+private const val MAX_INK_CHROMA = 0.22f
+
+private val DARK_NEUTRAL_INK = Oklch(0.20f, 0f, 0f).toColor()
+private val LIGHT_NEUTRAL_INK = Oklch(0.92f, 0f, 0f).toColor()
 
 /** Binary-search steps for the largest in-gamut chroma; far below a JND. */
 private const val GAMUT_STEPS = 18
