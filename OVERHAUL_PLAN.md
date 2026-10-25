@@ -1151,6 +1151,21 @@ decoder, heard as a hole.
   `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 / 2.2.18, 16 KB
   `zipalign`, JamesDSP lib and baseline profile verified. No tag, no Release.
 
+### Release v2.2.18 (2026-10-25)
+
+- Published `v2.2.18-convx` from the *tested* artifact built at commit
+  `90cdb876` (run `40145736082`): versionCode 80 / versionName 2.2.18, four
+  `Auris-*-release.apk` assets, same `CN=BitChord Next Fork` signer.
+- The tag already existed on an unpublished desktop-only draft at `aa1ec8df`;
+  it was moved to `90cdb876` (the APK build) before publishing. The draft's
+  Linux/Windows packages were left attached and were not rebuilt.
+- Changelog since `v2.2.17-convx`: player palette/backdrop and card layout,
+  opt-in seamless quality upgrades, idle-DSP/canvas/low-RAM performance work,
+  retirement of the bundled Tidal and Hi-Res Lossless addons, gated-addon host
+  key/header fixes, same-version update prompts and server announcements.
+- A 2.2.19 version bump was started, then cancelled and reverted before any tag
+  or release existed; the owner asked for the tested 2.2.18 artifact instead.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
@@ -1165,6 +1180,9 @@ decoder, heard as a hole.
   2026-10-24: release opened on the owner's instruction — `v2.2.17-convx`
   (run `40086363860`, commit `14bd1a52`) published with the four APKs. Keep
   this gate closed again until the next build is tested and they say go.
+  2026-10-25: owner asked for the tested `80 / 2.2.18` artifact —
+  `v2.2.18-convx` (run `40145736082`, commit `90cdb876`) published with the
+  four APKs. Gate closed again.
 - The only sanctioned way to produce a *installable-over-the-old-app* APK is the
   `Flow Debug APK` workflow (`workflow_dispatch`, artifact only). It builds
   `:app:assembleDevRelease` and signs with the fork's stable key from the
