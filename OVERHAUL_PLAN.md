@@ -1147,6 +1147,9 @@ decoder, heard as a hole.
   volume. A mid-fade stall freezes the blend rather than fading into silence;
   if it does not recover, the untouched original takes the direct swap. The
   `upgrade fade armed` / `... swapping directly` log lines say which gate fired.
+- Follow-up artifact: run `40145736082` (commit `90cdb876`), success. Same
+  `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 / 2.2.18, 16 KB
+  `zipalign`, JamesDSP lib and baseline profile verified. No tag, no Release.
 
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
