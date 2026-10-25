@@ -1266,6 +1266,15 @@
     <string name="custom_transport_smoothness">Oynatma düğmelerinin köşe yumuşaklığı</string>
     <string name="custom_transport_smoothness_help">Oynat, duraklat ve atla düğmelerinin köşelerini yuvarlar. 0\'da eski keskin kenar kalır; 100\'de şekil yumuşar ama yine de üçgendir.</string>
     <string name="custom_smoothness_reset">Yumuşaklığı sıfırla</string>
+    <string name="custom_indicators">Durum göstergeleri</string>
+    <string name="custom_next_track_status">Sıradaki şarkı durumu</string>
+    <string name="custom_next_track_status_help">Kapak altındaki, bu ve sıradaki şarkının analizini gösteren Automix satırı.</string>
+    <string name="custom_upgrade_badge">Kalite yükseltme rozeti</string>
+    <string name="custom_upgrade_badge_help">Parçanın daha iyi bir kopyası aranırken rozet gösterir.</string>
+    <string name="custom_lossless_badge">Lossless rozeti</string>
+    <string name="custom_lossless_badge_help">Çözülen akış kayıpsız olduğunda rozet gösterir.</string>
+    <string name="custom_hires_badge">Hi-Res rozeti</string>
+    <string name="custom_hires_badge_help">Yüksek çözünürlüklü akışlarda Lossless yerine Hi-Res ifadesini tercih eder.</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1290,5 +1299,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

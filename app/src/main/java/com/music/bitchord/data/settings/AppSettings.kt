@@ -560,6 +560,28 @@ object AppSettings {
     /** Shows the current lyric line above the player's controls. */
     val showNowPlayingLyrics = MutableStateFlow(true)
 
+    /**
+     * Shows the Automix analysis line under the sleeve — "this song: … · next:
+     * …", or why analysis is off for this one. Separate from
+     * [showNerdStats] because the measured-stream line above it is a different
+     * fact: someone can want the format readout without the next track's
+     * analysis state beside it.
+     */
+    val showNextTrackStatus = MutableStateFlow(true)
+
+    /** Shows "Upgrading quality" while a better copy is still being looked for. */
+    val showUpgradeBadge = MutableStateFlow(true)
+
+    /** Shows the "Lossless" badge once the stream decodes losslessly. */
+    val showLosslessBadge = MutableStateFlow(true)
+
+    /**
+     * Whether the lossless badge may say "Hi-Res" rather than the plain
+     * "Lossless" on high-resolution streams. Only consulted while
+     * [showLosslessBadge] is on — a hidden badge has no wording to keep.
+     */
+    val showHiResBadge = MutableStateFlow(true)
+
     /** Positive values delay synced lyrics; negative values bring them forward. */
     val lyricsOffsetMs = MutableStateFlow(0)
 
@@ -1261,6 +1283,10 @@ object AppSettings {
         lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
         textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
         showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
+        showNextTrackStatus.value = prefs.getBoolean(KEY_SHOW_NEXT_TRACK_STATUS, true)
+        showUpgradeBadge.value = prefs.getBoolean(KEY_SHOW_UPGRADE_BADGE, true)
+        showLosslessBadge.value = prefs.getBoolean(KEY_SHOW_LOSSLESS_BADGE, true)
+        showHiResBadge.value = prefs.getBoolean(KEY_SHOW_HI_RES_BADGE, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
@@ -1897,6 +1923,26 @@ object AppSettings {
     fun setShowNowPlayingLyrics(value: Boolean) {
         showNowPlayingLyrics.value = value
         prefs.edit().putBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, value).apply()
+    }
+
+    fun setShowNextTrackStatus(value: Boolean) {
+        showNextTrackStatus.value = value
+        prefs.edit().putBoolean(KEY_SHOW_NEXT_TRACK_STATUS, value).apply()
+    }
+
+    fun setShowUpgradeBadge(value: Boolean) {
+        showUpgradeBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_UPGRADE_BADGE, value).apply()
+    }
+
+    fun setShowLosslessBadge(value: Boolean) {
+        showLosslessBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_LOSSLESS_BADGE, value).apply()
+    }
+
+    fun setShowHiResBadge(value: Boolean) {
+        showHiResBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_HI_RES_BADGE, value).apply()
     }
 
     fun setLyricsOffsetMs(value: Int) {
@@ -2666,6 +2712,10 @@ object AppSettings {
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
     private const val KEY_TEXT_GLOW = "text_glow"
     private const val KEY_SHOW_NOW_PLAYING_LYRICS = "show_now_playing_lyrics"
+    private const val KEY_SHOW_NEXT_TRACK_STATUS = "show_next_track_status"
+    private const val KEY_SHOW_UPGRADE_BADGE = "show_upgrade_badge"
+    private const val KEY_SHOW_LOSSLESS_BADGE = "show_lossless_badge"
+    private const val KEY_SHOW_HI_RES_BADGE = "show_hi_res_badge"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"

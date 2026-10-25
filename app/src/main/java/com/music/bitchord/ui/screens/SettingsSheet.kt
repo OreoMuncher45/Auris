@@ -70,7 +70,6 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
-import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SurroundSound
@@ -417,7 +416,7 @@ fun SettingsScreen(
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
         )
 
-        if (search.matches("community", "discord", "reddit", "github", "beta", "bugs", "features", "star")) {
+        if (search.matches("community", "discord", "reddit", "beta", "bugs", "features")) {
             Spacer(Modifier.height(14.dp))
             CommunityCard()
         }
@@ -1659,19 +1658,11 @@ fun SettingsScreen(
                         textDecoration = TextDecoration.Underline,
                     ),
                 )
-                withLink(LinkAnnotation.Url("https://github.com/OreoMuncher45/BitChordNext", linkStyles)) {
-                    append("GitHub")
-                }
-                append("  ")
-                withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx", linkStyles)) {
-                    append("Developer")
-                }
-                append("  ")
                 withLink(LinkAnnotation.Url("https://discord.gg/8VnWqcuzqg", linkStyles)) {
                     append("Discord")
                 }
                 append("  ")
-                withLink(LinkAnnotation.Url("https://bitchord.kushagrasingh.in/", linkStyles)) {
+                withLink(LinkAnnotation.Url("https://auris.shehriyar.ink", linkStyles)) {
                     append("Website")
                 }
                 append("\n~YouTube Music & Listen Together Backend")
@@ -2408,7 +2399,6 @@ private fun DownloadQualitySheet(
 
 private const val COMMUNITY_DISCORD_URL = "https://discord.gg/8VnWqcuzqg"
 private const val COMMUNITY_REDDIT_URL = "https://reddit.com/r/BitChordNext"
-private const val COMMUNITY_GITHUB_URL = "https://github.com/OreoMuncher45/BitChordNext"
 
 private fun openCommunityLink(context: Context, url: String) {
     runCatching {
@@ -2420,7 +2410,7 @@ private fun openCommunityLink(context: Context, url: String) {
  * The first thing under the search field: where to report a bug, ask for a
  * feature, get into the beta, or just talk about the app. Discord is the
  * primary action because that is where the builds and quick replies live;
- * Reddit and GitHub stay one tap away without turning the card into a menu.
+ * Reddit stays one tap away without turning the card into a menu.
  */
 @Composable
 private fun CommunityCard() {
@@ -2491,52 +2481,26 @@ private fun CommunityCard() {
             Text(stringResource(R.string.community_join_discord))
         }
         Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        FilledTonalButton(
+            onClick = { openCommunityLink(context, COMMUNITY_REDDIT_URL) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp),
         ) {
-            FilledTonalButton(
-                onClick = { openCommunityLink(context, COMMUNITY_REDDIT_URL) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(44.dp),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Forum,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = Color(0xFFFF4500),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = stringResource(R.string.community_reddit),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            FilledTonalButton(
-                onClick = { openCommunityLink(context, COMMUNITY_GITHUB_URL) },
-                modifier = Modifier
-                    .weight(1f)
-                    .height(44.dp),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Star,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = Color(0xFFFFC107),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = stringResource(R.string.community_star_github),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Icon(
+                imageVector = Icons.Rounded.Forum,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = Color(0xFFFF4500),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = stringResource(R.string.community_reddit),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

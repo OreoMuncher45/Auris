@@ -1292,6 +1292,15 @@
     <string name="custom_transport_smoothness">ความนุ่มนวลของมุมปุ่มควบคุม</string>
     <string name="custom_transport_smoothness_help">ปรับมุมของปุ่มเล่น หยุดชั่วคราว และข้ามให้กลมขึ้น ที่ 0 จะคงมุมแหลมเดิม ที่ 100 รูปทรงจะนุ่มแต่ยังเป็นสามเหลี่ยม</string>
     <string name="custom_smoothness_reset">รีเซ็ตความนุ่มนวล</string>
+    <string name="custom_indicators">ตัวบ่งชี้สถานะ</string>
+    <string name="custom_next_track_status">สถานะเพลงถัดไป</string>
+    <string name="custom_next_track_status_help">บรรทัด Automix ใต้อาร์ตเวิร์กที่แสดงการวิเคราะห์เพลงนี้และเพลงถัดไป</string>
+    <string name="custom_upgrade_badge">ป้ายอัปเกรดคุณภาพ</string>
+    <string name="custom_upgrade_badge_help">แสดงป้ายขณะยังกำลังค้นหาไฟล์เพลงเวอร์ชันที่ดีกว่า</string>
+    <string name="custom_lossless_badge">ป้าย Lossless</string>
+    <string name="custom_lossless_badge_help">แสดงป้ายเมื่อสตรีมที่ถอดรหัสเป็นแบบไม่สูญเสียข้อมูล</string>
+    <string name="custom_hires_badge">ป้าย Hi-Res</string>
+    <string name="custom_hires_badge_help">ใช้คำว่า Hi-Res แทน Lossless สำหรับสตรีมความละเอียดสูง</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1316,5 +1325,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

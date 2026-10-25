@@ -12,6 +12,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Turns a queued track into an openable stream, using whichever source can
@@ -295,6 +296,57 @@ object SourceResolver {
         TrackLog.d(
             TAG,
             "warmed: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+        )
+        return stream
+    }
+
+    /**
+     * Chooses the copy a queued track should open on, with the length of the
+     * track in front of it to do the choosing.
+     *
+     * [substituteForYouTube] takes the first usable answer because a listener
+     * is waiting for the next note. This runs while the *previous* track is
+     * still playing, so it can afford the patient version of the same search:
+     * every candidate is asked, and the best rendition among the answers wins
+     * ([bestAcross] with [waitForAll]) instead of whichever source happened to
+     * be quickest. Two things follow, and they are the point of it:
+     *
+     *  - the next track starts on the best copy the enabled sources hold rather
+     *    than on JioSaavn's 320 and then being cut mid-song for a module's
+     *    FLAC — the "highest quality available, per the settings" case; and
+     *  - playback has a pinned stream before it needs one, so the resolve race
+     *    that used to run between two tracks (and was measured at 0.4s to
+     *    13.5s) simply does not happen at the hand-over.
+     *
+     * Bounded by [PREPARE_BUDGET_MS]. A module search is measured at 7-13s; a
+     * conversion-based source can take minutes, which is longer than the next
+     * track can be held for. Answers inside the budget are kept and the rest
+     * are dropped — the live path still asks the same sources if it needs to.
+     *
+     * The caller must pin the result with [StreamChoice] before caching a byte
+     * of it: see [prefetchSubstitute], which has the same requirement and the
+     * corruption that follows from skipping it.
+     */
+    suspend fun prepareForPlayback(target: TrackMatcher.Target): SourceStream? {
+        if (target.title.isBlank() || target.isVideo) return null
+        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
+        if (candidates.isEmpty()) return null
+        val (source, stream) = bestAcross(
+            candidates,
+            target,
+            requestForNow(),
+            waitForAll = true,
+            waitMs = PREPARE_BUDGET_MS,
+            // Only when the queue row carried a runtime. A strict search against
+            // a null one matches nothing rather than matching loosely — see
+            // matchAndStream — so it is opted into, not defaulted on.
+            strictLength = target.durationSec != null,
+            requireSharedArtist = true,
+        ) ?: return null
+        TrackLog.d(
+            TAG,
+            "prepared next: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +
+                if (stream.belowRequest) " (below request)" else "",
         )
         return stream
     }
@@ -786,6 +838,11 @@ object SourceResolver {
      * usable stream and cancelled the rest, which could discard an exact Tidal
      * FLAC or JioSaavn 320 result during an upgrade.
      *
+     * @param waitMs how long the patient mode may keep the search open. Only
+     *   read when [waitForAll] is true, because nothing else waits at all. A
+     *   caller preparing a track before it plays gives a budget it can afford;
+     *   the background upgrade keeps the default and waits however long the
+     *   sources take.
      * @return the winning source alongside its stream, so callers can name it in
      *   a log line without searching the list again.
      */
@@ -794,6 +851,7 @@ object SourceResolver {
         target: TrackMatcher.Target,
         request: StreamRequest,
         waitForAll: Boolean = false,
+        waitMs: Long = Long.MAX_VALUE,
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
         accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
@@ -813,7 +871,7 @@ object SourceResolver {
             }
             .toMutableList()
         var best: Pair<MusicSource, SourceStream>? = null
-        try {
+        val collect: suspend () -> Unit = {
             while (running.isNotEmpty()) {
                 val first = select {
                     running.forEach { candidate -> candidate.onAwait { candidate } }
@@ -836,6 +894,18 @@ object SourceResolver {
                 // patient result. Let every source finish so a fast lower tier
                 // cannot cancel a later, better rendition.
                 if (best != null && !waitForAll) break
+            }
+        }
+        try {
+            // The budget bounds patient callers, never the live path: a queue's
+            // next track has a finite amount of time before the hand-over, and
+            // a source whose stream is a conversion job can take longer than
+            // that. Whatever has arrived by the deadline is still worth having;
+            // the finally below is what stops the laggards.
+            if (waitForAll && waitMs != Long.MAX_VALUE) {
+                withTimeoutOrNull(waitMs) { collect() }
+            } else {
+                collect()
             }
         } finally {
             running.forEach { it.cancel() }
@@ -1116,6 +1186,17 @@ object SourceResolver {
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")
         null
     }
+
+    /**
+     * How long [prepareForPlayback] keeps its search open.
+     *
+     * Past the slowest module measured (13.5s) with room for a second attempt,
+     * and short enough that a source whose stream is a conversion job cannot
+     * hold the answer for a track that is about to be needed. Whatever answered
+     * inside the budget still counts; the live path asks the rest again if it
+     * has to.
+     */
+    private const val PREPARE_BUDGET_MS = 20_000L
 
     /**
      * How many answers per query are worth weighing.

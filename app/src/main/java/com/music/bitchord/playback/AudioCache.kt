@@ -938,6 +938,12 @@ object AudioCache {
             // reverted track resolves through YouTube, which is what it warms.
             val pinnedToYouTube = OriginalVersion.isPinned(next)
             scope.launch {
+                // Measured from the queue change, not from whenever the patient
+                // search below returns: that search can take seconds, and a
+                // settle delay counted after it would push the byte fetch out
+                // past the point the track is needed — exactly the gap this
+                // read-ahead exists to close.
+                val readyAt = SystemClock.elapsedRealtime() + PREFETCH_DELAY_MS
                 // With substitution on, the *bytes* half above used to be
                 // switched off outright, and the paragraph explaining why is
                 // still correct as far as it goes: read-ahead resolving to
@@ -945,21 +951,35 @@ object AudioCache {
                 // higher-ranked source is about to fill.
                 //
                 // What it treated as impossible was knowing the answer in
-                // advance. A quick source can be asked *here* — see
-                // [SourceResolver.prefetchSubstitute] — and once its stream is
+                // advance. A source can be asked *here* — see
+                // [SourceResolver.prepareForPlayback] — and once its stream is
                 // recorded in [StreamChoice], the question stops being open:
                 // every later resolve for this track, read-ahead's own included,
                 // is held to that one stream. Both writers then agree on the
                 // file and on the `#alt` key it lands under, which is exactly
                 // the condition the byte half was missing.
                 //
-                // A source that is disabled, doesn't have the track, or fails
-                // leaves nothing pinned, and this falls through to the same
-                // URL-only warm-up it did before — YouTube resolves the track at
-                // playback time as usual.
-                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
-                    runCatching { SourceResolver.prefetchSubstitute(target) }
-                        .onFailure { TrackLog.d(TAG, "warm-up substitute failed for $next: ${it.message}", about = next) }
+                // The old shape asked only [SourceKind.worthPrefetching]
+                // sources, which excluded every addon and module — so the case
+                // this is for, a listener whose sources are addons (or whose
+                // YouTube is off), got no preparation at all and paid the live
+                // race between the tracks. The patient pass asks every ranked
+                // source and starts as soon as the queue is known, so a slow
+                // lookup that takes ten seconds is done long before the track
+                // is needed rather than after.
+                //
+                // A pin somebody else already made — the analyzer's copy
+                // fallback, or a search warm-up — is the identity playback will
+                // read, so it is reused rather than replaced: a second stream
+                // pinned over it could write one server's bytes at the offsets
+                // another server had filled.
+                val alreadyPinned = StreamChoice.of(next)
+                    ?.takeIf { !pinnedToYouTube && StreamChoice.isSubstitute(next) }
+                val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
+                    runCatching { SourceResolver.prepareForPlayback(target) }
+                        .onFailure {
+                            TrackLog.d(TAG, "next-track preparation failed for $next: ${it.message}", about = next)
+                        }
                         .getOrNull()
                         ?.also { StreamChoice.remember(next, it, substituted = true) }
                 } else {
@@ -970,20 +990,31 @@ object AudioCache {
                 // source has been pinned and every writer now resolves to it.
                 // With YouTube switched off the first case no longer exists:
                 // an unpinned entry would be filled from a source the listener
-                // turned off, so only a warmed substitute is worth caching.
-                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube &&
-                    (warmed != null || SourceRegistry.youtubeEnabled())
+                // turned off, so only a prepared substitute is worth caching.
+                val cacheBytes = (!substitutable || prepared != null) && !pinnedToYouTube &&
+                    (prepared != null || SourceRegistry.youtubeEnabled())
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
-                        delay(PREFETCH_DELAY_MS)
+                        val wait = readyAt - SystemClock.elapsedRealtime()
+                        if (wait > 0) delay(wait)
                         fetch(next, 0, PRELOAD_BYTES)
                         // Enough to start the track is worth having everywhere.
                         // The rest is a guess about where the listener will
                         // seek, and a whole-track download of a guess is what
                         // waits for a screen, a charger or an unmetered link.
-                        val context = appContext
-                        if (context == null || PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) {
-                            fetchWhole(next)
+                        //
+                        // YouTube's own file only. [fetchWhole] sizes its ranges
+                        // from [StreamResolver]'s answer for the video id, which
+                        // knows nothing about an addon's copy — asking for
+                        // YouTube's offsets against another server's bytes
+                        // would stop short or run past the end. A prepared
+                        // substitute's opening is what a hand-over reads; the
+                        // rest streams while the track plays.
+                        if (prepared == null) {
+                            val context = appContext
+                            if (context == null || PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) {
+                                fetchWhole(next)
+                            }
                         }
                     }
                 }
@@ -993,13 +1024,14 @@ object AudioCache {
                 // walk — so minting them would spend network on every queued
                 // track for a cache entry nothing reads.
                 if (SourceRegistry.youtubeEnabled()) launch {
-                    delay(PREFETCH_DELAY_MS)
+                    val wait = readyAt - SystemClock.elapsedRealtime()
+                    if (wait > 0) delay(wait)
                     for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
                         // A track already pinned to another source has no use
                         // for a YouTube URL: nothing will ask for one, and
                         // minting it spends a client walk to fill a cache entry
                         // that is never read.
-                        if (id == next && warmed != null) continue
+                        if (id == next && prepared != null) continue
                         runCatching { StreamResolver.resolve(id) }
                             .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}", about = id) }
                         delay(QUEUE_RESOLVE_STAGGER_MS)

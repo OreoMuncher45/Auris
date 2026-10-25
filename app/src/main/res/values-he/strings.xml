@@ -1314,6 +1314,15 @@
     <string name="custom_transport_smoothness">החלקת פינות כפתורי השליטה</string>
     <string name="custom_transport_smoothness_help">מעגל את כפתורי הנגן, ההשהיה והדילוג. ב-0 נשמרת הפינה החדה; ב-100 הצורה רכה אך עדיין משולש.</string>
     <string name="custom_smoothness_reset">איפוס החלקת הפינות</string>
+    <string name="custom_indicators">מחווני מצב</string>
+    <string name="custom_next_track_status">מצב השיר הבא</string>
+    <string name="custom_next_track_status_help">שורת ה-Automix מתחת לעטיפה שמציגה את הניתוח של השיר הזה והשיר הבא.</string>
+    <string name="custom_upgrade_badge">תג שדרוג איכות</string>
+    <string name="custom_upgrade_badge_help">מציג תג כל עוד מחפשים עותק טוב יותר של הרצועה.</string>
+    <string name="custom_lossless_badge">תג Lossless</string>
+    <string name="custom_lossless_badge_help">מציג תג כשהזרם המפוענח הוא ללא אובדן.</string>
+    <string name="custom_hires_badge">תג Hi-Res</string>
+    <string name="custom_hires_badge_help">מעדיף את הכיתוב Hi-Res על פני Lossless עבור זרמים ברזולוציה גבוהה.</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1338,5 +1347,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

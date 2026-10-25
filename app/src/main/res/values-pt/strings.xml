@@ -1314,6 +1314,15 @@
     <string name="custom_transport_smoothness">Suavização dos cantos dos controlos</string>
     <string name="custom_transport_smoothness_help">Arredonda os botões de reproduzir, pausar e avançar. Em 0 mantém o canto afiado; em 100 a forma fica suave mas continua um triângulo.</string>
     <string name="custom_smoothness_reset">Repor suavização</string>
+    <string name="custom_indicators">Indicadores de estado</string>
+    <string name="custom_next_track_status">Estado da próxima faixa</string>
+    <string name="custom_next_track_status_help">A linha do Automix sob a capa que mostra a análise desta faixa e da próxima.</string>
+    <string name="custom_upgrade_badge">Selo de melhoria de qualidade</string>
+    <string name="custom_upgrade_badge_help">Mostra um selo enquanto uma cópia melhor da faixa ainda está sendo procurada.</string>
+    <string name="custom_lossless_badge">Selo Lossless</string>
+    <string name="custom_lossless_badge_help">Mostra um selo quando o stream decodificado é sem perdas.</string>
+    <string name="custom_hires_badge">Selo Hi-Res</string>
+    <string name="custom_hires_badge_help">Prefere o rótulo Hi-Res em vez de Lossless para streams de alta resolução.</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1338,5 +1347,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

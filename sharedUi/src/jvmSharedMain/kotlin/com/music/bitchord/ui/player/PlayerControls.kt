@@ -331,6 +331,10 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!showNerdStats) return
+    // Its own switch rather than riding on [showNerdStats]: the measured line
+    // above answers "what is playing", this one answers "what is the app doing
+    // about the next song", and either is worth having without the other.
+    val showNextStatus by PlayerSettings.showNextTrackStatus.collectAsStateWithLifecycle()
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val smartAnalysis by PlayerSettings.smartAnalysis.collectAsStateWithLifecycle()
@@ -373,7 +377,7 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
         // Only when Automix is actually switched on: otherwise this would
         // report on analysis nothing is going to use, which is noise rather
         // than a stat.
-        if (smartFadeOn) {
+        if (smartFadeOn && showNextStatus) {
             Text(
                 // Both sides always named, even when they agree, so the line
                 // reads the same way every time and the eye can find the half
@@ -1475,6 +1479,14 @@ private fun LosslessOrStats(
     nerdStats: NerdStats.Snapshot?,
     modifier: Modifier = Modifier,
 ) {
+    // Three switches, because the three read as three different claims: "we
+    // are still looking", "this is lossless", "this is beyond CD". Someone
+    // decluttering the player may want to keep the last and drop the first.
+    // A hidden lossless badge hides its Hi-Res wording with it — the finer
+    // label lives inside that badge, not beside it.
+    val showUpgrade by PlayerSettings.showUpgradeBadge.collectAsStateWithLifecycle()
+    val showLossless by PlayerSettings.showLosslessBadge.collectAsStateWithLifecycle()
+    val showHiRes by PlayerSettings.showHiResBadge.collectAsStateWithLifecycle()
     when {
         // Still resolving — either the player itself is buffering, or a
         // module is still racing YouTube for this track in the background
@@ -1498,7 +1510,7 @@ private fun LosslessOrStats(
         // only a genuinely unmeasured track — or a real race via
         // [stillRacing] — earns this label.
         (stillRacing && nerdStats?.isLossless != true) ||
-            (isLoading && losslessRequested && nerdStats == null) -> LosslessLabel(
+            (isLoading && losslessRequested && nerdStats == null) -> if (showUpgrade) LosslessLabel(
             // What is already true, ahead of what is still being looked for.
             // A race running over JioSaavn's 320kbps AAC and one running over
             // YouTube's 160kbps Opus were both drawn as a bare "Upgrading
@@ -1527,10 +1539,13 @@ private fun LosslessOrStats(
             animated = false,
             modifier = modifier,
         )
-        nerdStats?.isLossless == true -> LosslessLabel(
+        showLossless && nerdStats?.isLossless == true -> LosslessLabel(
             // Same line Tidal, Lossless and Apple Music draw it at — see
-            // [NerdStats.Snapshot.isHiRes].
-            text = stringResource(if (nerdStats.isHiRes) Res.string.hi_res_lossless else Res.string.lossless),
+            // [NerdStats.Snapshot.isHiRes]. The Hi-Res wording is a switch of
+            // its own: turning it off keeps the badge and drops the claim.
+            text = stringResource(
+                if (nerdStats.isHiRes && showHiRes) Res.string.hi_res_lossless else Res.string.lossless,
+            ),
             // Apple's lossless glyph, as upstream v1.8.1 draws it here.
             iconPainter = painterResource(Res.drawable.ic_lossless),
             // Shimmer is reserved for the thing that was asked for and

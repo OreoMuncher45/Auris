@@ -1457,6 +1457,45 @@ class SourcesTest {
         assertFalse("the patient lookup cancelled the later source", slowLossless.cancelled)
     }
 
+    /**
+     * The patient path is not allowed to be infinitely patient. A queued track
+     * can be minutes away, not hours, and a source whose stream is a conversion
+     * job can outlast the track in front of it. The budget keeps the best
+     * answer that arrived in time and drops the rest.
+     */
+    @Test
+    fun `a patient search stops at its budget and keeps what arrived`() = runBlocking {
+        val quickLossy = FakeSource("JioSaavn", answerAfterMs = 0, format = StreamFormat("mp4", kbps = 320))
+        val slowLossless = FakeSource("Ricky's Addon", answerAfterMs = 2_000, format = StreamFormat("flac"))
+        val (source, stream) = SourceResolver.bestAcross(
+            listOf(quickLossy, slowLossless),
+            raceTarget(),
+            StreamRequest.Lossless,
+            waitForAll = true,
+            waitMs = 300,
+        )!!
+        assertEquals("JioSaavn", source.displayName)
+        assertEquals(320, stream.format.kbps)
+        assertTrue("the budget left the slow source running", slowLossless.cancelled)
+    }
+
+    /** Nothing answered inside the budget: that is a miss for now, not a hang. */
+    @Test
+    fun `a patient search with no answer in budget reports nothing`() = runBlocking {
+        val a = FakeSource("Ricky's Addon", answerAfterMs = 2_000, format = StreamFormat("flac"))
+        val b = FakeSource("JioSaavn", answerAfterMs = 2_000, format = StreamFormat("mp4", kbps = 320))
+        assertNull(
+            SourceResolver.bestAcross(
+                listOf(a, b),
+                raceTarget(),
+                StreamRequest.Lossless,
+                waitForAll = true,
+                waitMs = 150,
+            ),
+        )
+        assertTrue("the budget left a source running", a.cancelled && b.cancelled)
+    }
+
     @Test
     fun `upgrade refuses same title and runtime from a different artist`() = runBlocking {
         val wrongMexico = FakeSource(

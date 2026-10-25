@@ -1286,6 +1286,15 @@
     <string name="custom_transport_smoothness">播放按钮边角圆润度</string>
     <string name="custom_transport_smoothness_help">让播放、暂停和跳过按钮的边角更圆。0 保留原来的尖角，100 更柔和但仍保留三角形。</string>
     <string name="custom_smoothness_reset">重置圆润度</string>
+    <string name="custom_indicators">状态指示</string>
+    <string name="custom_next_track_status">下一首状态</string>
+    <string name="custom_next_track_status_help">封面下方的 Automix 行，显示当前歌曲和下一首歌曲的分析状态。</string>
+    <string name="custom_upgrade_badge">音质升级标记</string>
+    <string name="custom_upgrade_badge_help">在寻找更好音源期间显示标记。</string>
+    <string name="custom_lossless_badge">无损标记</string>
+    <string name="custom_lossless_badge_help">当解码的音频流无损时显示标记。</string>
+    <string name="custom_hires_badge">高解析标记</string>
+    <string name="custom_hires_badge_help">高解析音频流优先显示 Hi-Res 而非无损。</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1310,5 +1319,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

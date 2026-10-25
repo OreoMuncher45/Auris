@@ -1226,6 +1226,15 @@
     <string name="custom_transport_smoothness">Độ mềm góc nút điều khiển</string>
     <string name="custom_transport_smoothness_help">Bo tròn các nút phát, tạm dừng và chuyển bài. Ở mức 0 vẫn giữ cạnh sắc cũ; ở mức 100 hình dạng mềm hơn nhưng vẫn là hình tam giác.</string>
     <string name="custom_smoothness_reset">Đặt lại độ mềm</string>
+    <string name="custom_indicators">Chỉ báo trạng thái</string>
+    <string name="custom_next_track_status">Trạng thái bài tiếp theo</string>
+    <string name="custom_next_track_status_help">Dòng Automix dưới bìa đĩa hiển thị phân tích của bài này và bài tiếp theo.</string>
+    <string name="custom_upgrade_badge">Huy hiệu nâng cấp chất lượng</string>
+    <string name="custom_upgrade_badge_help">Hiển thị huy hiệu khi vẫn đang tìm bản nhạc chất lượng tốt hơn.</string>
+    <string name="custom_lossless_badge">Huy hiệu Lossless</string>
+    <string name="custom_lossless_badge_help">Hiển thị huy hiệu khi luồng đang giải mã là không mất dữ liệu.</string>
+    <string name="custom_hires_badge">Huy hiệu Hi-Res</string>
+    <string name="custom_hires_badge_help">Ưu tiên nhãn Hi-Res thay vì Lossless cho luồng độ phân giải cao.</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1250,5 +1259,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

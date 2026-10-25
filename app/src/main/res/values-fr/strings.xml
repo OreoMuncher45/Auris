@@ -1310,6 +1310,15 @@
     <string name="custom_transport_smoothness">Arrondi des coins des commandes</string>
     <string name="custom_transport_smoothness_help">Arrondit les boutons lecture, pause et suivant. À 0, le bord reste net ; à 100, la forme est douce mais reste un triangle.</string>
     <string name="custom_smoothness_reset">Réinitialiser l’arrondi</string>
+    <string name="custom_indicators">Indicateurs d’état</string>
+    <string name="custom_next_track_status">État du morceau suivant</string>
+    <string name="custom_next_track_status_help">La ligne Automix sous la pochette qui indique l’analyse de ce morceau et du suivant.</string>
+    <string name="custom_upgrade_badge">Badge de mise à niveau qualité</string>
+    <string name="custom_upgrade_badge_help">Affiche un badge tant qu’une meilleure version du morceau est recherchée.</string>
+    <string name="custom_lossless_badge">Badge Lossless</string>
+    <string name="custom_lossless_badge_help">Affiche un badge lorsque le flux décodé est sans perte.</string>
+    <string name="custom_hires_badge">Badge Hi-Res</string>
+    <string name="custom_hires_badge_help">Préfère la mention Hi-Res à Lossless pour les flux haute résolution.</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1334,5 +1343,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

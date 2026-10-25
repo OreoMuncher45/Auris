@@ -1341,6 +1341,15 @@
     <string name="custom_transport_smoothness">Сглаживание углов кнопок управления</string>
     <string name="custom_transport_smoothness_help">Скругляет кнопки воспроизведения, паузы и перехода. При 0 остаётся прежний острый край; при 100 форма мягкая, но остаётся треугольником.</string>
     <string name="custom_smoothness_reset">Сбросить сглаживание</string>
+    <string name="custom_indicators">Индикаторы состояния</string>
+    <string name="custom_next_track_status">Состояние следующей песни</string>
+    <string name="custom_next_track_status_help">Строка Automix под обложкой с анализом этой и следующей песни.</string>
+    <string name="custom_upgrade_badge">Значок улучшения качества</string>
+    <string name="custom_upgrade_badge_help">Показывает значок, пока ищется более качественная копия трека.</string>
+    <string name="custom_lossless_badge">Значок Lossless</string>
+    <string name="custom_lossless_badge_help">Показывает значок, когда декодируемый поток без потерь.</string>
+    <string name="custom_hires_badge">Значок Hi-Res</string>
+    <string name="custom_hires_badge_help">Предпочитает подпись Hi-Res вместо Lossless для потоков высокого разрешения.</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1365,5 +1374,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

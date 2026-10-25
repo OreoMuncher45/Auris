@@ -163,6 +163,14 @@ interface PlayerSettingsSource {
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>
+    /** Whether the Automix "this song / next song" line under the sleeve is drawn. */
+    val showNextTrackStatus: StateFlow<Boolean>
+    /** Whether the "Upgrading quality" badge is drawn while a better copy is sought. */
+    val showUpgradeBadge: StateFlow<Boolean>
+    /** Whether the "Lossless" badge is drawn for a losslessly decoded stream. */
+    val showLosslessBadge: StateFlow<Boolean>
+    /** Whether that badge may say "Hi-Res Lossless" instead of "Lossless". */
+    val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
     val smartFadeEnabled: StateFlow<Boolean>
     /** True only while an analysed Automix transition is audibly mixing two tracks. */

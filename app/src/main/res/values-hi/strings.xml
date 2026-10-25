@@ -1309,6 +1309,15 @@
     <string name="custom_transport_smoothness">ट्रांसपोर्ट कोनों की चिकनाई</string>
     <string name="custom_transport_smoothness_help">प्ले, पॉज़ और स्किप बटन के कोनों को गोल करता है। 0 पर पुराना तेज़ किनारा रहता है; 100 पर आकार मुलायम है लेकिन फिर भी त्रिकोण है।</string>
     <string name="custom_smoothness_reset">चिकनाई रीसेट करें</string>
+    <string name="custom_indicators">स्थिति संकेतक</string>
+    <string name="custom_next_track_status">अगले गाने की स्थिति</string>
+    <string name="custom_next_track_status_help">कवर के नीचे Automix की पंक्ति जो इस और अगले गाने का विश्लेषण दिखाती है।</string>
+    <string name="custom_upgrade_badge">क्वालिटी अपग्रेड बैज</string>
+    <string name="custom_upgrade_badge_help">जब तक ट्रैक की बेहतर कॉपी खोजी जा रही है, तब तक बैज दिखाता है।</string>
+    <string name="custom_lossless_badge">लॉसलेस बैज</string>
+    <string name="custom_lossless_badge_help">डिकोड हो रही स्ट्रीम लॉसलेस होने पर बैज दिखाता है।</string>
+    <string name="custom_hires_badge">हाई-रेस बैज</string>
+    <string name="custom_hires_badge_help">हाई-रेज़ोल्यूशन स्ट्रीम के लिए सिर्फ़ लॉसलेस की जगह हाई-रेस शब्द पसंद करता है।</string>
     <string name="jamesdsp">JamesDSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
@@ -1333,5 +1342,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>

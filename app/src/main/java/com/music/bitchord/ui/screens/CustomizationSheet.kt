@@ -109,6 +109,10 @@ private fun NowPlayingCustomization() {
     val recents by AppSettings.recentPlayerColors.collectAsStateWithLifecycle()
     val textGlow by AppSettings.textGlow.collectAsStateWithLifecycle()
     val showLyricLine by AppSettings.showNowPlayingLyrics.collectAsStateWithLifecycle()
+    val nextStatus by AppSettings.showNextTrackStatus.collectAsStateWithLifecycle()
+    val upgradeBadge by AppSettings.showUpgradeBadge.collectAsStateWithLifecycle()
+    val losslessBadge by AppSettings.showLosslessBadge.collectAsStateWithLifecycle()
+    val hiResBadge by AppSettings.showHiResBadge.collectAsStateWithLifecycle()
     val smoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
     var picking by remember { mutableStateOf<AppSettings.PlayerColorTarget?>(null) }
 
@@ -177,6 +181,39 @@ private fun NowPlayingCustomization() {
             )
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+        Text(
+            text = stringResource(R.string.custom_indicators),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 16.dp, start = 4.dp),
+        )
+        // Every one defaults on; each is a separate claim the player makes, so
+        // each gets its own switch rather than one "hide status" master.
+        IndicatorToggle(
+            title = stringResource(R.string.custom_next_track_status),
+            help = stringResource(R.string.custom_next_track_status_help),
+            checked = nextStatus,
+            onCheckedChange = AppSettings::setShowNextTrackStatus,
+        )
+        IndicatorToggle(
+            title = stringResource(R.string.custom_upgrade_badge),
+            help = stringResource(R.string.custom_upgrade_badge_help),
+            checked = upgradeBadge,
+            onCheckedChange = AppSettings::setShowUpgradeBadge,
+        )
+        IndicatorToggle(
+            title = stringResource(R.string.custom_lossless_badge),
+            help = stringResource(R.string.custom_lossless_badge_help),
+            checked = losslessBadge,
+            onCheckedChange = AppSettings::setShowLosslessBadge,
+        )
+        IndicatorToggle(
+            title = stringResource(R.string.custom_hires_badge),
+            help = stringResource(R.string.custom_hires_badge_help),
+            checked = hiResBadge,
+            onCheckedChange = AppSettings::setShowHiResBadge,
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
         TransportSmoothnessSetting(smoothness)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
         if (recents.isNotEmpty()) {
@@ -233,6 +270,31 @@ private fun NowPlayingCustomization() {
             },
             onDismiss = { picking = null },
         )
+    }
+}
+
+@Composable
+private fun IndicatorToggle(
+    title: String,
+    help: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(text = title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = help,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

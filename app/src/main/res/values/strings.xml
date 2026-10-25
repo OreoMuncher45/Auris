@@ -1280,6 +1280,15 @@
     <string name="custom_transport_smoothness">Transport corner smoothness</string>
     <string name="custom_transport_smoothness_help">Rounds the play, pause and skip buttons. At 0 the old sharp edge stays; at 100 the glyph is soft but still a triangle.</string>
     <string name="custom_smoothness_reset">Reset smoothness</string>
+    <string name="custom_indicators">Status indicators</string>
+    <string name="custom_next_track_status">Next song status</string>
+    <string name="custom_next_track_status_help">The Automix line under the artwork that reports this and the next song\'s analysis.</string>
+    <string name="custom_upgrade_badge">Quality upgrade badge</string>
+    <string name="custom_upgrade_badge_help">Shows a badge while a better copy of the track is still being looked for.</string>
+    <string name="custom_lossless_badge">Lossless badge</string>
+    <string name="custom_lossless_badge_help">Shows a badge when the stream being decoded is lossless.</string>
+    <string name="custom_hires_badge">Hi-Res badge</string>
+    <string name="custom_hires_badge_help">Prefers the Hi-Res wording over plain Lossless for high-resolution streams.</string>
     <string name="custom_use_artwork">Use artwork</string>
     <string name="custom_home_help">Quick Picks and Flow stay pinned at the top. Move the categories below them. Flow can be hidden without affecting Quick Picks.</string>
     <string name="custom_home_empty">More Home categories appear here once the feed has loaded.</string>
@@ -1304,5 +1313,4 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
-    <string name="community_star_github">Star on GitHub</string>
 </resources>
