@@ -2435,13 +2435,20 @@ class PlaybackService : MediaLibraryService() {
     /** How a proved upgrade got onto the session player. */
     private enum class UpgradeSwap { Crossfaded, Fallback, Abandoned, Failed }
 
+    /** Ready with the clock moving: both a held buffer and an extracted frame. */
+    private fun Player.isProducingAudio(): Boolean =
+        playbackState == Player.STATE_READY && isPlaying
+
     /**
      * Blends the proved upgrade in on the standby player instead of cutting the
      * audio while the active one rebuilds its source.
      *
      * The audition has already filled the same on-disk cache entry this player
      * reads from and proved the decoder can open it, so what is left here is a
-     * seek and a start. The two sides then overlap for
+     * seek and a start — but both have to be *seen to work* before the original
+     * gives up any volume. A standby that is merely READY can still be about to
+     * re-buffer, and fading over it is how this first shipped as a fade-out
+     * followed by the old 0.5s hole. The two sides then overlap for
      * [UPGRADE_CROSSFADE_MS] on equal-power curves, and the incoming player is
      * adopted without track-change bookkeeping — it is the same song.
      *
@@ -2541,25 +2548,63 @@ class PlaybackService : MediaLibraryService() {
             // wasted.
             if (!active.isPlaying) return UpgradeSwap.Fallback
 
-            // The same collapsing sequence as [smoothSwapCurrentTrackVersion]:
-            // get it running first, then seek to where the listener is *now*,
-            // so the drift the prepare spent lands inside a buffer already
-            // held.
+            // The item was prepared at the position the listener held when the
+            // fade was armed; the original has kept playing while it buffered.
+            // Wait for the loader to cover where the listener is *now*, too: a
+            // forward seek past the end of the buffer is the same 0.5s
+            // re-buffer the direct swap used to pay, and fading the original
+            // out over it would hide nothing.
+            val alignBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_ALIGN_MS
+            while (currentCoroutineContext().isActive) {
+                if (player !== active || active.currentMediaItemIndex != index ||
+                    active.currentMediaItem?.mediaId != mediaId
+                ) {
+                    return UpgradeSwap.Abandoned
+                }
+                val error = standby.playerError
+                if (error != null || standby.playbackState == Player.STATE_ENDED) {
+                    return UpgradeSwap.Failed
+                }
+                // A negative buffered position means "not reported" (some
+                // manifest sources); the start and advance proofs below still
+                // catch a seek that has to go back to the network.
+                val buffered = standby.bufferedPosition
+                if (buffered < 0 || buffered >= active.currentPosition + UPGRADE_FADE_BUFFER_AHEAD_MS) break
+                if (SystemClock.elapsedRealtime() >= alignBy) {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade fade buffer did not reach the live position; swapping directly",
+                        about = mediaId,
+                    )
+                    return UpgradeSwap.Fallback
+                }
+                delay(20)
+            }
+            if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
+            if (!active.isPlaying) return UpgradeSwap.Fallback
+
+            // The same collapsing sequence as [smoothSwapCurrentTrackVersion],
+            // tightened: start it muted, then put it where the listener is now,
+            // and only accept the result while it is genuinely running. READY
+            // alone is not enough — a seek can report READY and then re-buffer —
+            // and a blend that starts on a silent incoming side is exactly the
+            // fade-out-then-hole this path exists to remove.
             standby.seekTo(index, active.currentPosition)
             standby.play()
             val startBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_START_MS
-            while (currentCoroutineContext().isActive && !standby.isPlaying &&
+            while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
                 SystemClock.elapsedRealtime() < startBy
             ) {
                 delay(10)
             }
-            if (!standby.isPlaying) {
+            if (standby.playerError != null) return UpgradeSwap.Failed
+            if (!standby.isProducingAudio()) {
                 TrackLog.d("BitChord", "upgrade fade standby never started; swapping directly", about = mediaId)
                 return UpgradeSwap.Fallback
             }
             standby.seekTo(index, active.currentPosition)
             val resyncBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_RESYNC_MS
-            while (currentCoroutineContext().isActive && standby.playbackState != Player.STATE_READY &&
+            while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
                 SystemClock.elapsedRealtime() < resyncBy
             ) {
                 delay(10)
@@ -2568,6 +2613,22 @@ class PlaybackService : MediaLibraryService() {
                 active.currentMediaItem?.mediaId != mediaId
             ) {
                 return UpgradeSwap.Abandoned
+            }
+            if (!standby.isProducingAudio()) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade standby re-buffered after the live seek; swapping directly",
+                    about = mediaId,
+                )
+                return UpgradeSwap.Fallback
+            }
+            // Prove it is advancing samples, not merely flagged playing for the
+            // tick before the seek's load task reports BUFFERING.
+            val probeAt = standby.currentPosition
+            delay(80)
+            if (!standby.isProducingAudio() || standby.currentPosition <= probeAt) {
+                TrackLog.d("BitChord", "upgrade fade standby is not advancing; swapping directly", about = mediaId)
+                return UpgradeSwap.Fallback
             }
 
             // Never blend into the track's own ending: both players would then
@@ -2580,9 +2641,17 @@ class PlaybackService : MediaLibraryService() {
                 minOf(UPGRADE_CROSSFADE_MS, remaining - 3_000L)
             }
 
+            TrackLog.d(
+                "BitChord",
+                "upgrade fade armed: standby at ${standby.currentPosition}ms, buffered through " +
+                    "${standby.bufferedPosition}ms, live at ${active.currentPosition}ms",
+                about = mediaId,
+            )
+
             var progress = 0f
             var lastTick = SystemClock.elapsedRealtime()
             var pausedSince: Long? = null
+            var stalledSince: Long? = null
             while (currentCoroutineContext().isActive) {
                 val tick = SystemClock.elapsedRealtime()
                 val delta = tick - lastTick
@@ -2593,26 +2662,42 @@ class PlaybackService : MediaLibraryService() {
                     return UpgradeSwap.Abandoned
                 }
                 if (standby.playerError != null) return UpgradeSwap.Failed
-                if (active.isPlaying) {
+                if (standby.playWhenReady != active.playWhenReady) {
+                    standby.playWhenReady = active.playWhenReady
+                }
+                val activeRunning = active.isPlaying
+                val standbyRunning = standby.isProducingAudio()
+                if (activeRunning && standbyRunning) {
                     pausedSince = null
-                    // Frozen while paused, so a pause and resume picks the
-                    // blend up rather than jumping it to wherever the clock got
-                    // to.
+                    stalledSince = null
+                    // Frozen whenever either side is not running, so a pause or
+                    // a re-buffer picks the blend up rather than jumping it to
+                    // wherever the clock got to.
                     progress = (progress + delta.toFloat() / fadeMs).coerceAtMost(1f)
+                    // A listener seek moves only the active player. Follow it
+                    // rather than let the two recordings part company.
+                    if (abs(active.currentPosition - standby.currentPosition) > UPGRADE_FADE_MAX_DRIFT_MS) {
+                        standby.seekTo(index, active.currentPosition)
+                    }
+                } else if (activeRunning) {
+                    // The incoming side stalled after it was proved running — a
+                    // seek crossed the end of its buffer, or the network
+                    // hiccupped. Hold the blend where it is instead of fading
+                    // the original into silence; if it does not catch up, let
+                    // the direct swap have the track.
+                    pausedSince = null
+                    val since = stalledSince ?: tick.also { stalledSince = tick }
+                    if (tick - since >= UPGRADE_FADE_STALL_MS) {
+                        TrackLog.d("BitChord", "upgrade fade standby stalled; swapping directly", about = mediaId)
+                        return UpgradeSwap.Fallback
+                    }
                 } else {
+                    stalledSince = null
                     val since = pausedSince ?: tick.also { pausedSince = tick }
                     if (tick - since >= UPGRADE_FADE_PAUSE_MS) {
                         TrackLog.d("BitChord", "upgrade fade paused out; swapping directly", about = mediaId)
                         return UpgradeSwap.Fallback
                     }
-                }
-                if (standby.playWhenReady != active.playWhenReady) {
-                    standby.playWhenReady = active.playWhenReady
-                }
-                // A listener seek moves only the active player. Follow it
-                // rather than let the two recordings part company.
-                if (abs(active.currentPosition - standby.currentPosition) > UPGRADE_FADE_MAX_DRIFT_MS) {
-                    standby.seekTo(index, active.currentPosition)
                 }
                 val inGain = sin(progress * (PI / 2.0)).toFloat()
                 val outGain = cos(progress * (PI / 2.0)).toFloat()
@@ -2623,7 +2708,7 @@ class PlaybackService : MediaLibraryService() {
                 val trim = 1f / sqrt((inGain + outGain).coerceAtLeast(1f))
                 loudnessA.setBlendTrim(trim)
                 loudnessB.setBlendTrim(trim)
-                if (progress >= 1f && active.isPlaying) break
+                if (progress >= 1f && activeRunning && standbyRunning) break
                 delay(16)
             }
             if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
@@ -9036,8 +9121,27 @@ class PlaybackService : MediaLibraryService() {
         /** How long the standby gets to actually start producing audio after `play()`. */
         const val UPGRADE_FADE_START_MS = 600L
 
+        /**
+         * How far past the live position the standby's buffer must reach before
+         * it is seeked there. The item was prepared at the position the
+         * listener held when the fade was armed, and the original keeps playing
+         * while it buffers; without this margin the near-seek crosses the end
+         * of the buffer and re-buffers exactly when the blend begins.
+         */
+        const val UPGRADE_FADE_BUFFER_AHEAD_MS = 3_000L
+
+        /** How long the buffer gets to reach that mark before the direct swap wins. */
+        const val UPGRADE_FADE_ALIGN_MS = 3_000L
+
         /** How long the near-seek to the live position gets to settle before the fade starts. */
-        const val UPGRADE_FADE_RESYNC_MS = 300L
+        const val UPGRADE_FADE_RESYNC_MS = 1_000L
+
+        /**
+         * How long the standby may stall mid-fade before the untouched original
+         * takes the track back. The blend freezes while it waits, so a stall
+         * ducks the song rather than fading it into silence.
+         */
+        const val UPGRADE_FADE_STALL_MS = 1_500L
 
         /**
          * Drift between the two players that is quiet enough to leave alone.

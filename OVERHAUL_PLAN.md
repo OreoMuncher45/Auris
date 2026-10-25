@@ -1137,6 +1137,16 @@ decoder, heard as a hole.
   verified, with `lib/arm64-v8a/libbitchord_jamesdsp.so` and the baseline
   profile packaged. No tag and no GitHub Release. Listening test on device is
   the remaining step.
+- Follow-up (2026-10-25), after the owner heard it: the first artifact faded the
+  original out over a standby that was only `STATE_READY`. The live-position
+  seek could still re-buffer, so the blend ran over a silent incoming side and
+  the old ~0.5s hole arrived after the fade — worse than the plain swap. The
+  fade is now gated on proof: the buffer must cover the live position plus 3s
+  before the seek, the player must be `STATE_READY` *and* `isPlaying` after the
+  seek, and its position must be advancing before the original gives up any
+  volume. A mid-fade stall freezes the blend rather than fading into silence;
+  if it does not recover, the untouched original takes the direct swap. The
+  `upgrade fade armed` / `... swapping directly` log lines say which gate fired.
 
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
