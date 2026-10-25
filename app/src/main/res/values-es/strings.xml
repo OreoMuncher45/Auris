@@ -124,6 +124,8 @@
     <string name="play_next">Reproducir después</string>
     <string name="queue">Cola</string>
     <string name="source_setup_required">Toca para terminar la configuración</string>
+    <string name="source_addon_turned_off">El complemento está desactivado.</string>
+    <string name="source_turned_off">Desactivado.</string>
     <string name="source_unreachable">No se puede acceder ahora · %1$s</string>
     <string name="checking">Comprobando…</string>
     <string name="failed">Error</string>
@@ -280,7 +282,6 @@
     <string name="activity_watching">Viendo</string>
     <string name="add_to_queue">Agregar a la cola</string>
     <string name="after_this_song">Después de esta canción</string>
-    <string name="always_on">Siempre activo</string>
     <string name="api_token">Token de API</string>
     <string name="audio_quality_connection">Al usar %1$s</string>
     <string name="back_in_future_version">Volverá en una versión futura</string>
@@ -465,6 +466,7 @@
     <string name="sleep_timer">Temporizador</string>
     <string name="sources_no_lossless">Ninguna fuente activa ofrece audio sin pérdida. Agrega un módulo personalizado para reproducir archivos sin pérdida disponibles sin transcodificarlos.</string>
     <string name="sources_order_footer">Si una fuente no tiene una canción o no responde, Auris prueba la siguiente. Las fuentes situadas antes de YouTube pueden reemplazar su grabación si devuelven una versión mejor.</string>
+    <string name="sources_youtube_off">YouTube Music está desactivado. Solo se usan tus propias fuentes, y un tema que ninguna de ellas tenga no se reproducirá.</string>
     <string name="sources_order_header">Fuentes, en orden de prioridad</string>
     <string name="sources_quality_capped">Esta conexión está configurada por debajo de calidad Alta, así que el audio se transcodifica para respetar ese límite. Las descargas no cambian.</string>
     <string name="jiosaavn_mismatch_warning">Puede elegir la versión equivocada de una canción. Actívalo bajo tu propio riesgo.</string>

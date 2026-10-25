@@ -150,6 +150,8 @@
     <string name="play_next">Riproduci dopo</string>
     <string name="queue">Coda</string>
     <string name="source_setup_required">Tocca per completare la configurazione</string>
+    <string name="source_addon_turned_off">L\'addon è disattivato.</string>
+    <string name="source_turned_off">Disattivato.</string>
     <string name="source_unreachable">Non raggiungibile al momento · %1$s</string>
     <string name="checking">Verifica in corso…</string>
     <string name="failed">Non riuscito</string>
@@ -310,7 +312,6 @@
     <string name="activity_watching">In visione</string>
     <string name="add_to_queue">Aggiungi alla coda</string>
     <string name="after_this_song">Dopo questo brano</string>
-    <string name="always_on">Sempre attivo</string>
     <string name="api_token">Token API</string>
     <string name="audio_quality_connection">Con %1$s</string>
     <string name="back_in_future_version">Tornerà in una versione futura</string>
@@ -499,6 +500,7 @@
     <string name="sleep_timer">Timer di spegnimento</string>
     <string name="sources_no_lossless">Nessuna sorgente attiva può fornire audio lossless. Aggiungi un modulo personalizzato per riprodurre i file lossless disponibili senza transcodifica.</string>
     <string name="sources_order_footer">Se una sorgente non ha un brano o non è raggiungibile, Auris prova la successiva. Le sorgenti sopra YouTube possono sostituire la sua registrazione quando restituiscono una versione migliore.</string>
+    <string name="sources_youtube_off">YouTube Music è disattivato. Vengono usate solo le tue fonti; un brano che nessuna di esse ha non verrà riprodotto.</string>
     <string name="sources_order_header">Sorgenti, provate in quest\'ordine</string>
     <string name="sources_quality_capped">Questa connessione è impostata sotto Alta qualità, quindi gli stream vengono transcodificati per rispettare questo limite. I download non ne risentono.</string>
     <string name="jiosaavn_mismatch_warning">Potrebbe trovare la versione sbagliata di un brano. Attivalo a tuo rischio.</string>

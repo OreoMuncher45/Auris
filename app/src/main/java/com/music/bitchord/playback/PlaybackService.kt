@@ -1441,7 +1441,23 @@ class PlaybackService : MediaLibraryService() {
             // Answer it before StreamChoice, the module race and a pending
             // upgrade can put another source back under the listener.
             if (dataSpec.uri.getQueryParameter(DIRECT_YOUTUBE_PARAMETER) == "1") {
-                QualityUpgrade.forget(videoId)
+                // The switch is honoured here too. An item carries this
+                // parameter when the listener asked for the original or a
+                // substitute failed and can't be retried — both are requests
+                // for YouTube's own bytes, and with YouTube switched off there
+                // are none to serve. Failing says so; resolving anyway would
+                // make the switch a preference rather than a switch.
+                if (!SourceRegistry.youtubeEnabled()) {
+                    throw java.io.IOException(
+                        "YouTube Music is turned off; $videoId asks for its stream directly",
+                    )
+                }
+                // Whatever upgrade was in flight for this item goes with the
+                // rendition, but the listener's own request to look again does
+                // not: this is the item "Upgrade quality" is offered for, and
+                // its own open would otherwise clear the exemption that makes
+                // the request work — see [QualityUpgrade.askByHand].
+                QualityUpgrade.forget(videoId, keepHandAsk = true)
                 StreamChoice.forget(videoId)
                 NerdStats.clearDeclared(videoId)
                 NerdStats.recordSource(videoId, "YouTube")
@@ -1466,6 +1482,16 @@ class PlaybackService : MediaLibraryService() {
                     dataSpec.uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
                 )
             ) {
+                // Analysis reads YouTube's own Opus encoding, so it has the
+                // same problem as the direct request above: with YouTube off
+                // there is nothing here to analyse. The blend is skipped for
+                // this transition rather than a stream played from a source
+                // the listener turned off.
+                if (!SourceRegistry.youtubeEnabled()) {
+                    throw java.io.IOException(
+                        "YouTube Music is turned off; automix analysis for $videoId needs its audio",
+                    )
+                }
                 NerdStats.recordSource(videoId, "YouTube")
                 val streamUrl = try {
                     runBlocking(about) {
@@ -1529,63 +1555,77 @@ class PlaybackService : MediaLibraryService() {
             // the end of the cached bytes. Deciding afresh each time is how
             // the middle of an MP4 ended up appended to a WebM. See
             // [StreamChoice].
-            StreamChoice.of(videoId)?.let { serving ->
-                // What the stream claims to be, restated on every open rather
-                // than only on the one that chose it.
-                //
-                // The race below is what used to report this, and it was enough
-                // while the race was the only way a substitution could be made.
-                // Read-ahead now pins one before the track is reached, so a
-                // warmed track arrives *here* on its very first open and never
-                // reaches the race at all — leaving the player with a 320kbps
-                // stream and nothing on record saying so, and the quality badge
-                // reading blank until the decoder got far enough to measure it
-                // for itself.
-                //
-                // Only when the format states something. A plain YouTube choice
-                // is remembered with an empty one, and writing that over a
-                // claim some other path made would be worse than saying nothing.
-                val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
-                    ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
-                if (serving.format != StreamFormat()) {
-                    NerdStats.onSourceStream(videoId, serving.format, sourceName)
+            // A URL warmed before the switch was flipped is still YouTube's,
+            // and serving it would make the switch a preference for everything
+            // already in flight. Dropping the pin lets the ordinary path below
+            // find a source — or say why it can't.
+            StreamChoice.of(videoId)
+                ?.takeIf { StreamChoice.isSubstitute(videoId) || SourceRegistry.youtubeEnabled() }
+                ?.let { serving ->
+                    // What the stream claims to be, restated on every open rather
+                    // than only on the one that chose it.
+                    //
+                    // The race below is what used to report this, and it was enough
+                    // while the race was the only way a substitution could be made.
+                    // Read-ahead now pins one before the track is reached, so a
+                    // warmed track arrives *here* on its very first open and never
+                    // reaches the race at all — leaving the player with a 320kbps
+                    // stream and nothing on record saying so, and the quality badge
+                    // reading blank until the decoder got far enough to measure it
+                    // for itself.
+                    //
+                    // Only when the format states something. A plain YouTube choice
+                    // is remembered with an empty one, and writing that over a
+                    // claim some other path made would be worse than saying nothing.
+                    val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                        ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
+                    if (serving.format != StreamFormat()) {
+                        NerdStats.onSourceStream(videoId, serving.format, sourceName)
+                    }
+                    NerdStats.recordSource(videoId, sourceName)
+                    // Read-ahead can pin JioSaavn's quick 320kbps answer before
+                    // this track becomes current.  It is the right answer for an
+                    // immediate start, but it is not the final quality verdict:
+                    // returning here used to bypass [resolveWithModulePriority],
+                    // the only path which calls [QualityUpgrade.settledForLess].
+                    // Consequently a warmed track displayed its high-quality
+                    // source but never kept the upgrading state or asked the
+                    // module for its lossless copy.
+                    //
+                    // Only substituted, non-lossless choices need this. A pinned
+                    // YouTube URL has no source result to promote, and a lossless
+                    // module result already satisfies the request.
+                    if (StreamChoice.isSubstitute(videoId) &&
+                        serving.format.isLossless != true &&
+                        QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
+                    ) {
+                        val pending = QualityUpgrade.settledForLess(
+                            mediaId = videoId,
+                            target = SourceResolver.targetIn(dataSpec.uri),
+                            playing = serving.format,
+                            servedBy = serving.sourceConfigId,
+                        )
+                        if (!pending) NerdStats.onLosslessRaceEnd(videoId)
+                    }
+                    return@Resolver dataSpec.buildUpon()
+                        .setUri(Uri.parse(serving.url))
+                        .setHttpRequestHeaders(serving.headers)
+                        .build()
                 }
-                NerdStats.recordSource(videoId, sourceName)
-                // Read-ahead can pin JioSaavn's quick 320kbps answer before
-                // this track becomes current.  It is the right answer for an
-                // immediate start, but it is not the final quality verdict:
-                // returning here used to bypass [resolveWithModulePriority],
-                // the only path which calls [QualityUpgrade.settledForLess].
-                // Consequently a warmed track displayed its high-quality
-                // source but never kept the upgrading state or asked the
-                // module for its lossless copy.
-                //
-                // Only substituted, non-lossless choices need this. A pinned
-                // YouTube URL has no source result to promote, and a lossless
-                // module result already satisfies the request.
-                if (StreamChoice.isSubstitute(videoId) &&
-                    serving.format.isLossless != true &&
-                    QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
-                ) {
-                    val pending = QualityUpgrade.settledForLess(
-                        mediaId = videoId,
-                        target = SourceResolver.targetIn(dataSpec.uri),
-                        playing = serving.format,
-                        servedBy = serving.sourceConfigId,
-                    )
-                    if (!pending) NerdStats.onLosslessRaceEnd(videoId)
-                }
-                return@Resolver dataSpec.buildUpon()
-                    .setUri(Uri.parse(serving.url))
-                    .setHttpRequestHeaders(serving.headers)
-                    .build()
-            }
             // A track queued from YouTube may be held by a source the user
             // ranked above it — see [SourceResolver.substituteForYouTube] and
             // [raceYouTubeOrModule]. Only worth the extra lookup when
             // something actually outranks YouTube; otherwise this is the
             // plain resolve every build before this one made.
             if (!SourceResolver.canSubstituteForYouTube()) {
+                // With YouTube switched off and no source enabled, the walk
+                // below has nothing to race and this direct resolve would be
+                // the one thing the switch forbids.
+                if (!SourceRegistry.youtubeEnabled()) {
+                    throw java.io.IOException(
+                        "YouTube Music is turned off and no other source is enabled",
+                    )
+                }
                 val streamUrl = try {
                     runBlocking(about) {
                         withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
@@ -3855,6 +3895,11 @@ class PlaybackService : MediaLibraryService() {
         position: Long,
     ): Boolean {
         val playbackUri = uri ?: return false
+        // The escape hatch this function builds is an explicit YouTube item.
+        // With YouTube switched off there is no escape to build: the ordinary
+        // recovery below asks the remaining sources again, which is the only
+        // thing the switch leaves available.
+        if (!SourceRegistry.youtubeEnabled()) return false
         val videoId = playbackUri.getQueryParameter("v")
         val substituted = videoId?.let(StreamChoice::isSubstitute) == true
         if (!PlaybackFallback.isAlternative(playbackUri.toString(), substituted)) return false
@@ -5224,8 +5269,14 @@ class PlaybackService : MediaLibraryService() {
         // Skipped entirely rather than merely deprioritised, because a lookup
         // that loses is handed to [QualityUpgrade] rather than dropped, and
         // handing over the search that just cost three attempts would only
-        // schedule a fourth.
+        // schedule a fourth. With YouTube switched off the one answer that
+        // hasn't failed is the one the switch forbids, so there is no answer.
         if (StreamChoice.substitutesRefused(videoId)) {
+            if (!SourceRegistry.youtubeEnabled()) {
+                throw java.io.IOException(
+                    "YouTube Music is turned off and '${target.title}' failed on every other source",
+                )
+            }
             return Resolved.YouTube(StreamResolver.resolve(videoId))
         }
         NerdStats.onLosslessRaceStart(videoId)
@@ -5237,12 +5288,27 @@ class PlaybackService : MediaLibraryService() {
         val lookup = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { SourceResolver.substituteForYouTube(target) }
         }
+        val youtubeEnabled = SourceRegistry.youtubeEnabled()
         // Started now rather than after the modules have had their say, and
         // wrapped rather than thrown from: it is awaited only on the paths
         // that need it, and an async that fails without ever being awaited is
         // an unhandled exception in this service's scope.
+        //
+        // With YouTube off there is no fallback leg to start, but the failure
+        // is put in the same place rather than in a second code path: every
+        // branch below already treats "the fallback finished without a URL" as
+        // "wait for the lookup", and then reads this result as the outcome
+        // when the lookup had nothing.
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
-            runCatching { StreamResolver.resolve(videoId) }
+            if (youtubeEnabled) {
+                runCatching { StreamResolver.resolve(videoId) }
+            } else {
+                Result.failure<String>(
+                    java.io.IOException(
+                        "YouTube Music is turned off and no other source could serve '${target.title}'",
+                    ),
+                )
+            }
         }
 
         // First past the post. A null because [lookup] won is a module miss; a
@@ -5337,7 +5403,14 @@ class PlaybackService : MediaLibraryService() {
             return Resolved.Module(quick)
         }
 
-        val url = fallback.await().getOrThrow()
+        val url = fallback.await().getOrElse { failure ->
+            // No stream came from anywhere: with YouTube off this is the
+            // switch's ordinary outcome for a track nothing else holds, and
+            // the badge has to go out with it rather than keep claiming a
+            // search is still running over a track that is not going to play.
+            NerdStats.onLosslessRaceEnd(videoId)
+            throw failure
+        }
         // Marked pending only here, with the fallback's own bitrate in hand:
         // that figure is the answer to "better than what?" the second look
         // measures candidates against, and it isn't known until the client

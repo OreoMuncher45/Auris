@@ -123,6 +123,8 @@
     <string name="play_next">आगे चलाएं</string>
     <string name="queue">कतार</string>
     <string name="source_setup_required">सेटअप पूरा करने के लिए टैप करें</string>
+    <string name="source_addon_turned_off">ऐड-ऑन बंद है।</string>
+    <string name="source_turned_off">बंद।</string>
     <string name="source_unreachable">अभी पहुंचा नहीं जा सकता · %1$s</string>
     <string name="checking">जांच हो रही है…</string>
     <string name="failed">विफल</string>
@@ -265,7 +267,6 @@
     <string name="activity_watching">देखना</string>
     <string name="add_to_queue">कतार में जोड़ें</string>
     <string name="after_this_song">इस गाने के बाद</string>
-    <string name="always_on">हमेशा चालू</string>
     <string name="api_token">API टोकन</string>
     <string name="audio_quality_connection">%1$s पर रहते हुए</string>
     <string name="back_in_future_version">आने वाले वर्शन में वापस</string>
@@ -450,6 +451,7 @@
     <string name="sleep_timer">स्लीप टाइमर</string>
     <string name="sources_no_lossless">कोई भी चालू स्रोत लॉसलेस ऑडियो नहीं दे सकता। बिना ट्रांसकोडिंग के उपलब्ध लॉसलेस फ़ाइलें चलाने के लिए कस्टम मॉड्यूल जोड़ें।</string>
     <string name="sources_order_footer">अगर किसी स्रोत के पास कोई ट्रैक नहीं है या उस तक पहुंचा नहीं जा सकता, तो Auris अगला स्रोत आज़माता है। YouTube से ऊपर के स्रोत बेहतर वर्शन मिलने पर उसकी रिकॉर्डिंग बदल सकते हैं।</string>
+    <string name="sources_youtube_off">YouTube Music बंद है। केवल आपके अपने स्रोत उपयोग किए जाएँगे, और जो ट्रैक किसी में भी नहीं है वह नहीं चलेगा।</string>
     <string name="sources_order_header">स्रोत, इसी क्रम में आज़माए जाते हैं</string>
     <string name="sources_quality_capped">यह कनेक्शन हाई क्वालिटी से नीचे सेट है, इसलिए स्ट्रीम को उस सीमा में फिट करने के लिए ट्रांसकोड किया जाता है। डाउनलोड पर कोई असर नहीं पड़ता।</string>
     <string name="jiosaavn_mismatch_warning">गाने का गलत वर्शन मिल सकता है। अपने जोखिम पर चालू करें।</string>

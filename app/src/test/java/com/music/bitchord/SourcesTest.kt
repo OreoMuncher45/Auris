@@ -627,6 +627,42 @@ class SourcesTest {
     }
 
     @Test
+    fun `a YouTube switched off by the user stays off across launches`() {
+        val seeded = SourceRegistry.sourcesForInit(emptyList(), forceJioSaavnOff = true)
+        val switchedOff = seeded.map {
+            if (it.kind == SourceKind.YOUTUBE) it.copy(enabled = false) else it
+        }
+
+        val nextLaunch = SourceRegistry.sourcesForInit(switchedOff, forceJioSaavnOff = false)
+
+        assertFalse(nextLaunch.single { it.kind == SourceKind.YOUTUBE }.enabled)
+    }
+
+    /**
+     * The playback and download paths ask one question — may YouTube serve
+     * this? — because YouTube is reached directly rather than through the
+     * source list. An addon left on must not answer it.
+     */
+    @Test
+    fun `youtubeEnabled follows only the YouTube row`() {
+        val before = SourceRegistry.configs.value
+        try {
+            SourceRegistry.configs.value = listOf(
+                SourceConfig(kind = SourceKind.YOUTUBE, enabled = true),
+                SourceConfig(kind = SourceKind.ADDON, enabled = true),
+            )
+            assertTrue(SourceRegistry.youtubeEnabled())
+
+            SourceRegistry.configs.value = SourceRegistry.configs.value.map {
+                if (it.kind == SourceKind.YOUTUBE) it.copy(enabled = false) else it
+            }
+            assertFalse(SourceRegistry.youtubeEnabled())
+        } finally {
+            SourceRegistry.configs.value = before
+        }
+    }
+
+    @Test
     fun `only the seeded built-in sources are stock and wear the Auris names`() {
         val seeded = SourceRegistry.sourcesForInit(emptyList(), forceJioSaavnOff = true)
 
@@ -1202,6 +1238,40 @@ class SourcesTest {
     @Test
     fun `youtube is not prefetched as a substitute for itself`() {
         assertFalse(SourceKind.YOUTUBE.worthPrefetching)
+    }
+
+    /**
+     * With YouTube on, only the sources ranked above it may serve a YouTube
+     * track: asking YouTube to substitute for itself is a walk with no point,
+     * and everything below it (nothing, by rank) would be worse by definition.
+     */
+    @Test
+    fun `the sources tried for a YouTube track are the ones ranked above YouTube`() {
+        val addon = FakeSource("Ricky's Addon", 0, StreamFormat("flac"), kind = SourceKind.ADDON)
+        val jio = FakeSource("JioSaavn", 0, StreamFormat("mp4", kbps = 320))
+        val youtube = FakeSource("YouTube Music", 0, null, kind = SourceKind.YOUTUBE)
+
+        assertEquals(
+            listOf<MusicSource>(addon, jio),
+            SourceResolver.candidatesForYouTube(listOf(addon, jio, youtube)),
+        )
+    }
+
+    /**
+     * Switched off, YouTube stops being the rung the others are measured
+     * against, so every enabled source is a candidate — which is what makes the
+     * remaining addons the only answer rather than merely the preferred one.
+     */
+    @Test
+    fun `with YouTube off every enabled source is a candidate`() {
+        val addon = FakeSource("Ricky's Addon", 0, StreamFormat("flac"), kind = SourceKind.ADDON)
+        val jio = FakeSource("JioSaavn", 0, StreamFormat("mp4", kbps = 320))
+
+        assertEquals(
+            listOf<MusicSource>(addon, jio),
+            SourceResolver.candidatesForYouTube(listOf(addon, jio)),
+        )
+        assertTrue(SourceResolver.candidatesForYouTube(emptyList()).isEmpty())
     }
 
     // ---- Racing the sources -------------------------------------------------

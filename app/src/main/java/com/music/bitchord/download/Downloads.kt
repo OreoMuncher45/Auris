@@ -11,6 +11,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -1543,6 +1544,12 @@ object Downloads {
         // Keep Opus for app-private downloads, but pin exported downloads to
         // AAC-in-MP4 for both the initial resolve and any mid-transfer retry.
         val requireM4a = AppSettings.exportDownloads.value
+        // The route below files YouTube's own bytes. With YouTube switched off
+        // there is no such file to file, and saving one anyway would be the
+        // same broken promise the sources screen's switch exists to fix.
+        if (!SourceRegistry.youtubeEnabled()) {
+            error("YouTube Music is turned off; this track can't be downloaded from your sources")
+        }
         val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps, requireM4a)
         return Route(
             extension = stream.downloadExtension,

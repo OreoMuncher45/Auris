@@ -188,8 +188,8 @@ object SourceResolver {
     }
 
     /**
-     * The stream for a YouTube track from a source the user ranked above
-     * YouTube, or null when none of them has the recording.
+     * The stream for a YouTube track from a source ranked above YouTube, or
+     * null when none of them has the recording.
      *
      * A YouTube track keeps its bare video id rather than a
      * [SourceRegistry.trackKey] — see [YouTubeSource] for why — so it reaches
@@ -198,6 +198,10 @@ object SourceResolver {
      * *queued* from YouTube: the library, a playlist, radio, the home feed —
      * which is very nearly everything. The list said "prefer my server" and
      * only search results honoured it.
+     *
+     * "Ranked above YouTube" is [candidatesForYouTube], which also answers for
+     * the case where YouTube is switched off: everything enabled is then the
+     * candidate set, and nothing plays from YouTube.
      *
      * The match is the same strict one [resolve] uses, for the same reason:
      * this substitutes something else for the track the user picked, and a
@@ -215,10 +219,10 @@ object SourceResolver {
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
+        if (candidates.isEmpty()) return null
         val request = requestForNow()
-        val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request)
+        val (source, stream) = bestAcross(candidates, target, request)
             ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
@@ -284,9 +288,8 @@ object SourceResolver {
      */
     suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        val quick = rankedAbove(youtube.configId, active).filter { it.kind.worthPrefetching }
+        val quick = candidatesForYouTube(SourceRegistry.activeForPlayback())
+            .filter { it.kind.worthPrefetching }
         if (quick.isEmpty()) return null
         val (source, stream) = bestAcross(quick, target, requestForNow()) ?: return null
         TrackLog.d(
@@ -354,8 +357,8 @@ object SourceResolver {
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
+        if (candidates.isEmpty()) return null
         // Every source gets asked, whether or not it can serve lossless, and
         // they are asked at once.
         //
@@ -385,7 +388,7 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            rankedAbove(youtube.configId, active).filterNot { it.configId == servedBy },
+            candidates.filterNot { it.configId == servedBy },
             target,
             request,
             waitForAll = true,
@@ -513,10 +516,12 @@ object SourceResolver {
         // YouTube one. Minus any addon whose manifest says `allowDownloads: 0`:
         // that one plays, but the file comes from whoever is next in line.
         val active = SourceRegistry.activeForDownload()
-        // YouTube can be switched off, and a download still goes to it when
-        // nothing here answers — the download path never consults this list. So
-        // an absent YouTube means everything enabled outranks it, which is
-        // already what [rankedAbove] says about a config that isn't in the list.
+        // An absent YouTube means every enabled source outranks it, which is
+        // already what [rankedAbove] says about a config that isn't in the
+        // list. What an absent YouTube changes is the end of the walk: the
+        // caller no longer has a YouTube file to fall back to, so a miss here
+        // is a failure rather than a quieter ordinary outcome — see the
+        // download route in `Downloads`.
         val youtubeId = active.firstOrNull { it.kind == SourceKind.YOUTUBE }?.configId
         val ranked = rankedAbove(youtubeId.orEmpty(), active)
         val strictLength = target.durationSec != null
@@ -609,7 +614,12 @@ object SourceResolver {
             if (isBetter(stream.format, best?.second?.format)) best = source to stream
         }
         val (winner, chosen) = best ?: return@coroutineScope null
-        if (!beatsYouTubeAac(chosen.format)) {
+        // The floor only applies while YouTube is the alternative. With YouTube
+        // switched off there is no AAC ladder to prefer, and refusing a thin
+        // file here would turn "my sources only" into "no download at all" for
+        // a track one of them did have — the caller has nothing left to fall
+        // back to either.
+        if (SourceRegistry.youtubeEnabled() && !beatsYouTubeAac(chosen.format)) {
             TrackLog.d(
                 TAG,
                 "best offered for '${target.title}' is ${winner.displayName}'s " +
@@ -619,8 +629,8 @@ object SourceResolver {
         }
         TrackLog.d(
             TAG,
-            "download: '${target.title}' from ${winner.displayName} at ${chosen.format.summary}, " +
-                "over YouTube's AAC",
+            "download: '${target.title}' from ${winner.displayName} at ${chosen.format.summary}" +
+                if (SourceRegistry.youtubeEnabled()) ", over YouTube's AAC" else ", YouTube is off",
         )
         chosen
     }
@@ -687,16 +697,33 @@ object SourceResolver {
     }
 
     /**
-     * Whether anything outranks YouTube right now — i.e. whether a YouTube
-     * track is worth offering around before it is resolved.
+     * Whether anything can stand in for a YouTube track right now — i.e.
+     * whether a substitute is worth looking for at all.
      *
      * Answerable from the source list alone, without a search, which is what
      * lets the cache and the read-ahead in
      * [AudioCache][com.music.bitchord.playback.AudioCache] decide how to treat
-     * a YouTube id before anyone has asked a source for it.
+     * a YouTube id before anyone has asked a source for it. With YouTube
+     * switched off it is true whenever any enabled source remains: the switch
+     * is exactly the statement that YouTube's stream is the one not to use.
      */
     fun canSubstituteForYouTube(): Boolean =
-        SourceRegistry.activeForPlayback().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
+        candidatesForYouTube(SourceRegistry.activeForPlayback()).isNotEmpty()
+
+    /**
+     * The sources a YouTube track may be served from, in rank order.
+     *
+     * Normally that is everything ranked above YouTube — the sources the user
+     * deliberately put there, and not YouTube itself, since substituting YouTube
+     * for YouTube is not a substitution. With YouTube switched off the list is
+     * every enabled source instead: there is no YouTube rung left to protect,
+     * and the ordinary ranking already says the addons come first. The two
+     * readings agree on the empty list, which is a walk with nothing to ask.
+     */
+    internal fun candidatesForYouTube(active: List<MusicSource>): List<MusicSource> {
+        val at = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
+        return if (at < 0) active else active.take(at)
+    }
 
     /**
      * The sources ranked above [configId], in order.

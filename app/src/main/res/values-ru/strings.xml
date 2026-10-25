@@ -133,6 +133,8 @@
     <string name="play_next">Следующим</string>
     <string name="queue">Очередь</string>
     <string name="source_setup_required">Нажмите, чтобы завершить настройку</string>
+    <string name="source_addon_turned_off">Дополнение выключено.</string>
+    <string name="source_turned_off">Выключено.</string>
     <string name="source_unreachable">Сейчас недоступно · %1$s</string>
     <string name="checking">Проверка…</string>
     <string name="failed">Ошибка</string>
@@ -275,7 +277,6 @@
     <string name="activity_watching">Смотрит</string>
     <string name="add_to_queue">Добавить в очередь</string>
     <string name="after_this_song">После этой песни</string>
-    <string name="always_on">Всегда включено</string>
     <string name="api_token">API-токен</string>
     <string name="audio_quality_connection">Через %1$s</string>
     <string name="back_in_future_version">Вернётся в будущей версии</string>
@@ -469,6 +470,7 @@
     <string name="sleep_timer">Таймер сна</string>
     <string name="sources_no_lossless">Ни один включённый источник не может предоставить аудио без потерь. Добавьте пользовательский модуль, чтобы воспроизводить доступные файлы без потерь без перекодирования.</string>
     <string name="sources_order_footer">Если у источника нет трека или он недоступен, Auris пробует следующий. Источники выше YouTube могут заменить его запись, если предоставляют более качественную версию.</string>
+    <string name="sources_youtube_off">YouTube Music выключен. Используются только ваши источники, и трек, которого нет ни в одном из них, не воспроизведётся.</string>
     <string name="sources_order_header">Источники, пробуются в этом порядке</string>
     <string name="sources_quality_capped">Это соединение установлено ниже высокого качества, поэтому потоки перекодируются под это ограничение. На загрузки это не влияет.</string>
     <string name="jiosaavn_mismatch_warning">Может подобрать не ту версию песни. Включайте на свой страх и риск.</string>

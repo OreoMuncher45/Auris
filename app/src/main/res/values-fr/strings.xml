@@ -124,6 +124,8 @@
     <string name="play_next">Lire ensuite</string>
     <string name="queue">File d\'attente</string>
     <string name="source_setup_required">Appuyez pour terminer la configuration</string>
+    <string name="source_addon_turned_off">L\'extension est désactivée.</string>
+    <string name="source_turned_off">Désactivé.</string>
     <string name="source_unreachable">Inaccessible pour le moment · %1$s</string>
     <string name="checking">Vérification…</string>
     <string name="failed">Échec</string>
@@ -266,7 +268,6 @@
     <string name="activity_watching">Visionnage</string>
     <string name="add_to_queue">Ajouter à la file d\'attente</string>
     <string name="after_this_song">Après cette chanson</string>
-    <string name="always_on">Toujours activé</string>
     <string name="api_token">Jeton API</string>
     <string name="audio_quality_connection">En %1$s</string>
     <string name="back_in_future_version">De retour dans une future version</string>
@@ -451,6 +452,7 @@
     <string name="sleep_timer">Minuteur de veille</string>
     <string name="sources_no_lossless">Aucune source activée ne peut fournir de l\'audio sans perte. Ajoutez un module personnalisé pour lire les fichiers sans perte disponibles sans transcodage.</string>
     <string name="sources_order_footer">Si une source n\'a pas un titre ou est inaccessible, Auris essaie la suivante. Les sources situées au-dessus de YouTube peuvent remplacer son enregistrement lorsqu\'elles renvoient une meilleure version.</string>
+    <string name="sources_youtube_off">YouTube Music est désactivé. Seules vos propres sources sont utilisées ; un titre qu\'aucune d\'elles ne possède ne sera pas lu.</string>
     <string name="sources_order_header">Sources, testées dans cet ordre</string>
     <string name="sources_quality_capped">Cette connexion est réglée en dessous de la qualité Élevée, les flux sont donc transcodés pour respecter cette limite. Les téléchargements ne sont pas concernés.</string>
     <string name="jiosaavn_mismatch_warning">Peut trouver la mauvaise version d\'un titre. Active-le à tes risques et périls.</string>

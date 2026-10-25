@@ -243,6 +243,10 @@ fun SourcesScreen(
             header = stringResource(R.string.sources_order_header),
             footer = buildString {
                 append(stringResource(R.string.sources_order_footer))
+                if (configs.none { it.kind == SourceKind.YOUTUBE && it.enabled }) {
+                    append("\n\n")
+                    append(stringResource(R.string.sources_youtube_off))
+                }
                 if (cappedByQuality) {
                     append("\n\n")
                     append(stringResource(R.string.sources_quality_capped))
@@ -302,18 +306,12 @@ fun SourcesScreen(
                                 ({ onEditSource(config) })
                             else -> null
                         },
-                        // YouTube gets no switch at all — see
-                        // [SourceRegistry.setEnabled] for why one would be a lie.
-                        onToggle = if (config.kind == SourceKind.YOUTUBE) {
-                            null
-                        } else {
-                            ({ enabled ->
-                                if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
-                                    onConfirmJioSaavn()
-                                } else {
-                                    SourceRegistry.setEnabled(config.id, enabled)
-                                }
-                            })
+                        onToggle = { enabled ->
+                            if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
+                                onConfirmJioSaavn()
+                            } else {
+                                SourceRegistry.setEnabled(config.id, enabled)
+                            }
                         },
                         handle = handle,
                     )
@@ -859,8 +857,7 @@ private fun SourceRow(
     config: SourceConfig,
     health: SourceHealth?,
     onClick: (() -> Unit)?,
-    /** Null for a source that cannot be switched off, which gets a label instead. */
-    onToggle: ((Boolean) -> Unit)?,
+    onToggle: (Boolean) -> Unit,
     /** On, but skipped by the ceiling the current connection is set to. */
     skippedByQuality: Boolean = false,
     /** On, but its addon needs a lossless output and this is what is connected instead. Null when not waiting. */
@@ -964,22 +961,14 @@ private fun SourceRow(
             )
         }
         Spacer(Modifier.width(8.dp))
-        if (onToggle == null) {
-            Text(
-                text = stringResource(R.string.always_on),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Switch(
-                checked = config.enabled,
-                onCheckedChange = onToggle,
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                ),
-            )
-        }
+        Switch(
+            checked = config.enabled,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
         // Outside the dimming above, and last in the row. A source switched off
         // still has a position worth setting for when it is switched back on,
         // so the grip stays at full strength on a row that is otherwise faded.
@@ -1003,6 +992,18 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
 /** The second line of a row: what this source is, or what is wrong with it. */
 @Composable
 private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
+    // A source that is switched off is never probed — see the probe filter in
+    // [SourcesScreen] — so its health stays null and the `needsServer` fallback
+    // below would go on saying "Checking…" for as long as it stayed off, which
+    // describes a request that was never made. The switch answers the question
+    // the line was asking.
+    !enabled -> stringResource(
+        if (kind.isUserAdded || kind == SourceKind.MODULE) {
+            R.string.source_addon_turned_off
+        } else {
+            R.string.source_turned_off
+        },
+    )
     !isComplete -> stringResource(R.string.source_setup_required)
     kind == SourceKind.JIOSAAVN -> stringResource(R.string.jiosaavn_mismatch_warning)
     health is SourceHealth.Ok -> listOfNotNull(

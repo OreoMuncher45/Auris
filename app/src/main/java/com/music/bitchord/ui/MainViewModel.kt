@@ -2379,8 +2379,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@runCatching
                 }
                 // Disabled, or hasn't got it: the tap path falls back to
-                // YouTube, so that is what is worth having ready.
-                StreamResolver.resolve(audio.videoId)
+                // YouTube, so that is what is worth having ready — unless
+                // YouTube is switched off, where the tap path fails instead and
+                // there is nothing to warm.
+                if (SourceRegistry.youtubeEnabled()) StreamResolver.resolve(audio.videoId)
             }
         }
     }

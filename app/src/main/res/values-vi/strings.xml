@@ -131,6 +131,8 @@
     <string name="source_unrecognised">Auris không nhận dạng được liên kết đó</string>
     <string name="source_already_added">Đã được thêm dưới tên %1$s</string>
     <string name="source_setup_required">Nhấn để hoàn tất thiết lập</string>
+    <string name="source_addon_turned_off">Tiện ích đang tắt.</string>
+    <string name="source_turned_off">Đã tắt.</string>
     <string name="source_skipped_by_quality">Không dùng trên %1$s · chất lượng được đặt thành %2$s</string>
     <string name="source_unreachable">Hiện không thể truy cập · %1$s</string>
     <string name="checking">Đang kiểm tra…</string>
@@ -301,7 +303,6 @@
     <string name="add_addon_detail">Trỏ Auris tới máy chủ tiện ích bạn tự lưu trữ hoặc được chia sẻ liên kết</string>
     <string name="add_to_queue">Thêm vào hàng đợi</string>
     <string name="after_this_song">Sau bài hát này</string>
-    <string name="always_on">Luôn bật</string>
     <string name="api_token">Mã token API</string>
     <string name="audio_quality_connection">Khi kết nối %1$s</string>
     <string name="back_in_future_version">Sẽ quay trở lại trong phiên bản tương lai</string>
@@ -482,6 +483,7 @@
     <string name="sleep_timer">Hẹn giờ tắt</string>
     <string name="sources_no_lossless">Không có nguồn nào được bật có thể cung cấp âm thanh Lossless. Hãy thêm tiện ích mở rộng để phát các tệp Lossless mà không cần chuyển mã.</string>
     <string name="sources_order_footer">Nếu một nguồn không có bản nhạc hoặc không thể kết nối, Auris sẽ thử nguồn tiếp theo. Các nguồn nằm trên YouTube có thể thay thế bản ghi âm của YouTube khi tìm được phiên bản tốt hơn.</string>
+    <string name="sources_youtube_off">YouTube Music đang tắt. Chỉ các nguồn của bạn được dùng, và bài hát không nguồn nào có sẽ không phát.</string>
     <string name="sources_order_header">Các nguồn nhạc, được thử theo thứ tự này</string>
     <string name="sources_quality_capped">Kết nối này được đặt dưới chất lượng Cao, vì vậy luồng phát sẽ được chuyển mã để phù hợp giới hạn đó. Việc tải xuống không bị ảnh hưởng.</string>
     <string name="sources_subtitle">Nguồn cung cấp âm thanh và thứ tự ưu tiên</string>

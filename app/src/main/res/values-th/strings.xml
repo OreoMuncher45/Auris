@@ -126,6 +126,8 @@
     <string name="play_next">เล่นต่อไป</string>
     <string name="queue">คิว</string>
     <string name="source_setup_required">แตะเพื่อตั้งค่าให้เสร็จสมบูรณ์</string>
+    <string name="source_addon_turned_off">ส่วนเสริมถูกปิดอยู่</string>
+    <string name="source_turned_off">ปิดอยู่</string>
     <string name="source_unreachable">ตอนนี้เชื่อมต่อไม่ได้ · %1$s</string>
     <string name="checking">กำลังตรวจสอบ…</string>
     <string name="failed">ล้มเหลว</string>
@@ -286,7 +288,6 @@
     <string name="activity_watching">กำลังดู</string>
     <string name="add_to_queue">เพิ่มลงคิว</string>
     <string name="after_this_song">หลังเพลงนี้</string>
-    <string name="always_on">เปิดตลอดเวลา</string>
     <string name="api_token">โทเคน API</string>
     <string name="audio_quality_connection">ขณะใช้ %1$s</string>
     <string name="back_in_future_version">จะกลับมาในเวอร์ชันถัดไป</string>
@@ -466,6 +467,7 @@
     <string name="sleep_timer">ตัวจับเวลาปิดเพลง</string>
     <string name="sources_no_lossless">ไม่มีแหล่งข้อมูลที่เปิดใช้งานสามารถให้เสียงแบบไม่สูญเสียคุณภาพได้ เพิ่มแอดออนเพื่อเล่นไฟล์ไม่สูญเสียคุณภาพโดยไม่ต้องแปลงไฟล์</string>
     <string name="sources_order_footer">หากแหล่งข้อมูลหนึ่งไม่มีแทร็กหรือเชื่อมต่อไม่ได้ Auris จะลองแหล่งถัดไป แหล่งข้อมูลที่อยู่เหนือ YouTube สามารถแทนที่การบันทึกของ YouTube ได้เมื่อให้เวอร์ชันที่ดีกว่า</string>
+    <string name="sources_youtube_off">YouTube Music ถูกปิดอยู่ ระบบจะใช้เฉพาะแหล่งของคุณเท่านั้น และเพลงที่ไม่มีในแหล่งใดเลยจะไม่เล่น</string>
     <string name="sources_order_header">แหล่งข้อมูล เรียงตามลำดับที่ลอง</string>
     <string name="sources_quality_capped">การเชื่อมต่อนี้ตั้งไว้ต่ำกว่าคุณภาพสูง สตรีมจึงถูกแปลงให้พอดีกับขีดจำกัดนั้น การดาวน์โหลดไม่ได้รับผลกระทบ</string>
     <string name="jiosaavn_mismatch_warning">อาจจับคู่กับเพลงผิดเวอร์ชัน เปิดใช้โดยยอมรับความเสี่ยงเอง</string>

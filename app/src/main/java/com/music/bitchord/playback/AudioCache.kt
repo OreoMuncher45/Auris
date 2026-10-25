@@ -968,7 +968,11 @@ object AudioCache {
                 // Safe to fill for the same reason in both cases: either nothing
                 // outranks YouTube and read-ahead is the only writer, or a
                 // source has been pinned and every writer now resolves to it.
-                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube
+                // With YouTube switched off the first case no longer exists:
+                // an unpinned entry would be filled from a source the listener
+                // turned off, so only a warmed substitute is worth caching.
+                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube &&
+                    (warmed != null || SourceRegistry.youtubeEnabled())
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
                         delay(PREFETCH_DELAY_MS)
@@ -983,7 +987,12 @@ object AudioCache {
                         }
                     }
                 }
-                launch {
+                // The URL warm-up below is YouTube's. With YouTube switched
+                // off nothing will ask for one of those URLs — a miss here
+                // ends in a source lookup at playback time, not in a client
+                // walk — so minting them would spend network on every queued
+                // track for a cache entry nothing reads.
+                if (SourceRegistry.youtubeEnabled()) launch {
                     delay(PREFETCH_DELAY_MS)
                     for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
                         // A track already pinned to another source has no use

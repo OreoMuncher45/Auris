@@ -118,6 +118,8 @@
     <string name="play_next">Putar berikutnya</string>
     <string name="queue">Antrean</string>
     <string name="source_setup_required">Ketuk untuk menyelesaikan pengaturan</string>
+    <string name="source_addon_turned_off">Addon dimatikan.</string>
+    <string name="source_turned_off">Dimatikan.</string>
     <string name="source_unreachable">Tidak dapat dijangkau sekarang · %1$s</string>
     <string name="checking">Memeriksa…</string>
     <string name="failed">Gagal</string>
@@ -260,7 +262,6 @@
     <string name="activity_watching">Menonton</string>
     <string name="add_to_queue">Tambahkan ke antrean</string>
     <string name="after_this_song">Setelah lagu ini</string>
-    <string name="always_on">Selalu aktif</string>
     <string name="api_token">Token API</string>
     <string name="audio_quality_connection">Saat %1$s</string>
     <string name="back_in_future_version">Akan kembali di versi mendatang</string>
@@ -436,6 +437,7 @@
     <string name="sleep_timer">Timer tidur</string>
     <string name="sources_no_lossless">Tidak ada sumber aktif yang dapat menyediakan audio lossless. Tambahkan modul kustom untuk memutar file lossless yang tersedia tanpa transcoding.</string>
     <string name="sources_order_footer">Jika suatu sumber tidak memiliki trek atau tidak dapat dijangkau, Auris mencoba sumber berikutnya. Sumber di atas YouTube dapat menggantikan rekamannya saat menghasilkan versi yang lebih baik.</string>
+    <string name="sources_youtube_off">YouTube Music dimatikan. Hanya sumber milikmu yang digunakan, dan trek yang tidak ada di salah satunya tidak akan diputar.</string>
     <string name="sources_order_header">Sumber, dicoba dalam urutan ini</string>
     <string name="sources_quality_capped">Koneksi ini diatur di bawah Kualitas tinggi, sehingga stream ditranskode agar sesuai dengan batas tersebut. Unduhan tidak terpengaruh.</string>
     <string name="jiosaavn_mismatch_warning">Bisa mencocokkan versi lagu yang salah. Aktifkan dengan risiko sendiri.</string>

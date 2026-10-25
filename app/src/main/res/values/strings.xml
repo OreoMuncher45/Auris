@@ -166,6 +166,8 @@
     <string name="source_unrecognised">Auris could not tell what that link is</string>
     <string name="source_already_added">Already added as %1$s</string>
     <string name="source_setup_required">Tap to finish setting up</string>
+    <string name="source_addon_turned_off">The addon is turned off.</string>
+    <string name="source_turned_off">Turned off.</string>
     <string name="source_skipped_by_quality">Not used on %1$s · quality is set to %2$s</string>
     <string name="source_unreachable">Can’t reach it right now · %1$s</string>
     <string name="checking">Checking…</string>
@@ -425,7 +427,6 @@
     <string name="add_addon_detail">Point Auris at an addon server you host or were given a link to</string>
     <string name="add_to_queue">Add to queue</string>
     <string name="after_this_song">After this song</string>
-    <string name="always_on">Always on</string>
     <string name="api_token">API token</string>
     <string name="audio_quality_connection">While on %1$s</string>
     <string name="back_in_future_version">Back in a future version</string>
@@ -677,6 +678,7 @@
     <string name="sleep_timer">Sleep timer</string>
     <string name="sources_no_lossless">No enabled source can provide lossless audio. Add an addon to play lossless files without transcoding.</string>
     <string name="sources_order_footer">If a source does not have a track or cannot be reached, Auris tries the next one. Sources above YouTube can replace its recording when they return a better version.</string>
+    <string name="sources_youtube_off">YouTube Music is turned off. Only your own sources are used, and a track none of them has will not play.</string>
     <string name="sources_order_header">Sources, tried in this order</string>
     <string name="sources_quality_capped">This connection is set below High quality, so streams are transcoded to fit that limit. Downloads are unaffected.</string>
     <string name="jiosaavn_mismatch_warning">May match the wrong version of a song. Enable at your own risk.</string>

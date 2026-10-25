@@ -130,12 +130,17 @@ data class SourceConfig(
  * The user's sources, always tried in the fixed order [SourceKind] declares:
  * their own addons first, then JioSaavn, then YouTube Music.
  *
- * [SourceKind.YOUTUBE] is seeded on first run and cannot be deleted, only
- * disabled — it needs no configuration, so a "remove" would delete something
- * the user could not then re-create by typing anything in, it would just be a
- * switch that hides itself. Addons are entirely optional: with none
+ * [SourceKind.YOUTUBE] is seeded on first run and cannot be deleted, but it can
+ * be switched off — it is the one source whose catalogue the app's own browsing
+ * is built on, so a "remove" would take away something the user could not then
+ * restore by typing anything in. Addons are entirely optional: with none
  * configured, YouTube is the only active source on a fresh install. JioSaavn
  * is present but off until the user accepts its catalogue-matching risk.
+ *
+ * Switching YouTube off is honoured for playback, not just for the row:
+ * everything enabled then ranks above it in the ordinary sense, and a track no
+ * other source has fails instead of quietly playing YouTube. See
+ * [SourceResolver][com.music.bitchord.data.sources.SourceResolver].
  */
 object SourceRegistry {
 
@@ -211,10 +216,10 @@ object SourceRegistry {
         val migrated = seeded
             .filterNot { it.kind == SourceKind.MODULE }
             .map { config ->
-                when {
-                    config.kind == SourceKind.YOUTUBE && !config.enabled -> config.copy(enabled = true)
-                    config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff -> config.copy(enabled = false)
-                    else -> config
+                if (config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff) {
+                    config.copy(enabled = false)
+                } else {
+                    config
                 }
             }
         return stampStock(migrated)
@@ -394,18 +399,32 @@ object SourceRegistry {
     /**
      * Turns one source on or off.
      *
-     * YouTube is not switchable and silently ignores a request to disable it.
-     * It is the only source that can supply a home feed, radio or related
-     * tracks, and nothing else holds the full catalogue — switching it off
-     * doesn't even stop it being played, because a YouTube-queued track whose
-     * substitutes all miss still falls back to it. A switch that cannot honour
-     * its own off position is worse than no switch, so it isn't offered one:
-     * see [SourcesScreen][com.music.bitchord.ui.screens.SourcesScreen].
+     * YouTube obeys its switch like any other row. It used to ignore a request
+     * to disable it, on the reasoning that it is the only source that can
+     * supply a home feed, radio or related tracks and the full catalogue — and
+     * that still stops it being *removed*, because nothing a listener types in
+     * could recreate it. But "off" has a meaning that can be honoured without
+     * the catalogue: nothing plays from it. The resolver treats every enabled
+     * source as ranked above a switched-off YouTube, so an addon becomes the
+     * only answer for a stream, and a track none of them holds fails with that
+     * reason rather than falling back to Opus. The catalogue itself (search,
+     * home, radio) stays available; it is not a stream.
      */
     fun setEnabled(configId: String, enabled: Boolean) {
-        if (!enabled && config(configId)?.kind == SourceKind.YOUTUBE) return
         publish(configs.value.map { if (it.id == configId) it.copy(enabled = enabled) else it })
     }
+
+    /**
+     * Whether YouTube Music may serve a stream right now.
+     *
+     * Read by the playback and download paths, which otherwise have no reason
+     * to know that the row exists: YouTube is reached directly through
+     * [StreamResolver][com.music.bitchord.data.innertube.StreamResolver], not
+     * through [active], so a switch on it would be invisible to every one of
+     * those paths without this.
+     */
+    fun youtubeEnabled(): Boolean =
+        configs.value.any { it.kind == SourceKind.YOUTUBE && it.enabled }
 
     /**
      * Puts the addons in [orderedIds], which is the order they will be asked in.

@@ -232,7 +232,11 @@ internal object QuickJsExecutor {
         val pool = synchronized(engineLock) { pools[moduleId] }
             ?: return Result.failure(IllegalStateException("Module $moduleId is not loaded"))
 
-        TrackLog.d(TAG, "QuickJsExecutor.callExport($moduleId, $functionName) args=$args")
+        // The trailing argument is the module's context object, which carries
+        // the app identity key. It is never logged — not the whole argument
+        // list, and not a truncated prefix that could still contain it. What
+        // was called and with which query/trackId is logged by ModuleManager.
+        TrackLog.d(TAG, "QuickJsExecutor.callExport($moduleId, $functionName)")
         return withContext(Dispatchers.Default) {
             val qjs = try {
                 acquire(moduleId, pool)

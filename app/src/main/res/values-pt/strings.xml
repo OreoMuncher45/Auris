@@ -125,6 +125,8 @@
     <string name="play_next">Tocar a seguir</string>
     <string name="queue">Fila</string>
     <string name="source_setup_required">Toque para concluir a configuração</string>
+    <string name="source_addon_turned_off">O complemento está desativado.</string>
+    <string name="source_turned_off">Desativado.</string>
     <string name="source_unreachable">Não é possível acessar agora · %1$s</string>
     <string name="checking">Verificando…</string>
     <string name="failed">Falhou</string>
@@ -267,7 +269,6 @@
     <string name="activity_watching">Assistindo</string>
     <string name="add_to_queue">Adicionar à fila</string>
     <string name="after_this_song">Depois desta música</string>
-    <string name="always_on">Sempre ativo</string>
     <string name="api_token">Token da API</string>
     <string name="audio_quality_connection">Enquanto no %1$s</string>
     <string name="back_in_future_version">De volta em uma versão futura</string>
@@ -416,6 +417,7 @@
     <string name="sleep_timer">Temporizador de sono</string>
     <string name="sources_no_lossless">Nenhuma fonte habilitada pode fornecer áudio lossless. Adicione um módulo personalizado para tocar arquivos lossless sem transcodificação.</string>
     <string name="sources_order_footer">Se uma fonte não tiver a faixa, o Auris tenta a próxima. Fontes acima do YouTube podem substituí-lo quando encontram uma versão melhor.</string>
+    <string name="sources_youtube_off">O YouTube Music está desativado. Apenas as suas próprias fontes são usadas, e uma faixa que nenhuma delas tenha não será reproduzida.</string>
     <string name="sources_order_header">Fontes, tentadas nesta ordem</string>
     <string name="sources_quality_capped">Esta conexão está definida abaixo de Alta qualidade, então os fluxos são transcodificados. Downloads não são afetados.</string>
     <string name="jiosaavn_mismatch_warning">Pode encontrar a versão errada de uma música. Ative por sua conta e risco.</string>

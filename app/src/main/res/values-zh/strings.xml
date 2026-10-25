@@ -118,6 +118,8 @@
     <string name="play_next">下一首播放</string>
     <string name="queue">播放队列</string>
     <string name="source_setup_required">点按以完成设置</string>
+    <string name="source_addon_turned_off">插件已关闭。</string>
+    <string name="source_turned_off">已关闭。</string>
     <string name="source_unreachable">目前无法访问 · %1$s</string>
     <string name="checking">正在检查…</string>
     <string name="failed">失败</string>
@@ -260,7 +262,6 @@
     <string name="activity_watching">观看</string>
     <string name="add_to_queue">添加到播放队列</string>
     <string name="after_this_song">在这首歌之后</string>
-    <string name="always_on">始终开启</string>
     <string name="api_token">API 令牌</string>
     <string name="audio_quality_connection">使用 %1$s 时</string>
     <string name="back_in_future_version">将在未来版本中回归</string>
@@ -436,6 +437,7 @@
     <string name="sleep_timer">睡眠定时器</string>
     <string name="sources_no_lossless">已启用的来源均无法提供无损音频。添加自定义模块即可播放可用的无损文件，而无需转码。</string>
     <string name="sources_order_footer">如果某个来源没有该曲目或无法访问，Auris 会尝试下一个来源。排在 YouTube 之前的来源如果返回更好的版本，可以替换其录音。</string>
+    <string name="sources_youtube_off">YouTube Music 已关闭。只会使用你自己的来源，任何来源都没有的曲目将无法播放。</string>
     <string name="sources_order_header">来源，按此顺序尝试</string>
     <string name="sources_quality_capped">此连接的设置低于高品质，因此串流会被转码以符合该限制，下载不受影响。</string>
     <string name="jiosaavn_mismatch_warning">可能匹配到歌曲的错误版本。启用风险自负。</string>

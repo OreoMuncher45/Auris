@@ -633,8 +633,22 @@ object QualityUpgrade {
         asked += mediaId
     }
 
-    /** Abandons the second look for [mediaId] — the queue has moved on. */
-    fun forget(mediaId: String) {
+    /** Test seam: whether [mediaId] still carries the listener's own request. */
+    internal fun isHandAskedForTest(mediaId: String): Boolean = mediaId in handAsked
+
+    /**
+     * Abandons the second look for [mediaId] — the queue has moved on, or the
+     * track failed on the copy it had been swapped to.
+     *
+     * @param keepHandAsk leaves the listener's own request standing. A reverted
+     *   item resolves through the direct-YouTube branch on every open, and that
+     *   branch calls this — so without it, "Upgrade quality" was erased by the
+     *   item's own open a few hundred milliseconds after it was asked, and the
+     *   marker rule then refused the track for the rest of the session with no
+     *   line in the log saying why. The request is not about the rendition being
+     *   abandoned; it is about the track.
+     */
+    fun forget(mediaId: String, keepHandAsk: Boolean = false) {
         pending.remove(mediaId)?.inFlight?.cancel()
         followUps.remove(mediaId)?.inFlight?.cancel()
         forced.remove(mediaId)
@@ -644,7 +658,7 @@ object QualityUpgrade {
         // to. Once the queue has moved off it there is nothing left to honour,
         // and an exemption that outlived its moment would let the next visit to
         // the track re-run a search that has already been answered.
-        handAsked -= mediaId
+        if (!keepHandAsk) handAsked -= mediaId
         NerdStats.onLosslessRaceEnd(mediaId)
     }
 

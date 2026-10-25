@@ -123,6 +123,8 @@
     <string name="play_next">Als Nächstes wiedergeben</string>
     <string name="queue">Warteschlange</string>
     <string name="source_setup_required">Tippen, um die Einrichtung abzuschließen</string>
+    <string name="source_addon_turned_off">Das Addon ist deaktiviert.</string>
+    <string name="source_turned_off">Deaktiviert.</string>
     <string name="source_unreachable">Momentan nicht erreichbar · %1$s</string>
     <string name="checking">Wird geprüft…</string>
     <string name="failed">Fehlgeschlagen</string>
@@ -265,7 +267,6 @@
     <string name="activity_watching">Sieht zu</string>
     <string name="add_to_queue">Zur Warteschlange hinzufügen</string>
     <string name="after_this_song">Nach diesem Song</string>
-    <string name="always_on">Immer an</string>
     <string name="api_token">API-Token</string>
     <string name="audio_quality_connection">Bei %1$s</string>
     <string name="back_in_future_version">Kommt in einer zukünftigen Version zurück</string>
@@ -450,6 +451,7 @@
     <string name="sleep_timer">Sleep-Timer</string>
     <string name="sources_no_lossless">Keine aktivierte Quelle kann verlustfreies Audio liefern. Füge ein eigenes Modul hinzu, um verfügbare verlustfreie Dateien ohne Transkodierung abzuspielen.</string>
     <string name="sources_order_footer">Wenn eine Quelle einen Titel nicht hat oder nicht erreichbar ist, versucht Auris die nächste. Quellen über YouTube können dessen Aufnahme ersetzen, wenn sie eine bessere Version liefern.</string>
+    <string name="sources_youtube_off">YouTube Music ist deaktiviert. Es werden nur deine eigenen Quellen verwendet; ein Titel, den keine davon hat, wird nicht abgespielt.</string>
     <string name="sources_order_header">Quellen, in dieser Reihenfolge versucht</string>
     <string name="sources_quality_capped">Diese Verbindung ist unter Hohe Qualität eingestellt, daher werden Streams transkodiert, um dieses Limit einzuhalten. Downloads sind davon nicht betroffen.</string>
     <string name="jiosaavn_mismatch_warning">Kann die falsche Version eines Songs erwischen. Aktivieren auf eigene Gefahr.</string>

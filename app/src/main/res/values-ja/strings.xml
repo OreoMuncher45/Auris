@@ -118,6 +118,8 @@
     <string name="play_next">次に再生</string>
     <string name="queue">再生キュー</string>
     <string name="source_setup_required">タップして設定を完了</string>
+    <string name="source_addon_turned_off">アドオンはオフです。</string>
+    <string name="source_turned_off">オフ。</string>
     <string name="source_unreachable">現在アクセスできません · %1$s</string>
     <string name="checking">確認中…</string>
     <string name="failed">失敗しました</string>
@@ -260,7 +262,6 @@
     <string name="activity_watching">視聴中</string>
     <string name="add_to_queue">再生キューに追加</string>
     <string name="after_this_song">この曲の後に</string>
-    <string name="always_on">常にオン</string>
     <string name="api_token">APIトークン</string>
     <string name="audio_quality_connection">%1$s接続時</string>
     <string name="back_in_future_version">今後のバージョンで復活予定</string>
@@ -436,6 +437,7 @@
     <string name="sleep_timer">スリープタイマー</string>
     <string name="sources_no_lossless">有効なソースの中にロスレスオーディオを提供できるものがありません。トランスコードなしでロスレスファイルを再生するにはカスタムモジュールを追加してください。</string>
     <string name="sources_order_footer">ソースにトラックがない、またはアクセスできない場合、Aurisは次のソースを試します。YouTubeより上のソースは、より良いバージョンが見つかった場合にその録音を置き換えられます。</string>
+    <string name="sources_youtube_off">YouTube Music はオフです。自分のソースのみを使用し、どのソースにもない曲は再生されません。</string>
     <string name="sources_order_header">ソース（この順番で試行）</string>
     <string name="sources_quality_capped">この接続は「高音質」より低く設定されているため、ストリームはその上限に合わせてトランスコードされます。ダウンロードには影響しません。</string>
     <string name="jiosaavn_mismatch_warning">曲の別バージョンに一致してしまうことがあります。自己責任で有効にしてください。</string>

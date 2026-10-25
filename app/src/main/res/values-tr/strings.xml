@@ -132,6 +132,8 @@
     <string name="play_next">Sonra çal</string>
     <string name="queue">Sıra</string>
     <string name="source_setup_required">Kurulumu tamamlamak için dokun</string>
+    <string name="source_addon_turned_off">Eklenti kapalı.</string>
+    <string name="source_turned_off">Kapalı.</string>
     <string name="source_unreachable">Şu anda ulaşılamıyor · %1$s</string>
     <string name="checking">Kontrol ediliyor…</string>
     <string name="failed">Başarısız</string>
@@ -292,7 +294,6 @@
     <string name="activity_watching">İzliyor</string>
     <string name="add_to_queue">Sıraya ekle</string>
     <string name="after_this_song">Bu şarkıdan sonra</string>
-    <string name="always_on">Her zaman açık</string>
     <string name="api_token">API belirteci</string>
     <string name="audio_quality_connection">%1$s bağlantısındayken</string>
     <string name="back_in_future_version">Gelecek bir sürümde geri dönecek</string>
@@ -481,6 +482,7 @@
     <string name="sleep_timer">Uyku zamanlayıcısı</string>
     <string name="sources_no_lossless">Etkin hiçbir kaynak kayıpsız ses sağlayamıyor. Yeniden kodlama yapmadan mevcut kayıpsız dosyaları çalmak için özel bir modül ekleyin.</string>
     <string name="sources_order_footer">Bir kaynakta parça yoksa veya ulaşılamıyorsa Auris bir sonrakini dener. YouTube üzerindeki kaynaklar daha iyi bir sürüm döndürdüklerinde onun kaydının yerini alabilir.</string>
+    <string name="sources_youtube_off">YouTube Music kapalı. Yalnızca kendi kaynakların kullanılır ve hiçbirinde olmayan bir parça çalınmaz.</string>
     <string name="sources_order_header">Kaynaklar, bu sırayla denenir</string>
     <string name="sources_quality_capped">Bu bağlantı Yüksek kalitenin altına ayarlandığından, akışlar bu sınıra uyacak şekilde yeniden kodlanır. İndirmeler etkilenmez.</string>
     <string name="jiosaavn_mismatch_warning">Bir şarkının yanlış sürümünü eşleştirebilir. Riski sana ait olmak üzere etkinleştir.</string>
