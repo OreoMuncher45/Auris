@@ -1150,6 +1150,17 @@ decoder, heard as a hole.
 - Follow-up artifact: run `40145736082` (commit `90cdb876`), success. Same
   `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 / 2.2.18, 16 KB
   `zipalign`, JamesDSP lib and baseline profile verified. No tag, no Release.
+- Next-track read-ahead (2026-10-25): `AudioCache.prefetchQueue` now asks every
+  source ranked above YouTube with a bounded patient wait
+  (`SourceResolver.prepareForPlayback`), pins the winner through `StreamChoice`
+  before caching its opening, reuses an existing pin, and counts its 8s settle
+  from the queue change rather than from after that search. Customization ->
+  Now Playing gains four independent status switches (Automix next-song line,
+  quality-upgrade badge, Lossless badge, Hi-Res wording); the website link is
+  now `auris.shehriyar.ink`, GitHub/developer links removed. Artifact: commit
+  `36fb9624`, run `40200243321`, success, same signer/version/alignment and
+  contents as above. No tag, no GitHub Release. Background-load and fade
+  listening checks on device remain the open step.
 
 ### Release v2.2.18 (2026-10-25)
 
