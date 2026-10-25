@@ -1130,6 +1130,13 @@ decoder, heard as a hole.
   masters, a brief extra decoder); only **Enable** writes the preference. The
   switch stays off while the dialog is open.
 - Not yet device-tested in this session.
+- Artifact: committed `57cae278` and ran `Flow Debug APK` on `convx-fresh` —
+  run `40144623453`, success. `bitchord-next-release` holds arm64/armeabi-v7a/
+  x86_64/universal dev-release APKs, signed by `CN=BitChord Next Fork`
+  (SHA-256 `385af3b4…`), `com.dev.bitchord` 80 / 2.2.18, all 16 KB `zipalign`
+  verified, with `lib/arm64-v8a/libbitchord_jamesdsp.so` and the baseline
+  profile packaged. No tag and no GitHub Release. Listening test on device is
+  the remaining step.
 
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
