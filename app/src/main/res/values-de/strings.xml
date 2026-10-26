@@ -868,6 +868,8 @@
     <string name="manage_accounts">Konten verwalten</string>
 
     <string name="output_precision">Ausgabegenauigkeit</string>
+    <string name="bit_perfect">Bitgenaue Ausgabe</string>
+    <string name="bit_perfect_subtitle">Gibt dekodierte Samples unverändert aus: kein DSP, keine Pegelanpassung, kein Crossfade. Die Ausgaberoute muss das Quellformat übertragen können.</string>
 
     <string name="personal">Persönlich</string>
 

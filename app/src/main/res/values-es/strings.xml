@@ -842,6 +842,8 @@
     <string name="lyrics_debug_logs_subtitle">Muestra consultas de API en vivo y actividad del extractor en el panel de letras</string>
 
     <string name="output_precision">Precisión de salida</string>
+    <string name="bit_perfect">Salida bit-perfect</string>
+    <string name="bit_perfect_subtitle">Envía las muestras decodificadas sin cambios: sin DSP, sin nivelación ni fundido cruzado. La ruta debe poder transportar el formato de origen.</string>
 
     <string name="prefer_usb_dac">Preferir DAC USB</string>
     <string name="loudness_normalization">Normalización de volumen</string>

@@ -10,6 +10,8 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.audio.AudioSink
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.EqCurve
+import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerProcessor
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
@@ -167,11 +169,12 @@ class PrecisionAudioSinkTest {
     // test below builds a buffer of awkward integers, pushes it through, and
     // compares what came out against what went in.
     //
-    // This used to be gated behind a Bit-perfect mode, and these tests used to
-    // prove that the mode overrode a deliberately audible DSP chain. The mode
-    // is gone; what is left is the property that made it mostly redundant in
-    // the first place — an idle chain really is idle, and the conversion on
-    // either side of it round-trips exactly.
+    // This was once gated behind a Bit-perfect mode, and these tests once
+    // proved that the mode overrode a deliberately audible DSP chain. The mode
+    // is back, but as a *bypass* rather than an override: the decoder's buffer
+    // is forwarded and the chain is skipped, rather than the chain being asked
+    // to reproduce it. The idle-chain tests above still hold, because an idle
+    // chain really is idle and the conversion on either side round-trips.
 
     /** Every stage present but switched off, which is the shipping default. */
     private fun idleDspChain(): DspChain = DspChain(
@@ -211,6 +214,59 @@ class PrecisionAudioSinkTest {
         samples.forEachIndexed { i, expected ->
             assertEquals("sample $i altered", expected, handed.getShort())
         }
+    }
+
+    /**
+     * Bit-perfect is a bypass, not a different filter curve.
+     *
+     * With the equaliser audibly engaged and 16-bit in/out, the ordinary path
+     * must alter the samples (proving the chain is really running), while
+     * bit-perfect must hand the decoder's bytes through untouched. Asserting
+     * both halves matters: forwarding identical bytes would prove nothing if
+     * the chain had happened to be idle.
+     */
+    @Test
+    fun `bit-perfect bypasses an audible DSP chain`() {
+        val samples = shortArrayOf(
+            0, 1, -1, 1000, -1000, 32767, -32768, 12345, -12345, 255, -256, 4096,
+        )
+
+        fun output(bitPerfect: Boolean): ShortArray {
+            val fakeDelegate = FakeAudioSink()
+            val equalizer = EqualizerProcessor()
+            val sink = PrecisionAudioSink(
+                delegate = fakeDelegate,
+                dspChain = DspChain(equalizer = equalizer),
+                enableFloatOutput = false,
+                bitPerfect = { bitPerfect },
+            )
+            sink.configure(AudioSink.AudioSinkConfig.Builder(rawFormat(C.ENCODING_PCM_16BIT)).build())
+            val gains = FloatArray(EqLayout.SLOTS)
+            val qs = FloatArray(EqLayout.SLOTS) { 0.707f }
+            gains[3] = 6.0f
+            equalizer.setTuning(enabled = true, EqCurve(gains, qs, 0f), balance = 0f)
+            equalizer.flush()
+
+            val input = ByteBuffer.allocate(samples.size * 2).order(ByteOrder.nativeOrder())
+            samples.forEach(input::putShort)
+            input.flip()
+            sink.handleBuffer(input, 0L, 1)
+
+            val handed = fakeDelegate.lastHandledBuffer!!.duplicate().order(ByteOrder.nativeOrder())
+            handed.rewind()
+            return ShortArray(samples.size) { handed.getShort() }
+        }
+
+        val altered = output(bitPerfect = false)
+        assertFalse(
+            "an enabled equalizer must alter the samples, or this proves nothing",
+            altered.contentEquals(samples),
+        )
+        val bypassed = output(bitPerfect = true)
+        samples.forEachIndexed { i, expected ->
+            assertEquals("sample $i altered", expected, bypassed[i])
+        }
+        assertTrue(AudioOutputStatus.current.value.dspBypassed)
     }
 
     /**

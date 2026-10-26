@@ -873,6 +873,8 @@
     <string name="manage_accounts">Gerenciar contas</string>
 
     <string name="output_precision">Precisão de saída</string>
+    <string name="bit_perfect">Saída bit-perfect</string>
+    <string name="bit_perfect_subtitle">Envia as amostras decodificadas sem alterações: sem DSP, nivelamento ou crossfade. A rota precisa comportar o formato da fonte.</string>
 
     <string name="personal">Pessoal</string>
 

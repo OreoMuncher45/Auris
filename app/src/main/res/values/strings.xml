@@ -1021,6 +1021,8 @@
     <string name="export_compatible_downloads">Export compatible downloads</string>
 
     <string name="output_precision">Output precision</string>
+    <string name="bit_perfect">Bit-perfect output</string>
+    <string name="bit_perfect_subtitle">Sends decoded samples out unchanged: no DSP, levelling or crossfade. The route must be able to carry the source format.</string>
 
     <string name="prefer_usb_dac">Prefer USB DAC</string>
 

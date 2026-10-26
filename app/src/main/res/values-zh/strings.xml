@@ -847,6 +847,8 @@
     <string name="manage_accounts">管理账号</string>
 
     <string name="output_precision">输出精度</string>
+    <string name="bit_perfect">位完美输出</string>
+    <string name="bit_perfect_subtitle">原样输出解码后的采样：不经过 DSP、响度均衡或交叉淡化。输出路径必须能承载源格式。</string>
 
     <string name="personal">个人</string>
 

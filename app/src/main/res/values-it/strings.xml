@@ -872,6 +872,8 @@
     <string name="lyrics_debug_logs_subtitle">Mostra query API in tempo reale e attività dello scraper nel pannello dei testi</string>
 
     <string name="output_precision">Precisione di uscita</string>
+    <string name="bit_perfect">Uscita bit-perfect</string>
+    <string name="bit_perfect_subtitle">Invia i campioni decodificati invariati: nessun DSP, livellamento o crossfade. Il percorso deve poter trasportare il formato sorgente.</string>
 
     <string name="prefer_usb_dac">Preferisci DAC USB</string>
     <string name="loudness_normalization">Normalizzazione del volume</string>

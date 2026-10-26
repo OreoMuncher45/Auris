@@ -854,6 +854,8 @@
     <string name="lyrics_debug_logs_subtitle">Şarkı sözü panelinde canlı API sorgularını ve kazıyıcı etkinliğini gösterir</string>
 
     <string name="output_precision">Çıkış hassasiyeti</string>
+    <string name="bit_perfect">Bit-perfect çıkış</string>
+    <string name="bit_perfect_subtitle">Kodu çözülmüş örnekleri değiştirmeden gönderir: DSP, ses seviyesi eşitleme veya crossfade yok. Çıkış yolu kaynak biçimini taşıyabilmelidir.</string>
 
     <string name="prefer_usb_dac">USB DAC tercih et</string>
     <string name="loudness_normalization">Ses yüksekliği normalleştirme</string>

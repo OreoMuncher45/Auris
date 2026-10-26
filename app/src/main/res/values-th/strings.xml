@@ -1073,6 +1073,8 @@
 
 
     <string name="output_precision">Output precision</string>
+    <string name="bit_perfect">เอาต์พุตบิตเพอร์เฟกต์</string>
+    <string name="bit_perfect_subtitle">ส่งตัวอย่างที่ถอดรหัสแล้วออกไปโดยไม่เปลี่ยนแปลง: ไม่มี DSP การปรับระดับเสียง หรือครอสเฟด เส้นทางเอาต์พุตต้องรองรับรูปแบบต้นฉบับ</string>
 
 
     <string name="prefer_usb_dac">Prefer USB DAC</string>

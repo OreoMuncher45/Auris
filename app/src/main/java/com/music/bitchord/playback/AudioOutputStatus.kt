@@ -14,6 +14,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import com.music.bitchord.data.settings.OutputPcmMode
+import com.music.bitchord.playback.audio.BitPerfectMixer
 import com.music.bitchord.playback.audio.DirectAudioProbe
 import com.music.bitchord.playback.audio.FallbackReason
 import com.music.bitchord.playback.audio.OutputNegotiationResult
@@ -79,6 +80,22 @@ object AudioOutputStatus {
          * off while it was working.
          */
         val dspAvailable: Boolean = true,
+        /**
+         * Whether the listener has taken every DSP stage out of the path for
+         * bit-perfect output. Distinct from [dspAvailable], which says the
+         * chain *can* run: here it can, and is deliberately not running.
+         */
+        val dspBypassed: Boolean = false,
+        /**
+         * Android 14's own bit-perfect mixer request for the active device, or
+         * null when bit-perfect output is off and nothing is requested.
+         *
+         * [BitPerfectMixer.State.active] is only true when the framework
+         * accepted a format that matches the sink's encoding, rate and channel
+         * count; otherwise the detail names what was available instead. This is
+         * the half of bit-exactness that happens after the app's AudioTrack.
+         */
+        val bitPerfectMixer: BitPerfectMixer.State? = null,
         val directUsbProbe: DirectUsbProbeResult? = null,
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
@@ -140,8 +157,10 @@ object AudioOutputStatus {
                 decoderName == other.decoderName &&
                 bufferSize == other.bufferSize &&
                 decoderOutputEncoding == other.decoderOutputEncoding &&
-                dspFormat == other.dspFormat &&
+                dspFormat == other.dspFormat &&
                 dspAvailable == other.dspAvailable &&
+                dspBypassed == other.dspBypassed &&
+                bitPerfectMixer == other.bitPerfectMixer &&
                 directUsbProbe == other.directUsbProbe &&
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
@@ -181,8 +200,10 @@ object AudioOutputStatus {
             result = 31 * result + (decoderName?.hashCode() ?: 0)
             result = 31 * result + (bufferSize ?: 0)
             result = 31 * result + (decoderOutputEncoding?.hashCode() ?: 0)
-            result = 31 * result + dspFormat.hashCode()
+            result = 31 * result + dspFormat.hashCode()
             result = 31 * result + dspAvailable.hashCode()
+            result = 31 * result + dspBypassed.hashCode()
+            result = 31 * result + (bitPerfectMixer?.hashCode() ?: 0)
             result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
@@ -371,11 +392,13 @@ object AudioOutputStatus {
         decoderOutputEncoding: String?,
         dspFormat: String = "Float32",
         dspAvailable: Boolean = true,
+        dspBypassed: Boolean = false,
     ) {
         current.value = current.value.copy(
             decoderOutputEncoding = decoderOutputEncoding,
             dspFormat = dspFormat,
             dspAvailable = dspAvailable,
+            dspBypassed = dspBypassed,
         )
     }
 
@@ -389,6 +412,11 @@ object AudioOutputStatus {
             outputExact = exact,
             outputExactDetail = detail,
         )
+    }
+
+    /** The Android 14 bit-perfect mixer request, or null when bit-perfect is off. */
+    fun publishBitPerfectMixer(state: BitPerfectMixer.State?) {
+        current.value = current.value.copy(bitPerfectMixer = state)
     }
 
     /**

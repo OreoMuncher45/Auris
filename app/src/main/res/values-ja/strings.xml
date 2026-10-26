@@ -787,6 +787,8 @@
     <string name="export_compatible_downloads">互換性のあるダウンロードをエクスポート</string>
 
     <string name="output_precision">出力精度</string>
+    <string name="bit_perfect">ビットパーフェクト出力</string>
+    <string name="bit_perfect_subtitle">デコードしたサンプルをそのまま出力します。DSP・音量調整・クロスフェードは行いません。出力経路がソース形式を伝送できる必要があります。</string>
 
     <string name="prefer_usb_dac">USB DAC を優先</string>
     <string name="loudness_normalization">音量の正規化</string>

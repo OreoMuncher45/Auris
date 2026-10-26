@@ -706,6 +706,8 @@
     <string name="profile_unavailable">Chưa có hồ sơ đã đăng nhập nào trên trang này.</string>
     <string name="export_compatible_downloads">Xuất bản tải xuống tương thích</string>
     <string name="output_precision">Độ chính xác đầu ra</string>
+    <string name="bit_perfect">Đầu ra bit-perfect</string>
+    <string name="bit_perfect_subtitle">Gửi các mẫu đã giải mã nguyên vẹn: không DSP, cân bằng âm lượng hay chuyển bài mượt. Tuyến đầu ra phải chở được định dạng nguồn.</string>
     <string name="prefer_usb_dac">Ưu tiên DAC USB</string>
     <string name="loudness_normalization">Chuẩn hóa âm lượng</string>
     <string name="loudness_normalization_subtitle">Cân bằng âm lượng giữa các bài hát</string>

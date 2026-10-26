@@ -906,6 +906,8 @@
     <string name="manage_accounts">Zarządzaj kontami</string>
 
     <string name="output_precision">Precyzja wyjścia</string>
+    <string name="bit_perfect">Wyjście bit-perfect</string>
+    <string name="bit_perfect_subtitle">Przesyła zdekodowane próbki bez zmian: bez DSP, wyrównywania poziomu i crossfade. Ścieżka wyjściowa musi obsługiwać format źródłowy.</string>
 
     <string name="personal">Osobisty</string>
 

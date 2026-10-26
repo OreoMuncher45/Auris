@@ -26,6 +26,14 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!--
+      Lets bit-perfect mode ask Android 14's mixer to pass the app's own format
+      through to the device untouched (setPreferredMixerAttributes). Normal
+      permission, granted at install; without it the request is simply refused
+      and the pipeline readout says so.
+    -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!--
       In-app updates: handing a downloaded APK to the system installer. The
       per-app "install unknown apps" switch is still the user's to flip; this
       only lets the request reach the installer.

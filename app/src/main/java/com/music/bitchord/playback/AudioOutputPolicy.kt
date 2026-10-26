@@ -39,6 +39,19 @@ internal object AudioOutputPolicy {
         return advertisesPcmFloat
     }
 
+    /**
+     * The precision the path should aim for, before the route has a say.
+     *
+     * Bit-perfect asks for the most faithful representation the sink can open,
+     * not merely whatever the precision menu holds. Media3's sink offers only
+     * 16-bit and float, so leaving a hi-res source on the menu's PCM16 would
+     * quantize it before the DAC ever saw it. The route still decides — the
+     * built-in speaker stays capped at 16-bit below — but the request starts
+     * at float so a route that can carry it is allowed to.
+     */
+    fun requestedPcmMode(mode: OutputPcmMode, bitPerfect: Boolean): OutputPcmMode =
+        if (bitPerfect) OutputPcmMode.FLOAT_32 else mode
+
     /** Samsung's vendor FLAC decoder emits invalid timestamps with PCM float. */
     fun isUnsafeFloatFlacDecoder(name: String): Boolean {
         val normalized = name.lowercase()

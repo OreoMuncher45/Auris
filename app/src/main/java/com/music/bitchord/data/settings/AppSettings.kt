@@ -280,6 +280,19 @@ object AppSettings {
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
 
+    /**
+     * Bit-perfect output: the decoder's samples reach the output unchanged.
+     *
+     * Not the same question as [outputPcmMode], which picks a *representation*
+     * while every DSP stage still runs its own settings. This is a promise
+     * about the whole path: the equaliser, spatial widening, vocal cut,
+     * levelling and transition filtering are bypassed whatever their switches
+     * say, and a crossfade — which mixes two tracks — is never armed. The
+     * route still has the last word; where it cannot carry the source
+     * encoding the pipeline readout says so rather than claiming otherwise.
+     */
+    val bitPerfect = MutableStateFlow(false)
+
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
 
@@ -1220,6 +1233,7 @@ object AppSettings {
                     ?: OutputPcmMode.PCM_16.name,
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
+        bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
@@ -2191,6 +2205,11 @@ object AppSettings {
         prefs.edit().putString(KEY_OUTPUT_PCM_MODE, value.name).apply()
     }
 
+    fun setBitPerfect(value: Boolean) {
+        bitPerfect.value = value
+        prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
+    }
+
     fun setPreferUsbDac(value: Boolean) {
         preferUsbDac.value = value
         prefs.edit().putBoolean(KEY_PREFER_USB_DAC, value).apply()
@@ -2666,6 +2685,7 @@ object AppSettings {
     private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
+    private const val KEY_BIT_PERFECT = "bit_perfect"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"

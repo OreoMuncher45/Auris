@@ -80,6 +80,13 @@ class PrecisionAudioSink(
      * sink's to write; the spare stays quiet.
      */
     private val isAudible: () -> Boolean = { true },
+    /**
+     * Whether the listener has asked for bit-perfect output — see
+     * [com.music.bitchord.data.settings.AppSettings.bitPerfect]. Read per
+     * decoder buffer, so a switch flipped mid-track stops altering the next
+     * buffer instead of waiting for the next configure.
+     */
+    private val bitPerfect: () -> Boolean = { false },
 ) : ForwardingAudioSink(delegate) {
 
     /** Whether the precision Float32 DSP path is currently active for the configured format. */
@@ -99,6 +106,9 @@ class PrecisionAudioSink(
         private set
 
     private var processCounter: Long = 0L
+
+    /** What [bitPerfect] said when the last buffer was processed. */
+    private var dspBypassLatched = false
 
     /** Sample rate of the configured format, for timestamping split sub-blocks. */
     private var configuredSampleRate: Int = 0
@@ -256,6 +266,9 @@ class PrecisionAudioSink(
         inputPcmEncoding = null
         targetOutputEncoding = null
         configuredSampleRate = 0
+        // Bit-perfect is a promise about decoded PCM; a bitstream that was
+        // never decoded has nothing for it to promise.
+        dspBypassLatched = false
         if (isAudible()) {
             AudioOutputStatus.publishOutputExactness(
                 exact = false,
@@ -317,6 +330,15 @@ class PrecisionAudioSink(
         if (bytesPerFrame <= 0) return true
         streaming = true
 
+        // Bit-perfect is a per-buffer promise rather than a configure-time one:
+        // switching it on must stop the very next buffer being altered, and
+        // switching it off must not resume a limiter from where it left off.
+        val skipDsp = bitPerfect()
+        if (skipDsp != dspBypassLatched) {
+            if (!skipDsp) dspChain.reset()
+            publishTelemetry(inEncoding, outEncoding)
+        }
+
         // 1. Drain pending output from previous cycle if delegate had backpressure
         if (outputByteBuffer.hasRemaining()) {
             val consumed = delegate.handleBuffer(
@@ -341,7 +363,7 @@ class PrecisionAudioSink(
         // instead of decoding to float and encoding it back to identical bytes.
         // On the 16-bit speaker path this is the whole per-buffer cost of the
         // app's audio processing.
-        if (inEncoding == outEncoding && dspChain.isBypassed()) {
+        if (inEncoding == outEncoding && (skipDsp || dspChain.isBypassed())) {
             timestampedInputTimeUs = C.TIME_UNSET
             framesEmittedForInput = 0L
             if (!inputBuffer.hasRemaining()) return true
@@ -393,7 +415,7 @@ class PrecisionAudioSink(
             }
 
             // Process normalized Float32 samples through custom DSP chain
-            dspChain.process(audioBlock)
+            if (!skipDsp) dspChain.process(audioBlock)
 
             // Encode processed samples to target PCM output buffer (Float32 or PCM16)
             outputByteBuffer.clear()
@@ -714,12 +736,14 @@ class PrecisionAudioSink(
     }
 
     private fun publishTelemetry(inEncoding: PcmEncoding, outEncoding: PcmEncoding) {
+        dspBypassLatched = bitPerfect()
         if (!isAudible()) return
         publishOutputExactness(inEncoding, outEncoding)
         AudioOutputStatus.publishDsp(
             decoderOutputEncoding = encodingLabel(mapFromPcmEncoding(inEncoding)),
             dspFormat = "Float32",
             dspAvailable = true,
+            dspBypassed = dspBypassLatched,
         )
     }
 

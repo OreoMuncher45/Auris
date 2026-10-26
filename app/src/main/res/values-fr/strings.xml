@@ -869,6 +869,8 @@
     <string name="manage_accounts">Gérer les comptes</string>
 
     <string name="output_precision">Précision de sortie</string>
+    <string name="bit_perfect">Sortie bit-perfect</string>
+    <string name="bit_perfect_subtitle">Envoie les échantillons décodés sans modification : sans DSP, sans normalisation du niveau ni fondu enchaîné. La sortie doit pouvoir transporter le format source.</string>
 
     <string name="personal">Personnel</string>
 

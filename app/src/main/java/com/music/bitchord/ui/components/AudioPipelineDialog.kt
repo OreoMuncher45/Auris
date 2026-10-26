@@ -96,11 +96,13 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  *    can carry. [outputExact] is the sink's own verdict on that; see
  *    `PrecisionAudioSink.publishOutputExactness`.
  *
- * This used to be gated behind a Bit-perfect mode that turned the DSP stages
- * off for you. The mode is gone — with every stage already idle the samples
- * were bit-exact without it, so the toggle mostly duplicated the Output
- * precision preference — but the readout is not, because "is it exact right
- * now" is worth answering whether or not there is a switch that forces it.
+ * Bit-perfect mode takes the first out of the path deliberately. What remains
+ * is the second, plus a third no sink can answer for: whether Android's mixer
+ * passed the track through or resampled it. On Android 14 bit-perfect mode also
+ * asks the framework for an unmixed path ([mixerBitPerfect]); when that request
+ * is refused the verdict says the samples are unchanged by the app but the
+ * system mixer may still resample them, rather than claiming a chain that does
+ * not exist.
  */
 private fun bitExactVerdict(
     dsd: Boolean,
@@ -109,11 +111,22 @@ private fun bitExactVerdict(
     loudnessActive: Boolean,
     eqActive: Boolean,
     spatialActive: Boolean,
+    dspBypassed: Boolean,
+    mixerBitPerfect: Boolean,
 ): String = when {
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
     dsd -> "No — DSD converted to PCM"
+    // Bit-perfect deliberately ignores the loudness/equaliser/spatial
+    // switches, so reporting one of them would name a stage that is not
+    // running. What is left to report is whether the source encoding survived
+    // the sink and whether the system's own mixer was taken out of the path.
+    dspBypassed && outputExact && mixerBitPerfect ->
+        "Yes (bit-perfect: DSP and system mixer bypassed)"
+    dspBypassed && outputExact ->
+        "Yes (DSP bypassed; the system mixer may resample)"
+    dspBypassed -> "No — bit-perfect requested, ${outputExactDetail ?: "the route cannot carry the source"}"
     loudnessActive -> "No — loudness normalization"
     eqActive -> "No — equalizer"
     spatialActive -> "No — spatial audio"
@@ -428,6 +441,11 @@ fun AudioPipelineDialog(
                         loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                         eqActive = eqEnabled,
                         spatialActive = spatialAudio,
+                        dspBypassed = outputStatus.dspBypassed,
+                        mixerBitPerfect = outputStatus.bitPerfectMixer?.active == true ||
+                            outputStatus.directPlaybackActual ||
+                            outputStatus.transportType ==
+                            com.music.bitchord.playback.audio.TransportType.DIRECT_USB,
                     ),
                 )
             }
@@ -496,6 +514,19 @@ fun AudioPipelineDialog(
                 }
                 mixerText?.let {
                     PipelineRow("System", it)
+                }
+
+                outputStatus.bitPerfectMixer?.let { mixer ->
+                    PipelineRow(
+                        "Bit-perfect mixer",
+                        when {
+                            outputStatus.directPlaybackActual ||
+                                outputStatus.transportType ==
+                                com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
+                                "Not needed (direct path already bypasses it)"
+                            else -> mixer.detail
+                        },
+                    )
                 }
 
                 outputStatus.usbEndpointFormat?.let {

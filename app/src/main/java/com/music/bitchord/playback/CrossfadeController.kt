@@ -791,6 +791,22 @@ class CrossfadeController(
     private fun considerAutoTransition() {
         val player = active()
         if (!player.isPlaying) return
+        // Bit-perfect output promises the samples are unaltered, and a blend
+        // of two tracks is the largest alteration this app can make. Nothing
+        // is armed while it is on — including Automix, which runs through
+        // this same point — and any window already marked is cleared so the
+        // screen does not describe a transition that will not happen. Turning
+        // the switch on mid-blend lets that blend finish rather than cutting
+        // it; the next pair is the first to play straight through.
+        //
+        // The sleep timer is the one exception: fading the last track out to
+        // silence is how the session ends, not a blend into the next one, and
+        // the ordinary paths below still run for it.
+        if (AppSettings.bitPerfect.value) {
+            AppSettings.smartTransitionWindow.value = null
+            AppSettings.smartMixInProgress.value = false
+            if (!SleepTimer.afterTrack.value) return
+        }
         // Not while a version swap owns the standby player — see
         // [versionSwapActive]. Nothing to clean up on the way out unlike the
         // party case below: a version swap is a between-tracks affair on the
@@ -877,6 +893,9 @@ class CrossfadeController(
             beginSleepFadeOut(fade)
             return
         }
+        // Bit-perfect: the sleep fade above is allowed, a blend into the next
+        // track is not.
+        if (AppSettings.bitPerfect.value) return
         // Arm early: the standby has to open the incoming track and buffer to
         // its cue point, and that work has to be finished by the time the fade
         // is due rather than started then. And before this player starts
@@ -1023,6 +1042,8 @@ class CrossfadeController(
             beginSleepFadeOut(fade)
             return
         }
+        // Bit-perfect: the sleep fade above is allowed, an Automix blend is not.
+        if (AppSettings.bitPerfect.value) return
         // Same arm-ahead margin as the standard path, just measured against
         // the plan's own start rather than a fixed offset from track end —
         // an analyzed mix-out anchor can place that start well before the

@@ -873,6 +873,8 @@
     <string name="manage_accounts">נהל חשבונות</string>
 
     <string name="output_precision">דיוק פלט</string>
+    <string name="bit_perfect">פלט ביט-מושלם</string>
+    <string name="bit_perfect_subtitle">שולח את הדגימות המפוענחות ללא שינוי: ללא DSP, ללא איזון עוצמה וללא מעבר הדרגתי. היציאה חייבת לתמוך בפורמט המקור.</string>
 
     <string name="personal">אישי</string>
 

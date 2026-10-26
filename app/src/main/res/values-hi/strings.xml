@@ -868,6 +868,8 @@
     <string name="manage_accounts">खाते प्रबंधित करें</string>
 
     <string name="output_precision">आउटपुट परिशुद्धता</string>
+    <string name="bit_perfect">बिट-परफ़ेक्ट आउटपुट</string>
+    <string name="bit_perfect_subtitle">डिकोड किए गए सैंपल बिना बदलाव के भेजता है: कोई DSP, लेवलिंग या क्रॉसफ़ेड नहीं। आउटपुट रूट को स्रोत फ़ॉर्मेट ले जाना होगा।</string>
 
     <string name="personal">व्यक्तिगत</string>
 

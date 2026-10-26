@@ -87,6 +87,7 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.ContainerBitrate
+import com.music.bitchord.playback.audio.BitPerfectMixer
 import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.audio.JamesDspConfig
 import com.music.bitchord.playback.audio.JamesDspNative
@@ -2539,6 +2540,10 @@ class PlaybackService : MediaLibraryService() {
     ): UpgradeSwap {
         // Opt-in, off by default. See the confirmation in Settings.
         if (!AppSettings.seamlessQualityUpgrade.value) return UpgradeSwap.Fallback
+        // Bit-perfect promises no stage alters the samples, and a blend of two
+        // decoders is the largest alteration this app can make. The proved
+        // stream still goes in; it just goes in on the direct swap.
+        if (AppSettings.bitPerfect.value) return UpgradeSwap.Fallback
         // A party plays through one continuous session player — see
         // [PartySync] — so it keeps the direct swap.
         if (ListenTogether.state.value.inParty) return UpgradeSwap.Fallback
@@ -6491,6 +6496,10 @@ class PlaybackService : MediaLibraryService() {
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
                 preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
+                // Read per buffer by the sink, not captured once: the switch
+                // takes effect on the next decoder buffer and needs no rebuild
+                // of the player when the output encoding itself is unchanged.
+                bitPerfect = { AppSettings.bitPerfect.value },
                 // Which of the two sinks the listener can hear, told by the
                 // role its transition filter currently holds — [activeFilter]
                 // and [spareFilter] trade places at every handoff. Only the
@@ -6573,17 +6582,42 @@ class PlaybackService : MediaLibraryService() {
             DirectAudioProbe.DirectSupport.NONE
         }
         val btTelemetry = if (routeKind == AudioRouting.Kind.BLUETOOTH) bluetoothTracker.telemetry.value else null
+        val floatEnabled = shouldEnableFloatOutput()
 
         AudioOutputStatus.publish(
             manager = manager,
-            requestedPcmMode = AppSettings.outputPcmMode.value,
+            requestedPcmMode = AudioOutputPolicy.requestedPcmMode(
+                AppSettings.outputPcmMode.value,
+                AppSettings.bitPerfect.value,
+            ),
             preferred = activeDevice,
-            floatEnabled = shouldEnableFloatOutput(),
+            floatEnabled = floatEnabled,
             routeKind = routeKind,
             directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             bluetoothTelemetry = btTelemetry,
             systemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
+        )
+
+        AudioOutputStatus.publishBitPerfectMixer(
+            BitPerfectMixer.apply(
+                manager = manager,
+                device = activeDevice,
+                enabled = AppSettings.bitPerfect.value,
+                sampleRateHz = sampleRate,
+                channelCount = channels,
+                // The request has to name what the sink will actually write:
+                // a float preference against a PCM16 track is converted at the
+                // seam exactly as a PCM16 preference against a float one.
+                sinkEncoding = if (floatEnabled) {
+                    AudioFormat.ENCODING_PCM_FLOAT
+                } else {
+                    AudioFormat.ENCODING_PCM_16BIT
+                },
+                // The platform view of the same attributes the tracks carry:
+                // the mixer preference only applies to playback that matches it.
+                audioAttributes = AUDIO_ATTRIBUTES.platformAudioAttributes,
+            ),
         )
 
         if (format != null) {
@@ -6670,7 +6704,10 @@ class PlaybackService : MediaLibraryService() {
             deviceName = activeDevice?.productName?.toString()?.ifBlank { null } ?: "System default",
             advertisedEncodings = advertisedEncodings,
             advertisedSampleRates = advertisedSampleRates,
-            requestedMode = AppSettings.outputPcmMode.value,
+            requestedMode = AudioOutputPolicy.requestedPcmMode(
+                AppSettings.outputPcmMode.value,
+                AppSettings.bitPerfect.value,
+            ),
             directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             bluetoothTelemetry = btTelemetry,
@@ -6821,7 +6858,10 @@ class PlaybackService : MediaLibraryService() {
         // so "32-bit float" in Output precision is the setting that preserves
         // a hi-res source, not the one that embellishes it.
         return AudioOutputPolicy.shouldUseFloatOutput(
-            requestedMode = AppSettings.outputPcmMode.value,
+            requestedMode = AudioOutputPolicy.requestedPcmMode(
+                AppSettings.outputPcmMode.value,
+                AppSettings.bitPerfect.value,
+            ),
             routeKind = routeKind,
             advertisesPcmFloat = advertisesFloat || directFloatSupported,
         )
@@ -6853,6 +6893,9 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
+            AppSettings.bitPerfect.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
             // Not applied to a player mid-transition: [CrossfadeController]
@@ -7520,6 +7563,10 @@ class PlaybackService : MediaLibraryService() {
         CastController.detach(castPlayback)
         castPlayback.release()
         closeAudioEffectSession()
+        // The mixer preference is per device and outlives this process, so it
+        // is withdrawn before the service goes rather than left pointing at a
+        // format nothing is playing any more.
+        BitPerfectMixer.clear(audioManager)
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         partySync?.stop()
