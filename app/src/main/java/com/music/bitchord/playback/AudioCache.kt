@@ -1288,6 +1288,11 @@ object AudioCache {
      */
     suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean {
         if (!::cache.isInitialized) return false
+        // No YouTube copy can be fetched while the switch is off, and waiting
+        // the deadline for one that will never arrive costs the transition it
+        // is meant to inform. The analyzer's ordinary path does not come
+        // through here — see [TrackAnalyzer].
+        if (!SourceRegistry.youtubeEnabled()) return false
         val videoId = uri.getQueryParameter("v") ?: return false
         if (alignmentHeadComplete(videoId)) return true
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
@@ -1382,6 +1387,10 @@ object AudioCache {
             TrackLog.w(TAG, "analysis head for $uri not started: no upstream yet")
             return
         }
+        // The head is a YouTube copy, and with the switch off the resolver
+        // refuses one by design. The analyzer reads the copy the track is
+        // already playing from instead — see [TrackAnalyzer].
+        if (!SourceRegistry.youtubeEnabled()) return
         val videoId = uri.getQueryParameter("v") ?: return
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
