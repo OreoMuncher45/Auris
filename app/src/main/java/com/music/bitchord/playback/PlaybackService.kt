@@ -94,6 +94,8 @@ import com.music.bitchord.playback.audio.JamesDspNative
 import com.music.bitchord.playback.audio.JamesDspProcessor
 import com.music.bitchord.playback.audio.LocalBitrateReading
 import com.music.bitchord.playback.audio.MeasuredBitrateMeter
+import com.music.bitchord.playback.usb.ExclusiveUsbOutput
+import com.music.bitchord.playback.usb.UsbDacMonitor
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
 import com.music.bitchord.playback.cast.CastSink
@@ -537,6 +539,15 @@ class PlaybackService : MediaLibraryService() {
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val bluetoothTracker by lazy { BluetoothAudioTracker(this) }
+    /**
+     * Userspace USB output, the one path that takes AudioFlinger out of the
+     * signal chain rather than asking it nicely. Created lazily and shared by
+     * both players' sinks.
+     */
+    private val exclusiveUsb by lazy { ExclusiveUsbOutput(this) }
+    private val usbDacMonitor by lazy { UsbDacMonitor(this, scope) }
+    /** Last availability line this service put in the signal-path row. */
+    private var lastUsbAvailabilityDetail: String? = null
     private var currentAudioInputFormat: Format? = null
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
@@ -947,6 +958,10 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // usbdevfs has no AudioTrack to pause; the writer's own gate has
+            // to follow the listener's transport state. playWhenReady stays
+            // true while buffering, so this does not lock out seek pre-fill.
+            if (AppSettings.bitPerfect.value) exclusiveUsb.setPaused(!playWhenReady)
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
@@ -6500,6 +6515,21 @@ class PlaybackService : MediaLibraryService() {
                 // takes effect on the next decoder buffer and needs no rebuild
                 // of the player when the output encoding itself is unchanged.
                 bitPerfect = { AppSettings.bitPerfect.value },
+                // The userspace USB session, when a DAC has granted access.
+                // The sink only engages it for stereo tracks at the source
+                // rate; anything else stays on AudioTrack and says so.
+                exclusiveUsb = exclusiveUsb,
+                // Do not attempt a claim until there is a DAC on the bus and
+                // the listener has granted direct access. The sink re-reads
+                // this per buffer, so a grant while a track plays is adopted.
+                exclusiveWanted = { exclusiveUsbWanted() },
+                // A decoded Float32 buffer cannot name the source's depth on
+                // its own; the stream's own figure is the honest hint for the
+                // wire format (otherwise the DAC alt falls back to 16-bit).
+                bitDepthHint = {
+                    NerdStats.current.value?.bitDepth
+                        ?: currentAudioInputFormat?.let { bitDepthOf(it.pcmEncoding) }
+                },
                 // Which of the two sinks the listener can hear, told by the
                 // role its transition filter currently holds — [activeFilter]
                 // and [spareFilter] trade places at every handoff. Only the
@@ -6823,6 +6853,59 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
+    /**
+     * Asks for direct USB access when bit-perfect is on and a DAC is attached
+     * without a grant. This is the system's own dialog ("Allow … to access
+     * <device>"), the same one LastWave shows, and the grant returns to our
+     * private receiver in [UsbDacMonitor].
+     */
+    private fun ensureUsbPermission() {
+        usbDacMonitor.refresh()
+        val dac = usbDacMonitor.state.value.dac ?: return
+        if (dac.hasUsbPeripheral && !dac.usbPermissionGranted) {
+            usbDacMonitor.requestPermission()
+        }
+    }
+
+    /**
+     * Bit-perfect asks for the userspace path, but the claim only makes sense
+     * once a DAC is on the bus and the listener has let us open it. Reading
+     * the monitor directly means a grant that arrives mid-track is picked up
+     * by the sink's per-buffer adoption attempt.
+     */
+    private fun exclusiveUsbWanted(): Boolean {
+        if (!AppSettings.bitPerfect.value) return false
+        val dac = usbDacMonitor.state.value.dac ?: return false
+        return dac.hasUsbPeripheral && dac.usbPermissionGranted
+    }
+
+    /**
+     * States what still stands between the listener and a mixer-free path,
+     * in the dialog's own row. The sink overwrites this at configure with the
+     * measured result or its own failure reason, so those sink-owned reasons
+     * are never replaced by one of these generic lines.
+     */
+    private fun publishExclusiveUsbAvailability() {
+        if (AudioOutputStatus.current.value.exclusiveUsbActive) return
+        if (!AppSettings.bitPerfect.value) {
+            lastUsbAvailabilityDetail = null
+            AudioOutputStatus.publishExclusiveUsb(active = false, detail = null)
+            return
+        }
+        val current = AudioOutputStatus.current.value.exclusiveUsbDetail
+        if (current != null && current != lastUsbAvailabilityDetail) return
+        val dac = usbDacMonitor.state.value.dac
+        val detail = when {
+            dac == null ->
+                "Bit-perfect output needs a USB DAC; the system mixer may resample"
+            !dac.usbPermissionGranted ->
+                "Waiting for USB access; the system mixer stays in the path until it is granted"
+            else -> "USB DAC ready; exclusive output starts with the next track"
+        }
+        lastUsbAvailabilityDetail = detail
+        AudioOutputStatus.publishExclusiveUsb(active = false, detail = detail)
+    }
+
     private fun preferredUsbDevice(): AudioDeviceInfo? = audioManager
         ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         ?.firstOrNull { device ->
@@ -6895,7 +6978,29 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
         }
         scope.launch {
-            AppSettings.bitPerfect.drop(1).collect { requestOutputReconfiguration() }
+            AppSettings.bitPerfect.collect { enabled ->
+                if (enabled) ensureUsbPermission()
+                exclusiveUsb.setWanted(exclusiveUsbWanted())
+                publishExclusiveUsbAvailability()
+                requestOutputReconfiguration()
+            }
+        }
+        scope.launch {
+            // Attach/detach and the permission grant both land here. Only a
+            // change in device or grant state acts, so a denial does not
+            // re-prompt in a loop.
+            usbDacMonitor.state
+                .map { st -> st.dac?.let { Triple(it.vendorId, it.productId, it.usbPermissionGranted) } }
+                .distinctUntilChanged()
+                .collect {
+                    if (AppSettings.bitPerfect.value) ensureUsbPermission()
+                    exclusiveUsb.setWanted(exclusiveUsbWanted())
+                    if (!AppSettings.bitPerfect.value) {
+                        lastUsbAvailabilityDetail = null
+                        AudioOutputStatus.publishExclusiveUsb(active = false, detail = null)
+                    }
+                    publishExclusiveUsbAvailability()
+                }
         }
         scope.launch {
             // Not applied to a player mid-transition: [CrossfadeController]
@@ -7567,6 +7672,10 @@ class PlaybackService : MediaLibraryService() {
         // is withdrawn before the service goes rather than left pointing at a
         // format nothing is playing any more.
         BitPerfectMixer.clear(audioManager)
+        // Close the usbdevfs session and let go of the monitor before the
+        // service goes; the next one re-opens it on its first configure.
+        exclusiveUsb.release()
+        usbDacMonitor.release()
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         partySync?.stop()

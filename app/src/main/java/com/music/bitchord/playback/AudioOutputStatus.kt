@@ -96,6 +96,15 @@ object AudioOutputStatus {
          * the half of bit-exactness that happens after the app's AudioTrack.
          */
         val bitPerfectMixer: BitPerfectMixer.State? = null,
+        /**
+         * Whether audio is going out through the userspace usbdevfs session
+         * rather than AudioFlinger. When true the transport below is
+         * [TransportType.DIRECT_USB] and the system mixer is genuinely out of
+         * the path, not merely asked to stay out of it.
+         */
+        val exclusiveUsbActive: Boolean = false,
+        /** Rate/bit depth on the wire, or why the session is not running. */
+        val exclusiveUsbDetail: String? = null,
         val directUsbProbe: DirectUsbProbeResult? = null,
         val directSupport: DirectAudioProbe.DirectSupport? = null,
         val directPlaybackSupported: Boolean = false,
@@ -161,6 +170,8 @@ object AudioOutputStatus {
                 dspAvailable == other.dspAvailable &&
                 dspBypassed == other.dspBypassed &&
                 bitPerfectMixer == other.bitPerfectMixer &&
+                exclusiveUsbActive == other.exclusiveUsbActive &&
+                exclusiveUsbDetail == other.exclusiveUsbDetail &&
                 directUsbProbe == other.directUsbProbe &&
                 directSupport == other.directSupport &&
                 directPlaybackSupported == other.directPlaybackSupported &&
@@ -204,6 +215,8 @@ object AudioOutputStatus {
             result = 31 * result + dspAvailable.hashCode()
             result = 31 * result + dspBypassed.hashCode()
             result = 31 * result + (bitPerfectMixer?.hashCode() ?: 0)
+            result = 31 * result + exclusiveUsbActive.hashCode()
+            result = 31 * result + (exclusiveUsbDetail?.hashCode() ?: 0)
             result = 31 * result + (directUsbProbe?.hashCode() ?: 0)
             result = 31 * result + (directSupport?.hashCode() ?: 0)
             result = 31 * result + directPlaybackSupported.hashCode()
@@ -420,6 +433,33 @@ object AudioOutputStatus {
     }
 
     /**
+     * The userspace USB session's own verdict. [active] is written only by the
+     * sink that owns the endpoint; a non-null [detail] with `active = false`
+     * names why the mixer is still in the path (permission, clock, channels).
+     */
+    fun publishExclusiveUsb(active: Boolean, detail: String?) {
+        val snapshot = current.value
+        if (snapshot.exclusiveUsbActive == active && snapshot.exclusiveUsbDetail == detail) return
+        // Deactivation must drop the DIRECT_USB transport the session forced,
+        // or the old values would make evaluateActualPath keep claiming a
+        // direct path after it is gone. A session that was never active must
+        // leave an independent framework direct path alone.
+        val base = if (!active && snapshot.exclusiveUsbActive) {
+            snapshot.copy(
+                transportType = TransportType.AUDIO_TRACK,
+                requestedTransportType = TransportType.AUDIO_TRACK,
+                directPlaybackRequested = false,
+                directPlaybackActual = false,
+            )
+        } else {
+            snapshot
+        }
+        current.value = evaluateActualPath(
+            base.copy(exclusiveUsbActive = active, exclusiveUsbDetail = detail),
+        )
+    }
+
+    /**
      * What loudness normalization is doing to the playing track. Nulls mean
      * "nothing" — off, or YouTube offered no figure for this track — and are
      * what the readout shows as inactive.
@@ -446,6 +486,21 @@ object AudioOutputStatus {
      * and bypassing AudioFlinger mixer, versus being rejected by AudioPolicy and placed on a MixerThread.
      */
     internal fun evaluateActualPath(snapshot: Snapshot): Snapshot {
+        // The userspace session outranks every framework answer: PCM goes to
+        // isochronous URBs, so AudioPolicy never sees this track and the
+        // system mixer cannot resample what it never receives.
+        if (snapshot.exclusiveUsbActive) {
+            return snapshot.copy(
+                transportType = TransportType.DIRECT_USB,
+                requestedTransportType = TransportType.DIRECT_USB,
+                directPlaybackRequested = true,
+                directPlaybackActual = true,
+                directPlaybackRejected = false,
+                directPlaybackSelected = false,
+                systemMixerRateHz = null,
+                halFormat = null,
+            )
+        }
         // Direct USB (userspace USB stream) directly communicates with USB endpoints,
         // bypassing Android AudioFlinger and AudioPolicy entirely.
         if (snapshot.transportType == TransportType.DIRECT_USB ||

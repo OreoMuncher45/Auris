@@ -481,6 +481,17 @@ fun AudioPipelineDialog(
                 PipelineRow("Route", outputStatus.routeKind.name)
                 PipelineRow("Transport", outputStatus.transportType.label)
 
+                if (outputStatus.exclusiveUsbActive || outputStatus.exclusiveUsbDetail != null) {
+                    PipelineRow(
+                        "USB exclusive",
+                        if (outputStatus.exclusiveUsbActive) {
+                            "Active — ${outputStatus.exclusiveUsbDetail ?: "usbdevfs"}".trim()
+                        } else {
+                            outputStatus.exclusiveUsbDetail ?: "Not active"
+                        },
+                    )
+                }
+
                 val directStatusText = when {
                     outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB ->
                         "Active (Direct Userspace USB)"
