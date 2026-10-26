@@ -6,6 +6,8 @@ import com.music.bitchord.data.jiosaavn.prioritizeExplicit
 import com.music.bitchord.data.jiosaavn.selectBestSaavnStream
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.data.settings.permits
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.MusicSource
@@ -922,6 +924,54 @@ class SourcesTest {
             listOf(lossless, plain),
             SourceResolver.preferred(listOf(plain, lossless), target, wantsLossless = true),
         )
+    }
+
+    /**
+     * The Dolby Atmos rung is additive, not a cap: it budgets like Lossless,
+     * every source may still answer, and the request is the same lossless one
+     * with an immersive answer preferred ahead of it. A track with no spatial
+     * master therefore plays its FLAC rather than failing the rung.
+     */
+    @Test
+    fun `the Dolby Atmos rung budgets like lossless and asks every source`() {
+        val wifi = AppSettings.audioQualityWifi.value
+        val cellular = AppSettings.audioQualityCellular.value
+        val metered = AppSettings.meteredConnection.value
+        AppSettings.meteredConnection.value = null
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        try {
+            assertEquals(StreamRequest.Lossless, SourceResolver.requestForNow())
+            assertTrue(AppSettings.wantsDolbyAtmos)
+            SourceKind.entries.forEach { kind -> assertTrue(AudioQuality.DOLBY.permits(kind)) }
+        } finally {
+            AppSettings.audioQualityWifi.value = wifi
+            AppSettings.audioQualityCellular.value = cellular
+            AppSettings.meteredConnection.value = metered
+        }
+    }
+
+    /**
+     * The rung is a statement even with the master switch off — that switch
+     * is a standing preference, the rung is what the listener picked for this
+     * connection, and a rung labelled Dolby Atmos must not serve stereo while
+     * the switch is what decides.
+     */
+    @Test
+    fun `the Dolby Atmos rung is honoured with the master switch off`() {
+        val wifi = AppSettings.audioQualityWifi.value
+        val cellular = AppSettings.audioQualityCellular.value
+        val metered = AppSettings.meteredConnection.value
+        AppSettings.meteredConnection.value = null
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        AppSettings.dolbyAtmos.value = false
+        try {
+            assertTrue(AppSettings.wantsDolbyAtmos)
+        } finally {
+            AppSettings.dolbyAtmos.value = true
+            AppSettings.audioQualityWifi.value = wifi
+            AppSettings.audioQualityCellular.value = cellular
+            AppSettings.meteredConnection.value = metered
+        }
     }
 
     /**

@@ -370,7 +370,10 @@ fun ClassipodHost(
     // Cycling a rung re-pushes a fresh page (values are snapshots).
     fun qualityPage(): ClassipodPage.Menu {
         fun cycle(current: AudioQuality, setter: (AudioQuality) -> Unit): () -> Unit = {
-            val order = listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW)
+            val order = listOf(
+                AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                AudioQuality.MEDIUM, AudioQuality.LOW,
+            )
             setter(order[(order.indexOf(current) + 1) % order.size])
         }
         return ClassipodPage.Menu(
@@ -502,10 +505,16 @@ fun ClassipodHost(
         "Audio",
         listOf(
             cyc("Wi-Fi ceiling", wifiQuality.label, wifiQuality,
-                listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW),
+                listOf(
+                    AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                    AudioQuality.MEDIUM, AudioQuality.LOW,
+                ),
                 AppSettings::setAudioQualityWifi, ::advAudioPage),
             cyc("Data ceiling", cellularQuality.label, cellularQuality,
-                listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW),
+                listOf(
+                    AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                    AudioQuality.MEDIUM, AudioQuality.LOW,
+                ),
                 AppSettings::setAudioQualityCellular, ::advAudioPage),
             tog("Dolby Atmos", atmosOn, AppSettings::setDolbyAtmos, ::advAudioPage),
             cyc("Download quality", dlQuality.label, dlQuality,

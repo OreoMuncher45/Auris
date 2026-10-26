@@ -274,7 +274,7 @@ class ModuleSource(
                 bitDepth = trackMeta?.bitDepth?.takeIf { it > 0 },
             )
             val playsAtmos = DeviceCodecs.playsDolbyAtmos
-            if (unplayable(format, atmosAllowed = playsAtmos && AppSettings.dolbyAtmos.value)) {
+            if (unplayable(format, atmosAllowed = playsAtmos && AppSettings.wantsDolbyAtmos)) {
                 val why = if (playsAtmos) {
                     "which is switched off in Settings"
                 } else {
@@ -369,7 +369,7 @@ class ModuleSource(
         // ignore anything it is handed — the Tidal one ignores the tier and
         // asks its backend for `MAX` regardless — so this is the polite ask
         // and the check on the response is the guarantee.
-        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value).toString(),
+        "dolbyAtmos" to (DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos).toString(),
     )
 
     private val StreamRequest.tier: String

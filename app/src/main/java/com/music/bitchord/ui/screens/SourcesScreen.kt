@@ -219,8 +219,12 @@ fun SourcesScreen(
     // the user onto Wi-Fi. See [AudioQuality.permits].
     val ceiling = if (metered == true) cellularQuality else wifiQuality
 
-    /** Whether the ceiling in force right now would cap a lossless stream anyway. */
-    val cappedByQuality = ceiling != AudioQuality.LOSSLESS
+    /**
+     * Whether the ceiling in force right now would cap a lossless stream
+     * anyway. The immersive rung does not: it looks for Atmos first and takes
+     * the lossless ladder below it when a track has no spatial master.
+     */
+    val cappedByQuality = ceiling != AudioQuality.LOSSLESS && ceiling != AudioQuality.DOLBY
     // Asked of the kinds themselves rather than of the module specifically, so
     // a source added later answers this on its own terms instead of being
     // invisible to it.
@@ -986,6 +990,7 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
         AudioQuality.MEDIUM -> R.string.medium
         AudioQuality.HIGH -> R.string.high
         AudioQuality.LOSSLESS -> R.string.lossless
+        AudioQuality.DOLBY -> R.string.dolby_atmos
     },
 )
 

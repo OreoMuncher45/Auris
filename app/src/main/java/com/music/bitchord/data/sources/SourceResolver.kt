@@ -64,7 +64,11 @@ object SourceResolver {
         // sources. It was a switch whose only real effect was to downgrade the
         // one source that could do better.
         return when {
-            ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
+            // The immersive rung is the lossless walk plus an Atmos answer
+            // preferred ahead of it: a track with no Atmos master must still
+            // play its FLAC, and [preferred]/[isBetter] already put an
+            // immersive rendition first when one is on offer.
+            ceiling == AudioQuality.DOLBY || ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
             ceiling.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
             else -> StreamRequest.Capped(ceiling.maxKbps)
         }
@@ -1069,13 +1073,15 @@ object SourceResolver {
     }
 
     /**
-     * Whether an immersive mix is worth preferring right now — the same two
-     * gates the playback side enforces in [ModuleSource.unplayable] and the
-     * addon path sends its `?atmos=` hint on, asked in the one place that
-     * chooses between rows.
+     * Whether an immersive mix is worth preferring right now — device
+     * capability plus the listener's answer, which is either the master switch
+     * or the Dolby Atmos rung on this connection. The same two gates the
+     * playback side enforces in [ModuleSource.unplayable] and the addon path
+     * sends its `?atmos=` hint on, asked in the one place that chooses between
+     * rows.
      */
     private fun atmosWanted(): Boolean =
-        DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value
+        DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
 
     private suspend fun streamBest(
         source: MusicSource,

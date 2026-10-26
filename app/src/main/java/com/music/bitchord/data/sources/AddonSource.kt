@@ -238,6 +238,32 @@ class AddonSource(
         withContext(Dispatchers.IO) {
             if (!admitted("a stream")) return@withContext null
             val tier = request.tier
+            // The immersive rung, asked first and as its own quality value.
+            //
+            // This is the difference the report "Atmos is enabled and the same
+            // addon plays it in another player" turned on: `quality` and
+            // `atmos` are two questions. `atmos=auto` only says the host
+            // *permits* a spatial answer; a backend that files the spatial mix
+            // under its own tier answers `quality=atmos` and hands back the
+            // stereo ladder for `quality=lossless`, whatever the hint says.
+            // The reference host always asks the Atmos tier first and only
+            // then walks down (atmos → hi_res → lossless → high); this is the
+            // same walk with the rungs this app has.
+            //
+            // A miss here costs one request and nothing else. Anything short of
+            // a playable immersive answer — an error, a stereo reply, an
+            // encrypted or malformed URL — falls through to the ordinary
+            // request below, so a track with no Atmos master resolves exactly
+            // as it did before.
+            if (request is StreamRequest.Lossless && atmosWanted()) {
+                val immersive = client.stream(trackId, AddonClient.TIER_ATMOS).getOrNull()
+                val opened = immersive?.let { answer ->
+                    answer.url.ifBlank { null }?.let { url ->
+                        openable(url, answer, trackId, AddonClient.TIER_ATMOS)
+                    }
+                }
+                if (opened != null && opened.format.isDolbyAtmos) return@withContext opened
+            }
             val result = client.stream(trackId, tier)
             val answer = result.getOrNull()
 
@@ -303,6 +329,15 @@ class AddonSource(
      *    the *only* one offered for a track, so there is no lower sibling to
      *    fall back to and refusing is what lets another source be heard.
      */
+    /**
+     * Whether this request should go looking for an immersive answer: the
+     * phone can decode one and the listener asked for one — by the master
+     * switch or by the Dolby Atmos quality rung on this connection. The same
+     * two answers [SourceResolver] and [ModuleSource.unplayable] read.
+     */
+    private fun atmosWanted(): Boolean =
+        DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
+
     private fun openable(url: String, answer: AddonStream, trackId: String, tier: String): SourceStream? {
         if (ModuleSource.malformed(url)) {
             TrackLog.w(
@@ -321,7 +356,7 @@ class AddonSource(
 
         val format = formatOf(answer, url, tier)
         val playsAtmos = DeviceCodecs.playsDolbyAtmos
-        if (ModuleSource.unplayable(format, atmosAllowed = playsAtmos && AppSettings.dolbyAtmos.value)) {
+        if (ModuleSource.unplayable(format, atmosAllowed = atmosWanted())) {
             val why = if (playsAtmos) {
                 "which is switched off in Settings"
             } else {
@@ -345,7 +380,7 @@ class AddonSource(
                 "ATMOS",
                 "${config.displayName}: $trackId → ${format.summary} " +
                     "(${answer.transport ?: "no transport"}, decoder=$playsAtmos, " +
-                    "setting=${AppSettings.dolbyAtmos.value})",
+                    "atmos=${AppSettings.wantsDolbyAtmos})",
             )
         }
 

@@ -438,7 +438,7 @@ object AudioCache {
      * rather than re-fetching it.
      */
     private fun atmosKeySuffix(): String =
-        if (DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value) "" else "-noatmos"
+        if (DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos) "" else "-noatmos"
 
     /**
      * Which kind of server a cache entry's bytes came from, as recorded by

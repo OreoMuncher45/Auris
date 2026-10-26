@@ -52,7 +52,10 @@ import java.util.Locale
  * above it are skipped.
  */
 fun AudioQuality.permits(kind: SourceKind): Boolean = when (this) {
-    AudioQuality.LOSSLESS -> true
+    // Atmos is additive rather than a cap: the immersive mix is looked for
+    // first, and every source that could serve the lossless ladder below it
+    // is still in the walk.
+    AudioQuality.DOLBY, AudioQuality.LOSSLESS -> true
     // No lossless answer is wanted here, and a source that can serve one is
     // the slow half of the list: an addon fronting several catalogues walks
     // all of them before it answers, which is seconds spent to land on a
@@ -328,6 +331,22 @@ object AppSettings {
      * quietly rewriting itself.
      */
     val dolbyAtmos = MutableStateFlow(true)
+
+    /**
+     * Whether the listener wants the immersive mix on the connection in hand.
+     *
+     * Two ways to say yes, and they are not duplicates: the master switch is a
+     * standing preference, while [AudioQuality.DOLBY] is the same statement
+     * made on the Wi-Fi or mobile-data rung, where most people actually look
+     * for a quality picker. Choosing the rung is the more specific answer and
+     * is honoured even with the switch off — a rung that says "Dolby Atmos"
+     * and then serves stereo would be the same bug the rung exists to fix.
+     *
+     * Callers still pair this with [DeviceCodecs.playsDolbyAtmos]; capability
+     * is the phone's answer, not the listener's.
+     */
+    val wantsDolbyAtmos: Boolean
+        get() = dolbyAtmos.value || effectiveAudioQuality == AudioQuality.DOLBY
 
     /**
      * Widens stereo output via [com.music.bitchord.playback.SpatialAudioProcessor],

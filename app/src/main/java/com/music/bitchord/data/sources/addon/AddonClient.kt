@@ -157,7 +157,13 @@ class AddonClient(rawBaseUrl: String) {
      * endpoint entirely.
      */
     suspend fun stream(trackId: String, tier: String): Result<AddonStream> {
-        val params = settingsFor(tier)
+        // The immersive rung is the only request that is allowed to come back
+        // spatial. Every other rung says `none` even when the listener wants
+        // Atmos, because those are the stereo fallback after the immersive
+        // rung missed — the shape the reference host uses, and what stops a
+        // failed Atmos attempt from being answered with the same mix again.
+        val atmos = if (tier == TIER_ATMOS) ATMOS_AUTO else ATMOS_NONE
+        val params = settingsFor(tier, atmos = atmos)
         return streams.get(
             key = keyOf(trackId, params.toString()),
             describe = { "▶ addon stream(${redact(baseUrl)}) id=$trackId tier=$tier" },
@@ -195,9 +201,14 @@ class AddonClient(rawBaseUrl: String) {
      *
      * Last comes `atmos`, which is the one parameter here that is not about
      * quality. See [atmosHint]; unlike `quality`, it is set rather than filled
-     * in, so it also replaces a default the manifest declared.
+     * in, so it also replaces a default the manifest declared. [stream] passes
+     * its own value: `auto` on the immersive rung and `none` on the stereo
+     * rungs below it — see there.
      */
-    private suspend fun settingsFor(tier: String): Map<String, String> {
+    private suspend fun settingsFor(
+        tier: String,
+        atmos: String = atmosHint(),
+    ): Map<String, String> {
         val declared = manifest().getOrNull()?.settings.orEmpty()
         val params = LinkedHashMap<String, String>()
         declared.forEach { setting ->
@@ -210,7 +221,6 @@ class AddonClient(rawBaseUrl: String) {
                 .mapNotNull { it.stringValue }
             params[QUALITY_KEY] = matchTier(tier, options) ?: tier
         }
-        val atmos = atmosHint()
         params[ATMOS_KEY] = atmos
         TrackLog.d(TAG, "asking ${redact(baseUrl)} with atmos=$atmos (tier=$tier)")
         return params
@@ -257,7 +267,7 @@ class AddonClient(rawBaseUrl: String) {
      * nothing on the IO thread it already runs on.
      */
     private fun atmosHint(): String {
-        val wanted = DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value
+        val wanted = DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
         return if (wanted) ATMOS_AUTO else ATMOS_NONE
     }
 
@@ -271,6 +281,15 @@ class AddonClient(rawBaseUrl: String) {
      * which an addon that bothered to order them makes its recommended tier.
      */
     private fun matchTier(tier: String, options: List<String>): String? {
+        // The immersive rung is its own value in the reference host's
+        // vocabulary, not a synonym for lossless: a backend that files the
+        // spatial mix under `quality=atmos` answers only when that value is
+        // asked for. A manifest that enumerates options but omits one gets the
+        // literal value rather than its first option — the reference host does
+        // not negotiate this one at all.
+        if (tier.equals(TIER_ATMOS, ignoreCase = true)) {
+            return options.firstOrNull { option -> ATMOS_WORDS.any { it in option.lowercase() } } ?: tier
+        }
         if (options.isEmpty()) return null
         options.firstOrNull { it.equals(tier, ignoreCase = true) }?.let { return it }
         val wanted = when (tier.uppercase()) {
@@ -404,6 +423,13 @@ class AddonClient(rawBaseUrl: String) {
         const val TIER_HIGH = "HIGH"
         const val TIER_LOW = "LOW"
 
+        /**
+         * The immersive rung. Not one of this app's quality tiers: this is the
+         * addon's own vocabulary, and the one value that says "the spatial
+         * mix, not merely a stream this device could decode as one".
+         */
+        const val TIER_ATMOS = "atmos"
+
         private const val QUALITY_KEY = "quality"
 
         /** The spec's immersive-audio parameter, and the two values BitChord sends for it. */
@@ -411,6 +437,7 @@ class AddonClient(rawBaseUrl: String) {
         private const val ATMOS_AUTO = "auto"
         private const val ATMOS_NONE = "none"
 
+        private val ATMOS_WORDS = listOf("atmos", "dolby", "immersive", "spatial", "joc")
         private val LOSSLESS_WORDS = listOf("lossless", "flac", "hifi", "hi-res", "hires", "max", "best")
         private val HIGH_WORDS = listOf("high", "320", "normal", "standard")
         private val LOW_WORDS = listOf("low", "96", "128", "min")
