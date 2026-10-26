@@ -3,6 +3,8 @@ package com.music.bitchord.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,6 +34,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -74,6 +77,14 @@ fun CustomizationSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        // The Now Playing tab is now taller than half a phone screen (four
+        // colour rows, two switches, four indicator switches, the smoothness
+        // slider and the recent swatches). At the partially expanded stop the
+        // lower rows were laid out past the sheet's bottom edge and never
+        // seen, or drawn over the rows above them. Open at full height and
+        // scroll the body; the title and tabs stay pinned so the tab you are
+        // on is always readable.
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.background,
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
@@ -89,13 +100,23 @@ fun CustomizationSheet(
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
             Spacer(Modifier.size(18.dp))
-            when (tab) {
-                0 -> NowPlayingCustomization()
-                1 -> HomeCustomization(homeShelfTitles)
-                2 -> LibraryCustomization()
-                else -> ThemeCustomization()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // fill = false keeps short tabs (Home, Library, Theme)
+                    // as small as their content; a tall tab takes the
+                    // remaining height and scrolls inside it instead.
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                when (tab) {
+                    0 -> NowPlayingCustomization()
+                    1 -> HomeCustomization(homeShelfTitles)
+                    2 -> LibraryCustomization()
+                    else -> ThemeCustomization()
+                }
+                Spacer(Modifier.size(28.dp))
             }
-            Spacer(Modifier.size(28.dp))
         }
     }
 }
