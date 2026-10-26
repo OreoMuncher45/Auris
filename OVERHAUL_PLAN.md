@@ -1327,11 +1327,15 @@ YouTube off).
 
 ### True bit-perfect output, stage 1 (2026-10-26)
 
-LastWave's "bit-perfect" label is only partly real: its integer path sets
-`bitPerfectAtConfigure` while Media3 still decimates 24/32-bit to 16-bit via
-`ToInt16PcmAudioProcessor`, though its float path and its `UsbBitPerfectOutput`
-(API 34 request plus readback) are sound. Stage 1 here implements the two
-verifiable mechanisms: a per-buffer DSP bypass latched in `PrecisionAudioSink`,
+LastWave's bit-perfect output is real on its primary path, not a label:
+`InternalDirectOutput` opens either a 24-bit packed AudioTrack at the source
+rate (the UAPP HiRes Direct recipe) or an AAudio MMAP exclusive stream, and
+`UsbBitPerfectOutput` reads the API 34 mixer request back. The only overclaim
+is its `DefaultAudioSink` fallback, which sets `bitPerfectAtConfigure` while
+Media3's `ToInt16PcmAudioProcessor` is still in the chain. That primary path —
+owning the AudioTrack — is the bar this stage does not yet meet. Stage 1 here
+implements the two verifiable mechanisms available inside Media3: a per-buffer
+DSP bypass latched in `PrecisionAudioSink`,
 and Android 14's `MIXER_BEHAVIOR_BIT_PERFECT` request for USB in
 `BitPerfectMixer`, accepted only when `getPreferredMixerAttributes` reads back
 the same encoding, rate and channel count. Crossfade and the seamless upgrade
@@ -1342,20 +1346,27 @@ persists as `bit_perfect`.
 
 - Verification: `:app:compileDevDebugKotlin` green; `BitPerfectMixerTest` (6),
   `AudioOutputPolicyTest` (11) and `PrecisionAudioSinkTest` (39) green.
-- Artifact: commit `a00ae6b5` on branch `bitperfect-artifact`, cut from
-  `86945c0a` plus the bit-perfect commit only — the halted Atmos-echo guard
-  (`48817f64`) is deliberately not included. `Flow Debug APK` run
-  `40281647084`
-  (`https://github.com/OreoMuncher45/Auris/actions/runs/40281647084`),
-  success. Same `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 /
-  2.2.18, 16 KB `zipalign` verified, `libbitchord_jamesdsp.so` +
-  `assets/dexopt/baseline.prof` packaged, `bit_perfect` strings present in
-  `resources.arsc`. arm64 SHA-256
-  `101a7b0dcb13f26fa3aaebcd9154c2cb9caeacb096a4cc5bd1780b1951de9c24`.
+- Crash fix (`34ab0bd2`): the switch was first rendered as a `row()` nested
+  inside the output-precision `row()`. That registers its entry while
+  `SearchableSettingsGroup` is already iterating `entries`, so opening Settings
+  threw `ConcurrentModificationException`. It is now a sibling with
+  `divided = false`, matching every other sub-row in the file; there are no
+  Compose tests in the suite, which is why compile and unit tests missed it.
+- Artifact: branch `bitperfect-artifact`, cut from `86945c0a` plus the
+  bit-perfect commits only — the halted Atmos-echo guard (`48817f64`) is
+  deliberately not included. First build `40281647084` (commit `a00ae6b5`) was
+  the crashing one; the shipped build is `40283654500` (commit `34ab0bd2`,
+  `https://github.com/OreoMuncher45/Auris/actions/runs/40283654500`), success.
+  Same `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 / 2.2.18, 16 KB
+  `zipalign` verified, `libbitchord_jamesdsp.so` + `assets/dexopt/baseline.prof`
+  packaged, `bit_perfect` strings present in `resources.arsc`. arm64 SHA-256
+  `fefda5d5f859c971d3075d7e181a887ebb6f2d5f3b7fcd8a7a376f6bd44b4d24`.
   No tag, no GitHub Release. Device confirmation (USB DAC, API 34) open.
 - Limits: API < 34 or non-USB is app-side bit-exact only; packed 24-bit has no
-  Media3 `AudioTrack`, so float carries it; true exclusivity needs a UAC2
-  driver port (stage 3, prior art: `Ma145/decent-player`, `moss-apps/Flick`).
+  Media3 `AudioTrack`, so float carries it. Parity with LastWave needs the
+  stage 2/3 work: own the AudioTrack (24-bit packed at source rate) and,
+  optionally, an AAudio MMAP exclusive stream; UAC2 prior art:
+  `Ma145/decent-player`, `moss-apps/Flick`.
 
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
