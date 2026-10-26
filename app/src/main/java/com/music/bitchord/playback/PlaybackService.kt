@@ -1572,7 +1572,26 @@ class PlaybackService : MediaLibraryService() {
             // and serving it would make the switch a preference for everything
             // already in flight. Dropping the pin lets the ordinary path below
             // find a source — or say why it can't.
-            StreamChoice.of(videoId)
+            // The prepared copy is the answer the hand-over is supposed to use,
+            // and it can still be in flight when this open happens: read-ahead
+            // resolves the next track while the current one plays, the player
+            // opens that next item before it is reached, and the two overlap.
+            // Racing here would let YouTube win — and pin it — before the
+            // source's answer landed, so the hand-over would start on YouTube
+            // and only reach lossless by upgrading mid-song. Waiting on the
+            // preparation, briefly and only while it is actually running, is
+            // what makes the pin authoritative. A miss ends the wait at once,
+            // and so does the pin arriving; whichever comes first.
+            var pinned = StreamChoice.of(videoId)
+            if (pinned == null && StreamChoice.isAwaitingPreparation(videoId)) {
+                runBlocking(about) {
+                    withTimeoutOrNull(PREPARED_PIN_WAIT_MS) {
+                        while (StreamChoice.isAwaitingPreparation(videoId)) delay(PREPARED_PIN_POLL_MS)
+                    }
+                }
+                pinned = StreamChoice.of(videoId)
+            }
+            pinned
                 ?.takeIf { StreamChoice.isSubstitute(videoId) || SourceRegistry.youtubeEnabled() }
                 ?.let { serving ->
                     // What the stream claims to be, restated on every open rather
@@ -9223,6 +9242,20 @@ class PlaybackService : MediaLibraryService() {
          * under it. The wait ends early whenever the lookup does.
          */
         const val MODULE_HEAD_START_MS = 1_500L
+
+        /**
+         * How long a track's first open may wait for a read-ahead pin that is
+         * still being looked up — see the resolving data source.
+         *
+         * This runs on the loader thread for the *next* item while the current
+         * one is still playing, so it costs preload time rather than sound.
+         * Long enough for a preparation that is nearly done, short enough that
+         * a track the sources have never heard of is not held at the hand-over.
+         */
+        const val PREPARED_PIN_WAIT_MS = 1_500L
+
+        /** How often the wait above re-asks whether the pin has landed. */
+        private const val PREPARED_PIN_POLL_MS = 25L
 
         /**
          * How much of a track has to be left for a mid-track quality swap to

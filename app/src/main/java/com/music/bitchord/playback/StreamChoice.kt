@@ -124,6 +124,41 @@ object StreamChoice {
     }
 
     /**
+     * Tracks whose read-ahead preparation is still looking for a stream.
+     *
+     * [AudioCache.prefetchQueue][com.music.bitchord.playback.AudioCache.prefetchQueue]
+     * resolves a queue's next track while the current one plays and pins the
+     * answer here. The player may open that next item *before* the pin lands —
+     * a playlist's following items are prepared ahead of the transition — and
+     * that first open is the one that decides which server's bytes fill the
+     * cache entry. Without this the open would race YouTube, which structurally
+     * wins, and pin it; the prepared stream would then arrive too late to be
+     * the copy the hand-over uses. See `PlaybackService`'s resolving data
+     * source, which waits on this rather than opening the question early.
+     */
+    private val preparing = ConcurrentHashMap.newKeySet<String>()
+
+    /** Announces that [videoId]'s prepared stream is being looked up. */
+    fun beginPreparing(videoId: String) {
+        if (preparing.size >= MAX_REMEMBERED) preparing.clear()
+        preparing += videoId
+    }
+
+    /** Withdraws [beginPreparing]'s claim — with a pin if it found one, without if it didn't. */
+    fun endPreparing(videoId: String) {
+        preparing -= videoId
+    }
+
+    /**
+     * Whether a first open should hold off for a prepared pin: a preparation is
+     * running and has not produced a choice yet. Once it has, [of] answers and
+     * the ordinary pinned path takes over; once it is withdrawn, there is
+     * nothing left to wait for.
+     */
+    fun isAwaitingPreparation(videoId: String): Boolean =
+        videoId in preparing && of(videoId) == null
+
+    /**
      * Tracks whose substituted stream refused to serve its bytes, and when.
      *
      * [forget] alone is not enough to recover from one. The search behind a

@@ -976,12 +976,21 @@ object AudioCache {
                 val alreadyPinned = StreamChoice.of(next)
                     ?.takeIf { !pinnedToYouTube && StreamChoice.isSubstitute(next) }
                 val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
-                    runCatching { SourceResolver.prepareForPlayback(target) }
-                        .onFailure {
-                            TrackLog.d(TAG, "next-track preparation failed for $next: ${it.message}", about = next)
-                        }
-                        .getOrNull()
-                        ?.also { StreamChoice.remember(next, it, substituted = true) }
+                    // Announced before the search, not after: the player opens
+                    // a queue's next item before it is reached, and that open
+                    // reads this to wait for the pin rather than racing YouTube
+                    // and locking the hand-over into the wrong server.
+                    StreamChoice.beginPreparing(next)
+                    try {
+                        runCatching { SourceResolver.prepareForPlayback(target) }
+                            .onFailure {
+                                TrackLog.d(TAG, "next-track preparation failed for $next: ${it.message}", about = next)
+                            }
+                            .getOrNull()
+                            ?.also { StreamChoice.remember(next, it, substituted = true) }
+                    } finally {
+                        StreamChoice.endPreparing(next)
+                    }
                 } else {
                     null
                 }
