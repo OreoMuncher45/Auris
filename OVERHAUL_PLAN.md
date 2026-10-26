@@ -1299,6 +1299,32 @@ the hint.
   universal `c62de684b62d9ff7038f240ebc9906bd436f3bf84a5149d750b320044f36ad60`.
   No tag, no GitHub Release. Device confirmation remains open.
 
+### Atmos port: ordering, preload, Automix (2026-10-26)
+
+The four ATMOS.md workstreams landed as separate commits on `convx-fresh`:
+`ba24833d` (capability detection incl. the system Spatializer, and the
+`atmos → hi_res → lossless → high` waterfall), `a58478b4` (bounded 1.5 s
+module head start so a lossless/addon answer outranks YouTube while a
+nothing-outranks-YouTube setup still starts instantly), `227ddc01` (the
+read-ahead pin is authoritative for the first open, bounded at 1.5 s, via the
+`StreamChoice.beginPreparing` marker), and `fe1df997` (Automix analyses any
+complete duration-checked copy, including `#alt`/`#hifi`, and works with
+YouTube off).
+
+- Verification: `:app:compileDevReleaseKotlin`, `AddonSourceTest`,
+  `StreamChoiceTest`, `AutomixAnalysisSourceTest`, `FlowTest`,
+  `QueueBuilderTest` and `:sharedUi:jvmTest` green. The full `app` suite keeps
+  the same pre-existing failures only (15 locale files, live Genius test).
+- Artifact: HEAD `fe1df997`; `Flow Debug APK` run `40273045094`
+  (`https://github.com/OreoMuncher45/Auris/actions/runs/40273045094`),
+  success. Same `CN=BitChord Next Fork` signer (SHA-256 `385af3b4…8971ce`),
+  `com.dev.bitchord` 80 / 2.2.18, 16 KB `zipalign` verified,
+  `libffmpegJNI.so` + `libbitchord_jamesdsp.so` + `assets/dexopt/baseline.prof`
+  packaged. arm64 SHA-256
+  `549b852417338cb1ab4c282573db245199bc492a066ad50342d1d78ef373b032`,
+  universal `0614c0d5956eea3ded0c3fe0bcf35e3630b22c8ea26beaa631d0cde8c38347e1`.
+  No tag, no GitHub Release. Device confirmation remains open.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
