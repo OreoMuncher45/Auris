@@ -1,6 +1,10 @@
 package com.music.bitchord.data.sources
 
+import android.content.Context
+import android.media.AudioManager
 import android.media.MediaCodecList
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
@@ -65,6 +69,18 @@ import java.util.Locale
  * Skipping that question was what greyed the switch out on phones the app can
  * in fact play Atmos on.
  *
+ * ### The platform spatializer
+ *
+ * A vendor image can ship no Dolby decoder and still render an immersive mix:
+ * from Android 12L the platform's own Spatializer is the audio HAL's path to a
+ * licensed downmix, and the phone that ships it reports `isAvailable` (or has
+ * the feature enabled) on [AudioManager.getSpatializer]. The reference player
+ * asks this before it gives up, and it is the difference on exactly the phones
+ * this app was otherwise dropping to stereo. It is asked after the decoder
+ * list, because a real JOC decoder keeps the object layer while the
+ * spatializer's behaviour is vendor-dependent — but before the verdict is
+ * settled, because "no decoder" is not "cannot render".
+ *
  * ### What this does not cover
  *
  * Passthrough. A phone with no decoder at all can still send E-AC-3 to a
@@ -90,6 +106,19 @@ object DeviceCodecs {
 
     @Volatile
     private var probed: Boolean? = null
+
+    /**
+     * Application context for the one question that needs a system service.
+     *
+     * Set once from [com.music.bitchord.BitChordApplication]; null in tests and
+     * before startup, where [systemSpatializer] simply answers false.
+     */
+    @Volatile
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
 
     /**
      * Test seam, and the field override of last resort. The decision that
@@ -133,7 +162,32 @@ object DeviceCodecs {
         // renderer decodes the E-AC-3 core itself. See the class doc.
         val viaBundled = bundledFfmpegDecoders()
         TrackLog.d(TAG, "Dolby Atmos: platform=false, bundled FFmpeg eac3=$viaBundled")
-        return viaBundled
+        if (viaBundled) return true
+        // Last, the vendor's own immersive path. See the class doc; this is
+        // the signal the reference player has and this one was missing.
+        val viaSpatializer = systemSpatializer()
+        TrackLog.d(TAG, "Dolby Atmos: no decoder, platform spatializer=$viaSpatializer")
+        return viaSpatializer
+    }
+
+    /**
+     * Whether the platform Spatializer can render an immersive stream, on the
+     * API levels that have one (12L and up).
+     */
+    private fun systemSpatializer(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S_V2) return false
+        val context = appContext ?: return false
+        return runCatching { spatializerAvailable(context) }.getOrElse {
+            TrackLog.w(TAG, "could not read the platform spatializer — ${it.message}")
+            false
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S_V2)
+    private fun spatializerAvailable(context: Context): Boolean {
+        val manager = context.getSystemService(AudioManager::class.java) ?: return false
+        val spatializer = manager.spatializer ?: return false
+        return spatializer.isAvailable || spatializer.isEnabled
     }
 
     /** The platform's own E-AC-3 decoders; true when the list cannot be read. */

@@ -47,6 +47,9 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        // One system-service probe needs a context; answered once, cached for
+        // the process. See DeviceCodecs for what it is and is not.
+        com.music.bitchord.data.sources.DeviceCodecs.init(this)
         // The player is drawn by the shared UI module; this is what it reads
         // underneath — settings, the Canvas decoder, outputs, the party.
         AndroidStreamHooks.installEarly()

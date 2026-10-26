@@ -5368,52 +5368,14 @@ class PlaybackService : MediaLibraryService() {
             fallback.onAwait { resolved -> if (resolved.isSuccess) null else lookup.await() }
         }
 
-        // A manifest cannot be substituted here, however good it is. This
-        // function runs on the loader thread, *inside* the open of a media
-        // source that was built minutes ago from an extensionless
-        // `bitchord://` URI — so the source is already progressive and cannot
-        // be told otherwise, and handing it a manifest is a track that fails
-        // at 0ms rather than a track that plays lossless. See [StreamContainer]
-        // for the log of exactly that.
-        //
-        // Nothing is thrown away for it. What the modules found is passed to
-        // the second look already answered, which is the same handover a lookup
-        // that merely lost the race gets — and [QualityUpgrade]'s swap does
-        // declare the type, so the manifest plays there. The cost is a seam a
-        // few seconds in instead of a clean start, which is the trade this
-        // whole path is built to make.
-        if (quick != null && StreamContainer.isManifest(quick.url)) {
-            val url = runCatching { fallback.await().getOrThrow() }.getOrNull()
-            if (url != null) {
-                TrackLog.d(
-                    "BitChord",
-                    "'${target.title}' was offered ${quick.format.summary} as a manifest; " +
-                        "starting on YouTube and swapping to it under the music",
-                    about = videoId,
-                )
-                val handed = QualityUpgrade.settledForLess(
-                    mediaId = videoId,
-                    target = target,
-                    inFlight = CompletableDeferred(quick),
-                    playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
-                )
-                if (!handed) NerdStats.onLosslessRaceEnd(videoId)
-                return Resolved.YouTube(url)
-            }
-            // YouTube cannot serve it either, so there is nothing to start on
-            // and nothing to swap from. The manifest goes out as it is: it will
-            // fail its first read, and [replayAsManifest] rebuilds the item
-            // with the type declared and prepares it again. A cut before the
-            // first note beats a track that does not play at all.
-            TrackLog.w(
-                "BitChord",
-                "'${target.title}' has only a manifest and YouTube cannot serve it; " +
-                    "letting it fail once to declare its type",
-                about = videoId,
-            )
-            NerdStats.onLosslessRaceEnd(videoId)
-            return Resolved.Module(quick)
-        }
+        // A manifest is returned like any other module answer, and its first
+        // open is expected to fail. That is not a wasted attempt: the resolving
+        // data source has recorded the URL in [StreamContainer], and
+        // [replayAsManifest] rebuilds the item with the type declared — the
+        // same path that makes a mid-track upgrade's DASH/HLS stream play.
+        // Falling back to YouTube here instead (the old shape) meant the one
+        // rendition the listener asked for — frequently the Atmos master —
+        // was found, logged as substituted, and never opened at all.
 
         if (quick != null) {
             // The modules got there first, so the YouTube walk is genuinely

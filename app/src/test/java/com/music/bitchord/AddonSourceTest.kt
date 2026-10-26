@@ -410,12 +410,14 @@ class AddonSourceTest {
             assertEquals("auto", requestFor("/search").queryParameter("atmos"))
 
             // Stream is a waterfall now: the immersive rung asks for the
-            // spatial tier with the hint, and the stereo rung below it says
+            // spatial tier with the hint, and the stereo rungs below it say
             // `none` so a failed attempt is not answered with the same mix.
+            // A stereo answer to the immersive rung is not a hit, so the walk
+            // continues to the hi-res rung the reference host uses next.
             val streams = streamRequests()
             assertEquals("atmos", streams[0].queryParameter("quality"))
             assertEquals("auto", streams[0].queryParameter("atmos"))
-            assertEquals("LOSSLESS", streams[1].queryParameter("quality"))
+            assertEquals("hi_res", streams[1].queryParameter("quality"))
             assertEquals("none", streams[1].queryParameter("atmos"))
         }
 
@@ -540,8 +542,54 @@ class AddonSourceTest {
         assertEquals(2, streams.size)
         assertEquals("atmos", streams[0].queryParameter("quality"))
         assertEquals("auto", streams[0].queryParameter("atmos"))
-        assertEquals("LOSSLESS", streams[1].queryParameter("quality"))
+        assertEquals("hi_res", streams[1].queryParameter("quality"))
         assertEquals("none", streams[1].queryParameter("atmos"))
+    }
+
+    /**
+     * The rest of the reference host's waterfall: atmos, then hi-res, then CD
+     * lossless, then 320. A backend that files 24-bit copies under their own
+     * tier answers none of the requests above it, and a walk that stopped at
+     * `lossless` never reached it.
+     */
+    @Test
+    fun `the stereo waterfall continues to hi-res and lossless when earlier rungs miss`() = runBlocking {
+        route("/manifest.json", manifest())
+        server.dispatcher = qualityDispatcher(
+            "atmos" to MockResponse().setResponseCode(404),
+            "hi_res" to MockResponse().setResponseCode(404),
+            "LOSSLESS" to json("""{"url":"https://cdn/a.flac","codec":"flac"}"""),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("flac", stream.format.codec)
+        assertEquals(listOf("atmos", "hi_res", "LOSSLESS"), streamRequests().map { it.queryParameter("quality") })
+    }
+
+    /**
+     * Nothing above the floor answers. The lossy copy is still better than
+     * falling to YouTube, but it is marked below the request so the resolver's
+     * second look knows to keep asking.
+     */
+    @Test
+    fun `a lossy floor is kept and marked below the request`() = runBlocking {
+        route("/manifest.json", manifest())
+        server.dispatcher = qualityDispatcher(
+            "atmos" to MockResponse().setResponseCode(404),
+            "hi_res" to MockResponse().setResponseCode(404),
+            "LOSSLESS" to MockResponse().setResponseCode(404),
+            "HIGH" to json("""{"url":"https://cdn/a.mp3","codec":"mp3","bitrate":128}"""),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("mp3", stream.format.codec)
+        assertTrue(stream.belowRequest)
+        assertEquals(
+            listOf("atmos", "hi_res", "LOSSLESS", "HIGH"),
+            streamRequests().map { it.queryParameter("quality") },
+        )
     }
 
     /**
@@ -810,6 +858,23 @@ class AddonSourceTest {
             } else {
                 json("""{"url":"https://cdn.example.com/a.flac","codec":"flac","container":"flac"}""")
             }
+        }
+    }
+
+    /**
+     * Answers each rung of the waterfall by the `quality` value it was asked
+     * for. A rung with no entry is a miss, the way a catalogue that does not
+     * stock that tier answers.
+     */
+    private fun qualityDispatcher(vararg byQuality: Pair<String, MockResponse>) = object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            synchronized(seen) { seen += request }
+            val url = request.requestUrl
+            val path = url?.encodedPath.orEmpty()
+            if (!path.startsWith("/stream/")) return routes[path] ?: MockResponse().setResponseCode(404)
+            val quality = url?.queryParameter("quality").orEmpty()
+            return byQuality.firstOrNull { it.first.equals(quality, ignoreCase = true) }?.second
+                ?: MockResponse().setResponseCode(404)
         }
     }
 

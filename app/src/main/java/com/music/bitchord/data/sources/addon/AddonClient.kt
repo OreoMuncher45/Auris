@@ -292,9 +292,10 @@ class AddonClient(rawBaseUrl: String) {
         }
         if (options.isEmpty()) return null
         options.firstOrNull { it.equals(tier, ignoreCase = true) }?.let { return it }
-        val wanted = when (tier.uppercase()) {
-            TIER_LOSSLESS -> LOSSLESS_WORDS
-            TIER_LOW -> LOW_WORDS
+        val wanted = when {
+            tier.equals(TIER_HI_RES, ignoreCase = true) -> HI_RES_WORDS
+            tier.equals(TIER_LOSSLESS, ignoreCase = true) -> LOSSLESS_WORDS
+            tier.equals(TIER_LOW, ignoreCase = true) -> LOW_WORDS
             else -> HIGH_WORDS
         }
         return options.firstOrNull { option -> wanted.any { it in option.lowercase() } }
@@ -424,6 +425,16 @@ class AddonClient(rawBaseUrl: String) {
         const val TIER_LOW = "LOW"
 
         /**
+         * The hi-res rung, in the reference host's vocabulary.
+         *
+         * The step between the immersive answer and CD lossless: a backend that
+         * files 24-bit or 96kHz copies under their own tier answers this and
+         * nothing below it, so a waterfall that jumps from Atmos straight to
+         * LOSSLESS never reaches them. See [AddonSource.stream].
+         */
+        const val TIER_HI_RES = "hi_res"
+
+        /**
          * The immersive rung. Not one of this app's quality tiers: this is the
          * addon's own vocabulary, and the one value that says "the spatial
          * mix, not merely a stream this device could decode as one".
@@ -438,6 +449,7 @@ class AddonClient(rawBaseUrl: String) {
         private const val ATMOS_NONE = "none"
 
         private val ATMOS_WORDS = listOf("atmos", "dolby", "immersive", "spatial", "joc")
+        private val HI_RES_WORDS = listOf("hi_res", "hi-res", "hires", "hi res", "24", "96", "192")
         private val LOSSLESS_WORDS = listOf("lossless", "flac", "hifi", "hi-res", "hires", "max", "best")
         private val HIGH_WORDS = listOf("high", "320", "normal", "standard")
         private val LOW_WORDS = listOf("low", "96", "128", "min")

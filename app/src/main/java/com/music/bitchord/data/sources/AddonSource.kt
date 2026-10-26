@@ -237,64 +237,98 @@ class AddonSource(
     override suspend fun stream(trackId: String, request: StreamRequest): SourceStream? =
         withContext(Dispatchers.IO) {
             if (!admitted("a stream")) return@withContext null
-            val tier = request.tier
-            // The immersive rung, asked first and as its own quality value.
+            // The same walk the reference host uses, with the rungs this app
+            // has. For an Atmos request that is atmos → hi_res → lossless →
+            // high; without Atmos it is lossless → hi_res → high. Each rung is
+            // a separate question to a tier-aware catalogue, and a backend that
+            // files a whole class of masters above `lossless` answers none of
+            // them to a request that skips it.
             //
-            // This is the difference the report "Atmos is enabled and the same
-            // addon plays it in another player" turned on: `quality` and
-            // `atmos` are two questions. `atmos=auto` only says the host
-            // *permits* a spatial answer; a backend that files the spatial mix
-            // under its own tier answers `quality=atmos` and hands back the
-            // stereo ladder for `quality=lossless`, whatever the hint says.
-            // The reference host always asks the Atmos tier first and only
-            // then walks down (atmos → hi_res → lossless → high); this is the
-            // same walk with the rungs this app has.
-            //
-            // A miss here costs one request and nothing else. Anything short of
-            // a playable immersive answer — an error, a stereo reply, an
-            // encrypted or malformed URL — falls through to the ordinary
-            // request below, so a track with no Atmos master resolves exactly
-            // as it did before.
-            if (request is StreamRequest.Lossless && atmosWanted()) {
-                val immersive = client.stream(trackId, AddonClient.TIER_ATMOS).getOrNull()
-                val opened = immersive?.let { answer ->
-                    answer.url.ifBlank { null }?.let { url ->
-                        openable(url, answer, trackId, AddonClient.TIER_ATMOS)
+            // The loop stops at the first answer that satisfies what was asked
+            // for — Atmos, bit-exact, or a rendition that declines to describe
+            // itself. Anything lossy is kept as a floor and the walk continues,
+            // so a failed Atmos+FLAC attempt still ends on the best stereo copy
+            // this addon has rather than on YouTube.
+            var settleFor: SourceStream? = null
+            for (tier in tiersFor(request)) {
+                val result = client.stream(trackId, tier)
+                val answer = result.getOrNull()
+                val stream = when {
+                    answer == null -> {
+                        // A 404 is the addon saying it does not hold this
+                        // recording, which is a miss and belongs in no log.
+                        // Anything else is a fault worth a line.
+                        val failure = result.exceptionOrNull()
+                        if (failure !is AddonNotFound) {
+                            TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId at $tier — ${failure?.message}")
+                        }
+                        fromRow(trackId, tier)
                     }
+                    answer.url.isBlank() -> {
+                        // The addon answered, and said it has nothing for this
+                        // one. Its own words when it gave any: some report a
+                        // backend that came up empty, others a credential the
+                        // user has to go and set on the addon's own setup page.
+                        TrackLog.w(
+                            TAG,
+                            "${config.displayName}: no $tier stream for $trackId" +
+                                (answer.error?.ifBlank { null }?.let { " — $it" } ?: ""),
+                        )
+                        fromRow(trackId, tier)
+                    }
+                    else -> openable(answer.url, answer, trackId, tier)
                 }
-                if (opened != null && opened.format.isDolbyAtmos) return@withContext opened
-            }
-            val result = client.stream(trackId, tier)
-            val answer = result.getOrNull()
+                if (stream == null) continue
 
-            if (answer == null) {
-                // A 404 is the addon saying it does not hold this recording,
-                // which is a miss and belongs in no log. Anything else is a
-                // fault worth a line, and both end the same way: whatever the
-                // search row had, else null so [SourceResolver] moves on.
-                val failure = result.exceptionOrNull()
-                if (failure !is AddonNotFound) {
-                    TrackLog.w(TAG, "${config.displayName}: stream failed for $trackId — ${failure?.message}")
+                val format = stream.format
+                if (tier == AddonClient.TIER_ATMOS) {
+                    // Only an immersive answer settles the rung it was asked
+                    // for. A stereo reply is a legitimate catalogue answer, not
+                    // a hit — the rungs below it exist to ask for it properly.
+                    if (format.isDolbyAtmos) return@withContext stream
+                    if (settleFor == null || SourceResolver.isBetter(format, settleFor?.format)) {
+                        settleFor = stream
+                    }
+                    continue
                 }
-                return@withContext fromRow(trackId, tier)
+                if (request !is StreamRequest.Lossless) return@withContext stream
+                if (format.isDolbyAtmos || format.isLossless == true || format.statesNothingLossy) {
+                    return@withContext stream
+                }
+                if (settleFor == null || SourceResolver.isBetter(format, settleFor?.format)) {
+                    settleFor = stream.copy(belowRequest = true)
+                }
             }
-
-            val url = answer.url.ifBlank { null } ?: run {
-                // The addon answered, and said it has nothing for this one. Its
-                // own words when it gave any: some report a backend that came
-                // up empty, others a credential the user has to go and set on
-                // the addon's own setup page — and that second kind is only
-                // ever actionable if it is said out loud here.
-                TrackLog.w(
-                    TAG,
-                    "${config.displayName}: no stream for $trackId" +
-                        (answer.error?.ifBlank { null }?.let { " — $it" } ?: ""),
-                )
-                return@withContext fromRow(trackId, tier)
-            }
-
-            openable(url, answer, trackId, tier)
+            settleFor
         }
+
+    /**
+     * The rungs one request walks, best first — see [stream].
+     *
+     * The order is the reference player's. It matters on a catalogue that
+     * publishes an Atmos master and a hi-res master as different entries of the
+     * same track: jumping from the immersive rung straight to `lossless` skips
+     * the only rung that names the hi-res copy. `high` is last and only reached
+     * when nothing above it answered; it is the floor, not a peer.
+     */
+    private fun tiersFor(request: StreamRequest): List<String> = when {
+        request !is StreamRequest.Lossless -> listOf(request.tier)
+        atmosWanted() -> listOf(
+            AddonClient.TIER_ATMOS,
+            AddonClient.TIER_HI_RES,
+            AddonClient.TIER_LOSSLESS,
+            AddonClient.TIER_HIGH,
+        )
+        else -> listOf(
+            AddonClient.TIER_LOSSLESS,
+            AddonClient.TIER_HI_RES,
+            AddonClient.TIER_HIGH,
+        )
+    }
+
+    /** Whether a format has said nothing that rules lossless out — see `SourceResolver.streamBest`. */
+    private val StreamFormat.statesNothingLossy: Boolean
+        get() = isLossless == null && kbps == null
 
     /**
      * The stream the search row carried, when the `/stream` call had nothing.
