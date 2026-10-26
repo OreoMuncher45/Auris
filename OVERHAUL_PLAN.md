@@ -1325,6 +1325,38 @@ YouTube off).
   universal `0614c0d5956eea3ded0c3fe0bcf35e3630b22c8ea26beaa631d0cde8c38347e1`.
   No tag, no GitHub Release. Device confirmation remains open.
 
+### True bit-perfect output, stage 1 (2026-10-26)
+
+LastWave's "bit-perfect" label is only partly real: its integer path sets
+`bitPerfectAtConfigure` while Media3 still decimates 24/32-bit to 16-bit via
+`ToInt16PcmAudioProcessor`, though its float path and its `UsbBitPerfectOutput`
+(API 34 request plus readback) are sound. Stage 1 here implements the two
+verifiable mechanisms: a per-buffer DSP bypass latched in `PrecisionAudioSink`,
+and Android 14's `MIXER_BEHAVIOR_BIT_PERFECT` request for USB in
+`BitPerfectMixer`, accepted only when `getPreferredMixerAttributes` reads back
+the same encoding, rate and channel count. Crossfade and the seamless upgrade
+are suppressed while the mode is on; the pipeline dialog reports the honest
+verdict (including "the system mixer may resample" when only the app side is
+provable). The Settings switch is under Output precision, default off, and
+persists as `bit_perfect`.
+
+- Verification: `:app:compileDevDebugKotlin` green; `BitPerfectMixerTest` (6),
+  `AudioOutputPolicyTest` (11) and `PrecisionAudioSinkTest` (39) green.
+- Artifact: commit `a00ae6b5` on branch `bitperfect-artifact`, cut from
+  `86945c0a` plus the bit-perfect commit only — the halted Atmos-echo guard
+  (`48817f64`) is deliberately not included. `Flow Debug APK` run
+  `40281647084`
+  (`https://github.com/OreoMuncher45/Auris/actions/runs/40281647084`),
+  success. Same `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 /
+  2.2.18, 16 KB `zipalign` verified, `libbitchord_jamesdsp.so` +
+  `assets/dexopt/baseline.prof` packaged, `bit_perfect` strings present in
+  `resources.arsc`. arm64 SHA-256
+  `101a7b0dcb13f26fa3aaebcd9154c2cb9caeacb096a4cc5bd1780b1951de9c24`.
+  No tag, no GitHub Release. Device confirmation (USB DAC, API 34) open.
+- Limits: API < 34 or non-USB is app-side bit-exact only; packed 24-bit has no
+  Media3 `AudioTrack`, so float carries it; true exclusivity needs a UAC2
+  driver port (stage 3, prior art: `Ma145/decent-player`, `moss-apps/Flick`).
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
