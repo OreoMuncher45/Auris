@@ -1177,6 +1177,40 @@ decoder, heard as a hole.
 - A 2.2.19 version bump was started, then cancelled and reverted before any tag
   or release existed; the owner asked for the tested 2.2.18 artifact instead.
 
+### Dolby Atmos unlock and Now Playing customization (2026-10-26)
+
+Owner report: Settings showed Dolby Atmos as unsupported on a phone where
+LastWave-native plays Atmos, and Customization -> Now Playing had overlapping
+text with most of it unreadable.
+
+- Engine comparison: LastWave accepts an E-AC-3 stream when either the platform
+  or its bundled FFmpeg (`FfmpegLibrary.supportsFormat("audio/eac3")`) can
+  decode it. Auris ships the same engine — `libffmpegJNI.so` is built from
+  librempeg with `eac3` and `FfmpegAudioRenderer` is registered after the
+  MediaCodec renderer — but `DeviceCodecs.playsDolbyAtmos` only asked
+  Media3/the platform, so a phone with no vendor Dolby codec got the switch
+  greyed out even though the software path works. `DeviceCodecs.probe` now
+  asks the bundled FFmpeg when the platform list has no answer; the gates in
+  `SourceResolver`/`ModuleSource`/`AddonSource` inherit the corrected verdict,
+  so the switch is enabled and the preference is honoured. On those phones
+  Atmos plays as its 5.1 bed with the object layer dropped — the same trade
+  LastWave makes with the same library.
+- Customization -> Now Playing: the four indicator switches added on 2026-10-25
+  pushed the tab past the sheet's partially expanded height, so lower rows were
+  laid out off the sheet and text drew over itself. The sheet now opens
+  expanded (`skipPartiallyExpanded`), pins the title and tab strip, and scrolls
+  only the tab body (`verticalScroll`, `weight(fill = false)`); short tabs still
+  wrap to their content.
+- Artifact: commits `c5b4a16d` (Atmos) and `8f94c41a` (sheet) pushed to
+  `convx-fresh`; `Flow Debug APK` run `40259665270`, success. Same
+  `CN=BitChord Next Fork` signer (SHA-256 `385af3b4…8971ce`),
+  `com.dev.bitchord` 80 / 2.2.18, 16 KB `zipalign` verified,
+  `libffmpegJNI.so` + `libbitchord_jamesdsp.so` + baseline profile packaged.
+  The new probe's log string is present in this APK's DEX and absent from the
+  prior artifact. arm64 SHA-256 `0a8cd1f7a41e5540f2979a1adb76fc897321ee37d359013b7b079b8d0bee4ac9`,
+  universal `7095ea9ca6b805a3c3004c1365043b89afb0ea4abf4c1f0dad493b1a6a7067bb`.
+  No tag, no GitHub Release. Device listening checks remain open.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
