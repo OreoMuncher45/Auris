@@ -5255,37 +5255,31 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
-     * Resolves a YouTube-queued track by racing the higher-ranked modules
-     * against YouTube itself, and handing whatever the modules are still doing
-     * to [QualityUpgrade] if YouTube gets there first.
+     * Resolves a YouTube-queued track by giving the sources ranked above
+     * YouTube a bounded head start, and handing whatever they are still doing
+     * to [QualityUpgrade] if YouTube has to start the track.
      *
-     * Nobody gets a head start. An earlier version gave the modules six
-     * seconds of silence to answer in before the fallback was even *asked*
-     * for, on the reasoning that a module answering inside that window plays
-     * with no seam in it. What that actually bought, on every track the
-     * modules were slow on, was six seconds of nothing followed by a YouTube
-     * client walk starting from cold — the wait and the seam, rather than one
-     * or the other. Starting both at once removes the first of those: the
-     * track begins as soon as *anything* can serve it.
+     * The ranking had stopped meaning anything: this used to be an even race,
+     * and YouTube's client walk answers in about a second while a module's
+     * search takes several, so first-past-the-post was YouTube on essentially
+     * every track — including tracks an addon was ordered above and did hold.
+     * Reversing the finish line would trade that for a silent track on every
+     * lookup that misses; [MODULE_HEAD_START_MS] is the compromise. While any
+     * source outranks YouTube, its lookup is the only leg running for that
+     * window. A module quick enough to answer inside it starts the track on
+     * its own copy with no seam at all; one that answers later still gets the
+     * mid-song upgrade below.
      *
-     * The speculative resolve this reinstates was dropped once before, for a
-     * real reason — it is several round trips to `youtubei.googleapis.com`
-     * competing for the same radio and connection pool as the lookup beside
-     * it, and on a track the modules do have, that work is thrown away. What
-     * changed is that it is no longer speculative: YouTube is now the expected
-     * outcome for anything the modules don't answer quickly, so its walk is on
-     * the critical path rather than hedging one. It is also coalesced and
-     * cached — see [StreamResolver.resolve] — so even a discarded walk warms
-     * the URL this track will want if the upgrade later falls through.
+     * The window ends the moment the lookup does, a miss included, so a source
+     * that says "not here" quickly does not delay YouTube by the rest of it.
+     * And when nothing outranks YouTube — a fresh install, addons off — there
+     * is nothing to wait for at all: the fallback starts immediately and the
+     * first note is as instant as it always was.
      *
-     * A module that wins the race outright still wins the track, which is the
-     * one thing worth keeping from the old head start: the lossless copy plays
-     * from the first note and there is no swap at all. That is a narrower
-     * window than it sounds, and deliberately so — read-ahead warms the
-     * YouTube URL for the queue (see [AudioCache.prefetchQueue]), so on a
-     * track that was read ahead the fallback answers in milliseconds and
-     * almost always wins. The swap is the ordinary path now; playing from the
-     * first note is the prize for a module quick enough to beat a cached URL.
+     * The YouTube walk itself is still worth what it costs: it is coalesced
+     * and cached (see [StreamResolver.resolve]), so a walk that ends up as
+     * the upgrade's fallback has warmed the URL this track will want if the
+     * module's copy fails later.
      *
      * A lookup that loses is not cancelled. It is handed over still running,
      * because it is not wrong, only late, and the thing it is about to return
@@ -5326,8 +5320,11 @@ class PlaybackService : MediaLibraryService() {
             withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { SourceResolver.substituteForYouTube(target) }
         }
         val youtubeEnabled = SourceRegistry.youtubeEnabled()
-        // Started now rather than after the modules have had their say, and
-        // wrapped rather than thrown from: it is awaited only on the paths
+        // Whether a head start is owed at all, answered from the source list
+        // alone — no search — because it is what decides whether YouTube runs
+        // now or after the window.
+        val moduleCandidate = youtubeEnabled && SourceResolver.canSubstituteForYouTube()
+        // Wrapped rather than thrown from: it is awaited only on the paths
         // that need it, and an async that fails without ever being awaited is
         // an unhandled exception in this service's scope.
         //
@@ -5338,6 +5335,13 @@ class PlaybackService : MediaLibraryService() {
         // when the lookup had nothing.
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             if (youtubeEnabled) {
+                if (moduleCandidate) {
+                    // The head start above, expressed as a wait on the lookup
+                    // rather than a fixed sleep: it ends early when the lookup
+                    // finishes — including when it misses — so only a slow
+                    // lookup spends the window.
+                    withTimeoutOrNull(MODULE_HEAD_START_MS) { lookup.join() }
+                }
                 runCatching { StreamResolver.resolve(videoId) }
             } else {
                 Result.failure<String>(
@@ -9208,6 +9212,17 @@ class PlaybackService : MediaLibraryService() {
          * enough that a dead server costs a pause rather than a stall.
          */
         const val SUBSTITUTE_TIMEOUT_MS = 20_000L
+
+        /**
+         * How long a YouTube-queued track waits for the sources ranked above
+         * YouTube before its own walk starts — see [resolveWithModulePriority].
+         *
+         * Enough for the sources that answer in a round trip (JioSaavn
+         * measures ~0.4s) and for a warm module; short enough that a cold
+         * module's 7-13s search still starts the track on YouTube and upgrades
+         * under it. The wait ends early whenever the lookup does.
+         */
+        const val MODULE_HEAD_START_MS = 1_500L
 
         /**
          * How much of a track has to be left for a mid-track quality swap to
