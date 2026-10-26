@@ -1254,6 +1254,51 @@ found four independent breaks, each enough on its own to lose the mix:
   No tag, no GitHub Release. Device confirmation now rests on the `[ATMOS]`
   logcat lines and hearing the mix.
 
+### Dolby Atmos as a quality rung (2026-10-26)
+
+Owner follow-up: same addon, same song — the reference player plays Atmos,
+Auris does not; the Wi-Fi/data picker stops at Lossless. Reading the
+reference host's lossless resolver settled it: Atmos is a *quality tier*, not
+just a permission flag. Its waterfall asks the addon
+`?quality=atmos&atmos=auto` first and only then walks down to
+`hi_res`/`lossless`/`high` with `atmos=none`. Auris was asking
+`quality=lossless&atmos=auto` for everything, so a backend that files the
+spatial mix under its own tier answered with the stereo ladder regardless of
+the hint.
+
+- Request: `AddonSource.stream` now asks `quality=atmos` first on a lossless
+  request when Atmos is wanted, accepts only a playable immersive answer, and
+  falls through to the ordinary tier. `AddonClient.stream` sends
+  `atmos=auto` on that rung and `atmos=none` on every stereo rung beneath it;
+  search still carries `atmos=auto` so the catalogue advertises its
+  immersive rows. `matchTier` returns the literal `atmos` rather than an
+  enumerated option when a manifest lists no Atmos entry, which is what the
+  reference host does.
+- Settings: `AudioQuality.DOLBY` ("Dolby Atmos", ~350 MB/hr) is the top row
+  in both the Wi-Fi and mobile-data pickers, in Sources and in the Classipod
+  menu. It is additive rather than a cap — it budgets like Lossless, permits
+  every source, and falls back to the lossless ladder where no spatial master
+  exists. Choosing the rung is honoured even with the master switch off;
+  `AppSettings.wantsDolbyAtmos` is the one place that folds the two, and the
+  addon, module, resolver and cache-key gates all read it.
+- Verification: `:app:compileDevReleaseKotlin` green; `AddonSourceTest`,
+  `SourcesTest`, `AudioPipelineTest`, `FlowTest`, `QueueBuilderTest` green
+  (new tests cover the immersive rung being asked first, the stereo fallback
+  with `atmos=none`, the rung working with the master switch off, and a
+  manifest that enumerates no Atmos option). Full `app` unit suite has the
+  same 16 pre-existing failures: 15 locale files missing 122 unrelated
+  translation keys and the live Genius scrape test.
+- Artifact: commit `c853e908`, pushed to `convx-fresh`; `Flow Debug APK` run
+  `40269044703`
+  (`https://github.com/OreoMuncher45/Auris/actions/runs/40269044703`),
+  success. Same `CN=BitChord Next Fork` signer (SHA-256 `385af3b4…8971ce`),
+  `com.dev.bitchord` 80 / 2.2.18, 16 KB `zipalign` verified,
+  `libffmpegJNI.so` + `libbitchord_jamesdsp.so` + baseline profile packaged,
+  new rung string present in `classes.dex`. arm64 SHA-256
+  `ba93bf3f7c1b241daff130036a1eeb7f2ef3dcbd57230d3495594b523cd30a11`,
+  universal `c62de684b62d9ff7038f240ebc9906bd436f3bf84a5149d750b320044f36ad60`.
+  No tag, no GitHub Release. Device confirmation remains open.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
