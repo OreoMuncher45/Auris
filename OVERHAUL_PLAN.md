@@ -1211,6 +1211,49 @@ text with most of it unreadable.
   universal `7095ea9ca6b805a3c3004c1365043b89afb0ea4abf4c1f0dad493b1a6a7067bb`.
   No tag, no GitHub Release. Device listening checks remain open.
 
+### Atmos path rework to reach the decoder (2026-10-26)
+
+Follow-up owner report: with the switch now enabled and the same addon,
+Atmos still did not play and no badge appeared. Tracing the whole addon path
+found four independent breaks, each enough on its own to lose the mix:
+
+- Request: `atmos` was sent with `putIfAbsent`, so an addon whose manifest
+  declares `atmos` defaulted it back to stereo no matter what the Settings
+  switch said. It is now set on every request — `auto` when the device and the
+  switch both allow it, `none` otherwise — the same explicit hint the
+  reference player sends, and logged per request.
+- Classification: `formatOf` ran stated codec -> container -> mime before the
+  Atmos flag, so an answer with `codec: "eac3"` or a generic `audio/mp4`
+  became a lossy MP4. All Dolby spellings (`eac3_joc`, `ec3`, `ec-3`, `ac3`,
+  `dolby-atmos`) now normalise to one id, and a flagged Atmos answer outranks
+  envelope-only claims while a specific conflicting codec such as FLAC still
+  wins.
+- Recovery: `fallbackFailedAlternativeToYouTube` ran before `replayAsManifest`,
+  so a substituted addon DASH stream's first unreadable-audio error rebuilt the
+  item as YouTube before it could be reopened with its manifest MIME. The
+  manifest reopen now runs first.
+- Decode/badge: the renderer chain had no Dolby-first platform renderer and no
+  `setEnableDecoderFallback(true)`; both are now mirrored from the reference
+  player behind a Dolby/spatial mime filter, so ordinary codecs keep their old
+  path. `NerdStats.isDolbyAtmosMime` matches the whole AC-3/E-AC-3 family
+  (case- and parameter-insensitive), which is what lights the badge for a
+  DASH stream whose decoder input is stated as `ec-3`.
+- Diagnostics: new `[ATMOS]` log lines at request, answer, renderer support,
+  decoder input (with `badge=Dolby Atmos`) and failure, so a device session
+  names which stage a stream reached.
+- Verification: `:app:compileDevReleaseKotlin` green; targeted
+  `AddonSourceTest`, `AudioPipelineTest`, `FlowTest`, `QueueBuilderTest` green
+  (including new tests for codec normalisation, FLAC-vs-Atmos precedence, and
+  every badge mime spelling). Commit `cacf74db`, pushed to `convx-fresh`;
+  `Flow Debug APK` run `40266450374` (`https://github.com/OreoMuncher45/Auris/actions/runs/40266450374`),
+  success. Same `CN=BitChord Next Fork` signer (SHA-256 `385af3b4…8971ce`),
+  `com.dev.bitchord` 80 / 2.2.18, 16 KB `zipalign` verified,
+  `libffmpegJNI.so` + `libbitchord_jamesdsp.so` + baseline profile packaged.
+  arm64 SHA-256 `09a97d63b5e77f27a53aa89b8f8aec2521d9ac8ffa1379e556c615b33df06adc`,
+  universal `b722c5ef5eab3211af19097498f7ad2c2e83d1806a54ef532ea768237b302fd5`.
+  No tag, no GitHub Release. Device confirmation now rests on the `[ATMOS]`
+  logcat lines and hearing the mix.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
