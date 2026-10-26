@@ -194,7 +194,8 @@ class AddonClient(rawBaseUrl: String) {
      * rather than failing outright on a document nothing here strictly needs.
      *
      * Last comes `atmos`, which is the one parameter here that is not about
-     * quality. See [atmosHint].
+     * quality. See [atmosHint]; unlike `quality`, it is set rather than filled
+     * in, so it also replaces a default the manifest declared.
      */
     private suspend fun settingsFor(tier: String): Map<String, String> {
         val declared = manifest().getOrNull()?.settings.orEmpty()
@@ -209,13 +210,16 @@ class AddonClient(rawBaseUrl: String) {
                 .mapNotNull { it.stringValue }
             params[QUALITY_KEY] = matchTier(tier, options) ?: tier
         }
-        atmosHint()?.let { params.putIfAbsent(ATMOS_KEY, it) }
+        val atmos = atmosHint()
+        params[ATMOS_KEY] = atmos
+        TrackLog.d(TAG, "asking ${redact(baseUrl)} with atmos=$atmos (tier=$tier)")
         return params
     }
 
     /**
-     * `auto` when this device and this user both want immersive audio, null
-     * otherwise — the standard `?atmos=` hint the spec defines for hosts.
+     * `auto` when this device and this user both want immersive audio, `none`
+     * otherwise — the standard `?atmos=` hint the spec defines for hosts, sent
+     * on every request.
      *
      * Without it an addon holding an Atmos mix has no way to know it may serve
      * one, so it takes its default branch and sends stereo. That is the whole
@@ -233,21 +237,28 @@ class AddonClient(rawBaseUrl: String) {
      *    playback side enforces in
      *    [ModuleSource.unplayable][com.music.bitchord.data.sources.ModuleSource.unplayable],
      *    so an addon is only ever offered Atmos when an Atmos answer would
-     *    actually be accepted. With either gate shut the parameter is absent
-     *    entirely and the addon's own default — stereo — stands.
-     *  - **[putIfAbsent], never an override.** An addon that declared its own
-     *    `atmos` setting has said what it wants; the manifest's default wins
-     *    and this adds nothing. Addons that have never heard of the parameter
-     *    ignore it, which is the same basis on which `quality` is already sent
+     *    actually be accepted.
+     *  - **It is set, never merely filled in.** This used to be
+     *    `putIfAbsent`, on the reasoning that an addon declaring its own
+     *    `atmos` setting had said what it wants. That reasoning is wrong under
+     *    the manifest's own contract: a declared value is a *default for a host
+     *    that has no preference*, and this host does — the Settings switch.
+     *    An addon whose schema defaults `atmos` to `off` therefore never served
+     *    an immersive mix no matter what the listener turned on, which is
+     *    exactly a report of "Atmos is enabled but not working, with the same
+     *    addon". `none` when the gates are shut is the other half: it tells an
+     *    addon that defaults to `auto` not to send a mix this device would only
+     *    refuse. Addons that have never heard of the parameter ignore it, which
+     *    is the same basis on which `quality` is already sent
      *    unconditionally.
      *
      * Nothing here names a particular addon. The decoder probe is cached per
      * process and the settings read is a flow's current value, so this costs
      * nothing on the IO thread it already runs on.
      */
-    private fun atmosHint(): String? {
+    private fun atmosHint(): String {
         val wanted = DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value
-        return if (wanted) ATMOS_AUTO else null
+        return if (wanted) ATMOS_AUTO else ATMOS_NONE
     }
 
     /**
@@ -395,9 +406,10 @@ class AddonClient(rawBaseUrl: String) {
 
         private const val QUALITY_KEY = "quality"
 
-        /** The spec's immersive-audio hint, and the only value BitChord ever sends for it. */
+        /** The spec's immersive-audio parameter, and the two values BitChord sends for it. */
         private const val ATMOS_KEY = "atmos"
         private const val ATMOS_AUTO = "auto"
+        private const val ATMOS_NONE = "none"
 
         private val LOSSLESS_WORDS = listOf("lossless", "flac", "hifi", "hi-res", "hires", "max", "best")
         private val HIGH_WORDS = listOf("high", "320", "normal", "standard")

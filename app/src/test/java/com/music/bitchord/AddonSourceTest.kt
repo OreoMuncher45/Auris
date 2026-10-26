@@ -410,43 +410,50 @@ class AddonSourceTest {
      * and a wired-headphones listener may want the bit-exact stereo FLAC. Not
      * asking is what gets them it, rather than asking and then refusing the
      * answer.
+     *
+     * The value is `none`, not an absent parameter. An addon whose schema
+     * defaults `atmos` to `auto` would otherwise keep offering a mix this
+     * device is about to refuse.
      */
     @Test
-    fun `no atmos hint is sent when the setting is off`() = runBlocking {
+    fun `atmos is explicitly declined when the setting is off`() = runBlocking {
         AppSettings.dolbyAtmos.value = false
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
 
         AddonSource(config()).stream("t1", StreamRequest.Lossless)
 
-        assertNull(requestFor("/stream/t1").queryParameter("atmos"))
+        assertEquals("none", requestFor("/stream/t1").queryParameter("atmos"))
     }
 
     /** A device with no E-AC-3 decoder would only have to refuse what it asked for. */
     @Test
-    fun `no atmos hint is sent when the device cannot decode it`() = runBlocking {
+    fun `atmos is explicitly declined when the device cannot decode it`() = runBlocking {
         DeviceCodecs.forced = false
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
 
         AddonSource(config()).stream("t1", StreamRequest.Lossless)
 
-        assertNull(requestFor("/stream/t1").queryParameter("atmos"))
+        assertEquals("none", requestFor("/stream/t1").queryParameter("atmos"))
     }
 
     /**
-     * An addon that declared its own `atmos` setting has already said what it
-     * wants. Its default stands; the hint is only ever filling a gap.
+     * The manifest's declared `atmos` value is a default for a host with no
+     * preference, and this host has one: the Settings switch. Leaving the
+     * default in place is what made an addon whose schema declares `off` serve
+     * stereo forever while Atmos was switched on — "enabled but not working,
+     * with the same addon".
      */
     @Test
-    fun `a declared atmos default is not overridden by the hint`() = runBlocking {
+    fun `the Settings switch overrides a declared atmos default`() = runBlocking {
         route(
             "/manifest.json",
             json(
                 """
                 {"id":"a","name":"A","resources":["search","stream","settings"],
-                 "settings":[{"key":"atmos","type":"select","default":"only",
-                              "options":[{"value":"only"},{"value":"auto"},{"value":"off"}]}]}
+                 "settings":[{"key":"atmos","type":"select","default":"off",
+                              "options":[{"value":"only"},{"value":"auto"},{"value":"none"}]}]}
                 """.trimIndent(),
             ),
         )
@@ -454,7 +461,107 @@ class AddonSourceTest {
 
         AddonSource(config()).stream("t1", StreamRequest.Lossless)
 
-        assertEquals("only", requestFor("/stream/t1").queryParameter("atmos"))
+        assertEquals("auto", requestFor("/stream/t1").queryParameter("atmos"))
+    }
+
+    /** The same override in the other direction: a declared `auto` is declined. */
+    @Test
+    fun `switching Atmos off overrides a declared auto default`() = runBlocking {
+        AppSettings.dolbyAtmos.value = false
+        route(
+            "/manifest.json",
+            json(
+                """
+                {"id":"a","name":"A","resources":["search","stream","settings"],
+                 "settings":[{"key":"atmos","type":"select","default":"auto",
+                              "options":[{"value":"only"},{"value":"auto"},{"value":"none"}]}]}
+                """.trimIndent(),
+            ),
+        )
+        route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
+
+        AddonSource(config()).stream("t1", StreamRequest.Lossless)
+
+        assertEquals("none", requestFor("/stream/t1").queryParameter("atmos"))
+    }
+
+    /**
+     * The spellings a real backend uses for the E-AC-3 core, with a container
+     * mime alongside it. The old codec chain let `audio/mp4` win and recorded
+     * the answer as an ordinary MP4 — no Atmos, no badge, and [`SourceResolver`]
+     * then treated the mix as a lossy stream to look past.
+     */
+    @Test
+    fun `an Atmos answer with a stated eac3 codec and an mp4 mime stays Atmos`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/stream/t1",
+            json(
+                """{"url":"https://cdn/a.mp4","codec":"eac3","mimeType":"audio/mp4",
+                   "quality":"Dolby Atmos","atmos":true}""",
+            ),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("eac3-joc", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+        assertEquals(false, stream.format.isLossless)
+    }
+
+    /** `ec-3` is the DASH `codecs` spelling of the same thing. */
+    @Test
+    fun `an ec-3 spelling is normalised to the JOC codec`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/stream/t1",
+            json(
+                """{"url":"https://cdn/a.mp4","codec":"ec-3","mimeType":"audio/mp4",
+                   "quality":"Tidal · Dolby Atmos","format":"dash"}""",
+            ),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("eac3-joc", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+    }
+
+    /**
+     * The underscore spelling without any free-text hint. It used to reach
+     * `eac3-joc` only through [AddonStream.isDolbyAtmos]'s fallback; now the
+     * codec field itself is normalised, so the label no longer depends on a
+     * quality string the backend may have left blank.
+     */
+    @Test
+    fun `an underscore JOC codec is normalised with no quality text`() = runBlocking {
+        route("/manifest.json", manifest())
+        route("/stream/t1", json("""{"url":"https://cdn/a.mp4","codec":"eac3_joc","mimeType":"audio/mp4"}"""))
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("eac3-joc", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+    }
+
+    /**
+     * The guard on the other side: a codec that names a different, specific
+     * payload is not overwritten by an Atmos-sounding quality label. FLAC is
+     * the more specific claim, and ranking it as E-AC-3 would send it to a
+     * decoder that cannot read it.
+     */
+    @Test
+    fun `a stated FLAC codec outranks an Atmos quality label`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/stream/t1",
+            json("""{"url":"https://cdn/a.flac","codec":"flac","quality":"Dolby Atmos"}"""),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("flac", stream.format.codec)
+        assertFalse(stream.format.isDolbyAtmos)
     }
 
     /**
@@ -462,11 +569,9 @@ class AddonSourceTest {
      * the hint goes out, the DASH answer comes back, and every field that
      * identifies it as immersive is one this app reads.
      *
-     * Note what is *not* in `AUDIO_CODECS`: the underscore spelling
-     * `eac3_joc`. Adding it there would have `formatOf` return it verbatim,
-     * which then misses the hyphenated `DOLBY_ATMOS_CODECS` and silently
-     * breaks [StreamFormat.isDolbyAtmos]. The free-text fallback is the
-     * correct path, and this is what locks it.
+     * The underscore spelling `eac3_joc` is normalised to the hyphenated codec
+     * id before [StreamFormat.isDolbyAtmos] sees it — passing it through
+     * verbatim would miss `DOLBY_ATMOS_CODECS` and silently drop the label.
      */
     @Test
     fun `asking for atmos gets an immersive answer the player is told how to open`() = runBlocking {

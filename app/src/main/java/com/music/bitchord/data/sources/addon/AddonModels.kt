@@ -218,7 +218,10 @@ data class AddonTrack(
  * the same vocabulary, and a row recognised as Atmos whose stream is not (or
  * the reverse) is the inconsistency that costs a track its immersive mix.
  */
-private val ATMOS_HINT = Regex("""atmos|dolby|eac3[_-]?joc|ec-?3""", RegexOption.IGNORE_CASE)
+private val ATMOS_HINT = Regex(
+    """atmos|dolby|joc|eac-?3|ec-?3|ac-?3""",
+    RegexOption.IGNORE_CASE,
+)
 
 // ── Stream ───────────────────────────────────────────────────────────────
 
@@ -399,7 +402,8 @@ data class AddonStream(
     /** Whether the addon says this is the immersive mix rather than a stereo one. */
     val isDolbyAtmos: Boolean
         get() = ATMOS_HINT.containsMatchIn(
-            "$qualityText ${audioMode.orEmpty()} ${audioModes.joinToString(" ")} ${statedCodec.orEmpty()}",
+            "$qualityText ${audioMode.orEmpty()} ${audioModes.joinToString(" ")} " +
+                "${statedCodec.orEmpty()} ${mimeType.orEmpty()}",
         )
 
     companion object {

@@ -51,11 +51,13 @@ import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.RendererCapabilities
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
@@ -1178,6 +1180,17 @@ class PlaybackService : MediaLibraryService() {
                 about = audioFormatFor,
             )
             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
+            if (activeTrackIsDolbyAtmos) {
+                // The one line that proves the immersive path end to end: the
+                // decoder is being handed a Dolby bitstream, and the badge is
+                // about to say so. `adb logcat -s ATMOS:I` is enough to check
+                // it — the platform-vs-software line is in this tag as well.
+                TrackLog.i(
+                    "ATMOS",
+                    "$audioFormatFor <- ${format.sampleMimeType} $khz $channels; badge=Dolby Atmos",
+                    about = audioFormatFor,
+                )
+            }
             applySpatialAudioEnabled()
             publishNerdStats()
             currentAudioInputFormat = format
@@ -3710,6 +3723,17 @@ class PlaybackService : MediaLibraryService() {
             error,
             about = mediaId,
         )
+        if (activeTrackIsDolbyAtmos) {
+            // A failure here is the other end of the [ATMOS] line in
+            // [formatListener]: the stream was recognised and handed to a
+            // decoder, and the decoder did not carry it. Name it before the
+            // recovery below rewrites the badge for a different stream.
+            TrackLog.w(
+                "ATMOS",
+                "$mediaId failed while decoding the Dolby stream (${error.errorCodeName}); recovering",
+                about = mediaId,
+            )
+        }
         // A local file that is not there is the one failure retrying cannot
         // touch, and the only one where the fix is to stop asking for the file.
         //
@@ -3731,22 +3755,35 @@ class PlaybackService : MediaLibraryService() {
         ) {
             return
         }
+        // A manifest read as audio is not a broken stream, and everything below
+        // this line would treat it as one. Ahead of the verdict and the attempt
+        // budget for the same reason as the local-file case above: this is not
+        // an attempt spent on the same stream, it is the same stream opened
+        // correctly for the first time.
+        //
+        // Ahead of the substitute fallback below as well, and that ordering is
+        // the whole point. An addon's DASH/HLS rendition is served through a
+        // progressive source until its type is declared, so its *first* open
+        // fails as unreadable audio — and a module substitution is exactly the
+        // sort of item that fallback exists for. It used to run first, so the
+        // stream was rebuilt as YouTube before this could reopen it: a working
+        // Atmos (or Hi-Res FLAC) rendition was never tried with the right
+        // source, and on a track started from YouTube the listener got Opus
+        // with no Atmos badge instead. [replayAsManifest] reopens the one
+        // stream that has not actually failed yet; if it is not a manifest, or
+        // is already declared and still unreadable, it returns false and the
+        // substitute fallback below proceeds as before.
+        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
+            replayAsManifest(player, item, uri, position)
+        ) {
+            return
+        }
         // An addon/JioSaavn stream gets one chance. If it fails after selection,
         // retrying the ordinary item only lets the same deterministic lookup win
         // again. Rebuild it as an explicit YouTube request instead. This also
         // clears a DASH/HLS MIME left on an upgraded item, which otherwise makes
         // Media3 parse YouTube's WebM bytes as a manifest forever.
         if (fallbackFailedAlternativeToYouTube(item, uri, position)) return
-        // A manifest read as audio is not a broken stream, and everything below
-        // this line would treat it as one. Ahead of the verdict and the attempt
-        // budget for the same reason as the local-file case above: this is not
-        // an attempt spent on the same stream, it is the same stream opened
-        // correctly for the first time.
-        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
-            replayAsManifest(player, item, uri, position)
-        ) {
-            return
-        }
         // Giving up on the *retry*, not on everything below it.
         //
         // A track that has exhausted its attempts is not finished with.
@@ -6296,6 +6333,13 @@ class PlaybackService : MediaLibraryService() {
             // embellishes it, since it is the only AudioTrack encoding Media3
             // will open that carries a 24-bit sample intact.
             setEnableAudioFloatOutput(configuredFloatOutput)
+            // A platform decoder that initialises and then cannot carry the
+            // format should not be the end of the track. Media3 will try the
+            // next decoder the selector offered, which on an E-AC-3 JOC
+            // stream is regularly the software E-AC-3 core behind it. The
+            // alternative is a decoder-init error that spends the recovery
+            // budget and lands on YouTube — no Atmos badge, no surround.
+            setEnableDecoderFallback(true)
             // c2.sec.flac.decoder produces one extra 232.2ms timestamp
             // advance per decoded buffer when Media3 requests float PCM.
             // Decode FLAC through the platform software codec on affected Samsung devices.
@@ -6335,6 +6379,57 @@ class PlaybackService : MediaLibraryService() {
             eventListener: AudioRendererEventListener,
             out: ArrayList<Renderer>,
         ) {
+            // The platform's own Immersive renderer, first. Android's Dolby
+            // HAL and Spatializer are what decode E-AC-3 JOC with the object
+            // layer intact and with hardware dialogue normalization; the
+            // bundled FFmpeg after this chain decodes only the 5.1 core. Let
+            // the stock renderer take it and a phone that advertises a JOC
+            // decoder it cannot actually initialise never reaches the other
+            // path at all.
+            //
+            // Restricted to the Dolby and spatial mimes so every ordinary
+            // codec still falls straight through to the stock MediaCodec
+            // renderer below it — this changes only what a Dolby stream is
+            // handed to first. This is the same shape another player uses,
+            // and it is what makes its Atmos support work on phones whose
+            // vendor image ships only the E-AC-3 core.
+            out.add(
+                object : MediaCodecAudioRenderer(
+                    context,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    eventHandler,
+                    eventListener,
+                    audioSink,
+                ) {
+                    private val logged = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+                    override fun supportsFormat(
+                        mediaCodecSelector: MediaCodecSelector,
+                        format: Format,
+                    ): Int {
+                        val mime = format.sampleMimeType?.lowercase(Locale.ROOT).orEmpty()
+                        val dolbyOrSpatial = mime.contains("eac3") || mime.contains("ec-3") ||
+                            mime.contains("ac-3") || mime.contains("ac3") || mime.contains("ac4") ||
+                            mime.contains("mha1") || mime.contains("mhm1")
+                        if (!dolbyOrSpatial) {
+                            return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
+                        }
+                        val support = super.supportsFormat(mediaCodecSelector, format)
+                        // One line per mime per process: the owner's log then
+                        // says whether the platform decoder exists at all, and
+                        // whether the software core below is what will play it.
+                        if (logged.add("$mime:$support")) {
+                            TrackLog.i(
+                                "ATMOS",
+                                "platform renderer for $mime ${format.channelCount}ch/" +
+                                    "${format.sampleRate}Hz: ${describeSupport(support)}",
+                            )
+                        }
+                        return support
+                    }
+                },
+            )
             super.buildAudioRenderers(
                 context,
                 extensionRendererMode,
@@ -6347,6 +6442,16 @@ class PlaybackService : MediaLibraryService() {
             )
             out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
         }
+
+        /** The support level in [capabilities], without the adaptive/decoder flags around it. */
+        private fun describeSupport(capabilities: Int): String =
+            when (RendererCapabilities.getFormatSupport(capabilities)) {
+                C.FORMAT_HANDLED -> "handled by the platform"
+                C.FORMAT_EXCEEDS_CAPABILITIES -> "platform decoder present but exceeds capabilities"
+                C.FORMAT_UNSUPPORTED_SUBTYPE -> "no platform decoder; software path takes it"
+                C.FORMAT_UNSUPPORTED_TYPE -> "not this renderer's type"
+                else -> "support=$capabilities"
+            }
 
         override fun buildAudioSink(
             context: Context,

@@ -340,6 +340,14 @@ class AddonSource(
         // extractor and fails as an unreadable container. The addon told us
         // what it is; the player only needed to be passed it on.
         answer.transport?.let { StreamContainer.declare(url, it) }
+        if (format.isDolbyAtmos) {
+            TrackLog.i(
+                "ATMOS",
+                "${config.displayName}: $trackId → ${format.summary} " +
+                    "(${answer.transport ?: "no transport"}, decoder=$playsAtmos, " +
+                    "setting=${AppSettings.dolbyAtmos.value})",
+            )
+        }
 
         return SourceStream(
             url = url,
@@ -363,18 +371,38 @@ class AddonSource(
      * answering "no" when it does not know is not.
      */
     private fun formatOf(answer: AddonStream, url: String, tier: String): StreamFormat {
-        val codec = answer.statedCodec?.takeIf { it in AUDIO_CODECS }
-            ?: answer.statedContainer?.takeIf { it in SELF_DESCRIBING_CONTAINERS }
-            ?: answer.mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim()
-                ?.lowercase(Locale.ROOT)?.takeIf { it in AUDIO_CODECS }
-            ?: if (answer.isDolbyAtmos) {
-                "eac3-joc"
-            } else if (ModuleSource.qualityTier(answer.qualityText) == ModuleSource.LOSSLESS) {
+        val stated = normalizedCodec(answer.statedCodec)
+        val container = answer.statedContainer?.takeIf { it in SELF_DESCRIBING_CONTAINERS }
+        val mime = normalizedCodec(
+            answer.mimeType?.substringAfterLast('/')?.substringBefore(';')?.trim(),
+        )
+        val extension = normalizedCodec(
+            url.substringBefore('?').substringAfterLast('.').takeIf { it.isNotEmpty() },
+        )
+
+        val codec = when {
+            // An answer the addon flags as immersive *is* E-AC-3 with joint
+            // object coding, and that outranks anything that only names the
+            // envelope. This chain used to run codec -> container -> mime
+            // first, so an addon stating `codec: "eac3"` or `"mp4"` — or a
+            // generic `audio/mp4` — won before the Atmos hint was ever
+            // consulted, and a stream the listener asked to hear as Atmos was
+            // ranked, badged and refused as an ordinary lossy file. A codec
+            // that names a different, specific payload is still trusted: FLAC
+            // is a more specific claim than a quality label, and a stream that
+            // truly says FLAC is not made immersive by one.
+            answer.isDolbyAtmos &&
+                (stated == null || stated == DOLBY_ATMOS || stated == "eac3" || stated in CONTAINERS) ->
+                DOLBY_ATMOS
+            stated != null -> stated
+            container != null -> container
+            mime != null -> mime
+            else -> if (ModuleSource.qualityTier(answer.qualityText) == ModuleSource.LOSSLESS) {
                 "flac"
             } else {
-                url.substringBefore('?').substringAfterLast('.')
-                    .lowercase(Locale.ROOT).takeIf { it in AUDIO_CODECS }
+                extension
             }
+        }
 
         return StreamFormat(
             codec = codec,
@@ -389,6 +417,28 @@ class AddonSource(
             sampleRateHz = answer.sampleRateHz,
             bitDepth = answer.bits,
         )
+    }
+
+    /**
+     * One codec id from whichever spelling an addon used.
+     *
+     * The Dolby family is the reason this exists. The same payload arrives as
+     * `eac3_joc`, `eac3-joc`, `ec-3`, `ec3`, `eac3`, `ac-3` or `ac3` depending
+     * on the backend, and [StreamFormat.isDolbyAtmos] compares against one
+     * hyphenated spelling. Passing the raw field through is what made the
+     * underscore payload the tests carry depend on a fallback branch; anything
+     * else — a plain `eac3`, say — fell straight into the lossy ladder and
+     * never reached the Atmos label at all. Normalising here makes every
+     * spelling one codec before anything decides what it is.
+     */
+    private fun normalizedCodec(raw: String?): String? {
+        val value = raw?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: return null
+        return when (value) {
+            in JOC_CODECS -> DOLBY_ATMOS
+            in EAC3_CODECS -> "eac3"
+            "ac-3", "ac3" -> "ac3"
+            else -> value.takeIf { it in AUDIO_CODECS }
+        }
     }
 
     /** What this app asks an addon for, in the vocabulary the reference host uses. */
@@ -450,7 +500,23 @@ class AddonSource(
          */
         val AUDIO_CODECS = setOf(
             "flac", "alac", "wav", "aiff", "mp3", "aac", "he-aac", "m4a", "mp4",
-            "ogg", "opus", "vorbis", "webm", "eac3-joc", "ec3-joc",
+            "ogg", "opus", "vorbis", "webm", "eac3-joc", "ec3-joc", "eac3", "ac3",
         )
+
+        /** The codec id every immersive answer is recorded as. */
+        const val DOLBY_ATMOS = "eac3-joc"
+
+        /** Joint-object-coding spellings, all of which mean the Atmos mix. */
+        val JOC_CODECS = setOf("eac3-joc", "eac3_joc", "ec3-joc", "ec3_joc", "dolby-atmos")
+
+        /** The E-AC-3 core, which may carry Atmos objects or may be a plain bed. */
+        val EAC3_CODECS = setOf("eac3", "eac-3", "ec-3", "ec3")
+
+        /**
+         * Envelopes an addon may put in its `codec` field. Unlike
+         * [SELF_DESCRIBING_CONTAINERS] these say nothing about the payload, so
+         * they lose to a flagged Atmos answer rather than overriding it.
+         */
+        val CONTAINERS = setOf("mp4", "m4a", "webm", "ogg")
     }
 }
