@@ -1650,6 +1650,23 @@ object AudioCache {
     }
 
     /**
+     * Whether [uri]'s rendition has any bytes on disk at [position].
+     *
+     * The upgrade fade measures the incoming copy at the position it is about
+     * to join, while the standby player is still fetching that region. This is
+     * how it knows the bytes have landed instead of decoding a hole and
+     * concluding there is nothing to measure.
+     */
+    fun hasCachedBytesAt(uri: Uri, position: Long): Boolean {
+        if (!::cache.isInitialized) return false
+        val total = contentLengthOf(uri)
+        if (total > 0 && position >= total) return true
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val probe = if (total > 0) (total - position).coerceAtMost(HEAD_PROBE_BYTES) else HEAD_PROBE_BYTES
+        return cache.getCachedLength(key, position, probe) > 0
+    }
+
+    /**
      * One rendition of a recording, as Automix's analyzer sees it.
      *
      * [key] is a cache key, not a URI: the point of this type is to name a
@@ -1754,6 +1771,13 @@ object AudioCache {
                 .createDataSource(),
             uri,
         )
+
+    /**
+     * The same reader for a key already in hand, without needing a [Rendition]
+     * built first — the upgrade fade names both sides by key.
+     */
+    fun dataSourceForKey(uri: Uri, cacheKey: String): MediaDataSource =
+        renditionDataSource(uri, Rendition(cacheKey, contentLength = 0L, cachedPrefix = 0L))
 
     /**
      * A random-access reader over [uri]'s cached bytes, for the analyzer to hand

@@ -290,6 +290,17 @@ private const val ALIGNMENT_HEAD_TIMEOUT_MS = 20_000L
  */
 private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
 
+/**
+ * How long the playing renditions get to correlate before the analysis copies
+ * are tried instead.
+ *
+ * Short, because the usual answer here is "the target has no bytes yet" and
+ * that is discovered almost at once: the reader gets an end-of-stream where
+ * the disk runs out. The bound only exists so a decoder that opens but crawls
+ * cannot spend the whole switch's patience on the copy that is not there.
+ */
+private const val ALIGNMENT_RENDITION_TIMEOUT_MS = 8_000L
+
 private fun Song.canStartStation(): Boolean =
     videoId.isNotBlank() &&
         !videoId.startsWith("content://") &&
@@ -2152,7 +2163,18 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val startPosition = activePlayer.currentPosition
                 val alignmentOffsetMs = if (smartAlignEnabled) {
-                    prepareVersionAlignment(sourceSong, targetSong, startPosition)
+                    // The files the players read, not just the analysis
+                    // copies: an addon or local track may have no analysis
+                    // rendition at all, and these are the bytes the fade will
+                    // actually join.
+                    prepareVersionAlignment(
+                        sourceSong = sourceSong,
+                        targetSong = targetSong,
+                        currentPosMs = startPosition,
+                        sourcePlaybackUri = currentItem.localConfiguration?.uri,
+                        targetPlaybackUri = targetMediaItem.localConfiguration?.uri,
+                        durationMs = activePlayer.duration,
+                    )
                 } else {
                     0L
                 }
@@ -2267,24 +2289,28 @@ class PlaybackService : MediaLibraryService() {
                 // behind — a few hundred reads as a doubled word rather than
                 // as an alignment.
                 standbyPlayer.play()
-                val runningTimeout = SystemClock.elapsedRealtime() + 600L
-                while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < runningTimeout) {
+                val runningTimeout = SystemClock.elapsedRealtime() + UPGRADE_FADE_START_MS
+                while (isActive && !standbyPlayer.isProducingAudio() &&
+                    SystemClock.elapsedRealtime() < runningTimeout
+                ) {
                     delay(10)
                 }
-                if (standbyPlayer.isPlaying) {
+                if (standbyPlayer.isProducingAudio()) {
                     // Now that it is producing audio — still at zero volume —
-                    // put it exactly where the outgoing player is *now*. The
-                    // near-seek lands inside the buffer it already holds, so
-                    // the drift accumulated above collapses to this seek's own
-                    // resume time, which is the one part that cannot go.
-                    standbyPlayer.seekTo(
-                        currentIndex,
-                        (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L),
+                    // put it exactly where the outgoing player is *now*, in
+                    // content terms. Each seek lands the incoming player at
+                    // the position read a moment earlier, so it re-enters the
+                    // blend by its own resume latency; [alignIncomingToLive]
+                    // aims that ahead and iterates until both clocks agree
+                    // instead of fading in on a doubled word.
+                    alignIncomingToLive(
+                        standby = standbyPlayer,
+                        active = activePlayer,
+                        index = currentIndex,
+                        offsetMs = alignmentOffsetMs,
+                        budgetMs = UPGRADE_FADE_RESYNC_MS,
+                        mediaId = mediaId,
                     )
-                    val resyncTimeout = SystemClock.elapsedRealtime() + 300L
-                    while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < resyncTimeout) {
-                        delay(10)
-                    }
                 }
             } else {
                 // Paused swap: nothing is running on either side, so the first
@@ -2380,7 +2406,59 @@ class PlaybackService : MediaLibraryService() {
      */
     private val versionAlignmentMeasurements = ConcurrentHashMap<Pair<String, String>, Deferred<Long?>>()
 
-    private fun measureVersionAlignmentAsync(sourceSong: Song, targetSong: Song): Deferred<Long?> {
+    /**
+     * Measures the shift between the two copies a version swap is about to
+     * join, named by the URIs the players use rather than by song id.
+     *
+     * This is the measurement that works when there is no analysis rendition
+     * to fall back on — an addon-only track, a local file, or a pair that is
+     * the same id on both sides. It returns null quickly when either side has
+     * no bytes cached at the region, which is the ordinary case for a target
+     * that has never played; the caller then takes the analysis copies.
+     */
+    private suspend fun measureRenditionPair(
+        sourceUri: Uri,
+        targetUri: Uri,
+        fromMs: Long,
+        durationMs: Long,
+        aboutId: String,
+    ): Long? {
+        val sourceKey = AudioCache.cacheKeyOf(sourceUri)
+        val targetKey = AudioCache.cacheKeyOf(targetUri)
+        if (sourceKey == targetKey) return 0L
+        VersionAudioAligner.getCachedRenditionOffsetMs(sourceKey, targetKey)?.let { return it }
+        return try {
+            withTimeoutOrNull(ALIGNMENT_RENDITION_TIMEOUT_MS) {
+                VersionAudioAligner.findRenditionOffsetMs(
+                    source = VersionAudioAligner.RenditionSource(sourceUri, sourceKey),
+                    target = VersionAudioAligner.RenditionSource(targetUri, targetKey),
+                    fromMs = fromMs,
+                    durationMs = durationMs,
+                )
+            }?.also { offset ->
+                TrackLog.d(
+                    "BitChord",
+                    "version alignment measured on the playing copies: ${offset}ms " +
+                        "between $sourceKey and $targetKey",
+                    about = aboutId,
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w("BitChord", "version alignment on the playing copies failed: ${e.message}", about = aboutId)
+            null
+        }
+    }
+
+    private fun measureVersionAlignmentAsync(
+        sourceSong: Song,
+        targetSong: Song,
+        sourcePlaybackUri: Uri? = null,
+        targetPlaybackUri: Uri? = null,
+        currentPosMs: Long = 0L,
+        durationMs: Long = 0L,
+    ): Deferred<Long?> {
         val sourceId = sourceSong.videoId
         val targetId = targetSong.videoId
         val key = sourceId to targetId
@@ -2388,6 +2466,22 @@ class PlaybackService : MediaLibraryService() {
         versionAlignmentMeasurements[key]?.let { return it }
         val deferred = scope.async(Dispatchers.Main) {
             try {
+                // The files the players themselves read come first. For an
+                // addon or local copy the "analysis" URI below may never have
+                // been fetched at all, and for a pair whose ids match it cannot
+                // ask the right question — so the rendition key, which names
+                // the exact bytes, is the only measurement that can answer.
+                // When the target has not been played yet this finds nothing
+                // quickly, and the analysis copies below still get their turn.
+                if (sourcePlaybackUri != null && targetPlaybackUri != null) {
+                    measureRenditionPair(
+                        sourceUri = sourcePlaybackUri,
+                        targetUri = targetPlaybackUri,
+                        fromMs = currentPosMs,
+                        durationMs = durationMs,
+                        aboutId = sourceId,
+                    )?.let { return@async it }
+                }
                 val sourceUri = Uri.parse(sourceSong.localUri ?: AutomixAnalysisSource.opusUri(sourceId))
                 val targetUri = Uri.parse(targetSong.localUri ?: AutomixAnalysisSource.opusUri(targetId))
                 withContext(Dispatchers.IO) {
@@ -2438,6 +2532,9 @@ class PlaybackService : MediaLibraryService() {
         sourceSong: Song,
         targetSong: Song,
         currentPosMs: Long,
+        sourcePlaybackUri: Uri? = null,
+        targetPlaybackUri: Uri? = null,
+        durationMs: Long = 0L,
     ): Long {
         val sourceId = sourceSong.videoId
         val targetId = targetSong.videoId
@@ -2456,7 +2553,14 @@ class PlaybackService : MediaLibraryService() {
         val token = VersionAudioAligner.beginAttempt(sourceId, targetId)
         try {
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FETCHING)
-            val deferred = measureVersionAlignmentAsync(sourceSong, targetSong)
+            val deferred = measureVersionAlignmentAsync(
+                sourceSong = sourceSong,
+                targetSong = targetSong,
+                sourcePlaybackUri = sourcePlaybackUri,
+                targetPlaybackUri = targetPlaybackUri,
+                currentPosMs = currentPosMs,
+                durationMs = durationMs,
+            )
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.MEASURING)
             val measured = deferred.await()
             if (measured == null) {
@@ -2528,6 +2632,29 @@ class PlaybackService : MediaLibraryService() {
         playbackState == Player.STATE_READY && isPlaying
 
     /**
+     * Returns the outgoing player to full gain over a short ramp.
+     *
+     * The exit from a blend that died mid-ramp: the incoming side is already
+     * silent (it stalled, or the correction could not resume it), and jumping
+     * the original from half volume to full in one tick is a click of its own.
+     * Main thread.
+     */
+    private suspend fun restoreOutgoingVolume(player: Player) {
+        val from = player.volume
+        if (from >= 1f) return
+        val restoreMs = 150L
+        val startedAt = SystemClock.elapsedRealtime()
+        while (currentCoroutineContext().isActive) {
+            val progress = ((SystemClock.elapsedRealtime() - startedAt).toFloat() / restoreMs)
+                .coerceIn(0f, 1f)
+            player.volume = from + (1f - from) * progress
+            if (progress >= 1f) break
+            delay(8)
+        }
+        player.volume = 1f
+    }
+
+    /**
      * Blends the proved upgrade in on the standby player instead of cutting the
      * audio while the active one rebuilds its source.
      *
@@ -2552,7 +2679,12 @@ class PlaybackService : MediaLibraryService() {
         mediaId: String,
         at: SwapPoint,
         upgradedItem: MediaItem,
+        upgradedUri: String,
     ): UpgradeSwap {
+        // The caller's direct swap reads this when the fade falls back, and a
+        // figure left from the previous upgrade would land the new one seconds
+        // off — including on every path that declines the fade below.
+        upgradeFadeOffsetMs = 0L
         // Opt-in, off by default. See the confirmation in Settings.
         if (!AppSettings.seamlessQualityUpgrade.value) return UpgradeSwap.Fallback
         // Bit-perfect promises no stage alters the samples, and a blend of two
@@ -2584,6 +2716,17 @@ class PlaybackService : MediaLibraryService() {
             if (i == index) upgradedItem else active.getMediaItemAt(i)
         }
         val startPosition = active.currentPosition
+
+        // The two copies are not necessarily the same cut at the same
+        // timestamps — see [measureUpgradeAlignment]. Started here, while the
+        // standby opens, so the seconds it takes are spent concurrently with
+        // the prepare rather than in front of the fade.
+        val alignmentJob = if (AppSettings.smartVersionAlignment.value) {
+            scope.async(Dispatchers.IO) { measureUpgradeAlignment(at, upgradedUri, startPosition) }
+        } else {
+            null
+        }
+        var offsetMs = 0L
 
         // Held from the first touch of the standby rather than from the fade:
         // preparing takes seconds, and an Automix plan or a version switch
@@ -2625,27 +2768,60 @@ class PlaybackService : MediaLibraryService() {
                 }
                 if (standby.playbackState == Player.STATE_READY) break
                 if (SystemClock.elapsedRealtime() >= prepareBy) {
+                    // The original is still playing and has lost nothing, so
+                    // this is not a failure worth cutting for. Returning it to
+                    // the shelf leaves the proved bytes in the cache for the
+                    // next attempt (and for the next play of the track, which
+                    // adopts a cached better copy) without the silence the
+                    // direct swap would have cost.
                     TrackLog.d(
                         "BitChord",
-                        "upgrade fade standby not ready in ${UPGRADE_FADE_PREPARE_MS}ms; swapping directly",
+                        "upgrade fade standby not ready in ${UPGRADE_FADE_PREPARE_MS}ms; keeping the original",
                         about = mediaId,
                     )
-                    return UpgradeSwap.Fallback
+                    return UpgradeSwap.Abandoned
                 }
                 delay(20)
             }
             if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
-            // A pause during the wait has taken the audio away; there is
-            // nothing left to hide and decoding a second stream would be
-            // wasted.
+            // A pause during the wait has taken the audio away; the direct
+            // swap is free there, and a second decoder would be pure cost.
             if (!active.isPlaying) return UpgradeSwap.Fallback
+
+            // Now that the standby is open, the measured shift between the two
+            // copies decides where it has to sit. Awaited here rather than
+            // before the prepare so the decode and the open run at the same
+            // time; the original plays through both.
+            offsetMs = awaitUpgradeAlignment(mediaId, alignmentJob)
+            // Published for the direct swap the caller may still have to make:
+            // a pause during any wait below falls back to it, and the listener
+            // must resume at the same *content*, not the same timestamp.
+            upgradeFadeOffsetMs = offsetMs
 
             // The item was prepared at the position the listener held when the
             // fade was armed; the original has kept playing while it buffered.
-            // Wait for the loader to cover where the listener is *now*, too: a
-            // forward seek past the end of the buffer is the same 0.5s
-            // re-buffer the direct swap used to pay, and fading the original
-            // out over it would hide nothing.
+            // Wait for the loader to cover where the listener is *now*, too —
+            // including the measured shift, which can put the incoming copy
+            // seconds away from the position that was prepared. A forward seek
+            // past the end of the buffer is the same re-buffer the direct swap
+            // used to pay, and fading the original out over it would hide
+            // nothing.
+            //
+            // Aim the paused standby there first. The prepare opened at the
+            // arm-time position and the loader walks forward from it, so a
+            // large shift would otherwise have to be read through in full — and
+            // stopped at the load control's buffer cap, the wait would expire
+            // and give up an upgrade the connection could have served. Seeking
+            // now fetches the region the blend needs instead of the gap before
+            // it; the wait below then measures the same fetch.
+            standby.seekTo(
+                index,
+                UpgradeFadeAlignment.incomingPositionMs(
+                    active.currentPosition,
+                    offsetMs,
+                    standby.duration,
+                ),
+            )
             val alignBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_ALIGN_MS
             while (currentCoroutineContext().isActive) {
                 if (player !== active || active.currentMediaItemIndex != index ||
@@ -2660,28 +2836,39 @@ class PlaybackService : MediaLibraryService() {
                 // A negative buffered position means "not reported" (some
                 // manifest sources); the start and advance proofs below still
                 // catch a seek that has to go back to the network.
+                val liveTarget = UpgradeFadeAlignment.incomingPositionMs(
+                    active.currentPosition,
+                    offsetMs,
+                    standby.duration,
+                )
                 val buffered = standby.bufferedPosition
-                if (buffered < 0 || buffered >= active.currentPosition + UPGRADE_FADE_BUFFER_AHEAD_MS) break
+                if (buffered < 0 || buffered >= liveTarget + UPGRADE_FADE_BUFFER_AHEAD_MS) break
                 if (SystemClock.elapsedRealtime() >= alignBy) {
                     TrackLog.d(
                         "BitChord",
-                        "upgrade fade buffer did not reach the live position; swapping directly",
+                        "upgrade fade buffer did not reach the live position; keeping the original",
                         about = mediaId,
                     )
-                    return UpgradeSwap.Fallback
+                    return UpgradeSwap.Abandoned
                 }
                 delay(20)
             }
             if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
             if (!active.isPlaying) return UpgradeSwap.Fallback
 
-            // The same collapsing sequence as [smoothSwapCurrentTrackVersion],
-            // tightened: start it muted, then put it where the listener is now,
-            // and only accept the result while it is genuinely running. READY
-            // alone is not enough — a seek can report READY and then re-buffer —
-            // and a blend that starts on a silent incoming side is exactly the
-            // fade-out-then-hole this path exists to remove.
-            standby.seekTo(index, active.currentPosition)
+            // Start it muted, then put it where the listener is *now*, and
+            // only accept the result while it is genuinely running. READY
+            // alone is not enough — a seek can report READY and then re-buffer
+            // — and a blend that starts on a silent incoming side is exactly
+            // the fade-out-then-hole this path exists to remove.
+            standby.seekTo(
+                index,
+                UpgradeFadeAlignment.incomingPositionMs(
+                    active.currentPosition,
+                    offsetMs,
+                    standby.duration,
+                ),
+            )
             standby.play()
             val startBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_START_MS
             while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
@@ -2691,52 +2878,76 @@ class PlaybackService : MediaLibraryService() {
             }
             if (standby.playerError != null) return UpgradeSwap.Failed
             if (!standby.isProducingAudio()) {
-                TrackLog.d("BitChord", "upgrade fade standby never started; swapping directly", about = mediaId)
-                return UpgradeSwap.Fallback
-            }
-            standby.seekTo(index, active.currentPosition)
-            val resyncBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_RESYNC_MS
-            while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
-                SystemClock.elapsedRealtime() < resyncBy
-            ) {
-                delay(10)
-            }
-            if (player !== active || active.currentMediaItemIndex != index ||
-                active.currentMediaItem?.mediaId != mediaId
-            ) {
-                return UpgradeSwap.Abandoned
-            }
-            if (!standby.isProducingAudio()) {
                 TrackLog.d(
                     "BitChord",
-                    "upgrade fade standby re-buffered after the live seek; swapping directly",
+                    "upgrade fade standby never started; keeping the original",
                     about = mediaId,
                 )
-                return UpgradeSwap.Fallback
+                return UpgradeSwap.Abandoned
             }
+
+            // Not merely running — running at the same point in the song. A
+            // seek lands the incoming player at the position read a moment
+            // earlier, so it re-enters the blend by the seek's own resume
+            // latency every time; that is the doubled word the old single
+            // resync still produced. The correction aims that latency ahead
+            // and iterates until both clocks agree.
+            var resumeLatencyMs = alignIncomingToLive(
+                standby,
+                active,
+                index,
+                offsetMs,
+                UPGRADE_FADE_RESYNC_MS,
+                mediaId,
+            ) ?: run {
+                // A pause makes the direct swap free; a running session keeps
+                // the original rather than cutting it for a blend there is no
+                // time left to prove.
+                if (!active.isPlaying) return UpgradeSwap.Fallback
+                TrackLog.d("BitChord", "upgrade fade could not align; keeping the original", about = mediaId)
+                return UpgradeSwap.Abandoned
+            }
+
             // Prove it is advancing samples, not merely flagged playing for the
             // tick before the seek's load task reports BUFFERING.
             val probeAt = standby.currentPosition
-            delay(80)
+            delay(120)
             if (!standby.isProducingAudio() || standby.currentPosition <= probeAt) {
-                TrackLog.d("BitChord", "upgrade fade standby is not advancing; swapping directly", about = mediaId)
-                return UpgradeSwap.Fallback
+                if (!active.isPlaying) return UpgradeSwap.Fallback
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade standby is not advancing; keeping the original",
+                    about = mediaId,
+                )
+                return UpgradeSwap.Abandoned
             }
 
             // Never blend into the track's own ending: both players would then
-            // run out together and the adopt would have nothing to adopt.
-            val remaining = if (at.duration > 0) at.duration - active.currentPosition else Long.MAX_VALUE
-            if (remaining < UPGRADE_FADE_START_MS + 3_000L) return UpgradeSwap.Fallback
+            // run out together and the adopt would have nothing to adopt. The
+            // length is read from the player now rather than from [at]: the
+            // waits above can span seconds, and a stale one would arm a blend
+            // that runs past the end.
+            val duration = active.duration.takeIf { it > 0 } ?: at.duration
+            val remaining = if (duration > 0) duration - active.currentPosition else Long.MAX_VALUE
+            if (remaining < UPGRADE_FADE_MIN_REMAINING_MS) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade skipped: ${remaining}ms left is too little to blend",
+                    about = mediaId,
+                )
+                return UpgradeSwap.Abandoned
+            }
             val fadeMs = if (remaining == Long.MAX_VALUE) {
                 UPGRADE_CROSSFADE_MS
             } else {
-                minOf(UPGRADE_CROSSFADE_MS, remaining - 3_000L)
+                minOf(UPGRADE_CROSSFADE_MS, remaining - 1_000L).coerceAtLeast(400L)
             }
 
             TrackLog.d(
                 "BitChord",
                 "upgrade fade armed: standby at ${standby.currentPosition}ms, buffered through " +
-                    "${standby.bufferedPosition}ms, live at ${active.currentPosition}ms",
+                    "${standby.bufferedPosition}ms, live at ${active.currentPosition}ms, " +
+                    "shift ${offsetMs}ms, resume latency ${resumeLatencyMs}ms, blend ${fadeMs}ms",
                 about = mediaId,
             )
 
@@ -2767,21 +2978,58 @@ class PlaybackService : MediaLibraryService() {
                     // wherever the clock got to.
                     progress = (progress + delta.toFloat() / fadeMs).coerceAtMost(1f)
                     // A listener seek moves only the active player. Follow it
-                    // rather than let the two recordings part company.
-                    if (abs(active.currentPosition - standby.currentPosition) > UPGRADE_FADE_MAX_DRIFT_MS) {
-                        standby.seekTo(index, active.currentPosition)
+                    // rather than let the two recordings part company — and
+                    // follow it in *content* terms, so the measured shift is
+                    // part of the comparison and the correction, not an error
+                    // the loop keeps trying to erase.
+                    val drift = UpgradeFadeAlignment.driftMs(
+                        active.currentPosition,
+                        standby.currentPosition,
+                        offsetMs,
+                    )
+                    if (abs(drift) > UPGRADE_FADE_MAX_DRIFT_MS) {
+                        // The full loop rather than one seek: it aims the
+                        // resume latency ahead and reads the result back,
+                        // so a listener seek does not leave the two sides
+                        // a fixed resume-time apart for the rest of the
+                        // blend.
+                        val corrected = alignIncomingToLive(
+                            standby,
+                            active,
+                            index,
+                            offsetMs,
+                            UPGRADE_FADE_RESYNC_MS,
+                            mediaId,
+                        )
+                        if (corrected == null) {
+                            if (!active.isPlaying) return UpgradeSwap.Fallback
+                            TrackLog.d(
+                                "BitChord",
+                                "upgrade fade lost alignment mid-blend; keeping the original",
+                                about = mediaId,
+                            )
+                            restoreOutgoingVolume(active)
+                            return UpgradeSwap.Abandoned
+                        }
+                        resumeLatencyMs = corrected
+                        // The correction held the blend still while it
+                        // sought and waited to resume; that time is not
+                        // blend time.
+                        lastTick = SystemClock.elapsedRealtime()
                     }
                 } else if (activeRunning) {
                     // The incoming side stalled after it was proved running — a
                     // seek crossed the end of its buffer, or the network
                     // hiccupped. Hold the blend where it is instead of fading
-                    // the original into silence; if it does not catch up, let
-                    // the direct swap have the track.
+                    // the original into silence. If it does not catch up, keep
+                    // the original: swapping directly here is the choice that
+                    // cuts the audio, and a proved upgrade is not worth a hole.
                     pausedSince = null
                     val since = stalledSince ?: tick.also { stalledSince = tick }
                     if (tick - since >= UPGRADE_FADE_STALL_MS) {
-                        TrackLog.d("BitChord", "upgrade fade standby stalled; swapping directly", about = mediaId)
-                        return UpgradeSwap.Fallback
+                        TrackLog.d("BitChord", "upgrade fade standby stalled; keeping the original", about = mediaId)
+                        restoreOutgoingVolume(active)
+                        return UpgradeSwap.Abandoned
                     }
                 } else {
                     stalledSince = null
@@ -2809,7 +3057,12 @@ class PlaybackService : MediaLibraryService() {
             adopted = true
             return UpgradeSwap.Crossfaded
         } finally {
+            // A measurement that outlived the fade it was started for has no
+            // reader left; cancelling it releases the decoder and the cache
+            // readers rather than letting them run out their timeout.
+            alignmentJob?.cancel()
             upgradeFadeActive = false
+            AppSettings.versionAlignmentInProgress.value = false
             loudnessA.setBlendTrim(1f)
             loudnessB.setBlendTrim(1f)
             // The role check guards an exception thrown *inside* the adoption,
@@ -2823,6 +3076,221 @@ class PlaybackService : MediaLibraryService() {
                 active.volume = 1f
             }
         }
+    }
+
+    /**
+     * The shift between the two files a quality upgrade joins, measured on the
+     * copies both players actually read.
+     *
+     * [VersionAudioAligner.findOffsetMs] cannot answer this: an upgrade is the
+     * *same* song id on both sides, and it short-circuits those to zero. The
+     * two files can still be different masters — a music video against the
+     * album cut, or a catalogue that pads the opening — so the fade has to be
+     * told where the same musical moment is in the incoming copy. The
+     * upgrade's rendition key says which bytes to open, which is what
+     * [VersionAudioAligner.findRenditionOffsetMs] takes.
+     *
+     * Runs beside the standby's prepare rather than in front of the fade:
+     * the outgoing copy plays through all of it.
+     *
+     * @return the measured shift, or null when neither the openings nor the
+     *   playback window correlated convincingly. Null is "no measurement",
+     *   never zero — the caller fades at the same timestamp when there is no
+     *   better answer, but the log says which of the two happened.
+     */
+    private suspend fun measureUpgradeAlignment(
+        at: SwapPoint,
+        upgradedUri: String,
+        fromMs: Long,
+    ): Long? {
+        val sourceUri = Uri.parse(at.uri)
+        val targetUri = Uri.parse(upgradedUri)
+        val sourceKey = AudioCache.cacheKeyOf(sourceUri)
+        val targetKey = AudioCache.cacheKeyOf(targetUri)
+        if (sourceKey == targetKey) return 0L
+
+        // The incoming copy is still being filled by the standby's prepare.
+        // A decode that starts before the loader reaches [fromMs] reads a hole
+        // and reports nothing, which is how a measurement that would have
+        // worked a second later came back empty. Wait for the bytes actually
+        // to be there — bounded, because this runs while the original plays
+        // and nothing is audible either way.
+        val cachedBy = SystemClock.elapsedRealtime() + UPGRADE_ALIGNMENT_CACHE_WAIT_MS
+        while (currentCoroutineContext().isActive &&
+            !AudioCache.hasCachedBytesAt(targetUri, fromMs) &&
+            SystemClock.elapsedRealtime() < cachedBy
+        ) {
+            delay(100)
+        }
+
+        return try {
+            withTimeoutOrNull(UPGRADE_FADE_ALIGNMENT_TIMEOUT_MS) {
+                var attempt = 0
+                while (currentCoroutineContext().isActive) {
+                    val offset = VersionAudioAligner.findRenditionOffsetMs(
+                        source = VersionAudioAligner.RenditionSource(sourceUri, sourceKey),
+                        target = VersionAudioAligner.RenditionSource(targetUri, targetKey),
+                        fromMs = fromMs,
+                        durationMs = at.duration,
+                        // Not cached: an upgrade's rendition key names a slot,
+                        // and the next candidate to fill it is a different file.
+                        cache = false,
+                    )
+                    // One retry, because the reader can land on the span the
+                    // standby is still writing and see a hole that is a moment
+                    // from closing. A second empty answer is the answer.
+                    if (offset != null || attempt >= 1) return@withTimeoutOrNull offset
+                    attempt++
+                    delay(400)
+                }
+                null
+            }.also { offset ->
+                if (offset != null) {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade alignment measured: ${offset}ms between $sourceKey and $targetKey",
+                        about = at.item.mediaId,
+                    )
+                } else {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade alignment found no convincing shift between $sourceKey and $targetKey",
+                        about = at.item.mediaId,
+                    )
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w("BitChord", "upgrade alignment failed: ${e.message}", about = at.item.mediaId)
+            null
+        }
+    }
+
+    /**
+     * Collects [measureUpgradeAlignment]'s answer before the standby is put
+     * where the listener is.
+     *
+     * The measurement normally finishes while the standby prepares — it is
+     * started first and the prepare takes seconds — so this is a wait on work
+     * already in flight, not an extra stage. It is bounded on its own because
+     * a stuck decoder must not hold the fade forever; past the bound the
+     * original keeps playing and the blend uses the same timestamp on both
+     * sides, which is what it did before alignment existed.
+     */
+    private suspend fun awaitUpgradeAlignment(mediaId: String, job: Deferred<Long?>?): Long {
+        if (job == null) return 0L
+        AppSettings.versionAlignmentInProgress.value = true
+        try {
+            val offset = withTimeoutOrNull(UPGRADE_FADE_ALIGNMENT_TIMEOUT_MS + 1_000L) {
+                job.await()
+            }
+            if (offset == null) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade has no measured shift; both copies start at the same timestamp",
+                    about = mediaId,
+                )
+            }
+            return offset ?: 0L
+        } finally {
+            AppSettings.versionAlignmentInProgress.value = false
+        }
+    }
+
+    /**
+     * Puts the incoming player on the outgoing player's musical position and
+     * proves it stayed there.
+     *
+     * A seek is not instantaneous. The player reports its target at once,
+     * becomes ready a resume-time later, and resumes at that target while the
+     * outgoing player has moved on by exactly the resume time — so seeking to
+     * the live position re-enters the blend the same number of milliseconds
+     * behind every time, which is the doubled word a "successful" fade still
+     * had. [UpgradeFadeAlignment.correctionPositionMs] aims that far ahead
+     * using what the previous correction measured, and this loops until the
+     * clocks agree to [UpgradeFadeAlignment.FINE_DRIFT_MS] or the corrections
+     * run out.
+     *
+     * @return the residual resume latency the blend should use for later
+     *   corrections, or null when the standby never settled or the listener
+     *   paused out from under it. Zero is a valid, perfectly aligned answer.
+     */
+    private suspend fun alignIncomingToLive(
+        standby: ExoPlayer,
+        active: ExoPlayer,
+        index: Int,
+        offsetMs: Long,
+        budgetMs: Long,
+        mediaId: String,
+    ): Long? {
+        var resumeLatencyMs = 0L
+        for (attempt in 0..UpgradeFadeAlignment.MAX_CORRECTIONS) {
+            if (!currentCoroutineContext().isActive) return null
+            if (!active.isPlaying) return null
+            val live = active.currentPosition
+            val drift = UpgradeFadeAlignment.driftMs(live, standby.currentPosition, offsetMs)
+            if (abs(drift) <= UpgradeFadeAlignment.FINE_DRIFT_MS) {
+                TrackLog.d(
+                    "BitChord",
+                    "incoming player aligned after $attempt correction(s): drift ${drift}ms, shift ${offsetMs}ms",
+                    about = mediaId,
+                )
+                return resumeLatencyMs
+            }
+            if (attempt == UpgradeFadeAlignment.MAX_CORRECTIONS) {
+                if (abs(drift) <= UpgradeFadeAlignment.MAX_ACCEPTABLE_DRIFT_MS) {
+                    TrackLog.d(
+                        "BitChord",
+                        "incoming player settled ${drift}ms out after " +
+                            "${UpgradeFadeAlignment.MAX_CORRECTIONS} corrections; blending on that",
+                        about = mediaId,
+                    )
+                    return resumeLatencyMs
+                }
+                TrackLog.d(
+                    "BitChord",
+                    "incoming player still ${drift}ms out after " +
+                        "${UpgradeFadeAlignment.MAX_CORRECTIONS} corrections",
+                    about = mediaId,
+                )
+                return null
+            }
+            standby.seekTo(
+                index,
+                UpgradeFadeAlignment.correctionPositionMs(live, offsetMs, resumeLatencyMs),
+            )
+            val resumeBy = SystemClock.elapsedRealtime() + budgetMs
+            while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
+                SystemClock.elapsedRealtime() < resumeBy
+            ) {
+                delay(10)
+            }
+            if (!standby.isProducingAudio()) {
+                TrackLog.d("BitChord", "incoming player did not resume after a correction", about = mediaId)
+                return null
+            }
+            // Off the seek target and back onto the clock: until a buffer or
+            // two has played, currentPosition is still reporting the number the
+            // seek gave it, and reading it back would measure nothing at all.
+            delay(80)
+            if (!standby.isProducingAudio()) {
+                TrackLog.d("BitChord", "incoming player re-buffered after a correction", about = mediaId)
+                return null
+            }
+            val residual = UpgradeFadeAlignment.driftMs(
+                active.currentPosition,
+                standby.currentPosition,
+                offsetMs,
+            )
+            // The target already carried the previous estimate; only the
+            // leftover is this seek's resume time. Accumulating rather than
+            // replacing is what stops the correction oscillating between
+            // "aimed ahead" and "aimed straight".
+            resumeLatencyMs = (resumeLatencyMs + residual)
+                .coerceIn(0L, UpgradeFadeAlignment.MAX_RESUME_LATENCY_MS)
+        }
+        return null
     }
 
     /**
@@ -4327,6 +4795,18 @@ class PlaybackService : MediaLibraryService() {
     private var upgradeFadeActive = false
 
     /**
+     * The shift the upgrade fade measured between the playing copy and the
+     * incoming one — target position = source position + this.
+     *
+     * Set by [crossfadeUpgradeIn] once the measurement lands and read by the
+     * caller only when the fade falls back to the direct swap. Without it a
+     * pause during the fade's waits resumed at the outgoing file's timestamp
+     * in a file whose matching passage is somewhere else. Zero is a valid
+     * value and means both copies share a timeline.
+     */
+    private var upgradeFadeOffsetMs = 0L
+
+    /**
      * The track [ExoPlayer.getAudioFormat] is currently describing.
      *
      * `audioFormat` is a property of the *renderer*, not of the queue item, and
@@ -4678,6 +5158,23 @@ class PlaybackService : MediaLibraryService() {
             return
         }
 
+        // The opening again, before rather than after the swap this time: the
+        // fade's alignment searches the first seconds of both files for the
+        // same passage, and the header warmed for the swap is one megabyte —
+        // a few seconds of audio, often too little to search a video's intro
+        // against the album master. Fetched during the wait for a transition
+        // to clear, where nothing is on the listener's critical path. The warm
+        // after the swap asks for the same range, so this moves the download
+        // rather than adding one.
+        if (AppSettings.smartVersionAlignment.value &&
+            AppSettings.seamlessQualityUpgrade.value &&
+            !ListenTogether.state.value.inParty
+        ) {
+            scope.launch(Dispatchers.IO) {
+                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+            }
+        }
+
         // There used to be an unconditional five-second hold here, keyed off the
         // track's own position, so that an upgrade arriving with the first note
         // could not cut the song a millisecond in. Its own reasoning said it was
@@ -4811,7 +5308,7 @@ class PlaybackService : MediaLibraryService() {
             val upgradedSourceName = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
                 ?: "Upgrade"
             var upgradedAt = now.position
-            when (crossfadeUpgradeIn(mediaId, now, upgradedItem)) {
+            when (crossfadeUpgradeIn(mediaId, now, upgradedItem, upgradedUri)) {
                 UpgradeSwap.Crossfaded -> {
                     // Adopted without touching the outgoing item; the fade's own
                     // log already recorded the overlap.
@@ -4824,7 +5321,10 @@ class PlaybackService : MediaLibraryService() {
                     // be seconds old if the fade spent time preparing.
                     val active = player ?: return@withContext
                     val index = active.currentMediaItemIndex
-                    upgradedAt = active.currentPosition
+                    // The same content, not the same timestamp: a fade that
+                    // measured a shift and then fell back still has to land
+                    // on the passage the listener is hearing.
+                    upgradedAt = (active.currentPosition + upgradeFadeOffsetMs).coerceAtLeast(0L)
                     swappingMediaId = mediaId
                     swapCutAt = SystemClock.elapsedRealtime()
                     active.replaceMediaItem(index, upgradedItem)
@@ -9466,14 +9966,51 @@ class PlaybackService : MediaLibraryService() {
          * preloaded, so this is not buying buffer time — it is only long enough
          * for two recordings of the same song to be heard as one changing
          * quality rather than as a splice.
+         *
+         * Kept near a second rather than the two it first shipped with: the
+         * blend is only clean while the two clocks agree, and a short overlap
+         * exposes an imperfect measurement far less than a long one does.
          */
-        const val UPGRADE_CROSSFADE_MS = 2_000L
+        const val UPGRADE_CROSSFADE_MS = 1_000L
 
-        /** How long the standby gets to open the proved stream before the fade is abandoned. */
-        const val UPGRADE_FADE_PREPARE_MS = 4_000L
+        /**
+         * How long the standby gets to open the proved stream before the fade
+         * is abandoned.
+         *
+         * Generous on purpose: this runs while the original keeps playing, so
+         * the only cost of waiting is that the better stream arrives later.
+         * The old four seconds was measured against a warm cache and loses the
+         * upgrade outright on a cold, large file — which is exactly the case an
+         * upgrade exists for.
+         */
+        const val UPGRADE_FADE_PREPARE_MS = 12_000L
 
         /** How long the standby gets to actually start producing audio after `play()`. */
-        const val UPGRADE_FADE_START_MS = 600L
+        const val UPGRADE_FADE_START_MS = 2_000L
+
+        /**
+         * How long the measurement started beside the prepare may take.
+         *
+         * It decodes two regions concurrently while the standby opens, and the
+         * outgoing copy plays throughout, so a slow answer delays the blend but
+         * never costs audio — while no answer leaves the blend at the same
+         * timestamp on both sides.
+         */
+        const val UPGRADE_FADE_ALIGNMENT_TIMEOUT_MS = 25_000L
+
+        /**
+         * How long the measurement waits for the standby's own fetch to cover
+         * the position it is about to decode.
+         *
+         * Not a second prepare: the standby is seeking exactly there, so the
+         * bytes arrive with or without this. The wait exists because the
+         * measurement starts beside the prepare, and a decode that beats the
+         * loader reads a hole and returns nothing.
+         */
+        const val UPGRADE_ALIGNMENT_CACHE_WAIT_MS = 12_000L
+
+        /** Below this much music left, a blend has nothing to hand over to. */
+        const val UPGRADE_FADE_MIN_REMAINING_MS = 3_000L
 
         /**
          * How far past the live position the standby's buffer must reach before
@@ -9484,11 +10021,18 @@ class PlaybackService : MediaLibraryService() {
          */
         const val UPGRADE_FADE_BUFFER_AHEAD_MS = 3_000L
 
-        /** How long the buffer gets to reach that mark before the direct swap wins. */
-        const val UPGRADE_FADE_ALIGN_MS = 3_000L
+        /**
+         * How long the buffer gets to reach that mark before the fade gives up
+         * and the original keeps the track.
+         *
+         * The position it has to reach is the live one *plus the measured
+         * shift*, which can jump it seconds beyond what the prepare fetched;
+         * the old three seconds was timed for a same-timestamp upgrade only.
+         */
+        const val UPGRADE_FADE_ALIGN_MS = 8_000L
 
-        /** How long the near-seek to the live position gets to settle before the fade starts. */
-        const val UPGRADE_FADE_RESYNC_MS = 1_000L
+        /** How long each near-seek to the live position gets to resume before the fade gives up. */
+        const val UPGRADE_FADE_RESYNC_MS = 3_000L
 
         /**
          * How long the standby may stall mid-fade before the untouched original
@@ -9501,8 +10045,13 @@ class PlaybackService : MediaLibraryService() {
          * Drift between the two players that is quiet enough to leave alone.
          * More than this and the standby is re-seeked to the live position;
          * less would seek on every frame of ordinary jitter.
+         *
+         * Measured in content terms (see [UpgradeFadeAlignment.driftMs]) and
+         * kept well below the 120ms this first used: 120ms is a syllable, and a
+         * syllable of the same word twice is the doubling the fade is meant to
+         * remove.
          */
-        const val UPGRADE_FADE_MAX_DRIFT_MS = 120L
+        const val UPGRADE_FADE_MAX_DRIFT_MS = 50L
 
         /**
          * How long the fade may sit frozen on a paused session before it gives

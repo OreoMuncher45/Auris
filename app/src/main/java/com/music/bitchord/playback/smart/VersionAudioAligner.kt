@@ -7,6 +7,7 @@ import android.util.Log
 import androidx.media3.common.util.UnstableApi
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.playback.AudioCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -36,6 +37,24 @@ object VersionAudioAligner {
     private const val WIN_MS = 40.0 // 40ms analysis window
     private const val MAX_LAG_SECONDS = 40.0 // Search up to ±40s drift/intro
     private const val MIN_CONFIDENCE = 0.40 // Minimum normalized correlation
+    private const val DEFAULT_WINDOW_SEC = 45.0
+
+    /**
+     * One side of an offset measurement that names the exact copy on disk:
+     * the URI the player opens and the cache key it resolves to.
+     *
+     * [findOffsetMs] works from a song id and has to guess which of a track's
+     * renditions to open. That guess is wrong for the two cases that matter
+     * most — a quality upgrade is the *same* id on both sides (so it answers
+     * zero without measuring), and an addon-only track's copies are keyed by
+     * source rather than by video id. This names the bytes instead.
+     */
+    data class RenditionSource(val uri: Uri, val cacheKey: String)
+
+    // Keyed by cache key rather than song id: one id can own the Opus copy,
+    // a substituted source's copy and a quality upgrade, and those are exactly
+    // the pairs that have to be told apart.
+    private val renditionOffsetCache = ConcurrentHashMap<Pair<String, String>, Long>()
 
     // Cache computed offsets so subsequent switches are instantaneous:
     // (sourceVideoId, targetVideoId) -> offsetMs
@@ -116,6 +135,139 @@ object VersionAudioAligner {
         return offsetCache[sourceVideoId to targetVideoId]
     }
 
+    /** A previously measured shift between two specific copies, if any. */
+    fun getCachedRenditionOffsetMs(sourceKey: String, targetKey: String): Long? {
+        if (sourceKey == targetKey) return 0L
+        return renditionOffsetCache[sourceKey to targetKey]
+    }
+
+    /**
+     * The shift between the two copies a swap is about to join — the one
+     * playing and the one replacing it — measured on the bytes themselves.
+     *
+     * Two cuts of the same song can open on the same frame or seconds apart:
+     * a music video with a spoken intro against the album master, or two
+     * catalogues that encode the same release with different padding. Playing
+     * the incoming copy at the outgoing copy's timestamp is what a crossfade
+     * turns into comb filtering and a doubled vocal; this is the number that
+     * keeps the same musical moment on both sides of the blend.
+     *
+     * Head first, because both files should open on the same passage and a
+     * full opening allows a far wider search than the playback window does.
+     * When one head is too short to trust — a hi-res upgrade whose opening is
+     * only a few seconds — the measurement falls back to the region around
+     * [fromMs], which both copies are known to hold because the audition and
+     * the playing stream have already fetched it.
+     *
+     * @param durationMs the recording's length, used only to turn a known byte
+     *   count into seconds of audio. Zero skips the head attempt.
+     * @param cache whether to answer from, and store into, the pair cache.
+     *   False for a quality-upgrade slot: `#hifi` names a slot rather than a
+     *   file, so the bytes behind it can be a different candidate — and a
+     *   different master — on the next attempt. A manual version switch names
+     *   stable renditions and is cached.
+     * @return the shift, or null when neither region correlated convincingly.
+     *   Callers must treat null as "no measurement", not as zero.
+     */
+    suspend fun findRenditionOffsetMs(
+        source: RenditionSource,
+        target: RenditionSource,
+        fromMs: Long,
+        durationMs: Long,
+        cache: Boolean = true,
+    ): Long? = withContext(Dispatchers.IO) {
+        if (source.cacheKey == target.cacheKey) return@withContext 0L
+        if (cache) {
+            renditionOffsetCache[source.cacheKey to target.cacheKey]?.let { return@withContext it }
+        }
+
+        val sourceDs = AudioCache.dataSourceForKey(source.uri, source.cacheKey)
+        val targetDs = AudioCache.dataSourceForKey(target.uri, target.cacheKey)
+        try {
+            val offset = measureFromOpenings(source, target, sourceDs, targetDs, durationMs)
+                ?: measureAtPosition(sourceDs, targetDs, fromMs)
+            if (offset != null && cache) {
+                renditionOffsetCache[source.cacheKey to target.cacheKey] = offset
+                renditionOffsetCache[target.cacheKey to source.cacheKey] = -offset
+            }
+            offset
+        } finally {
+            safeClose(sourceDs)
+            safeClose(targetDs)
+        }
+    }
+
+    private suspend fun measureFromOpenings(
+        source: RenditionSource,
+        target: RenditionSource,
+        sourceDs: MediaDataSource,
+        targetDs: MediaDataSource,
+        durationMs: Long,
+    ): Long? {
+        val window = minOf(
+            cachedOpeningSeconds(source, durationMs),
+            cachedOpeningSeconds(target, durationMs),
+            30.0,
+        )
+        // Below this the searchable lags collapse to a handful of frames and a
+        // "match" says little more than zero.
+        if (window < 6.0) return null
+        val maxLag = (window - 3.5).coerceAtMost(MAX_LAG_SECONDS)
+        return measureOffset(
+            sourceDs = sourceDs,
+            targetDs = targetDs,
+            sourceFromSec = 0.0,
+            targetFromSec = 0.0,
+            windowSec = window,
+            maxLagSec = maxLag,
+            label = "upgrade openings (${source.cacheKey} -> ${target.cacheKey})",
+            about = source.uri.getQueryParameter("v").orEmpty(),
+        )
+    }
+
+    private suspend fun measureAtPosition(
+        sourceDs: MediaDataSource,
+        targetDs: MediaDataSource,
+        fromMs: Long,
+    ): Long? {
+        val fromSec = fromMs.coerceAtLeast(0L) / 1000.0
+        // Long enough that the search can find a shift of several seconds —
+        // the difference a label's spoken intro or a padded master makes —
+        // while still reading only a region both copies hold: the outgoing
+        // side has already played here, and the incoming one is being fetched
+        // from the same position by the prepare this runs beside.
+        return measureOffset(
+            sourceDs = sourceDs,
+            targetDs = targetDs,
+            sourceFromSec = fromSec,
+            targetFromSec = fromSec,
+            windowSec = 20.0,
+            maxLagSec = 12.0,
+            label = "upgrade at ${fromMs}ms",
+            about = "",
+        )
+    }
+
+    /**
+     * Seconds of audio in the contiguous opening of [rendition], from the
+     * recording's own byte rate. Deliberately conservative when the length
+     * was never recorded: decoding past the cached prefix throws and loses
+     * the samples that were already good.
+     */
+    private fun cachedOpeningSeconds(rendition: RenditionSource, durationMs: Long): Double {
+        val prefix = AudioCache.cachedPrefixBytes(rendition.uri)
+        if (prefix <= 0L) return 0.0
+        val total = AudioCache.contentLengthOf(rendition.uri)
+        val bytesPerSecond = if (total > 0 && durationMs > 0) {
+            total.toDouble() / (durationMs / 1000.0)
+        } else {
+            // A high guess, so an unknown bitrate underestimates seconds
+            // rather than reading past what is on disk.
+            400_000.0
+        }
+        return prefix / bytesPerSecond
+    }
+
     /**
      * Calculates or retrieves the time offset (in milliseconds) from [sourceSong] to [targetSong].
      * Target timestamp = (source timestamp + offsetMs).
@@ -152,120 +304,146 @@ object VersionAudioAligner {
         }
 
         try {
-            // Both decodes at once rather than one after the other, and every
-            // phase timed: the measurement runs against a deadline (see
-            // [PlaybackService]'s ALIGNMENT_MEASURE_TIMEOUT_MS), and a result
-            // arriving past it is discarded as if it had never happened — the
-            // swap then goes out with no shift even though the offset was
-            // computed. The field log caught exactly that race, with the
-            // correlation succeeding 10 ms over a tighter budget.
-            var decodes: Pair<Pair<AudioDecoder.Pcm, Double>?, Pair<AudioDecoder.Pcm, Double>?> =
-                null to null
-            val decodeMs = measureTimeMillis {
-                decodes = coroutineScope {
-                    val source = async(Dispatchers.IO) {
-                        AudioDecoder.decodeRegion(sourceDs, 0.0, 45.0)
-                    }
-                    val target = async(Dispatchers.IO) {
-                        AudioDecoder.decodeRegion(targetDs, 0.0, 45.0)
-                    }
-                    source.await() to target.await()
-                }
-            }
-            val (sourceDecode, targetDecode) = decodes
-
-            if (sourceDecode == null || targetDecode == null) {
-                return@withContext null
-            }
-
-            val (pcmSource, startSourceSec) = sourceDecode
-            val (pcmTarget, startTargetSec) = targetDecode
-
-            if (pcmSource.samples.isEmpty() || pcmTarget.samples.isEmpty()) {
-                return@withContext null
-            }
-
-            var envelopes: Pair<FloatArray, FloatArray> = FloatArray(0) to FloatArray(0)
-            val envelopeMs = measureTimeMillis {
-                envelopes = computeEnergyEnvelope(pcmSource.samples, pcmSource.sampleRate) to
-                    computeEnergyEnvelope(pcmTarget.samples, pcmTarget.sampleRate)
-            }
-
-            var correlation: Correlation = Correlation(0, 0.0, 0, 0)
-            val correlateMs = measureTimeMillis {
-                correlation = crossCorrelate(envelopes.first, envelopes.second)
-            }
-            TrackLog.d(
-                TAG,
-                "Alignment timings for '${sourceSong.title}': decode=${decodeMs}ms, " +
-                    "envelope=${envelopeMs}ms, correlate=${correlateMs}ms",
-                sourceSong.videoId,
-            )
-            val bestLagFrames = correlation.lagFrames
-            val confidence = correlation.confidence
-            TrackLog.d(
-                TAG,
-                "Alignment for '${sourceSong.title}' -> '${targetSong.title}': lagFrames=$bestLagFrames, conf=$confidence, range=${correlation.floor}..${correlation.ceiling}",
-                sourceSong.videoId,
-            )
-
-            if (confidence >= MIN_CONFIDENCE) {
-                // A peak sitting on the edge of what the window could search
-                // means the true lag is further out than these bytes reach —
-                // which is what a truncated head looks like from here. The
-                // eight-second head that a half-finished fetch leaves decodes
-                // to a five-second range, finds its best match pinned to it,
-                // and would report that as measured: a swap landing a handful
-                // of seconds off while claiming thirty. Refuse instead.
-                val floor = correlation.floor
-                val ceiling = correlation.ceiling
-                if (bestLagFrames == floor || bestLagFrames == ceiling) {
-                    TrackLog.w(
-                        TAG,
-                        "Alignment for '${sourceSong.title}' -> '${targetSong.title}': peak pinned to the searchable edge ($bestLagFrames of $floor..$ceiling) — window too short to trust",
-                        sourceSong.videoId,
-                    )
-                    return@withContext null
-                }
-
-                val lagMs = (bestLagFrames * HOP_MS).toLong()
-                val startDiffMs = ((startTargetSec - startSourceSec) * 1000.0).toLong()
-                val totalOffsetMs = lagMs + startDiffMs
-
-                offsetCache[sourceSong.videoId to targetSong.videoId] = totalOffsetMs
-                offsetCache[targetSong.videoId to sourceSong.videoId] = -totalOffsetMs
-                return@withContext totalOffsetMs
-            }
-
-            TrackLog.w(
-                TAG,
-                "Alignment for '${sourceSong.title}' -> '${targetSong.title}': confidence $confidence below $MIN_CONFIDENCE — no shift measured",
-                sourceSong.videoId,
-            )
+            val totalOffsetMs = measureOffset(
+                sourceDs = sourceDs,
+                targetDs = targetDs,
+                sourceFromSec = 0.0,
+                targetFromSec = 0.0,
+                windowSec = DEFAULT_WINDOW_SEC,
+                maxLagSec = MAX_LAG_SECONDS,
+                label = "'${sourceSong.title}' -> '${targetSong.title}'",
+                about = sourceSong.videoId,
+            ) ?: return@withContext null
+            offsetCache[sourceSong.videoId to targetSong.videoId] = totalOffsetMs
+            offsetCache[targetSong.videoId to sourceSong.videoId] = -totalOffsetMs
+            return@withContext totalOffsetMs
         } catch (e: Exception) {
             Log.w(TAG, "Failed to compute audio alignment for ${sourceSong.videoId} -> ${targetSong.videoId}", e)
+            return@withContext null
         } finally {
             safeClose(sourceDs)
             safeClose(targetDs)
         }
-
-        null
     }
 
     /**
-     * Opens the copy of [song] worth measuring: the largest same-source
-     * opening on disk, and only a substitute (`#alt`) when nothing else is
-     * there at all.
+     * Decodes the same stretch of both copies, correlates their energy
+     * envelopes, and turns the winning lag into a shift in milliseconds.
      *
-     * Ordered by bytes rather than by whichever URI answers first, because
-     * neither URI names a particular copy — the live one resolves to whatever
-     * rendition the player is streaming *now*, and the analysis copy under the
-     * plain id can be a stale stub while a sibling key holds the whole
-     * opening. A stub hands the decoder a second of audio, and a second of
-     * audio can only correlate to garbage, which is how every switch measured
-     * against one came out "failed". [AudioCache] asks the same question in
-     * the same order when it declares the head ready, so what the wait calls
-     * ready is what gets opened here.
+     * Both decodes run at once rather than one after the other, and every
+     * phase is timed: the measurement runs against a deadline (see
+     * [PlaybackService]'s ALIGNMENT_MEASURE_TIMEOUT_MS), and a result arriving
+     * past it is discarded as if it had never happened — the swap then goes
+     * out with no shift even though the offset was computed. The field log
+     * caught exactly that race, with the correlation succeeding 10 ms over a
+     * tighter budget.
+     *
+     * A peak sitting on the edge of what the window could search means the
+     * true lag is further out than these bytes reach — which is what a
+     * truncated head looks like from here. The eight-second head that a
+     * half-finished fetch leaves decodes to a five-second range, finds its
+     * best match pinned to it, and would report that as measured: a swap
+     * landing a handful of seconds off while claiming thirty. Refuse instead.
+     */
+    private suspend fun measureOffset(
+        sourceDs: MediaDataSource,
+        targetDs: MediaDataSource,
+        sourceFromSec: Double,
+        targetFromSec: Double,
+        windowSec: Double,
+        maxLagSec: Double,
+        label: String,
+        about: String,
+    ): Long? = withContext(Dispatchers.IO) {
+        var decodes: Pair<Pair<AudioDecoder.Pcm, Double>?, Pair<AudioDecoder.Pcm, Double>?> =
+            null to null
+        val decodeMs = measureTimeMillis {
+            decodes = coroutineScope {
+                val source = async(Dispatchers.IO) {
+                    AudioDecoder.decodeRegion(sourceDs, sourceFromSec, sourceFromSec + windowSec)
+                }
+                val target = async(Dispatchers.IO) {
+                    AudioDecoder.decodeRegion(targetDs, targetFromSec, targetFromSec + windowSec)
+                }
+                source.await() to target.await()
+            }
+        }
+        val (sourceDecode, targetDecode) = decodes
+        if (sourceDecode == null || targetDecode == null) return@withContext null
+
+        val (pcmSource, startSourceSec) = sourceDecode
+        val (pcmTarget, startTargetSec) = targetDecode
+        if (pcmSource.samples.isEmpty() || pcmTarget.samples.isEmpty()) return@withContext null
+
+        var envelopes: Pair<FloatArray, FloatArray> = FloatArray(0) to FloatArray(0)
+        val envelopeMs = measureTimeMillis {
+            envelopes = computeEnergyEnvelope(pcmSource.samples, pcmSource.sampleRate) to
+                computeEnergyEnvelope(pcmTarget.samples, pcmTarget.sampleRate)
+        }
+
+        var correlation = Correlation(0, 0.0, 0, 0)
+        val correlateMs = measureTimeMillis {
+            correlation = crossCorrelate(envelopes.first, envelopes.second, maxLagSec = maxLagSec)
+        }
+        TrackLog.d(
+            TAG,
+            "Alignment timings for $label: decode=${decodeMs}ms, " +
+                "envelope=${envelopeMs}ms, correlate=${correlateMs}ms",
+            about,
+        )
+        val bestLagFrames = correlation.lagFrames
+        val confidence = correlation.confidence
+        TrackLog.d(
+            TAG,
+            "Alignment for $label: lagFrames=$bestLagFrames, conf=$confidence, " +
+                "range=${correlation.floor}..${correlation.ceiling}",
+            about,
+        )
+
+        if (confidence < MIN_CONFIDENCE) {
+            TrackLog.w(
+                TAG,
+                "Alignment for $label: confidence $confidence below $MIN_CONFIDENCE — no shift measured",
+                about,
+            )
+            return@withContext null
+        }
+        val floor = correlation.floor
+        val ceiling = correlation.ceiling
+        if (bestLagFrames == floor || bestLagFrames == ceiling) {
+            TrackLog.w(
+                TAG,
+                "Alignment for $label: peak pinned to the searchable edge " +
+                    "($bestLagFrames of $floor..$ceiling) — window too short to trust",
+                about,
+            )
+            return@withContext null
+        }
+
+        val lagMs = (bestLagFrames * HOP_MS).toLong()
+        val startDiffMs = ((startTargetSec - startSourceSec) * 1000.0).toLong()
+        lagMs + startDiffMs
+    }
+
+    /**
+     * Opens the copy of [song] worth measuring — by preference the one the
+     * player would actually read for it.
+     *
+     * That copy is not the largest one on disk: with source substitution on,
+     * playback reads the `#alt` entry, and the plain id belongs to a YouTube
+     * Opus head fetched only for analysis. Measuring the analysis copy while
+     * the switch plays the substitute is how an offset measured between two
+     * other recordings gets applied to these. The live key is asked for first
+     * and taken whenever it holds enough to correlate.
+     *
+     * Everything else falls back to ordering by bytes, because neither URI
+     * names a particular copy — the analysis copy under the plain id can be a
+     * stale stub while a sibling key holds the whole opening. A stub hands the
+     * decoder a second of audio, and a second of audio can only correlate to
+     * garbage, which is how every switch measured against one came out
+     * "failed". [AudioCache] asks the same question in the same order when it
+     * declares the head ready, so what the wait calls ready is what gets
+     * opened here.
      */
     private fun openDataSource(context: Context, song: Song): MediaDataSource? {
         song.localUri?.let { local ->
@@ -274,8 +452,23 @@ object VersionAudioAligner {
                 return LocalAudioSource.open(context.contentResolver, uri)
             }
         }
+        // A source-backed track keys on its source and track id rather than on
+        // the video-id scheme below, and its playback URI is derivable from the
+        // id alone — the key factory ignores the title and artist that usually
+        // ride along.
+        SourceRegistry.parseTrackKey(song.videoId)?.let { (configId, trackId) ->
+            val uri = Uri.parse(SourceRegistry.trackUri(configId, trackId))
+            if (AudioCache.cachedPrefixBytes(uri) >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES) {
+                return AudioCache.dataSourceForKey(uri, AudioCache.cacheKeyOf(uri))
+            }
+        }
         val watch = Uri.parse("bitchord://watch?v=${song.videoId}")
         val onDisk = AudioCache.renditionsOf(watch)
+        val liveKey = AudioCache.cacheKeyOf(watch)
+        val live = onDisk.firstOrNull {
+            it.key == liveKey && it.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
+        }
+        if (live != null) return AudioCache.dataSourceForKey(watch, live.key)
         val sameSource = onDisk
             .filter { !it.key.endsWith("#alt") }
             .maxByOrNull { it.cachedPrefix }
