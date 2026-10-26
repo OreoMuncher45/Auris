@@ -10,9 +10,9 @@
 
 <br/>
 
-[![Latest release](https://img.shields.io/github/v/release/OreoMuncher45/BitChordNext?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/BitChordNext/releases)
-[![License](https://img.shields.io/github/license/OreoMuncher45/BitChordNext?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/BitChordNext/blob/main/LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/OreoMuncher45/BitChordNext/total?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/BitChordNext/releases)
+[![Latest release](https://img.shields.io/github/v/release/OreoMuncher45/Auris?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/Auris/releases)
+[![License](https://img.shields.io/github/license/OreoMuncher45/Auris?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/Auris/blob/main/LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/OreoMuncher45/Auris/total?style=for-the-badge&labelColor=0d1117)](https://github.com/OreoMuncher45/Auris/releases)
 
 <br/>
 
@@ -66,7 +66,7 @@ The app ships with YouTube Music, optional JioSaavn, and the **Auris Lossless** 
 
 ## Download
 
-Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/BitChordNext/releases) page. Current build: **2.2.18** (`versionCode 80`, package `com.dev.bitchord`).
+Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/Auris/releases) page. Current build: **2.2.18** (`versionCode 80`, package `com.dev.bitchord`).
 
 | APK | Use it for |
 |---|---|
@@ -95,7 +95,7 @@ A signed, installable release APK is produced by the **Flow Debug APK** workflow
 
 Auris is free and open source, and it is staying that way. A star, a bug report or a pull request is appreciated as much as a donation.
 
-- [Discord](https://discord.gg/8VnWqcuzqg) · [Reddit](https://reddit.com/r/BitChordNext) · [Issues](https://github.com/OreoMuncher45/BitChordNext/issues)
+- [Discord](https://discord.gg/8VnWqcuzqg) · [Reddit](https://reddit.com/r/BitChordNext) · [Issues](https://github.com/OreoMuncher45/Auris/issues)
 
 | Asset | Address |
 |---|---|
