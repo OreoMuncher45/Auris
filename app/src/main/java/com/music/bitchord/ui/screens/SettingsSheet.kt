@@ -643,15 +643,23 @@ fun SettingsScreen(
                     onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
                     modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
-                val bitPerfectTitle = stringResource(R.string.bit_perfect)
-                row(bitPerfectTitle, "bit perfect", "bypass", "dsp", "crossfade", "lossless") {
-                    SettingsSubRow(
-                        title = bitPerfectTitle,
-                        checked = bitPerfect,
-                        onCheckedChange = AppSettings::setBitPerfect,
-                        subtitle = stringResource(R.string.bit_perfect_subtitle),
-                    )
-                }
+            }
+            val bitPerfectTitle = stringResource(R.string.bit_perfect)
+            row(
+                bitPerfectTitle,
+                "bit perfect",
+                "bypass",
+                "dsp",
+                "crossfade",
+                "lossless",
+                divided = false,
+            ) {
+                SettingsSubRow(
+                    title = bitPerfectTitle,
+                    checked = bitPerfect,
+                    onCheckedChange = AppSettings::setBitPerfect,
+                    subtitle = stringResource(R.string.bit_perfect_subtitle),
+                )
             }
             val preferUsbDacTitle = stringResource(R.string.prefer_usb_dac)
             row(preferUsbDacTitle, "headphone", "output") {
