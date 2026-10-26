@@ -6110,6 +6110,20 @@ class PlaybackService : MediaLibraryService() {
         } else {
             emptyList()
         }
+        // The item's own playback URI, which read-ahead needs to warm a
+        // source-backed track: its resolver has config and track ids plus the
+        // title, artist and runtime a cross-source match is made on, and none
+        // of that is reconstructible from a media id. See [AudioCache.Upcoming].
+        val upcomingUris = if (nextIndex != C.INDEX_UNSET) {
+            val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
+            (nextIndex..end).associate { index ->
+                player.getMediaItemAt(index).let { item ->
+                    item.mediaId to item.localConfiguration?.uri
+                }
+            }
+        } else {
+            emptyMap()
+        }
         // So whatever read-ahead writes for these can be named in the Cached
         // songs folder; its own requests carry nothing but an id.
         AudioCache.noteSongs(upcomingSongs)
@@ -6128,6 +6142,7 @@ class PlaybackService : MediaLibraryService() {
                     AudioCache.Upcoming(
                         mediaId = song.videoId,
                         target = TrackMatcher.targetOf(song),
+                        uri = upcomingUris[song.videoId],
                     )
                 },
             )
@@ -6330,8 +6345,10 @@ class PlaybackService : MediaLibraryService() {
     ) = object : DefaultRenderersFactory(this) {
         init {
             // Do not force PCM_FLOAT onto an OEM speaker mixer merely because
-            // the preference asks for it. The selected route must advertise
-            // the format; otherwise Media3 uses its stable PCM16 path.
+            // the preference asks for it. External routes are allowed to open
+            // float without advertising it — a Bluetooth device advertises
+            // PCM16 because its codec encoder sits behind the mixer — and the
+            // sink falls back to PCM16 by itself if the track will not open.
             //
             // Which way this cuts is worth stating, because it reads backwards:
             // float is what *preserves* a hi-res source rather than what
@@ -6626,7 +6643,6 @@ class PlaybackService : MediaLibraryService() {
             directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             bluetoothTelemetry = btTelemetry,
-            systemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
 
         AudioOutputStatus.publishBitPerfectMixer(
@@ -6750,7 +6766,6 @@ class PlaybackService : MediaLibraryService() {
             // silently re-converted, costing an extra quantization and leaving
             // this readout naming a bit depth that was never written.
             delegateSupportsPcm24 = false,
-            knownSystemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
 
         AudioOutputStatus.publishNegotiation(negotiation)
@@ -6930,10 +6945,6 @@ class PlaybackService : MediaLibraryService() {
     private fun shouldEnableFloatOutput(): Boolean {
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
-        val advertisesFloat = activeDevice?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true
-        val directFloatSupported = audioManager?.let { mgr ->
-            DirectAudioProbe.probeDirectSupport(mgr, 48000, 2, activeDevice).supportsFloat
-        } ?: false
         // Worth knowing which way this cuts for a hi-res stream: with float
         // off, Media3 downconverts *every* input encoding to 16-bit, because
         // float and 16-bit are the only two linear-PCM tracks its sink can
@@ -6946,7 +6957,6 @@ class PlaybackService : MediaLibraryService() {
                 AppSettings.bitPerfect.value,
             ),
             routeKind = routeKind,
-            advertisesPcmFloat = advertisesFloat || directFloatSupported,
         )
     }
 

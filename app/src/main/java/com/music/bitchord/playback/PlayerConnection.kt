@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.core.os.bundleOf
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -29,6 +30,7 @@ import com.music.bitchord.data.model.PlaybackSourceType
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.TrackMatcher
@@ -54,6 +56,10 @@ data class PlayerState(
      * Left here rather than moved alongside the position: it settles once per
      * track, and [mutableStateOf] compares structurally, so the poll writing it
      * back unchanged every tick invalidates nothing.
+     *
+     * Not always the player's own answer: an addon stream that arrives without
+     * a parsable length leaves the timeline's duration unset, and
+     * [claimedDurationMs] stands in — see [playbackDurationMs].
      */
     val durationMs: Long = 0L,
     val error: String? = null,
@@ -72,6 +78,43 @@ data class PlayerState(
     /** True while the current item is the replacement installed by a quality upgrade. */
     val isQualityUpgraded: Boolean = false,
 )
+
+/**
+ * What a queue row said this track runs for, in milliseconds, or 0 when it
+ * didn't say.
+ *
+ * The player's own duration is the measured answer and is preferred wherever
+ * it exists — this is the fallback for the case it doesn't. An addon answering
+ * with a chunked transfer or a container whose length is only written at the
+ * end leaves the timeline's window at [C.TIME_UNSET] for the whole track, and
+ * both the scrubber and every crossfade path read that as "no duration" rather
+ * than "not measured yet": taps scaled by zero do nothing and the transition
+ * watcher returns before it plans anything. The catalogue's runtime is already
+ * on the item — see `Song.matchQuery`, which carries it as `d=` for matching —
+ * so it costs a query-parameter read to say what the track is.
+ *
+ * The extras are the second source, for a track whose URI could not carry one
+ * (a local file, or an item built before this existed).
+ */
+fun MediaItem.claimedDurationMs(): Long {
+    // [Uri.getQueryParameter] throws on an opaque URI, and a stem like "item/3"
+    // is one; a missing or unparsable `d=` is simply an absent duration.
+    val seconds = runCatching {
+        localConfiguration?.uri?.getQueryParameter("d")?.toLongOrNull()
+    }.getOrNull()
+    if (seconds != null && seconds > 0L) return seconds * 1_000L
+    return mediaMetadata.extras?.getString(EXTRA_DURATION).durationMillis()
+}
+
+/**
+ * The duration everything downstream should scale by: what the player measured,
+ * or what the queue row claimed when the player has nothing to say.
+ *
+ * [C.TIME_UNSET] is negative and must not be mistaken for a runtime, which is
+ * why this tests `> 0` rather than "not zero".
+ */
+internal fun playbackDurationMs(playerDurationMs: Long, claimedDurationMs: Long): Long =
+    if (playerDurationMs > 0L) playerDurationMs else claimedDurationMs.coerceAtLeast(0L)
 
 /** Binds to [PlaybackService] for the lifetime of the composition. */
 @Composable
@@ -307,7 +350,10 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
             state = state.copy(
                 song = item?.toSong(),
                 isPlaying = player.isPlaying,
-                durationMs = player.duration.coerceAtLeast(0L),
+                durationMs = playbackDurationMs(
+                    player.duration,
+                    item?.claimedDurationMs() ?: 0L,
+                ),
                 error = error,
                 isLoading = player.playbackState == Player.STATE_BUFFERING,
                 repeatMode = player.repeatMode,
@@ -366,7 +412,10 @@ fun rememberPlayerState(controller: MediaController?): PlayerState {
     LaunchedEffect(controller, state.isPlaying, foreground) {
         while (controller != null && state.isPlaying && foreground) {
             position.report(controller.currentPosition.coerceAtLeast(0L))
-            val duration = controller.duration.coerceAtLeast(0L)
+            val duration = playbackDurationMs(
+                controller.duration,
+                controller.currentMediaItem?.claimedDurationMs() ?: 0L,
+            )
             if (duration != state.durationMs) state = state.copy(durationMs = duration)
             delay(500)
         }

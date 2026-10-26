@@ -332,7 +332,7 @@ object AudioOutputStatus {
             floatFallback = fallback,
             fallbackReason = reason,
             fallbackDetail = detail,
-            systemMixerRateHz = systemMixerRateHz ?: if (isUsbDevice && !isDirectAudioTrack && !isDirectUsbViable) 48000 else null,
+            systemMixerRateHz = systemMixerRateHz,
             directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             directPlaybackSupported = directSupport?.isDirectSupported == true,
@@ -560,8 +560,10 @@ object AudioOutputStatus {
             encoding == null ||
             encodings.contains(encoding)
 
-        val defaultMixerRate = snapshot.systemMixerRateHz ?: 48000
-
+        // The mixer rate is reported only when something actually measured it.
+        // Guessing 48 kHz here used to make the readout claim every mixed route
+        // ran at 48 kHz — including Bluetooth links running at 44.1 or 96 kHz —
+        // which read as if the app had resampled the source.
         return when (snapshot.routeKind) {
             AudioRouting.Kind.PHONE -> {
                 snapshot.copy(
@@ -570,8 +572,6 @@ object AudioOutputStatus {
                     directPlaybackActual = false,
                     directPlaybackRejected = false,
                     directPlaybackSelected = false,
-                    systemMixerRateHz = defaultMixerRate,
-                    halFormat = "PCM24 packed",
                     usbEndpointFormat = null,
                 )
             }
@@ -583,15 +583,23 @@ object AudioOutputStatus {
                 val encodingSupported = encodingMatchesDescriptors || directSupported
                 val isFloatPcm = encoding == AudioFormat.ENCODING_PCM_FLOAT
 
-                val maxUsbRate = sampleRates.maxOrNull() ?: 48000
+                // Capabilities are reported only as far as the device actually
+                // describes them; an empty descriptor list means "unknown",
+                // not "48 kHz PCM16".
+                val maxUsbRate = sampleRates.maxOrNull()
                 val usbEnc = when {
                     encodings.contains(AudioFormat.ENCODING_PCM_32BIT) -> "PCM32"
                     encodings.contains(AudioFormat.ENCODING_PCM_24BIT_PACKED) -> "PCM24"
                     encodings.contains(AudioFormat.ENCODING_PCM_FLOAT) -> "Float32"
                     encodings.contains(AudioFormat.ENCODING_PCM_16BIT) -> "PCM16"
-                    else -> "PCM16"
+                    else -> null
                 }
-                val usbEndpointStr = "$usbEnc / $maxUsbRate Hz"
+                val usbEndpointStr = when {
+                    usbEnc != null && maxUsbRate != null -> "$usbEnc / $maxUsbRate Hz"
+                    usbEnc != null -> usbEnc
+                    maxUsbRate != null -> "Up to $maxUsbRate Hz"
+                    else -> null
+                }
 
                 val isGenuineDirect = requestedDirect &&
                     directSupported &&
@@ -617,8 +625,6 @@ object AudioOutputStatus {
                         directPlaybackActual = false,
                         directPlaybackRejected = true,
                         directPlaybackSelected = false,
-                        systemMixerRateHz = defaultMixerRate,
-                        halFormat = "PCM24 packed",
                         usbEndpointFormat = usbEndpointStr,
                         fallbackReason = FallbackReason.ROUTE_LIMITATION,
                         fallbackDetail = "Direct playback unavailable for active USB device",
@@ -630,8 +636,6 @@ object AudioOutputStatus {
                         directPlaybackActual = false,
                         directPlaybackRejected = false,
                         directPlaybackSelected = false,
-                        systemMixerRateHz = defaultMixerRate,
-                        halFormat = "PCM24 packed",
                         usbEndpointFormat = usbEndpointStr,
                     )
                 }
@@ -643,8 +647,6 @@ object AudioOutputStatus {
                     directPlaybackActual = false,
                     directPlaybackRejected = false,
                     directPlaybackSelected = false,
-                    systemMixerRateHz = defaultMixerRate,
-                    halFormat = "PCM24 packed",
                     usbEndpointFormat = null,
                 )
             }
@@ -671,8 +673,6 @@ object AudioOutputStatus {
                         directPlaybackActual = false,
                         directPlaybackRejected = requestedDirect,
                         directPlaybackSelected = false,
-                        systemMixerRateHz = defaultMixerRate,
-                        halFormat = "PCM24 packed",
                         usbEndpointFormat = null,
                         fallbackReason = if (requestedDirect) FallbackReason.ROUTE_LIMITATION else snapshot.fallbackReason,
                         fallbackDetail = if (requestedDirect) "Direct playback unavailable for active ${snapshot.routeKind.name} device" else snapshot.fallbackDetail,

@@ -191,6 +191,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.playback.autoplayEnabledFor
 import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.beginRadioQueue
+import com.music.bitchord.playback.claimedDurationMs
 import com.music.bitchord.playback.commitRadioQueue
 import com.music.bitchord.playback.fromAutoplay
 import com.music.bitchord.playback.hasYouTubeOriginal
@@ -2566,8 +2567,17 @@ private fun BitChordApp(
                     // the duration, so a fraction dropped seconds after
                     // a transition would otherwise be scaled by the
                     // previous song's length.
-                    val duration = player.duration
-                    if (duration > 0) {
+                    //
+                    // The row's claimed runtime stands in when the player
+                    // has none — an addon stream with no stated length
+                    // leaves the timeline at C.TIME_UNSET, and scaling a
+                    // tap by "unknown" is why the scrubber stopped
+                    // responding on those sources. See
+                    // [com.music.bitchord.playback.claimedDurationMs].
+                    val duration = player.duration.takeIf { it > 0L }
+                        ?: player.currentMediaItem?.claimedDurationMs()
+                        ?: 0L
+                    if (duration > 0L) {
                         player.seekTo(
                             (fraction * duration).toLong()
                                 .coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L)),
@@ -2589,9 +2599,11 @@ private fun BitChordApp(
                     // final millisecond, which ends the track and starts
                     // the next one: tapping the last line of a song
                     // skipped it.
-                    val duration = player.duration
+                    val duration = player.duration.takeIf { it > 0L }
+                        ?: player.currentMediaItem?.claimedDurationMs()
+                        ?: 0L
                     player.seekTo(
-                        if (duration > 0) {
+                        if (duration > 0L) {
                             target.coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L))
                         } else {
                             target.coerceAtLeast(0L)

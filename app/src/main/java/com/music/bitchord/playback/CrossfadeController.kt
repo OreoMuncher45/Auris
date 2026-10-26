@@ -844,8 +844,16 @@ class CrossfadeController(
             return
         }
 
-        val duration = player.duration
-        if (duration == C.TIME_UNSET || duration <= 0L) return
+        // The player's duration is the measured answer; an addon stream that
+        // never states a length leaves it unset, and the row's own runtime is
+        // the only scale left — without it every branch below returns and the
+        // queue plays straight through, which is what "AutoMix became v1"
+        // looked like. See [claimedDurationMs].
+        val duration = playbackDurationMs(
+            player.duration,
+            player.currentMediaItem?.claimedDurationMs() ?: 0L,
+        )
+        if (duration <= 0L) return
 
         // Repeating one track would crossfade it into itself, so nothing is
         // armed and no window is marked — but the queue behind the loop has not
@@ -1181,21 +1189,7 @@ class CrossfadeController(
                 .takeIf { it != C.TIME_UNSET && it > 0 }
                 ?.let { return it }
         }
-        return queuedDurationMs(item)
-    }
-
-    /**
-     * The runtime the queue row carried, in milliseconds, or 0 when the item
-     * doesn't state one — a local file, or a track queued without a duration.
-     *
-     * Deliberately forgiving: [Uri.getQueryParameter] throws on an opaque URI,
-     * and a missing or unparsable value is simply an absent duration rather than
-     * anything worth failing a tick over.
-     */
-    private fun queuedDurationMs(item: MediaItem): Long {
-        val uri = item.localConfiguration?.uri ?: return 0L
-        val seconds = runCatching { uri.getQueryParameter("d") }.getOrNull()?.toLongOrNull() ?: return 0L
-        return if (seconds > 0) seconds * 1000L else 0L
+        return item.claimedDurationMs()
     }
 
     /** BitChord doesn't carry album metadata on [MediaMetadata] yet, so [TransitionTrackInfo.album] stays blank. */

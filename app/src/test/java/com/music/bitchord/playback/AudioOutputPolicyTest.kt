@@ -57,43 +57,29 @@ class AudioOutputPolicyTest {
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.PHONE,
-                advertisesPcmFloat = true,
             ),
         )
     }
 
     @Test
-    fun routeAwareUsbAllowsFloatWhenAdvertised() {
+    fun routeAwareUsbAllowsFloatWithoutDeviceAdvertisement() {
+        // A USB DAC's AudioDeviceInfo describes what its HAL accepts after
+        // AudioFlinger, not what AudioTrack can open; the sink's delegate probe
+        // is the real gate and falls back to PCM16 when float will not open.
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.USB,
-                advertisesPcmFloat = true,
-            ),
-        )
-        assertFalse(
-            AudioOutputPolicy.shouldUseFloatOutput(
-                OutputPcmMode.FLOAT_32,
-                routeKind = AudioRouting.Kind.USB,
-                advertisesPcmFloat = false,
             ),
         )
     }
 
     @Test
-    fun routeAwareBluetoothAllowsFloatOnlyWhenAdvertised() {
+    fun routeAwareBluetoothAllowsFloatWithoutDeviceAdvertisement() {
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.BLUETOOTH,
-                advertisesPcmFloat = true,
-            ),
-        )
-        assertFalse(
-            AudioOutputPolicy.shouldUseFloatOutput(
-                OutputPcmMode.FLOAT_32,
-                routeKind = AudioRouting.Kind.BLUETOOTH,
-                advertisesPcmFloat = false,
             ),
         )
     }
@@ -104,14 +90,12 @@ class AudioOutputPolicyTest {
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.PCM_16,
                 routeKind = AudioRouting.Kind.BLUETOOTH,
-                advertisesPcmFloat = true,
             ),
         )
         assertFalse(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.PCM_16,
                 routeKind = AudioRouting.Kind.USB,
-                advertisesPcmFloat = true,
             ),
         )
     }
