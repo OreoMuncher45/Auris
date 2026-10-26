@@ -2,6 +2,7 @@ package com.music.bitchord.data.sources
 
 import android.media.MediaCodecList
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.decoder.ffmpeg.FfmpegLibrary
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import com.music.bitchord.data.TrackLog
 import java.util.Locale
@@ -51,6 +52,18 @@ import java.util.Locale
  * deliberately, not `ALL_CODECS`: the extra entries in the full list exist only
  * for specific configurations, and counting them is how you end up saying yes
  * to a decoder the renderer will not be given.
+ *
+ * ### The decoder the platform does not list
+ *
+ * The platform list is not the whole engine. The app bundles its own FFmpeg
+ * audio decoder (`libffmpegJNI.so`, built from librempeg with `eac3` enabled)
+ * and registers it after the MediaCodec renderer, so an E-AC-3 stream that
+ * the vendor image has no codec for is still decoded in software — the object
+ * layer is dropped and the 5.1 bed is played, which is the same trade another
+ * player makes with the same library. So a platform list with no Dolby entry
+ * is not yet a no: [FfmpegLibrary] is asked before the verdict is settled.
+ * Skipping that question was what greyed the switch out on phones the app can
+ * in fact play Atmos on.
  *
  * ### What this does not cover
  *
@@ -109,24 +122,49 @@ object DeviceCodecs {
      */
     private fun probe(): Boolean {
         val viaMedia3 = media3Decoders()
-        if (viaMedia3 != null) {
+        val viaPlatform = if (viaMedia3 != null) {
             TrackLog.d(TAG, "Dolby Atmos decoders (Media3): ${viaMedia3.ifEmpty { "none" }}")
-            return viaMedia3.isNotEmpty()
+            viaMedia3.isNotEmpty()
+        } else {
+            platformDecoders()
         }
-        return runCatching {
-            MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
-                !info.isEncoder && info.supportedTypes.any {
-                    it.lowercase(Locale.ROOT) in DOLBY_MIMES
-                }
-            }.map { it.name }
-        }.onSuccess {
-            TrackLog.d(TAG, "Dolby Atmos decoders (platform): ${it.ifEmpty { "none" }}")
-        }.map {
-            it.isNotEmpty()
-        }.getOrElse {
-            TrackLog.w(TAG, "could not read the codec list; assuming Dolby Atmos plays — ${it.message}")
-            true
-        }
+        if (viaPlatform) return true
+        // The platform list is only half the answer: the bundled FFmpeg
+        // renderer decodes the E-AC-3 core itself. See the class doc.
+        val viaBundled = bundledFfmpegDecoders()
+        TrackLog.d(TAG, "Dolby Atmos: platform=false, bundled FFmpeg eac3=$viaBundled")
+        return viaBundled
+    }
+
+    /** The platform's own E-AC-3 decoders; true when the list cannot be read. */
+    private fun platformDecoders(): Boolean = runCatching {
+        MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
+            !info.isEncoder && info.supportedTypes.any {
+                it.lowercase(Locale.ROOT) in DOLBY_MIMES
+            }
+        }.map { it.name }
+    }.onSuccess {
+        TrackLog.d(TAG, "Dolby Atmos decoders (platform): ${it.ifEmpty { "none" }}")
+    }.map {
+        it.isNotEmpty()
+    }.getOrElse {
+        TrackLog.w(TAG, "could not read the codec list; assuming Dolby Atmos plays — ${it.message}")
+        true
+    }
+
+    /**
+     * Whether the E-AC-3 decoder vendored into the app is present and loadable.
+     *
+     * This is the answer for phones whose vendor image ships no Dolby codec:
+     * `libffmpegJNI.so` is built with `eac3`, and [FfmpegAudioRenderer] is
+     * registered after the platform renderer, so it gets exactly that stream.
+     */
+    @UnstableApi
+    private fun bundledFfmpegDecoders(): Boolean = runCatching {
+        FfmpegLibrary.isAvailable() && DOLBY_MIMES.any { FfmpegLibrary.supportsFormat(it) }
+    }.getOrElse {
+        TrackLog.w(TAG, "could not query the bundled FFmpeg decoder — ${it.message}")
+        false
     }
 
     /**
