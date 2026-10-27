@@ -1540,7 +1540,7 @@ private fun LosslessOrStats(
             modifier = modifier,
         )
         showLossless && nerdStats?.isLossless == true -> LosslessLabel(
-            // Same line Tidal, Lossless and Apple Music draw it at — see
+            // Same line Tidal, Deezer and Apple Music draw it at — see
             // [NerdStats.Snapshot.isHiRes]. The Hi-Res wording is a switch of
             // its own: turning it off keeps the badge and drops the claim.
             text = stringResource(
@@ -1714,7 +1714,7 @@ private fun ShimmerText(
  *
  * Bitrate is stated for a lossless stream too, and is the rate its samples
  * decode to — 1411 for 16-bit/44.1kHz, 4608 for 24-bit/96kHz. It is the same
- * figure Tidal, Lossless and Apple Music print next to a lossless track, and the
+ * figure Tidal, Deezer and Apple Music print next to a lossless track, and the
  * one a listener can carry from track to track; a FLAC's compressed rate
  * cannot, because it says more about how compressible that recording was than
  * about the copy being played.

@@ -110,12 +110,7 @@ data class SourceConfig(
             // listener's source, not ours: calling it "Auris Addon" claimed an
             // addon this app does not run and made a user's own server
             // indistinguishable from the bundled one.
-            if (stock && kind == SourceKind.LOSSLESS) {
-                return SourceRegistry.LOSSLESS_DISPLAY_NAME
-            }
-            // A user-added source cannot borrow one of those names either —
-            // third-party manifests and typed labels reach the same field.
-            val named = label.trim().takeUnless(SourceRegistry::isReservedDisplayName)
+            val named = label.trim()
             return named?.takeIf { it.isNotBlank() }
                 ?: baseUrl.takeIf { it.isNotBlank() }?.let(SourceRegistry::hostOf)
                 ?: kind.label
@@ -204,9 +199,7 @@ object SourceRegistry {
                 SourceConfig(
                     kind = kind,
                     // JioSaavn arrives off after the forced opt-out migration.
-                    // Lossless without an unlock can search but stream nothing,
-                    // so it arrives off too: one tap plus the toggle.
-                    enabled = kind != SourceKind.JIOSAAVN && kind != SourceKind.LOSSLESS,
+                    enabled = kind != SourceKind.JIOSAAVN,
                     stock = true,
                 )
             }
@@ -575,7 +568,6 @@ object SourceRegistry {
         SourceKind.CUSTOM_MODULE -> ModuleSource(config)
         SourceKind.MODULE -> ModuleSource(config)
         SourceKind.JIOSAAVN -> JioSaavnSource(config)
-        SourceKind.LOSSLESS -> LosslessQueueSource(config)
         SourceKind.YOUTUBE -> YouTubeSource(config)
     }
 
@@ -620,20 +612,7 @@ object SourceRegistry {
             .build()
             .toString()
 
-    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.LOSSLESS, SourceKind.YOUTUBE)
-
-    /** The branded name of the Lossless conversion-queue source. */
-    const val LOSSLESS_DISPLAY_NAME = "Auris Lossless Addon"
-
-    /**
-     * Whether [label] is a name only this app's own sources may show. A
-     * pasted source that names itself one of these is displayed under its host
-     * instead — see [SourceConfig.displayName].
-     */
-    internal fun isReservedDisplayName(label: String): Boolean {
-        val name = label.trim()
-        return name.equals(LOSSLESS_DISPLAY_NAME, ignoreCase = true)
-    }
+    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
 
     /**
      * The host a source's address points at, for rows that have no name of

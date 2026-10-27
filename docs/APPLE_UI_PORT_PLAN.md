@@ -274,13 +274,13 @@ their Dart code itself is not being copied.
 ## SpotiFLAC extension registry — investigation complete, integration plan
 
 Owner request: add https://raw.githubusercontent.com/spotiflacapp/spotiflac-extension/main/registry.json
-as a fourth backup source ("BitChord Backup Addon"), Tidal and Lossless especially,
+as a fourth backup source ("BitChord Backup Addon"), Tidal and Deezer especially,
 configured to STREAM rather than download.
 
 ### What the ecosystem actually is
 
 - `registry.json`: 12 extensions, each with `download_url` (a `.sflx`), `sha256`,
-  `min_app_version`. Tidal = `tidal-web` v1.2.9, Lossless = `lossless-web` v1.2.23.
+  `min_app_version`. Tidal = `tidal-web` v1.2.9, Deezer = `deezer-web` v1.2.23.
 - `.sflx` = a ZIP of `manifest.json` + `index.js`. Nothing else.
 - **Full readable sources exist**, Apache-2.0: `/home/ubuntu/spotiflac-ext-src/sources/<id>/`
   (built by `scripts/build_packages.py`). Mornye (the runner app) is MIT.
@@ -319,7 +319,7 @@ extension source:
 
 ### How "stream instead of download" works
 
-The tidal/lossless extensions acquire playback URLs INSIDE their `download()`
+The tidal/deezer extensions acquire playback URLs INSIDE their `download()`
 export (signedJSON → /dl/tid → manifest with apiURL + mirrors). For streaming
 we call the same export and hand the returned URL/manifest to the player as a
 stream, never invoking `file.downloadSegments`. That makes `downloadSegments@1`
@@ -340,7 +340,7 @@ softened to "warn if missing" rather than refuse to load.
    Keep our existing two-export modules working: the prelude is additive.
 3. **Source integration**: a new `SflxSource` joining the existing fallback
    chain (see `data/sources/SourceRegistry.kt`, `TidalSource.kt`,
-   `LosslessQueueSource.kt`, `AddonOrderTest` / `AddonPolicyTest` for the
+   `AddonOrderTest` / `AddonPolicyTest` for the
    ordering/policy rules). Stream path: `download()` → feed URL to player.
    Search path: `searchTracks`. Skip `downloadSegments`.
 4. **Settings + policy**: enable/disable per extension; the existing
@@ -357,7 +357,7 @@ softened to "warn if missing" rather than refuse to load.
 - Legal: we are running Apache-2.0 code under GPL-3.0 with attribution — clean.
   The STREAMING of the content itself is exactly what the extensions were
   built to enable; no new exposure beyond what BitChord already does with its
-  existing Tidal/Lossless addons.
+  existing Tidal/Deezer addons.
 - Version gates: registry entries carry `min_app_version` (e.g. 4.9.1) —
   honour or ignore deliberately, don't crash on mismatch.
 

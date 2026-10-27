@@ -33,10 +33,10 @@ Release URL: https://github.com/OreoMuncher45/BitChordNext/releases/tag/v2.2.17-
 
 ## Current baseline
 
-- v2.2.13 is already released. Do not redo icon, halo, nav, Lossless, Octave, or
+- v2.2.13 is already released. Do not redo icon, halo, nav, Octave, or
   method-size work as part of the overhaul.
 - `BitChordApp` is effectively at the JVM 64 KB method limit. Extracting
-  `LosslessUnlockHost`, `WebSessionHost`, and `DiscordLoginHost` bought 1,338 bytes
+  `WebSessionHost`, and `DiscordLoginHost` bought 1,338 bytes
   at the time, but later feature work consumed most of it. The JamesDSP Settings
   entry fits; adding the player-menu state/host did not and failed compilation
   with `MethodTooLargeException`. Any new UI must go in its own composable/file,
@@ -976,7 +976,7 @@ this to be recorded here because the beta is now in a bug-fix-only phase:
 ### Sources / addons (2026-10-24)
 - `SourceConfig.stock` is new. Only seeded built-ins are stock. Only a stock
   row displays **"Auris Addon"**, **"Auris Hi-Res Lossless Addon"** or
-  **"Auris Lossless Addon"**, and only a stock row cannot be deleted.
+  **"Auris Deezer Addon"**, and only a stock row cannot be deleted.
 - `SourceRegistry.add` always stores `stock = false`; `update` keeps the stored
   flag; `remove` refuses only stock rows (and YouTube), not whole kinds. This
   fixes a pasted Tidal-compatible link being branded as the bundled source and
