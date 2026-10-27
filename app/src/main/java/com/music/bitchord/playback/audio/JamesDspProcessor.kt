@@ -13,7 +13,7 @@ internal object JamesDspNative {
 
     val available: Boolean by lazy {
         runCatching { System.loadLibrary("bitchord_jamesdsp") }
-            .onFailure { Log.w(TAG, "JamesDSP native library unavailable", it) }
+            .onFailure { Log.w(TAG, "DSP native library unavailable", it) }
             .isSuccess
     }
 
@@ -204,7 +204,7 @@ class JamesDspProcessor : FloatAudioProcessor {
         if (failed) return false
         if (!JamesDspNative.available) {
             failed = true
-            Log.w(TAG, "JamesDSP enabled but native library is unavailable; bypassing")
+            Log.w(TAG, "DSP enabled but native library is unavailable; bypassing")
             return false
         }
         engine = JamesDspNative.nativeCreate(
@@ -213,7 +213,7 @@ class JamesDspProcessor : FloatAudioProcessor {
         )
         if (engine == 0L) {
             failed = true
-            Log.w(TAG, "JamesDSP engine allocation failed; bypassing")
+            Log.w(TAG, "DSP engine allocation failed; bypassing")
             return false
         }
         applied = null

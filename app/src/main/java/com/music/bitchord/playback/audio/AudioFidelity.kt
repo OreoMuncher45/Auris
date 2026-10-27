@@ -137,7 +137,7 @@ object AudioFidelity {
                     add("Vocal cut" to VOCAL_CUT_POINTS)
                 }
                 if (inputs.jamesDspActive) {
-                    add("JamesDSP" to JAMES_DSP_POINTS)
+                    add("DSP" to JAMES_DSP_POINTS)
                 }
             }
         }
