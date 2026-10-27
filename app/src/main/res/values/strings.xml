@@ -292,10 +292,10 @@
     <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
-    <string name="jamesdsp">JamesDSP</string>
+    <string name="jamesdsp">DSP</string>
     <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
-    <string name="jamesdsp_unavailable">JamesDSP is not available in this build.</string>
+    <string name="jamesdsp_unavailable">DSP is not available in this build.</string>
     <string name="jamesdsp_bass">Bass boost</string>
     <string name="jamesdsp_stereo">Stereo width</string>
     <string name="jamesdsp_tube">Tube warmth</string>
@@ -310,7 +310,7 @@
     <string name="jamesdsp_large_hall">Large hall</string>
     <string name="jamesdsp_plate">Plate</string>
     <string name="jamesdsp_long">Long</string>
-    <string name="jamesdsp_license">JamesDSP is GPL-licensed. Source and notices ship with Auris.</string>
+    <string name="jamesdsp_license">DSP is GPL-licensed. Source and notices ship with Auris.</string>
     <string name="equalizer_footer">Shapes the sound inside Auris, before it reaches the system.</string>
     <string name="equalizer_dynamic">Dynamic</string>
     <string name="equalizer_manual">Manual</string>

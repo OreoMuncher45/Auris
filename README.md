@@ -47,6 +47,7 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 - **Classipod** — a full iPod Classic theme with click-wheel navigation and Cover Flow.
 - **Automix V2** — DJ-style transitions with beat locking, entrance rescoring and vocal gating.
 - **Sing** — karaoke mode that turns the lead vocal down so you can sing over the track.
+- **DSP** — reverb, bass boost, stereo width and tube warmth, running inside the app's own playback stream.
 - **Honest lossless numbers** — stats and Discord presence report the decoded PCM rate (1411 / 4608 kbps), never a container guess.
 - **AI badge with strict mode** — flags AI-generated uploads and can skip them.
 
@@ -65,7 +66,7 @@ Auris ranks sources itself: the ones you add first, then JioSaavn if you opt in,
 
 ## Download
 
-Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/Auris/releases) page. Current build: **2.2.18** (`versionCode 80`, package `com.dev.bitchord`).
+Grab the latest signed APK from the [Releases](https://github.com/OreoMuncher45/Auris/releases) page. Current build: **2.2.20** (`versionCode 82`, package `com.dev.bitchord`).
 
 | APK | Use it for |
 |---|---|
