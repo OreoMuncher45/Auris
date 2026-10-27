@@ -61,7 +61,7 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 
 Auris ranks sources itself: your addons first, then JioSaavn if you opt in, then YouTube Music as the fallback. Each addon has a health check and reports stream refusals on its own row instead of failing silently.
 
-Two built-in lossless addons ship with the app:
+For Example:
 
 | Addon | What it does |
 |---|---|
