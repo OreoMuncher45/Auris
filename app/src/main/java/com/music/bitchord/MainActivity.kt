@@ -594,7 +594,6 @@ private fun BitChordApp(
     // background at all. Hosting it here also puts the scrim over the tab bar
     // and the mini player, like every other alert in the app.
     var editingSource by remember { mutableStateOf<SourceConfig?>(null) }
-    var unlockLossless by remember { mutableStateOf<SourceConfig?>(null) }
     var confirmJioSaavn by remember { mutableStateOf(false) }
     var editingPartyServer by remember { mutableStateOf(false) }
     var showHistory by remember { mutableStateOf(false) }
@@ -748,25 +747,6 @@ private fun BitChordApp(
     LaunchedEffect(Unit) {
         if (!com.music.bitchord.ui.components.SupportDonations.isSeen(context)) {
             showSupportPopup = true
-        }
-    }
-    // Lossless session housekeeping, once per launch and fully silent: an
-    // enabled addon with no session renews itself in the background while
-    // the UI comes up. Failures stay invisible — the row still offers the
-    // sheet, which retries silently before showing any browser.
-    LaunchedEffect(Unit) {
-        val lossless = com.music.bitchord.data.sources.SourceRegistry.configs.value.firstOrNull {
-            it.kind == SourceKind.LOSSLESS && it.enabled &&
-                it.settings[com.music.bitchord.data.sources.LosslessQueueSource.SP_KEY].isNullOrBlank()
-        } ?: return@LaunchedEffect
-        when (val outcome = com.music.bitchord.data.lossless.LosslessSilentUnlock.unlock(context)) {
-            is com.music.bitchord.data.lossless.LosslessSilentUnlock.Outcome.Unlocked -> {
-                val next = lossless.settings.toMutableMap()
-                next[com.music.bitchord.data.sources.LosslessQueueSource.SP_KEY] = outcome.session.sp
-                next[com.music.bitchord.data.sources.LosslessQueueSource.TOKEN_KEY] = outcome.session.token
-                com.music.bitchord.data.sources.SourceRegistry.update(lossless.copy(settings = next))
-            }
-            else -> Unit
         }
     }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
@@ -3067,7 +3047,6 @@ private fun BitChordApp(
                             onEditWebDav = { showWebDavEditor = true },
                             onEditSmb = { showSmbEditor = true },
                             onConfirmJioSaavn = { confirmJioSaavn = true },
-                            onUnlockLossless = { unlockLossless = it },
                         )
                     } else if (key == "listen_together") {
                         ListenTogetherScreen(
@@ -3647,7 +3626,6 @@ private fun BitChordApp(
                                 onEditWebDav = { showWebDavEditor = true },
                                 onEditSmb = { showSmbEditor = true },
                                 onConfirmJioSaavn = { confirmJioSaavn = true },
-                                onUnlockLossless = { unlockLossless = it },
                             )
                         }
                     }
@@ -4787,13 +4765,6 @@ private fun BitChordApp(
         LaunchedEffect(songActions == null) {
             if (songActions == null) songMenuOrigin = null
         }
-        // Lossless unlock: the browser check that mints the conversion
-        // session. The sp/token land in the config's settings, which
-        // re-probes the row above on the way past.
-        LosslessUnlockHost(
-            config = unlockLossless,
-            onDismiss = { unlockLossless = null },
-        )
         // Flow save asks for a name instead of stamping "Flow — Flow".
         if (showFlowSave) {
             com.music.bitchord.ui.screens.FlowSaveDialog(
@@ -5671,26 +5642,6 @@ private fun DiscordLoginHost(
             )
         }
     }
-}
-
-@Composable
-private fun LosslessUnlockHost(
-    config: SourceConfig?,
-    onDismiss: () -> Unit,
-) {
-    if (config == null) return
-    BackHandler(onBack = onDismiss)
-    com.music.bitchord.ui.components.LosslessUnlockSheet(
-        config = config,
-        onUnlocked = { sp, token ->
-            val next = config.settings.toMutableMap()
-            next[com.music.bitchord.data.sources.LosslessQueueSource.SP_KEY] = sp
-            next[com.music.bitchord.data.sources.LosslessQueueSource.TOKEN_KEY] = token
-            SourceRegistry.update(config.copy(settings = next))
-            onDismiss()
-        },
-        onDismiss = onDismiss,
-    )
 }
 
 private fun tween(durationMillis: Int) =

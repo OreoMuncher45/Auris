@@ -347,7 +347,7 @@ class ModuleSource(
      * `fallbackMode` is the important one, and `strict` is the right answer
      * whenever lossless was actually asked for. Left flexible, a module whose
      * lossless backend is slow or missing walks its *own* fallback chain —
-     * Lossless, then HiFi, then SoundCloud — and returns a 128kbps MP3 ten
+     * Deezer, then HiFi, then SoundCloud — and returns a 128kbps MP3 ten
      * seconds later, having spent that time getting further from what was
      * wanted. Strict makes it fail fast and say so, which hands the decision
      * back to [SourceResolver], who has two other modules to try and knows
@@ -404,7 +404,7 @@ class ModuleSource(
          *
          * Nor is it the whole module going down for a while. Three seconds after
          * the URL above, the same module answered the same `LOSSLESS` request
-         * for a different track with a clean Lossless URL that played — so the
+         * for a different track with a clean lossless URL that played — so the
          * fault belongs to *one of the backends a module can resolve to*, and
          * one bad URL says nothing about the next. Which is why this is a test
          * on the URL in hand and nothing is remembered between calls.

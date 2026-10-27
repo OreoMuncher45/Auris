@@ -143,18 +143,9 @@ fun SourcesScreen(
     onEditSmb: () -> Unit,
     /** Opens the full-window warning before JioSaavn is opted into. */
     onConfirmJioSaavn: () -> Unit,
-    /**
-     * Opens the Lossless unlock sheet for a config — raised like [onEditSource]
-     * because the sheet hosts a WebView the frosted subtree cannot draw.
-     */
-    onUnlockLossless: (SourceConfig) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    // The how-to card sits in front of the unlock sheet until the reader ticks
-    // the box and accepts. It is hosted here, not at the activity, so the
-    // Lossless row is the only place that has to know about it.
-    var losslessHelpFor by remember { mutableStateOf<SourceConfig?>(null) }
     val configs by SourceRegistry.configs.collectAsStateWithLifecycle()
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
@@ -180,12 +171,12 @@ fun SourcesScreen(
     // Enabled only: probing a source the listener switched off is how
     // turned-off addons kept showing up in the log. The toggle means
     // "leave it alone", and health checks are contact.
-    val probeKey = configs.filter { (it.kind.needsServer || it.kind == SourceKind.LOSSLESS) && it.enabled }
+    val probeKey = configs.filter { it.kind.needsServer && it.enabled }
         .joinToString { "${it.id}@${it.baseUrl}@${it.checkValidLossless}@${it.settings.hashCode()}" } +
         "@${losslessOutput.capable}"
     LaunchedEffect(probeKey) {
         configs.filter {
-            (it.kind.needsServer || it.kind == SourceKind.LOSSLESS) &&
+            it.kind.needsServer &&
                 it.enabled && it.isComplete && !it.awaitsLosslessOutput
         }.forEach { config ->
             val source = SourceRegistry.instance(config.id) ?: return@forEach
@@ -289,13 +280,6 @@ fun SourcesScreen(
                         // The lossless source is sealed: branded row, toggle
                         // only, no editor and no address anywhere.
                         onClick = when {
-                            config.kind == SourceKind.LOSSLESS -> ({
-                                if (AppSettings.losslessHelpDismissed.value) {
-                                    onUnlockLossless(config)
-                                } else {
-                                    losslessHelpFor = config
-                                }
-                            })
                             config.kind.needsServer && config.kind != SourceKind.TIDAL ->
                                 ({ onEditSource(config) })
                             else -> null
@@ -433,61 +417,6 @@ fun SourcesScreen(
         Spacer(Modifier.height(32.dp))
     }
 
-    losslessHelpFor?.let { helpConfig ->
-        LosslessHelpDialog(
-            config = helpConfig,
-            onDismiss = { losslessHelpFor = null },
-            onAccept = { dontShowAgain ->
-                if (dontShowAgain) AppSettings.setLosslessHelpDismissed(true)
-                losslessHelpFor = null
-                onUnlockLossless(helpConfig)
-            },
-        )
-    }
-}
-
-/**
- * Explains what the Lossless page's Download button actually does before the
- * unlock sheet opens.
- */
-@Composable
-private fun LosslessHelpDialog(
-    config: SourceConfig,
-    onDismiss: () -> Unit,
-    onAccept: (dontShowAgain: Boolean) -> Unit,
-) {
-    var dontShowAgain by remember(config) { mutableStateOf(false) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.lossless_help_title)) },
-        text = {
-            Column {
-                Text(stringResource(R.string.lossless_help_body))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .padding(top = 8.dp)
-                        .clickable { dontShowAgain = !dontShowAgain },
-                ) {
-                    Checkbox(
-                        checked = dontShowAgain,
-                        onCheckedChange = { dontShowAgain = it },
-                    )
-                    Text(stringResource(R.string.lossless_help_never))
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onAccept(dontShowAgain) }) {
-                Text("OK")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.cancel))
-            }
-        },
-    )
 }
 
 
@@ -943,7 +872,6 @@ private fun SourceRow(
                 SourceKind.MODULE -> Icons.Rounded.Extension
                 SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
                 SourceKind.TIDAL -> Icons.Rounded.MusicNote
-                SourceKind.LOSSLESS -> Icons.Rounded.Album
                 SourceKind.HIRES -> Icons.Rounded.MusicNote
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },

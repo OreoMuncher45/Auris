@@ -25,7 +25,7 @@
 > Auris is a community fork of [BitChord](https://github.com/kushagrasinghx/BitChord) by [kushagra](https://github.com/kushagrasinghx) — the original app is his work, and credit belongs to him. This fork adds the interface and features described below and is maintained by [OreoMuncher45](https://github.com/OreoMuncher45).
 
 > [!NOTE]
-> Auris is not affiliated with, endorsed by, or connected to YouTube, Google, Deezer, Lossless, Tidal, or any other service mentioned here.
+> Auris is not affiliated with, endorsed by, or connected to YouTube, Google, Deezer, Tidal, or any other service mentioned here.
 
 ---
 
@@ -61,15 +61,14 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 
 Auris ranks sources itself: your addons first, then JioSaavn if you opt in, then YouTube Music as the fallback. Each addon has a health check and reports stream refusals on its own row instead of failing silently.
 
-Three built-in lossless addons ship with the app:
+Two built-in lossless addons ship with the app:
 
 | Addon | What it does |
 |---|---|
 | **Auris Addon** | Hi-Fi FLAC through community instances, with automatic failover and a refreshed instance list. |
 | **Auris Hi-Res Lossless Addon** | Direct FLAC files at measured quality — no converter, no account, no waiting. |
-| **Auris Lossless Addon** | Catalogue search plus queued FLAC conversions up to 24/192. One in-app unlock starts a resuming session and the row tells you when it needs renewing. |
 
-Those three names belong to the sources Auris ships, and only those are permanent. **Anything you add yourself stays yours**: it is listed under its own name or host, and it can always be deleted — including links that happen to speak one of the built-in protocols. Adding an addon never creates a second "Auris" row.
+Those two names belong to the sources Auris ships, and only those are permanent. **Anything you add yourself stays yours**: it is listed under its own name or host, and it can always be deleted — including links that happen to speak one of the built-in protocols. Adding an addon never creates a second "Auris" row.
 
 > **Why the addons aren't named after their backends:** they run on volunteers' servers and free tiers. Naming them draws traffic, and traffic gets things rate-limited or shut down. The endpoints, fallbacks and setup steps are all in the source for anyone who wants to look.
 
@@ -138,7 +137,7 @@ Auris is free software under the **GNU General Public License v3.0**. You may us
 
 ## Disclaimer
 
-Auris is an independent, community-driven fork. It is **not** associated with Google LLC, YouTube Music, Deezer, Lossless, Tidal, or any of their parent companies.
+Auris is an independent, community-driven fork. It is **not** associated with Google LLC, YouTube Music, Deezer, Tidal, or any of their parent companies.
 
 - **No media hosting.** Auris does not host, upload or store copyrighted music. It is an interface to local storage and to user-authenticated or public APIs.
 - **Fair use and API usage.** The software is provided for personal research, educational and fair-use purposes. You are responsible for complying with your local copyright law and the terms of any service you connect.
