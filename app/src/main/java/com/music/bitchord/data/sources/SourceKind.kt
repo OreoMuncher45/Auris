@@ -120,7 +120,7 @@ enum class SourceKind(
     MODULE(
         label = "Module source",
         detail = "A URL to a compatible module index. Modules are JS plugins that " +
-            "can search and stream from services like Tidal, Lossless, Apple Music and more.",
+            "can search and stream from services like Tidal, Deezer, Apple Music and more.",
         labels = listOf("FLAC", "Lossless", "Hi-Res", "Plugins"),
         needsServer = true,
         canServeLossless = true,
@@ -190,26 +190,6 @@ enum class SourceKind(
         needsServer = false,
         canServeLossless = true,
         worthPrefetching = true,
-        rank = 1,
-    ),
-
-    /**
-     * Lossless FLAC through lossless.invalid's conversion queue: catalogue
-     * search with ISRC-grade rows, conversions up to 24-bit/192kHz. One
-     * in-app-browser unlock mints a resuming session — no account, no key
-     * to paste, no URL to configure.
-     *
-     * A separate addon from Hi-Res on purpose: direct files and queued
-     * conversions fail in completely different ways and deserve separate
-     * rows, toggles and blame. Slow by design (a job, not a URL), so it
-     * never prefetches and a miss here is a timeout, not a fault.
-     */
-    LOSSLESS(
-        label = "Lossless FLAC",
-        detail = "FLAC conversions up to 24/192. Tap to unlock once in the browser; the session resumes itself after that.",
-        labels = listOf("FLAC", "Lossless", "Hi-Res", "Unlock"),
-        needsServer = false,
-        canServeLossless = true,
         rank = 1,
     ),
 
