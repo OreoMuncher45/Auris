@@ -1368,6 +1368,33 @@ persists as `bit_perfect`.
   optionally, an AAudio MMAP exclusive stream; UAC2 prior art:
   `Ma145/decent-player`, `moss-apps/Flick`.
 
+### Exclusive USB: clock-exact selection (2026-10-27)
+
+The exclusive path no longer negotiates a different rate when the DAC refuses
+the track's own clock. `UsbAudioDevice` follows the UAC2 input terminal's
+`bCSourceID` first, selects an alt setting by bit depth **and** channel count
+**and** stated rate, and treats a short control transfer as a failure. A
+readback that disagrees with the track rate, or a write to a clock the
+descriptors do not name with no readback to verify it, fails closed and falls
+back to AudioTrack (which resamples properly). The sink suppresses retries for
+definitive failures (no matching alt, wrong clock, blocked DAC) instead of
+pausing and flushing the working AudioTrack every five seconds. A resume and a
+writer-thread watchdog (5 s) re-read the clock and stop the session if it moved.
+Continuous feedback stays disabled in the native driver.
+
+- Verification: `:app:compileDevDebugKotlin` and
+  `:app:compileDevReleaseKotlin` green; `FlowTest`, `QueueBuilderTest` and
+  `PrecisionAudioSinkTest` green. Branch `fix/bitperfect-clock-exactness`
+  (commit `ff4c83ab`, based on `b753e15f`).
+- Artifact: run `40458541439`, success, four APKs. Same
+  `CN=BitChord Next Fork` signer, `com.dev.bitchord` 80 / 2.2.18, 16 KB
+  `zipalign`, `lib/arm64-v8a/libdecent_usb_audio.so` packaged, new clock
+  strings present in the dex. arm64 SHA-256
+  `71390939cc7ba490d2325dde7f9401a5d384a8a1b8816bd790551ef0a5277729`;
+  universal SHA-256
+  `bf52200466137752d42a2baa5489127b2ca63b6d189e2f0dcf8610b222acbd1c`.
+  Local copies in `artifact-2.2.18-clock/`. No tag, no GitHub Release.
+
 ### Still open
 - JamesDSP is GPLv2-only and remains incompatible with the app's GPLv3 for a
   public release. It stays artifact-only until Workstream A is closed.
