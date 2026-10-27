@@ -143,6 +143,14 @@ class PrecisionAudioSink(
     /** One adoption attempt per configured track; a failed claim is not retried per buffer. */
     private var lastExclusiveAttemptMs = 0L
 
+    /**
+     * Set when the exclusive open failed for a reason retrying cannot fix
+     * (wrong clock, no matching alt). Without it the 5 s retry loop keeps
+     * pausing and flushing the working AudioTrack, which is heard as a
+     * dropout — and would fix nothing.
+     */
+    private var exclusiveAdoptionSuppressed = false
+
     /** Sample rate of the configured format, for timestamping split sub-blocks. */
     private var configuredSampleRate: Int = 0
 
@@ -212,6 +220,7 @@ class PrecisionAudioSink(
         }
         exclusiveEnded = false
         lastExclusiveAttemptMs = 0L
+        exclusiveAdoptionSuppressed = false
         activeFormat = format
 
         if (shouldActivatePrecision(format)) {
@@ -267,7 +276,7 @@ class PrecisionAudioSink(
                         enableFloatOutput = enableFloatOutput,
                         delegateEncoding = delegateFormat.pcmEncoding,
                     )
-                    startExclusiveIfWanted(format)
+                    if (startExclusiveIfWanted(format)) exclusiveAdoptionSuppressed = true
                     return
                 } catch (e: Exception) {
                     // If the Float32 delegate config failed, try PCM16 before aborting precision
@@ -293,7 +302,7 @@ class PrecisionAudioSink(
                                 enableFloatOutput = enableFloatOutput,
                                 delegateEncoding = pcm16Format.pcmEncoding,
                             )
-                            startExclusiveIfWanted(format)
+                            if (startExclusiveIfWanted(format)) exclusiveAdoptionSuppressed = true
                             return
                         } catch (e2: Exception) {
                             // Delegate configuration failed completely; fall back safely
@@ -348,19 +357,29 @@ class PrecisionAudioSink(
      * which is what LastWave does before claiming the endpoint: while
      * AudioFlinger still owns the DAC, the usbdevfs claim fails and the
      * session falls back onto the shared mixer path.
+     *
+     * @return true when the failure is definitive for this format, so the
+     *   caller can stop retrying until the next configure.
      */
-    private fun startExclusiveIfWanted(format: Format) {
+    private fun startExclusiveIfWanted(format: Format): Boolean {
         exclusiveActive = false
         // The crossfade standby must never claim the endpoint: its configure
         // runs while the outgoing track still owns the DAC.
-        if (!isAudible()) return
-        val session = exclusiveUsb ?: return
-        if (!exclusiveWanted() || !bitPerfect()) return
+        if (!isAudible()) return false
+        val session = exclusiveUsb ?: return false
+        if (!exclusiveWanted() || !bitPerfect()) return false
         if (format.channelCount !in 1..2) {
             publishExclusiveUnavailable(
                 "This track has ${format.channelCount} channels; the Android mixer stays in the path",
             )
-            return
+            return false
+        }
+        // Nothing to try without a DAC that grants access. Pausing the
+        // delegate first would cost a dropout for an attempt that cannot
+        // even reach the endpoint.
+        if (!session.canOpen()) {
+            publishExclusiveUnavailable(null)
+            return false
         }
         // LastWave's order: release the mixer's claim before opening usbdevfs.
         runCatching { delegate.pause() }
@@ -378,12 +397,12 @@ class PrecisionAudioSink(
                 "DAC clock ${latched} Hz for a ${format.sampleRate} Hz track; no resampling in bit-perfect",
             )
             if (playing) runCatching { delegate.play() }
-            return
+            return true
         }
         if (!started) {
             publishExclusiveUnavailable(session.lastFailureReason)
             if (playing) runCatching { delegate.play() }
-            return
+            return !session.failureIsRetryable()
         }
         exclusiveActive = true
         exclusiveEnded = false
@@ -411,6 +430,7 @@ class PrecisionAudioSink(
             "exclusive USB active rate=${session.currentRateHz()}Hz wireBits=${session.activeWireBits()} " +
                 "enc=$inputPcmEncoding ch=${format.channelCount} AudioTrack=idle",
         )
+        return false
     }
 
     /** Leaves the userspace session and re-reports the AudioTrack path. */
@@ -443,19 +463,28 @@ class PrecisionAudioSink(
      * not re-prompt or re-open on every buffer.
      */
     private fun maybeAdoptExclusive() {
-        if (exclusiveActive || !exclusiveWanted() || !bitPerfect() || !isPrecisionActive) return
-        if (exclusiveUsb == null || !isAudible()) return
+        if (!exclusiveWanted() || !bitPerfect()) {
+            // A fresh ask starts a fresh attempt after an earlier refusal.
+            exclusiveAdoptionSuppressed = false
+            return
+        }
+        if (exclusiveActive || !isPrecisionActive) return
+        if (exclusiveAdoptionSuppressed) return
+        val session = exclusiveUsb ?: return
+        if (!isAudible()) return
         // A live session belongs to the other sink; do not feed two clocks
         // into one isochronous queue.
-        if (exclusiveUsb.isStreamAlive()) return
+        if (session.isStreamAlive()) return
         val format = activeFormat ?: return
         if (format.channelCount !in 1..2) return
         // A claim refused for a missing grant must be able to succeed once
         // the user accepts the system dialog, so retry on a slow clock
-        // instead of latching the failure for the whole track.
+        // instead of latching the failure for the whole track. Without a
+        // grant there is nothing to try, so leave the delegate alone.
         val now = SystemClock.elapsedRealtime()
         if (now - lastExclusiveAttemptMs < EXCLUSIVE_RETRY_MS) return
         lastExclusiveAttemptMs = now
+        if (!session.canOpen()) return
         // The pre-toggle processed tail belongs to the AudioTrack path; drop
         // it rather than replaying it on a clock that just changed owner.
         outputByteBuffer.clear()
@@ -463,7 +492,7 @@ class PrecisionAudioSink(
         passthroughBuffer = null
         timestampedInputTimeUs = C.TIME_UNSET
         framesEmittedForInput = 0L
-        startExclusiveIfWanted(format)
+        if (startExclusiveIfWanted(format)) exclusiveAdoptionSuppressed = true
     }
 
     /**

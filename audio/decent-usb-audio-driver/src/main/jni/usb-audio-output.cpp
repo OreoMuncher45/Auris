@@ -183,6 +183,10 @@ static bool allocFeedbackUrb(UsbAudioContext *ctx) {
  * actual frames-per-microframe.
  */
 static bool submitFeedbackUrb(UsbAudioContext *ctx) {
+    // Continuous feedback is off: ISO IN feedback URBs on the same usbdevfs
+    // fd disrupt ISO OUT timing on Android xHCI (see header). This guard is
+    // what keeps a completion handler or a drain from quietly starting it.
+    if (!USB_AUDIO_ENABLE_CONTINUOUS_FEEDBACK) return false;
     if (ctx->endpointFeedback <= 0 || !ctx->feedbackUrb || ctx->feedbackInFlight)
         return false;
 
