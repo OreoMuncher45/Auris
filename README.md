@@ -62,7 +62,6 @@ Extra sources under Sources, each with health checks and honest failure states:
 
 - **BitChord NEXT** — genuine Hi-Fi FLAC via community instances with automatic failover and daily list refresh.
 - **BitChord Hi-Res** — direct measured FLAC files, no converter, no account, no waiting.
-- **BitChord Lossless** — catalogue search plus queued FLAC conversions up to 24/192. One in-app-browser unlock mints a resuming session; the row tells you when it needs renewing or the converter is down.
 - Stream refusals report themselves on the Sources rows instead of failing silently.
 
 > **Why no provider names?** The backends behind these addons are volunteers' servers and free tiers. Naming them draws traffic, and traffic gets things rate-limited or shut down — so the app shows only its own addon names. Nothing is hidden from you technically: every endpoint, ritual and fallback lives in the source, in plain sight, for anyone who knows where to look.
@@ -123,7 +122,7 @@ Anything is appreciated, nothing is expected. A star, a bug report, or a pull re
 
 <h1><a id="disclaimer"></a>Disclaimer & Legal Notice</h1>
 
-BitChord Next is an independent, community-driven fork. It is **not** associated with Google LLC, YouTube Music, Deezer, Lossless, Tidal, Telegram, or any of their parent companies.
+BitChord Next is an independent, community-driven fork. It is **not** associated with Google LLC, YouTube Music, Deezer, Tidal, Telegram, or any of their parent companies.
 
 * **No Media Hosting:** BitChord Next does not host, upload, or store copyrighted music files. It operates strictly as an interface to scan local device storage or stream media directly from public, public-facing, or user-authenticated APIs.
 * **Fair Use & API Usage:** This software is created solely for personal research, educational, and fair-use purposes. The user is entirely responsible for ensuring their usage aligns with their local copyright laws and the terms of service of any service used.

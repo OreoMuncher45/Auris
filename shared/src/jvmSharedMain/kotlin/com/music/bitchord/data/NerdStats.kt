@@ -110,7 +110,7 @@ object NerdStats {
             get() = isDolbyAtmosMime(mimeType)
 
         /**
-         * Whether this is better than CD quality — the line Tidal, Lossless and
+         * Whether this is better than CD quality — the line Tidal, Deezer and
          * Apple Music all draw it at: past 16-bit or past 48kHz, not merely
          * lossless. A 16-bit/44.1kHz FLAC is a bit-exact CD rip and gets
          * called "Lossless"; a 24-bit/96kHz one is "Hi-Res Lossless", because

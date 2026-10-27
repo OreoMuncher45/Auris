@@ -143,11 +143,6 @@ fun SourcesScreen(
     onEditSmb: () -> Unit,
     /** Opens the full-window warning before JioSaavn is opted into. */
     onConfirmJioSaavn: () -> Unit,
-    /**
-     * Opens the Lossless unlock sheet for a config — raised like [onEditSource]
-     * because the sheet hosts a WebView the frosted subtree cannot draw.
-     */
-    onUnlockLossless: (SourceConfig) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -176,12 +171,12 @@ fun SourcesScreen(
     // Enabled only: probing a source the listener switched off is how
     // turned-off addons kept showing up in the log. The toggle means
     // "leave it alone", and health checks are contact.
-    val probeKey = configs.filter { (it.kind.needsServer || it.kind == SourceKind.LOSSLESS) && it.enabled }
+    val probeKey = configs.filter { it.kind.needsServer && it.enabled }
         .joinToString { "${it.id}@${it.baseUrl}@${it.checkValidLossless}@${it.settings.hashCode()}" } +
         "@${losslessOutput.capable}"
     LaunchedEffect(probeKey) {
         configs.filter {
-            (it.kind.needsServer || it.kind == SourceKind.LOSSLESS) &&
+            it.kind.needsServer &&
                 it.enabled && it.isComplete && !it.awaitsLosslessOutput
         }.forEach { config ->
             val source = SourceRegistry.instance(config.id) ?: return@forEach
@@ -285,7 +280,6 @@ fun SourcesScreen(
                         // The lossless source is sealed: branded row, toggle
                         // only, no editor and no address anywhere.
                         onClick = when {
-                            config.kind == SourceKind.LOSSLESS -> ({ onUnlockLossless(config) })
                             config.kind.needsServer && config.kind != SourceKind.TIDAL ->
                                 ({ onEditSource(config) })
                             else -> null
@@ -878,7 +872,6 @@ private fun SourceRow(
                 SourceKind.MODULE -> Icons.Rounded.Extension
                 SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
                 SourceKind.TIDAL -> Icons.Rounded.MusicNote
-                SourceKind.LOSSLESS -> Icons.Rounded.Album
                 SourceKind.HIRES -> Icons.Rounded.MusicNote
                 SourceKind.OCTAVE -> Icons.Rounded.Album
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
