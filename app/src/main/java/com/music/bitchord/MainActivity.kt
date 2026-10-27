@@ -833,10 +833,11 @@ private fun BitChordApp(
     // is playing, not a borrowed album, and a blank captioned tile is what
     // reads as broken. Empty queue, empty art, same tile as before.
     val flowArt = (flowQueueState as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl
-    val homeWithFlow by remember(homeState, flowStatus, flowArt) {
+    val offlineActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
+    val offlinePicksTitle = stringResource(R.string.shelf_quick_picks)
+    val homeWithFlow by remember(homeState, flowStatus, flowArt, offlineActive, offlinePicksTitle) {
         derivedStateOf {
-            val base = (homeState as? UiState.Success)?.data ?: return@derivedStateOf homeState
-            if (!flowStatus.unlocked) return@derivedStateOf homeState
+            val base = (homeState as? UiState.Success)?.data
             val flowShelf = HomeShelf(
                 title = com.music.bitchord.data.flow.FlowRules.FLOW_SHELF_TITLE,
                 items = listOf(
@@ -849,8 +850,32 @@ private fun BitChordApp(
                     ),
                 ),
             )
-            if (base.any { it.title == flowShelf.title }) homeState
-            else UiState.Success(listOf(flowShelf) + base)
+            val flowShelves = when {
+                base == null -> emptyList()
+                !flowStatus.unlocked -> emptyList()
+                base.any { it.title == flowShelf.title } -> emptyList()
+                else -> listOf(flowShelf)
+            }
+            val online = if (base == null) homeState else UiState.Success(flowShelves + base)
+            if (!offlineActive) return@derivedStateOf online
+            val picks = Downloads.snapshotSongs()
+                .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+                .take(20)
+                .mapNotNull { song ->
+                    song.videoId.takeIf { it.isNotBlank() }?.let { videoId ->
+                        ShelfItem(
+                            title = song.title,
+                            subtitle = "Song • ${song.artist}",
+                            thumbnailUrl = song.thumbnailUrl,
+                            videoId = videoId,
+                            browseId = null,
+                        )
+                    }
+                }
+            if (picks.isEmpty()) return@derivedStateOf online
+            UiState.Success(
+                listOf(HomeShelf(title = offlinePicksTitle, items = picks)) + flowShelves + (base ?: emptyList()),
+            )
         }
     }
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
@@ -3739,6 +3764,14 @@ private fun BitChordApp(
                         .align(Alignment.TopCenter)
                         .rotate(180f)
                         .graphicsLayer { alpha = topFadeAlpha },
+                )
+
+                val offlineBannerActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
+                com.music.bitchord.ui.components.OfflineBanner(
+                    visible = offlineBannerActive,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = com.music.bitchord.ui.components.topBarHeight()),
                 )
 
                 FrostedTopBar(
