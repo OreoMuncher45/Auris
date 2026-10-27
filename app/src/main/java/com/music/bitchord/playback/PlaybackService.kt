@@ -5465,7 +5465,7 @@ class PlaybackService : MediaLibraryService() {
          * What the samples cost per second once decoded, in kbps.
          *
          * `16-bit · 44.1 kHz · stereo` is 1411, `24-bit · 96 kHz · stereo` is
-         * 4608 — the figures Tidal, Lossless and Apple Music all put next to a
+         * 4608 — the figures Tidal, Deezer and Apple Music all put next to a
          * lossless track, and the only bitrate that means anything for one.
          * A FLAC's *compressed* rate is a property of how compressible that
          * particular recording was, so two copies of the same master at the
@@ -9355,7 +9355,7 @@ class PlaybackService : MediaLibraryService() {
          * a half on the strength of "a replacement that works reports its
          * length in well under a tenth of this" — which was true of what the
          * swap landed on at the time, and is not true of a FLAC. Measured
-         * here, an upgrade to a 16-bit Lossless stream was still buffering its
+         * here, an upgrade to a 16-bit lossless stream was still buffering its
          * first chunk when the window closed:
          *
          * ```

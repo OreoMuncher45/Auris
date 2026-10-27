@@ -104,7 +104,7 @@ data class DesktopStreamFormat(
         get() = codecName == "eac3" || codecName == "eac3-joc" || codecName == "ec-3"
 
     /**
-     * Better than CD — the line Tidal, Lossless and Apple Music all draw it at: past 16-bit or past
+     * Better than CD — the line Tidal, Deezer and Apple Music all draw it at: past 16-bit or past
      * 48kHz, not merely lossless.
      */
     val isHiRes: Boolean
