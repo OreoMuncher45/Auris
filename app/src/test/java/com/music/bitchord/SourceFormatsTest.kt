@@ -30,7 +30,7 @@ class SourceFormatsTest {
     fun `a real addon manifest is recognised and its name read`() {
         val body = """
             {"id":"com.unified.music.quality","name":"Unified · Quality First","version":"1.0.0",
-             "description":"Tidal + Lossless + YouTube Music + JioSaavn in one addon.",
+             "description":"Tidal + Deezer + YouTube Music + JioSaavn in one addon.",
              "icon":"https://unified-addon.netlify.app/icon.png",
              "resources":["search","stream","catalog"],
              "types":["track","album","artist","playlist"],"contentType":"music"}
@@ -149,7 +149,7 @@ class SourceFormatsTest {
         val body = """
             {"version":1,"updated_at":"2026-08-30T00:00:00Z","extensions":[
               {"id":"deezer","display_name":"Deezer","download_url":"https://x/deezer.sflx"},
-              {"id":"lossless-web","display_name":"Lossless","download_url":"https://x/lossless-web.sflx"}]}
+              {"id":"apple-web","display_name":"Apple Music","download_url":"https://x/apple-web.sflx"}]}
         """.trimIndent()
 
         val reason = reason(SourceFormats.detect(body, "https://host/registry.json"))

@@ -189,9 +189,9 @@ class AudioPipelineTest {
 
     @Test
     fun `source lookup unwraps prefixed source track keys`() {
-        NerdStats.recordSource("inner-id-abc", "Lossless FLAC")
+        NerdStats.recordSource("inner-id-abc", "Hi-Res FLAC")
         val fullMediaId = "src:config-uuid-123::inner-id-abc"
-        assertEquals("Lossless FLAC", NerdStats.sourceFor(fullMediaId))
+        assertEquals("Hi-Res FLAC", NerdStats.sourceFor(fullMediaId))
     }
 
     @Test

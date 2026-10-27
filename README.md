@@ -24,7 +24,7 @@
 > Auris is a community fork of [BitChord](https://github.com/kushagrasinghx/BitChord) by [kushagra](https://github.com/kushagrasinghx) — the original app is his work, and credit belongs to him. This fork adds the interface and features described below and is maintained by [OreoMuncher45](https://github.com/OreoMuncher45).
 
 > [!NOTE]
-> Auris is not affiliated with, endorsed by, or connected to YouTube, Google, Deezer, Lossless, Tidal, or any other service mentioned here.
+> Auris is not affiliated with, endorsed by, or connected to YouTube, Google, Deezer, Tidal, or any other service mentioned here.
 
 ---
 
@@ -60,7 +60,6 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 
 Auris ranks sources itself: the ones you add first, then JioSaavn if you opt in, then YouTube Music as the fallback. Every row has a health check and reports stream refusals instead of failing silently.
 
-The app ships with YouTube Music, optional JioSaavn, and the **Auris Lossless** lossless source — catalogue search plus queued FLAC conversions up to 24/192. One in-app unlock starts a resuming session and the row tells you when it needs renewing.
 
 **Anything you add yourself stays yours**: it is listed under its own name or host, and it can always be deleted — including links that happen to speak a built-in protocol. Adding a source never creates a second "Auris" row.
 
@@ -129,7 +128,7 @@ Auris is free software under the **GNU General Public License v3.0**. You may us
 
 ## Disclaimer
 
-Auris is an independent, community-driven fork. It is **not** associated with Google LLC, YouTube Music, Deezer, Lossless, Tidal, or any of their parent companies.
+Auris is an independent, community-driven fork. It is **not** associated with Google LLC, YouTube Music, Deezer, Tidal, or any of their parent companies.
 
 - **No media hosting.** Auris does not host, upload or store copyrighted music. It is an interface to local storage and to user-authenticated or public APIs.
 - **Fair use and API usage.** The software is provided for personal research, educational and fair-use purposes. You are responsible for complying with your local copyright law and the terms of any service you connect.
