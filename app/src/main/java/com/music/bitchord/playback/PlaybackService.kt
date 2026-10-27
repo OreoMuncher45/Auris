@@ -4089,6 +4089,21 @@ class PlaybackService : MediaLibraryService() {
     private var upgradeFor: String? = null
 
     /**
+     * Nothing is upgraded in offline mode. Every catalogue the second look
+     * asks is on the other side of a connection that is not there, so the
+     * hunt cannot answer — it can only time out into silence, or worse,
+     * arrive *after* the connection returns and swap the track that is
+     * audible by then for one that was asked for in a different world.
+     * [applyOfflineFilesToQueue] has already moved the queue onto its
+     * files; the upgrade question reopens with the stream.
+     */
+    private fun offlineBlocksUpgrades(): Boolean {
+        if (!AppSettings.effectiveOffline.value) return false
+        TrackLog.d("BitChord", "offline mode: skipping the second look")
+        return true
+    }
+
+    /**
      * Ends [upgradeJob] because the queue has moved on — unless it has already
      * found a stream and is proving it.
      *
@@ -4260,6 +4275,34 @@ class PlaybackService : MediaLibraryService() {
         if (error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND &&
             restreamMissingLocalFile(player, item, uri, position)
         ) {
+            return
+        }
+        // Offline, and there is no file behind this track: every rung of the
+        // ladder below is a network lookup that cannot answer, and paying the
+        // attempt budget to learn that once per song is what turned a
+        // dropped connection into a queue that walks itself to a stop. A
+        // downloaded track does not come down this branch — it is rescued by
+        // [fallbackOnlineStreamToFile] after its stream fails — so by here the
+        // verdict "not playable while offline" is already certain.
+        //
+        // Deliberately not run through [skipReason]: the consecutive-skip
+        // floor exists to stop an offline queue from walking to its end
+        // [MAX_CONSECUTIVE_SKIPS] songs deep when every failure looks like a
+        // broken track. Offline skips are not failures and not guesses — the
+        // connection, not the song, is the reason — so they neither spend the
+        // floor nor trigger its stop. [skipPastUnplayable] still leaves the
+        // item in place, and stops on the last one.
+        if (AppSettings.effectiveOffline.value && Downloads.verifiedSavedUri(mediaId) == null) {
+            TrackLog.d(
+                "BitChord",
+                "$mediaId has no downloaded copy while offline; moving down the queue",
+                about = mediaId,
+            )
+            scope.launch(TrackLog.about(mediaId)) {
+                withContext(Dispatchers.Main) {
+                    skipPastUnplayable(mediaId, "offline — not downloaded")
+                }
+            }
             return
         }
         // A manifest read as audio is not a broken stream, and everything below
@@ -4846,6 +4889,7 @@ class PlaybackService : MediaLibraryService() {
      * instead — see [adoptCachedTrack] and [QualityUpgrade.adoptUnresolved].
      */
     private fun lookForBetterCopy(player: ExoPlayer, byHand: Boolean = false) {
+        if (offlineBlocksUpgrades()) return
         // A search and an audition pull a whole replacement stream while the
         // listener may be on mobile data with the screen off. That is the
         // listener's data and battery, so automatic hunts wait for a screen,
@@ -4972,6 +5016,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun upgradeQualityNow() {
         val player = player ?: return
+        if (offlineBlocksUpgrades()) return
         val mediaId = player.currentMediaItem?.mediaId ?: return
         // Do not charge the manual cooldown for a command that merely arrived
         // while this track's automatic or manual upgrade was already running.
@@ -7548,11 +7593,15 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
-            // Edge-triggered: the work is only wanted on the offline -> online
-            // edge, not on every emission of a value the player already follows.
+            // Edge-triggered: the work is only wanted on the edges, not on
+            // every emission of a value the player already follows. Both
+            // directions matter — coming back online returns the queue to
+            // streams, going offline claims the downloaded files before the
+            // first stream has to fail to find them.
             var wasOffline = AppSettings.effectiveOffline.value
             AppSettings.effectiveOffline.collect { offline ->
                 if (wasOffline && !offline) restoreStreamingAfterOffline()
+                if (!wasOffline && offline) applyOfflineFilesToQueue()
                 wasOffline = offline
             }
         }
@@ -7711,6 +7760,45 @@ class PlaybackService : MediaLibraryService() {
         TrackLog.d(
             "BitChord",
             "back online; ${rebuilt.size} queued track(s) return to streaming",
+            about = player.currentMediaItem?.mediaId,
+        )
+        player.replaceMediaItems(from, items.size, rebuilt)
+    }
+
+    /**
+     * The mirror of [restoreStreamingAfterOffline]: when offline begins, claim
+     * the downloaded files for the *upcoming* tracks before any of them has to
+     * fail as a stream to get one.
+     *
+     * Without this, the queue only half joins the offline mode: the tracks
+     * that were queued while the network was up keep their stream uris, and
+     * each of them then costs a full failed resolve — [fallbackOnlineStreamToFile]
+     * rescues the ones with a file on disk, but only after the failure, on
+     * the player's error path, one dead request at a time. Rebuilding the rows
+     * here makes the whole rest of the queue read as files in one pass, the
+     * same decision [Song.toMediaItem][com.music.bitchord.playback.toMediaItem]
+     * would have made for a queue built now.
+     *
+     * Tracks with no file on disk keep their stream uri, and are skipped by
+     * the offline path in [recoverFrom] rather than retried into a dead
+     * network. The current item is left alone for the same reason as the
+     * restore: cutting the source under an audible track is a gap nobody
+     * asked for, and the ladder can rescue that one failure on its own.
+     */
+    private fun applyOfflineFilesToQueue() {
+        val player = player ?: return
+        val count = player.mediaItemCount
+        if (count == 0) return
+        val items: List<MediaItem> = (0 until count).map { player.getMediaItemAt(it) }
+        val from = player.currentMediaItemIndex + 1
+        if (from >= items.size) return
+        val rebuilt = (from until items.size)
+            .mapNotNull { items[it].toSong().takeIf { song -> song.localUri != null } }
+            .map { it.toMediaItem() }
+        if (rebuilt.isEmpty()) return
+        TrackLog.d(
+            "BitChord",
+            "offline; ${rebuilt.size} queued track(s) with files switch to them",
             about = player.currentMediaItem?.mediaId,
         )
         player.replaceMediaItems(from, items.size, rebuilt)

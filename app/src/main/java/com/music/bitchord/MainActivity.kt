@@ -888,6 +888,8 @@ private fun BitChordApp(
     // is playing, not a borrowed album, and a blank captioned tile is what
     // reads as broken. Empty queue, empty art, same tile as before.
     val flowArt = (flowQueueState as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl
+    val offlineActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
+    val offlinePicksTitle = stringResource(R.string.shelf_quick_picks)
     val flowTile: ShelfItem? = if (flowStatus.unlocked && homeFlowVisible) {
         ShelfItem(
             title = "Flow",
@@ -899,8 +901,33 @@ private fun BitChordApp(
     } else {
         null
     }
-    val homeWithFlow by remember(homeState, flowTile, homeShelfOrder) {
+    val homeWithFlow by remember(homeState, flowTile, homeShelfOrder, offlineActive, offlinePicksTitle) {
         derivedStateOf {
+            // Offline: the home is what is on disk. The feed needs a connection
+            // that is not there, so the shelf that matters is the downloads —
+            // and it has to be able to stand alone, because the feed request
+            // behind [homeState] is exactly what fails without a connection.
+            if (offlineActive) {
+                val picks = Downloads.snapshotSongs()
+                    .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+                    .take(20)
+                    .mapNotNull { song ->
+                        song.videoId.takeIf { it.isNotBlank() }?.let { videoId ->
+                            ShelfItem(
+                                title = song.title,
+                                subtitle = "Song • ${song.artist}",
+                                thumbnailUrl = song.thumbnailUrl,
+                                videoId = videoId,
+                                browseId = null,
+                            )
+                        }
+                    }
+                if (picks.isNotEmpty()) {
+                    return@derivedStateOf UiState.Success(
+                        listOf(HomeShelf(title = offlinePicksTitle, items = picks)),
+                    )
+                }
+            }
             val base = (homeState as? UiState.Success)?.data ?: return@derivedStateOf homeState
             // Quick Picks is the top row, always. Flow is not a shelf at all
             // any more — it rides at the head of that row — so reordering the
@@ -3949,6 +3976,14 @@ private fun BitChordApp(
                         .align(Alignment.TopCenter)
                         .rotate(180f)
                         .graphicsLayer { alpha = topFadeAlpha },
+                )
+
+                val offlineBannerActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
+                com.music.bitchord.ui.components.OfflineBanner(
+                    visible = offlineBannerActive,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = com.music.bitchord.ui.components.topBarHeight()),
                 )
 
                 FrostedTopBar(

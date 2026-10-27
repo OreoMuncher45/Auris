@@ -1489,7 +1489,22 @@ object AppSettings {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return
         var pendingCheck: Job? = null
 
-        val actuallyUp = { runCatching { manager.activeNetwork != null }.getOrDefault(false) }
+        // A connected network is not the same thing as a working one. Wi-Fi
+        // with no internet behind it — the router is up, the line is down —
+        // keeps `activeNetwork` non-null, and a verdict that only asks "is
+        // there a network" calls that online. Streams then fail one by one
+        // while the detector insists it is fine. The system's own probe is the
+        // answer: VALIDATED is set only after it got an answer from the
+        // internet, so a captive portal and a dead line both read as offline.
+        val actuallyUp = {
+            runCatching {
+                val network = manager.activeNetwork ?: return@runCatching false
+                val capabilities = manager.getNetworkCapabilities(network)
+                    ?: return@runCatching false
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            }.getOrDefault(false)
+        }
 
         // Believed immediately when a network is there; believed gone only after
         // the grace period, and only if it is *still* gone by then. `activeNetwork`

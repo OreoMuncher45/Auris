@@ -109,6 +109,18 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
             // all — it is the fix for canvas clips re-fetching the same few
             // seconds of video from the network on every loop.
             CanvasCache.init(this)
+            runCatching {
+                val cutoff = System.currentTimeMillis() - 24L * 3600_000L
+                cacheDir.listFiles()?.forEach { file ->
+                    if (!file.isFile) return@forEach
+                    val name = file.name
+                    val stray = name.startsWith("tagging-") ||
+                        name.startsWith("manifest-") ||
+                        name.startsWith("webdav-upload") ||
+                        name.endsWith(".tmp")
+                    if (stray && file.lastModified() < cutoff) file.delete()
+                }
+            }
         }
         // Migration-safe: an old single cookie becomes the first encrypted
         // session, while newer installs restore the profile the listener chose.
