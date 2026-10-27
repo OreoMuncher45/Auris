@@ -753,7 +753,13 @@ fun Song.toMediaItem(parentBrowseId: String? = null): MediaItem {
             // Sized here rather than left as stored: this is what the lock
             // screen, the notification and Android Auto draw, all of them
             // large, and none of them go back for a better copy later.
-            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri())
+            //
+            // A track with no sleeve of its own gets the white-only mark
+            // rather than nothing: with no artwork at all, these surfaces
+            // reach for the app's own full-colour icon, and the whole old
+            // logo ends up drawn where a sleeve should be. See
+            // [FallbackArtwork].
+            .setArtworkUri(artworkAt(NOTIFICATION_ART_PX)?.toUri() ?: FallbackArtwork.uri())
             // System media surfaces (One UI's Now Bar, Android Auto, Assistant)
             // classify a session by its media type; untyped sessions get treated
             // as generic audio and lose the music-specific card.

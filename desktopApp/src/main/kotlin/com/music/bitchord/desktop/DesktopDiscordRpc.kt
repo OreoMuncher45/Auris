@@ -172,7 +172,7 @@ internal object DesktopDiscordRpc {
                     largeImage = RpcImage.ExternalImage(
                         song.artworkAt(ART_PX)?.takeIf { it.startsWith("http") } ?: FALLBACK_ART_URL,
                     ),
-                    smallImage = null,
+                    smallImage = RpcImage.ExternalImage(FALLBACK_ART_URL),
                     largeText = song.albumName,
                     buttons = buttonLabels(song).takeIf { it.isNotEmpty() },
                     type = when (DesktopDiscordSettings.activityType.value) {
@@ -292,7 +292,7 @@ internal object DesktopDiscordRpc {
     private const val PROJECT_URL = "https://github.com/kushagrasinghx/BitChord"
     private const val ART_PX = 480
     private const val FALLBACK_ART_URL =
-        "https://raw.githubusercontent.com/kushagrasinghx/BitChord/main/app/src/main/ic_launcher-playstore.png"
+        "https://raw.githubusercontent.com/OreoMuncher45/Auris/presence-icon-v1/app/src/main/res/drawable-nodpi/ic_launcher_monochrome.png"
     private const val CLIENT_VERSION = "0.0.83"
     private const val CLIENT_BUILD = "352675"
     private const val USER_AGENT =

@@ -25,6 +25,7 @@ import com.music.bitchord.data.smb.SmbCoverFetcher
 import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.FallbackArtwork
 import com.music.bitchord.playback.LastPlayed
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.data.innertube.Innertube
@@ -50,6 +51,10 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // One system-service probe needs a context; answered once, cached for
         // the process. See DeviceCodecs for what it is and is not.
         com.music.bitchord.data.sources.DeviceCodecs.init(this)
+        // The sleeve a track with no artwork of its own is drawn with, on
+        // every system surface that would otherwise reach for the app's own
+        // full-colour icon. See [FallbackArtwork].
+        FallbackArtwork.install(this)
         // The player is drawn by the shared UI module; this is what it reads
         // underneath — settings, the Canvas decoder, outputs, the party.
         AndroidStreamHooks.installEarly()
