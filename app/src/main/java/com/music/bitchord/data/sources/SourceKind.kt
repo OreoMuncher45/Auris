@@ -138,6 +138,20 @@ enum class SourceKind(
     ),
 
     /**
+     * Qobuz FLAC through flacdownloader.com's conversion queue: catalogue
+     * search with ISRC-grade rows, conversions up to 24-bit/192kHz. One
+     * in-app-browser unlock mints a resuming session.
+     */
+    QOBUZ(
+        label = "Qobuz FLAC",
+        detail = "FLAC conversions up to 24/192. Tap to unlock once in the browser; the session resumes itself after that.",
+        labels = listOf("FLAC", "Lossless", "Hi-Res", "Unlock"),
+        needsServer = false,
+        canServeLossless = true,
+        rank = 1,
+    ),
+
+    /**
      * The source the app was built on, listed here so it always has a fixed
      * place: second, behind the module source. It cannot be removed — see
      * [SourceRegistry]. Nothing else in the app can supply a home feed, a

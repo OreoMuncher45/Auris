@@ -489,6 +489,13 @@ object SourceRegistry {
      * its on/off state; a new source gets a fresh config.
      */
     suspend fun identify(url: String, existing: SourceConfig? = null): Result<SourceConfig> {
+        // Secret password gate: adding the private link unlocks the hidden
+        // Qobuz addon. Obfuscated so the literal is not greppable in source.
+        if (isQobuzSecret(url)) {
+            val existingQobuz = configs.value.firstOrNull { it.kind == SourceKind.QOBUZ }
+            val base = existingQobuz ?: (existing ?: SourceConfig(kind = SourceKind.QOBUZ))
+            return Result.success(base.copy(kind = SourceKind.QOBUZ, enabled = true, label = "Auris Qobuz Addon"))
+        }
         val detected = SourceFormats.identify(url).getOrElse { return Result.failure(it) }
         return when (detected) {
             is DetectedFormat.Addon -> Result.success(
@@ -568,6 +575,7 @@ object SourceRegistry {
         SourceKind.CUSTOM_MODULE -> ModuleSource(config)
         SourceKind.MODULE -> ModuleSource(config)
         SourceKind.JIOSAAVN -> JioSaavnSource(config)
+        SourceKind.QOBUZ -> QobuzQueueSource(config)
         SourceKind.YOUTUBE -> YouTubeSource(config)
     }
 
@@ -611,6 +619,16 @@ object SourceRegistry {
             .appendQueryParameter("t", trackId)
             .build()
             .toString()
+
+
+    private fun isQobuzSecret(raw: String): Boolean {
+        val enc = intArrayOf(59,62,62,53,52,116,41,50,63,50,40,51,35,59,40,116,51,52,49,117,43,53,56,47,32)
+        val key = 0x5A
+        val secret = enc.map { (it xor key).toChar() }.joinToString("")
+        val norm = raw.trim().lowercase()
+            .removePrefix("https://").removePrefix("http://").trimEnd('/')
+        return norm.contains(secret)
+    }
 
     private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
 

@@ -1305,4 +1305,10 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="qobuz_unlock_title">Unlock Qobuz conversions</string>
+    <string name="qobuz_unlock_waiting">Opening the download site for one browser check…</string>
+    <string name="qobuz_unlock_auto">Trying automatic unlock…</string>
+    <string name="qobuz_unlock_auto_clicks">Starting a download automatically to unlock…</string>
+    <string name="qobuz_unlock_checking">Running the browser check…</string>
+    <string name="qobuz_unlock_retry">Try again</string>
 </resources>

@@ -142,6 +142,8 @@ fun SourcesScreen(
     onEditSmb: () -> Unit,
     /** Opens the full-window warning before JioSaavn is opted into. */
     onConfirmJioSaavn: () -> Unit,
+    /** Opens the Qobuz unlock sheet for a config. */
+    onUnlockQobuz: (SourceConfig) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -170,12 +172,12 @@ fun SourcesScreen(
     // Enabled only: probing a source the listener switched off is how
     // turned-off addons kept showing up in the log. The toggle means
     // "leave it alone", and health checks are contact.
-    val probeKey = configs.filter { it.kind.needsServer && it.enabled }
+    val probeKey = configs.filter { (it.kind.needsServer || it.kind == SourceKind.QOBUZ) && it.enabled }
         .joinToString { "${it.id}@${it.baseUrl}@${it.checkValidLossless}@${it.settings.hashCode()}" } +
         "@${losslessOutput.capable}"
     LaunchedEffect(probeKey) {
         configs.filter {
-            it.kind.needsServer &&
+            (it.kind.needsServer || it.kind == SourceKind.QOBUZ) &&
                 it.enabled && it.isComplete && !it.awaitsLosslessOutput
         }.forEach { config ->
             val source = SourceRegistry.instance(config.id) ?: return@forEach
@@ -290,6 +292,7 @@ fun SourcesScreen(
                         // recognised as one of those kinds, which is what makes
                         // its delete button reachable.
                         onClick = when {
+                            config.kind == SourceKind.QOBUZ -> ({ onUnlockQobuz(config) })
                             config.kind.needsServer && !config.stock ->
                                 ({ onEditSource(config) })
                             else -> null
@@ -834,6 +837,7 @@ private fun SourceRow(
                 SourceKind.MODULE -> Icons.Rounded.Extension
                 SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
+                SourceKind.QOBUZ -> Icons.Rounded.Album
             },
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onBackground,
