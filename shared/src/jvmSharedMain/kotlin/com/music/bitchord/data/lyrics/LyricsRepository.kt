@@ -235,7 +235,8 @@ object LyricsRepository {
             LyricsSource.GENIUS -> Genius.lyrics(title, artist)
             LyricsSource.EXTENSION -> extensionProvider?.lyrics(title, artist, album, durationMs)
         }
-        return found
+        // An instrumental's "pure music, please enjoy" is no lyrics, whoever relays it.
+        return found?.takeUnless(KuGou::isInstrumentalNotice)
     }
 
     /**
