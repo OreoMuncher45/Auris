@@ -15,6 +15,7 @@ import android.net.Uri
 import android.widget.Toast
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import com.music.bitchord.data.TelemetryProvenance
 import kotlinx.coroutines.sync.Mutex
@@ -34,6 +35,10 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.core.net.toUri
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
+import com.music.bitchord.data.presence.AndroidPresence
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
@@ -46,11 +51,13 @@ import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.RendererCapabilities
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.MediaCodecAudioRenderer
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
@@ -80,9 +87,15 @@ import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.playback.audio.ContainerBitrate
+import com.music.bitchord.playback.audio.BitPerfectMixer
 import com.music.bitchord.playback.audio.DspChain
+import com.music.bitchord.playback.audio.JamesDspConfig
+import com.music.bitchord.playback.audio.JamesDspNative
+import com.music.bitchord.playback.audio.JamesDspProcessor
 import com.music.bitchord.playback.audio.LocalBitrateReading
 import com.music.bitchord.playback.audio.MeasuredBitrateMeter
+import com.music.bitchord.playback.usb.ExclusiveUsbOutput
+import com.music.bitchord.playback.usb.UsbDacMonitor
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
 import com.music.bitchord.playback.cast.CastSink
@@ -113,6 +126,7 @@ import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.QueueTier
+import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
 import java.util.concurrent.ConcurrentHashMap
@@ -153,6 +167,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
@@ -275,6 +290,17 @@ private const val ALIGNMENT_HEAD_TIMEOUT_MS = 20_000L
  * second.
  */
 private const val ALIGNMENT_MEASURE_TIMEOUT_MS = 30_000L
+
+/**
+ * How long the playing renditions get to correlate before the analysis copies
+ * are tried instead.
+ *
+ * Short, because the usual answer here is "the target has no bytes yet" and
+ * that is discovered almost at once: the reader gets an end-of-stream where
+ * the disk runs out. The bound only exists so a decoder that opens but crawls
+ * cannot spend the whole switch's patience on the copy that is not there.
+ */
+private const val ALIGNMENT_RENDITION_TIMEOUT_MS = 8_000L
 
 private fun Song.canStartStation(): Boolean =
     videoId.isNotBlank() &&
@@ -525,6 +551,15 @@ class PlaybackService : MediaLibraryService() {
 
     private val audioManager by lazy { getSystemService(AudioManager::class.java) }
     private val bluetoothTracker by lazy { BluetoothAudioTracker(this) }
+    /**
+     * Userspace USB output, the one path that takes AudioFlinger out of the
+     * signal chain rather than asking it nicely. Created lazily and shared by
+     * both players' sinks.
+     */
+    private val exclusiveUsb by lazy { ExclusiveUsbOutput(this) }
+    private val usbDacMonitor by lazy { UsbDacMonitor(this, scope) }
+    /** Last availability line this service put in the signal-path row. */
+    private var lastUsbAvailabilityDetail: String? = null
     private var currentAudioInputFormat: Format? = null
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
@@ -586,6 +621,8 @@ class PlaybackService : MediaLibraryService() {
     private val spatialAudioProcessorB = SpatialAudioProcessor()
     private val equalizerProcessorA = EqualizerProcessor()
     private val equalizerProcessorB = EqualizerProcessor()
+    private val jamesDspProcessorA = JamesDspProcessor()
+    private val jamesDspProcessorB = JamesDspProcessor()
     private val transitionFilterA = TransitionFilterProcessor()
     private val transitionFilterB = TransitionFilterProcessor()
 
@@ -701,6 +738,17 @@ class PlaybackService : MediaLibraryService() {
      * every time playback paused without a presence ever having been set.
      */
     private var discordPresenceUp = false
+
+    /**
+     * Releases the Discord gateway when the app leaves the screen with nothing
+     * playing — the pause-before-background case, which doesn't fire a playback
+     * event of its own. See [clearDiscordPresence].
+     */
+    private val discordIdleObserver = object : DefaultLifecycleObserver {
+        override fun onStop(owner: LifecycleOwner) {
+            if (player?.isPlaying != true) clearDiscordPresence(releaseSocket = true)
+        }
+    }
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val localBitrateCache = ConcurrentHashMap<String, LocalBitrateReading>()
@@ -860,6 +908,10 @@ class PlaybackService : MediaLibraryService() {
             if (isPlaying) prefetchAround(exoPlayer) else cancelPrefetch()
             if (isPlaying) lookForBetterCopy(exoPlayer)
             savePlaybackState(exoPlayer)
+            // Everything the sampler records is about audible time, so its job
+            // exists exactly while audio does instead of waking every five
+            // seconds to rediscover a paused player.
+            if (isPlaying) reportProgress() else stopProgressReporting()
             // Not strictly needed for the glyph — onPlayWhenReadyChanged has
             // already flipped that — but this is where hasNext/hasPrevious and
             // the artwork are known to be settled.
@@ -897,7 +949,11 @@ class PlaybackService : MediaLibraryService() {
                 pushDiscordPresence(exoPlayer)
                 startLyricsTicker()
             } else {
-                clearDiscordPresence()
+                // Released only once the app is also off screen: a pause with
+                // the app still open keeps the socket for an immediate resume,
+                // while a pause in the background would otherwise leave it
+                // heartbeating a presence-less session until the process dies.
+                clearDiscordPresence(releaseSocket = !AndroidPresence.isForeground)
                 stopLyricsTicker()
             }
         }
@@ -914,6 +970,10 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // usbdevfs has no AudioTrack to pause; the writer's own gate has
+            // to follow the listener's transport state. playWhenReady stays
+            // true while buffering, so this does not lock out seek pre-fill.
+            if (AppSettings.bitPerfect.value) exclusiveUsb.setPaused(!playWhenReady)
             // Something started the phone's own player while a receiver is the
             // speaker — an internal path, since the session player's door
             // already sends a listener's play to the receiver. The phone goes
@@ -963,6 +1023,20 @@ class PlaybackService : MediaLibraryService() {
                 mediaItem.mediaId == swappingMediaId
             ) {
                 swappingMediaId = null
+                return
+            }
+
+            // A queue built before the listener marked an act as AI (or hid it)
+            // would otherwise still walk straight into that track on the next
+            // automatic advance. Filtering at build time cannot cover a queue
+            // that is already in the player, so enforce the same rule here,
+            // before anything books the track as played. The seek is posted:
+            // moving the player from inside its own transition callback is
+            // re-entrant, and one skip would arrive as two.
+            if (!castPlayback.active && mediaItem != null &&
+                AppSettings.isSongBlocked(mediaItem.toSong())
+            ) {
+                skipBlockedMediaItem(exoPlayer)
                 return
             }
 
@@ -1134,6 +1208,17 @@ class PlaybackService : MediaLibraryService() {
                 about = audioFormatFor,
             )
             activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(format.sampleMimeType)
+            if (activeTrackIsDolbyAtmos) {
+                // The one line that proves the immersive path end to end: the
+                // decoder is being handed a Dolby bitstream, and the badge is
+                // about to say so. `adb logcat -s ATMOS:I` is enough to check
+                // it — the platform-vs-software line is in this tag as well.
+                TrackLog.i(
+                    "ATMOS",
+                    "$audioFormatFor <- ${format.sampleMimeType} $khz $channels; badge=Dolby Atmos",
+                    about = audioFormatFor,
+                )
+            }
             applySpatialAudioEnabled()
             publishNerdStats()
             currentAudioInputFormat = format
@@ -1273,6 +1358,10 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
 
+        // The Discord gateway has no playback event to key its teardown on when
+        // the listener pauses and then leaves; ProcessLifecycleOwner does.
+        ProcessLifecycleOwner.get().lifecycle.addObserver(discordIdleObserver)
+
         if (com.music.bitchord.data.innertube.Innertube.cookie == null) {
             com.music.bitchord.data.innertube.Innertube.cookie = com.music.bitchord.auth.AuthStore(this).cookie
         }
@@ -1393,7 +1482,23 @@ class PlaybackService : MediaLibraryService() {
             // Answer it before StreamChoice, the module race and a pending
             // upgrade can put another source back under the listener.
             if (dataSpec.uri.getQueryParameter(DIRECT_YOUTUBE_PARAMETER) == "1") {
-                QualityUpgrade.forget(videoId)
+                // The switch is honoured here too. An item carries this
+                // parameter when the listener asked for the original or a
+                // substitute failed and can't be retried — both are requests
+                // for YouTube's own bytes, and with YouTube switched off there
+                // are none to serve. Failing says so; resolving anyway would
+                // make the switch a preference rather than a switch.
+                if (!SourceRegistry.youtubeEnabled()) {
+                    throw java.io.IOException(
+                        "YouTube Music is turned off; $videoId asks for its stream directly",
+                    )
+                }
+                // Whatever upgrade was in flight for this item goes with the
+                // rendition, but the listener's own request to look again does
+                // not: this is the item "Upgrade quality" is offered for, and
+                // its own open would otherwise clear the exemption that makes
+                // the request work — see [QualityUpgrade.askByHand].
+                QualityUpgrade.forget(videoId, keepHandAsk = true)
                 StreamChoice.forget(videoId)
                 NerdStats.clearDeclared(videoId)
                 NerdStats.recordSource(videoId, "YouTube")
@@ -1418,6 +1523,16 @@ class PlaybackService : MediaLibraryService() {
                     dataSpec.uri.getQueryParameter(AutomixAnalysisSource.OPUS_QUERY_PARAMETER),
                 )
             ) {
+                // Analysis reads YouTube's own Opus encoding, so it has the
+                // same problem as the direct request above: with YouTube off
+                // there is nothing here to analyse. The blend is skipped for
+                // this transition rather than a stream played from a source
+                // the listener turned off.
+                if (!SourceRegistry.youtubeEnabled()) {
+                    throw java.io.IOException(
+                        "YouTube Music is turned off; automix analysis for $videoId needs its audio",
+                    )
+                }
                 NerdStats.recordSource(videoId, "YouTube")
                 val streamUrl = try {
                     runBlocking(about) {
@@ -1481,63 +1596,96 @@ class PlaybackService : MediaLibraryService() {
             // the end of the cached bytes. Deciding afresh each time is how
             // the middle of an MP4 ended up appended to a WebM. See
             // [StreamChoice].
-            StreamChoice.of(videoId)?.let { serving ->
-                // What the stream claims to be, restated on every open rather
-                // than only on the one that chose it.
-                //
-                // The race below is what used to report this, and it was enough
-                // while the race was the only way a substitution could be made.
-                // Read-ahead now pins one before the track is reached, so a
-                // warmed track arrives *here* on its very first open and never
-                // reaches the race at all — leaving the player with a 320kbps
-                // stream and nothing on record saying so, and the quality badge
-                // reading blank until the decoder got far enough to measure it
-                // for itself.
-                //
-                // Only when the format states something. A plain YouTube choice
-                // is remembered with an empty one, and writing that over a
-                // claim some other path made would be worse than saying nothing.
-                val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
-                    ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
-                if (serving.format != StreamFormat()) {
-                    NerdStats.onSourceStream(videoId, serving.format, sourceName)
+            // A URL warmed before the switch was flipped is still YouTube's,
+            // and serving it would make the switch a preference for everything
+            // already in flight. Dropping the pin lets the ordinary path below
+            // find a source — or say why it can't.
+            // The prepared copy is the answer the hand-over is supposed to use,
+            // and it can still be in flight when this open happens: read-ahead
+            // resolves the next track while the current one plays, the player
+            // opens that next item before it is reached, and the two overlap.
+            // Racing here would let YouTube win — and pin it — before the
+            // source's answer landed, so the hand-over would start on YouTube
+            // and only reach lossless by upgrading mid-song. Waiting on the
+            // preparation, briefly and only while it is actually running, is
+            // what makes the pin authoritative. A miss ends the wait at once,
+            // and so does the pin arriving; whichever comes first.
+            var pinned = StreamChoice.of(videoId)
+            if (pinned == null && StreamChoice.isAwaitingPreparation(videoId)) {
+                runBlocking(about) {
+                    withTimeoutOrNull(PREPARED_PIN_WAIT_MS) {
+                        while (StreamChoice.isAwaitingPreparation(videoId)) delay(PREPARED_PIN_POLL_MS)
+                    }
                 }
-                NerdStats.recordSource(videoId, sourceName)
-                // Read-ahead can pin JioSaavn's quick 320kbps answer before
-                // this track becomes current.  It is the right answer for an
-                // immediate start, but it is not the final quality verdict:
-                // returning here used to bypass [resolveWithModulePriority],
-                // the only path which calls [QualityUpgrade.settledForLess].
-                // Consequently a warmed track displayed its high-quality
-                // source but never kept the upgrading state or asked the
-                // module for its lossless copy.
-                //
-                // Only substituted, non-lossless choices need this. A pinned
-                // YouTube URL has no source result to promote, and a lossless
-                // module result already satisfies the request.
-                if (StreamChoice.isSubstitute(videoId) &&
-                    serving.format.isLossless != true &&
-                    QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
-                ) {
-                    val pending = QualityUpgrade.settledForLess(
-                        mediaId = videoId,
-                        target = SourceResolver.targetIn(dataSpec.uri),
-                        playing = serving.format,
-                        servedBy = serving.sourceConfigId,
-                    )
-                    if (!pending) NerdStats.onLosslessRaceEnd(videoId)
-                }
-                return@Resolver dataSpec.buildUpon()
-                    .setUri(Uri.parse(serving.url))
-                    .setHttpRequestHeaders(serving.headers)
-                    .build()
+                pinned = StreamChoice.of(videoId)
             }
+            pinned
+                ?.takeIf { StreamChoice.isSubstitute(videoId) || SourceRegistry.youtubeEnabled() }
+                ?.let { serving ->
+                    // What the stream claims to be, restated on every open rather
+                    // than only on the one that chose it.
+                    //
+                    // The race below is what used to report this, and it was enough
+                    // while the race was the only way a substitution could be made.
+                    // Read-ahead now pins one before the track is reached, so a
+                    // warmed track arrives *here* on its very first open and never
+                    // reaches the race at all — leaving the player with a 320kbps
+                    // stream and nothing on record saying so, and the quality badge
+                    // reading blank until the decoder got far enough to measure it
+                    // for itself.
+                    //
+                    // Only when the format states something. A plain YouTube choice
+                    // is remembered with an empty one, and writing that over a
+                    // claim some other path made would be worse than saying nothing.
+                    val sourceName = serving.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
+                        ?: if (StreamChoice.isSubstitute(videoId)) "Module" else "YouTube"
+                    if (serving.format != StreamFormat()) {
+                        NerdStats.onSourceStream(videoId, serving.format, sourceName)
+                    }
+                    NerdStats.recordSource(videoId, sourceName)
+                    // Read-ahead can pin JioSaavn's quick 320kbps answer before
+                    // this track becomes current.  It is the right answer for an
+                    // immediate start, but it is not the final quality verdict:
+                    // returning here used to bypass [resolveWithModulePriority],
+                    // the only path which calls [QualityUpgrade.settledForLess].
+                    // Consequently a warmed track displayed its high-quality
+                    // source but never kept the upgrading state or asked the
+                    // module for its lossless copy.
+                    //
+                    // Only substituted, non-lossless choices need this. A pinned
+                    // YouTube URL has no source result to promote, and a lossless
+                    // module result already satisfies the request.
+                    if (StreamChoice.isSubstitute(videoId) &&
+                        serving.format.isLossless != true &&
+                        QualityUpgrade.couldStillUpgrade(videoId, dataSpec.uri)
+                    ) {
+                        val pending = QualityUpgrade.settledForLess(
+                            mediaId = videoId,
+                            target = SourceResolver.targetIn(dataSpec.uri),
+                            playing = serving.format,
+                            servedBy = serving.sourceConfigId,
+                        )
+                        if (!pending) NerdStats.onLosslessRaceEnd(videoId)
+                    }
+                    return@Resolver dataSpec.buildUpon()
+                        .setUri(Uri.parse(serving.url))
+                        .setHttpRequestHeaders(serving.headers)
+                        .build()
+                }
             // A track queued from YouTube may be held by a source the user
             // ranked above it — see [SourceResolver.substituteForYouTube] and
             // [raceYouTubeOrModule]. Only worth the extra lookup when
             // something actually outranks YouTube; otherwise this is the
             // plain resolve every build before this one made.
             if (!SourceResolver.canSubstituteForYouTube()) {
+                // With YouTube switched off and no source enabled, the walk
+                // below has nothing to race and this direct resolve would be
+                // the one thing the switch forbids.
+                if (!SourceRegistry.youtubeEnabled()) {
+                    throw java.io.IOException(
+                        "YouTube Music is turned off and no other source is enabled",
+                    )
+                }
                 val streamUrl = try {
                     runBlocking(about) {
                         withTimeout(RESOLVE_TIMEOUT_MS) { StreamResolver.resolve(videoId) }
@@ -1649,6 +1797,7 @@ class PlaybackService : MediaLibraryService() {
             singProcessorA,
             spatialAudioProcessorA,
             equalizerProcessorA,
+            jamesDspProcessorA,
             transitionFilterA,
             loudnessA,
             ownsSession = true,
@@ -1657,6 +1806,7 @@ class PlaybackService : MediaLibraryService() {
             singProcessorB,
             spatialAudioProcessorB,
             equalizerProcessorB,
+            jamesDspProcessorB,
             transitionFilterB,
             loudnessB,
             ownsSession = false,
@@ -1728,8 +1878,6 @@ class PlaybackService : MediaLibraryService() {
         // publisher reads the format off the player, so it can't go stale
         // against the track the bitrate is looked up for.
         exoPlayer.addAnalyticsListener(formatListener)
-
-        reportProgress()
 
         val controller = createCrossfadeController()
         crossfade = controller
@@ -1827,7 +1975,7 @@ class PlaybackService : MediaLibraryService() {
                 loudnessA.setBlendTrim(trim)
                 loudnessB.setBlendTrim(trim)
             },
-            versionSwapActive = { versionSwapJob?.isActive == true },
+            versionSwapActive = { versionSwapJob?.isActive == true || upgradeFadeActive },
         )
 
     /** Favorite and Shuffle: the only actions shown on the phone notification. */
@@ -1994,6 +2142,12 @@ class PlaybackService : MediaLibraryService() {
             TrackLog.d("BitChord", "version swap deferred: Automix is mid-transition", about = currentItem.mediaId)
             return
         }
+        // The same standby, for the same reason: a quality upgrade may already
+        // have it loading the proved stream at the live position.
+        if (upgradeFadeActive) {
+            TrackLog.d("BitChord", "version swap deferred: a quality upgrade is fading", about = currentItem.mediaId)
+            return
+        }
 
         val sourceSong = currentItem.toSong()
         val targetSong = targetMediaItem.toSong()
@@ -2010,7 +2164,18 @@ class PlaybackService : MediaLibraryService() {
             try {
                 val startPosition = activePlayer.currentPosition
                 val alignmentOffsetMs = if (smartAlignEnabled) {
-                    prepareVersionAlignment(sourceSong, targetSong, startPosition)
+                    // The files the players read, not just the analysis
+                    // copies: an addon or local track may have no analysis
+                    // rendition at all, and these are the bytes the fade will
+                    // actually join.
+                    prepareVersionAlignment(
+                        sourceSong = sourceSong,
+                        targetSong = targetSong,
+                        currentPosMs = startPosition,
+                        sourcePlaybackUri = currentItem.localConfiguration?.uri,
+                        targetPlaybackUri = targetMediaItem.localConfiguration?.uri,
+                        durationMs = activePlayer.duration,
+                    )
                 } else {
                     0L
                 }
@@ -2125,24 +2290,28 @@ class PlaybackService : MediaLibraryService() {
                 // behind — a few hundred reads as a doubled word rather than
                 // as an alignment.
                 standbyPlayer.play()
-                val runningTimeout = SystemClock.elapsedRealtime() + 600L
-                while (isActive && !standbyPlayer.isPlaying && SystemClock.elapsedRealtime() < runningTimeout) {
+                val runningTimeout = SystemClock.elapsedRealtime() + UPGRADE_FADE_START_MS
+                while (isActive && !standbyPlayer.isProducingAudio() &&
+                    SystemClock.elapsedRealtime() < runningTimeout
+                ) {
                     delay(10)
                 }
-                if (standbyPlayer.isPlaying) {
+                if (standbyPlayer.isProducingAudio()) {
                     // Now that it is producing audio — still at zero volume —
-                    // put it exactly where the outgoing player is *now*. The
-                    // near-seek lands inside the buffer it already holds, so
-                    // the drift accumulated above collapses to this seek's own
-                    // resume time, which is the one part that cannot go.
-                    standbyPlayer.seekTo(
-                        currentIndex,
-                        (activePlayer.currentPosition + alignmentOffsetMs).coerceAtLeast(0L),
+                    // put it exactly where the outgoing player is *now*, in
+                    // content terms. Each seek lands the incoming player at
+                    // the position read a moment earlier, so it re-enters the
+                    // blend by its own resume latency; [alignIncomingToLive]
+                    // aims that ahead and iterates until both clocks agree
+                    // instead of fading in on a doubled word.
+                    alignIncomingToLive(
+                        standby = standbyPlayer,
+                        active = activePlayer,
+                        index = currentIndex,
+                        offsetMs = alignmentOffsetMs,
+                        budgetMs = UPGRADE_FADE_RESYNC_MS,
+                        mediaId = mediaId,
                     )
-                    val resyncTimeout = SystemClock.elapsedRealtime() + 300L
-                    while (isActive && standbyPlayer.playbackState != Player.STATE_READY && SystemClock.elapsedRealtime() < resyncTimeout) {
-                        delay(10)
-                    }
                 }
             } else {
                 // Paused swap: nothing is running on either side, so the first
@@ -2238,7 +2407,59 @@ class PlaybackService : MediaLibraryService() {
      */
     private val versionAlignmentMeasurements = ConcurrentHashMap<Pair<String, String>, Deferred<Long?>>()
 
-    private fun measureVersionAlignmentAsync(sourceSong: Song, targetSong: Song): Deferred<Long?> {
+    /**
+     * Measures the shift between the two copies a version swap is about to
+     * join, named by the URIs the players use rather than by song id.
+     *
+     * This is the measurement that works when there is no analysis rendition
+     * to fall back on — an addon-only track, a local file, or a pair that is
+     * the same id on both sides. It returns null quickly when either side has
+     * no bytes cached at the region, which is the ordinary case for a target
+     * that has never played; the caller then takes the analysis copies.
+     */
+    private suspend fun measureRenditionPair(
+        sourceUri: Uri,
+        targetUri: Uri,
+        fromMs: Long,
+        durationMs: Long,
+        aboutId: String,
+    ): Long? {
+        val sourceKey = AudioCache.cacheKeyOf(sourceUri)
+        val targetKey = AudioCache.cacheKeyOf(targetUri)
+        if (sourceKey == targetKey) return 0L
+        VersionAudioAligner.getCachedRenditionOffsetMs(sourceKey, targetKey)?.let { return it }
+        return try {
+            withTimeoutOrNull(ALIGNMENT_RENDITION_TIMEOUT_MS) {
+                VersionAudioAligner.findRenditionOffsetMs(
+                    source = VersionAudioAligner.RenditionSource(sourceUri, sourceKey),
+                    target = VersionAudioAligner.RenditionSource(targetUri, targetKey),
+                    fromMs = fromMs,
+                    durationMs = durationMs,
+                )
+            }?.also { offset ->
+                TrackLog.d(
+                    "BitChord",
+                    "version alignment measured on the playing copies: ${offset}ms " +
+                        "between $sourceKey and $targetKey",
+                    about = aboutId,
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w("BitChord", "version alignment on the playing copies failed: ${e.message}", about = aboutId)
+            null
+        }
+    }
+
+    private fun measureVersionAlignmentAsync(
+        sourceSong: Song,
+        targetSong: Song,
+        sourcePlaybackUri: Uri? = null,
+        targetPlaybackUri: Uri? = null,
+        currentPosMs: Long = 0L,
+        durationMs: Long = 0L,
+    ): Deferred<Long?> {
         val sourceId = sourceSong.videoId
         val targetId = targetSong.videoId
         val key = sourceId to targetId
@@ -2246,6 +2467,22 @@ class PlaybackService : MediaLibraryService() {
         versionAlignmentMeasurements[key]?.let { return it }
         val deferred = scope.async(Dispatchers.Main) {
             try {
+                // The files the players themselves read come first. For an
+                // addon or local copy the "analysis" URI below may never have
+                // been fetched at all, and for a pair whose ids match it cannot
+                // ask the right question — so the rendition key, which names
+                // the exact bytes, is the only measurement that can answer.
+                // When the target has not been played yet this finds nothing
+                // quickly, and the analysis copies below still get their turn.
+                if (sourcePlaybackUri != null && targetPlaybackUri != null) {
+                    measureRenditionPair(
+                        sourceUri = sourcePlaybackUri,
+                        targetUri = targetPlaybackUri,
+                        fromMs = currentPosMs,
+                        durationMs = durationMs,
+                        aboutId = sourceId,
+                    )?.let { return@async it }
+                }
                 val sourceUri = Uri.parse(sourceSong.localUri ?: AutomixAnalysisSource.opusUri(sourceId))
                 val targetUri = Uri.parse(targetSong.localUri ?: AutomixAnalysisSource.opusUri(targetId))
                 withContext(Dispatchers.IO) {
@@ -2296,6 +2533,9 @@ class PlaybackService : MediaLibraryService() {
         sourceSong: Song,
         targetSong: Song,
         currentPosMs: Long,
+        sourcePlaybackUri: Uri? = null,
+        targetPlaybackUri: Uri? = null,
+        durationMs: Long = 0L,
     ): Long {
         val sourceId = sourceSong.videoId
         val targetId = targetSong.videoId
@@ -2314,7 +2554,14 @@ class PlaybackService : MediaLibraryService() {
         val token = VersionAudioAligner.beginAttempt(sourceId, targetId)
         try {
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.FETCHING)
-            val deferred = measureVersionAlignmentAsync(sourceSong, targetSong)
+            val deferred = measureVersionAlignmentAsync(
+                sourceSong = sourceSong,
+                targetSong = targetSong,
+                sourcePlaybackUri = sourcePlaybackUri,
+                targetPlaybackUri = targetPlaybackUri,
+                currentPosMs = currentPosMs,
+                durationMs = durationMs,
+            )
             VersionAudioAligner.publishPhase(token, VersionAudioAligner.CutPhase.MEASURING)
             val measured = deferred.await()
             if (measured == null) {
@@ -2357,6 +2604,11 @@ class PlaybackService : MediaLibraryService() {
 
         mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
 
+        // Before the outgoing player is stopped: the controller's listener now
+        // sits on the player about to be silenced, and the next arm would load
+        // a queue under it.
+        crossfade?.rebind()
+
         incoming.volume = 1f
         outgoing.stop()
         outgoing.clearMediaItems()
@@ -2370,6 +2622,736 @@ class PlaybackService : MediaLibraryService() {
             previousEnded = false,
             reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
             alreadyAudible = true,
+        )
+    }
+
+    /** How a proved upgrade got onto the session player. */
+    private enum class UpgradeSwap { Crossfaded, Fallback, Abandoned, Failed }
+
+    /** Ready with the clock moving: both a held buffer and an extracted frame. */
+    private fun Player.isProducingAudio(): Boolean =
+        playbackState == Player.STATE_READY && isPlaying
+
+    /**
+     * Returns the outgoing player to full gain over a short ramp.
+     *
+     * The exit from a blend that died mid-ramp: the incoming side is already
+     * silent (it stalled, or the correction could not resume it), and jumping
+     * the original from half volume to full in one tick is a click of its own.
+     * Main thread.
+     */
+    private suspend fun restoreOutgoingVolume(player: Player) {
+        val from = player.volume
+        if (from >= 1f) return
+        val restoreMs = 150L
+        val startedAt = SystemClock.elapsedRealtime()
+        while (currentCoroutineContext().isActive) {
+            val progress = ((SystemClock.elapsedRealtime() - startedAt).toFloat() / restoreMs)
+                .coerceIn(0f, 1f)
+            player.volume = from + (1f - from) * progress
+            if (progress >= 1f) break
+            delay(8)
+        }
+        player.volume = 1f
+    }
+
+    /**
+     * Blends the proved upgrade in on the standby player instead of cutting the
+     * audio while the active one rebuilds its source.
+     *
+     * The audition has already filled the same on-disk cache entry this player
+     * reads from and proved the decoder can open it, so what is left here is a
+     * seek and a start — but both have to be *seen to work* before the original
+     * gives up any volume. A standby that is merely READY can still be about to
+     * re-buffer, and fading over it is how this first shipped as a fade-out
+     * followed by the old 0.5s hole. The two sides then overlap for
+     * [UPGRADE_CROSSFADE_MS] on equal-power curves, and the incoming player is
+     * adopted without track-change bookkeeping — it is the same song.
+     *
+     * Every exit that is not [UpgradeSwap.Crossfaded] leaves the active player
+     * exactly as it was found, so the caller's direct swap stays safe:
+     * [UpgradeSwap.Fallback] means do it, [UpgradeSwap.Abandoned] means keep
+     * the proved stream for later, [UpgradeSwap.Failed] means it did not open
+     * on a second decoder either and should not be offered again.
+     *
+     * Main thread.
+     */
+    private suspend fun crossfadeUpgradeIn(
+        mediaId: String,
+        at: SwapPoint,
+        upgradedItem: MediaItem,
+        upgradedUri: String,
+    ): UpgradeSwap {
+        // The caller's direct swap reads this when the fade falls back, and a
+        // figure left from the previous upgrade would land the new one seconds
+        // off — including on every path that declines the fade below.
+        upgradeFadeOffsetMs = 0L
+        // Opt-in, off by default. See the confirmation in Settings.
+        if (!AppSettings.seamlessQualityUpgrade.value) return UpgradeSwap.Fallback
+        // Bit-perfect promises no stage alters the samples, and a blend of two
+        // decoders is the largest alteration this app can make. The proved
+        // stream still goes in; it just goes in on the direct swap.
+        if (AppSettings.bitPerfect.value) return UpgradeSwap.Fallback
+        // A party plays through one continuous session player — see
+        // [PartySync] — so it keeps the direct swap.
+        if (ListenTogether.state.value.inParty) return UpgradeSwap.Fallback
+        if (castPlayback.active) return UpgradeSwap.Fallback
+        // Both use the same standby pair. The caller waited these out, but the
+        // two checks are cheap and neither may be armed under this fade.
+        if (upgradeFadeActive || versionSwapJob?.isActive == true) return UpgradeSwap.Abandoned
+        if (crossfade?.isTransitioning() == true) return UpgradeSwap.Abandoned
+        if (crossfade == null) return UpgradeSwap.Fallback
+
+        val active = player ?: return UpgradeSwap.Fallback
+        val standby = spare ?: return UpgradeSwap.Fallback
+        val index = active.currentMediaItemIndex
+        if (index !in 0 until active.mediaItemCount || active.currentMediaItem?.mediaId != mediaId) {
+            return UpgradeSwap.Abandoned
+        }
+        // Nothing to mask on a paused session, and a second decoder starting
+        // under one is pure cost.
+        if (!active.isPlaying || active.playbackState != Player.STATE_READY) return UpgradeSwap.Fallback
+        if (active.playerError != null || standby.playerError != null) return UpgradeSwap.Fallback
+
+        val items = (0 until active.mediaItemCount).map { i ->
+            if (i == index) upgradedItem else active.getMediaItemAt(i)
+        }
+        val startPosition = active.currentPosition
+
+        // The two copies are not necessarily the same cut at the same
+        // timestamps — see [measureUpgradeAlignment]. Started here, while the
+        // standby opens, so the seconds it takes are spent concurrently with
+        // the prepare rather than in front of the fade.
+        val alignmentJob = if (AppSettings.smartVersionAlignment.value) {
+            scope.async(Dispatchers.IO) { measureUpgradeAlignment(at, upgradedUri, startPosition) }
+        } else {
+            null
+        }
+        var offsetMs = 0L
+
+        // Held from the first touch of the standby rather than from the fade:
+        // preparing takes seconds, and an Automix plan or a version switch
+        // arriving in that window would load its own queue over this one.
+        upgradeFadeActive = true
+        var adopted = false
+        try {
+            standby.stop()
+            standby.clearMediaItems()
+            standby.skipSilenceEnabled = active.skipSilenceEnabled
+            standby.repeatMode = active.repeatMode
+            standby.shuffleModeEnabled = active.shuffleModeEnabled
+            // The listener's speed, not the active player's — see the same
+            // line in [smoothSwapCurrentTrackVersion].
+            standby.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            standby.volume = 0f
+            standby.setMediaItems(items, index, startPosition)
+            // Before prepare(), so the DSP applies the upgraded track's gain
+            // from its first frame rather than the outgoing one's.
+            spareLoudness().track(mediaId, nextMediaIdOf(standby))
+            standby.playWhenReady = false
+            standby.prepare()
+
+            val prepareBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_PREPARE_MS
+            while (currentCoroutineContext().isActive) {
+                if (player !== active || active.currentMediaItemIndex != index ||
+                    active.currentMediaItem?.mediaId != mediaId
+                ) {
+                    return UpgradeSwap.Abandoned
+                }
+                val error = standby.playerError
+                if (error != null || standby.playbackState == Player.STATE_ENDED) {
+                    TrackLog.w(
+                        "BitChord",
+                        "upgrade fade standby failed: ${error?.errorCodeName ?: "ended early"}",
+                        about = mediaId,
+                    )
+                    return UpgradeSwap.Failed
+                }
+                if (standby.playbackState == Player.STATE_READY) break
+                if (SystemClock.elapsedRealtime() >= prepareBy) {
+                    // The original is still playing and has lost nothing, so
+                    // this is not a failure worth cutting for. Returning it to
+                    // the shelf leaves the proved bytes in the cache for the
+                    // next attempt (and for the next play of the track, which
+                    // adopts a cached better copy) without the silence the
+                    // direct swap would have cost.
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade fade standby not ready in ${UPGRADE_FADE_PREPARE_MS}ms; keeping the original",
+                        about = mediaId,
+                    )
+                    return UpgradeSwap.Abandoned
+                }
+                delay(20)
+            }
+            if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
+            // A pause during the wait has taken the audio away; the direct
+            // swap is free there, and a second decoder would be pure cost.
+            if (!active.isPlaying) return UpgradeSwap.Fallback
+
+            // Now that the standby is open, the measured shift between the two
+            // copies decides where it has to sit. Awaited here rather than
+            // before the prepare so the decode and the open run at the same
+            // time; the original plays through both.
+            offsetMs = awaitUpgradeAlignment(mediaId, alignmentJob)
+            // Published for the direct swap the caller may still have to make:
+            // a pause during any wait below falls back to it, and the listener
+            // must resume at the same *content*, not the same timestamp.
+            upgradeFadeOffsetMs = offsetMs
+
+            // The item was prepared at the position the listener held when the
+            // fade was armed; the original has kept playing while it buffered.
+            // Wait for the loader to cover where the listener is *now*, too —
+            // including the measured shift, which can put the incoming copy
+            // seconds away from the position that was prepared. A forward seek
+            // past the end of the buffer is the same re-buffer the direct swap
+            // used to pay, and fading the original out over it would hide
+            // nothing.
+            //
+            // Aim the paused standby there first. The prepare opened at the
+            // arm-time position and the loader walks forward from it, so a
+            // large shift would otherwise have to be read through in full — and
+            // stopped at the load control's buffer cap, the wait would expire
+            // and give up an upgrade the connection could have served. Seeking
+            // now fetches the region the blend needs instead of the gap before
+            // it; the wait below then measures the same fetch.
+            standby.seekTo(
+                index,
+                UpgradeFadeAlignment.incomingPositionMs(
+                    active.currentPosition,
+                    offsetMs,
+                    standby.duration,
+                ),
+            )
+            val alignBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_ALIGN_MS
+            while (currentCoroutineContext().isActive) {
+                if (player !== active || active.currentMediaItemIndex != index ||
+                    active.currentMediaItem?.mediaId != mediaId
+                ) {
+                    return UpgradeSwap.Abandoned
+                }
+                val error = standby.playerError
+                if (error != null || standby.playbackState == Player.STATE_ENDED) {
+                    return UpgradeSwap.Failed
+                }
+                // A negative buffered position means "not reported" (some
+                // manifest sources); the start and advance proofs below still
+                // catch a seek that has to go back to the network.
+                val liveTarget = UpgradeFadeAlignment.incomingPositionMs(
+                    active.currentPosition,
+                    offsetMs,
+                    standby.duration,
+                )
+                val buffered = standby.bufferedPosition
+                if (buffered < 0 || buffered >= liveTarget + UPGRADE_FADE_BUFFER_AHEAD_MS) break
+                if (SystemClock.elapsedRealtime() >= alignBy) {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade fade buffer did not reach the live position; keeping the original",
+                        about = mediaId,
+                    )
+                    return UpgradeSwap.Abandoned
+                }
+                delay(20)
+            }
+            if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
+            if (!active.isPlaying) return UpgradeSwap.Fallback
+
+            // Start it muted, then put it where the listener is *now*, and
+            // only accept the result while it is genuinely running. READY
+            // alone is not enough — a seek can report READY and then re-buffer
+            // — and a blend that starts on a silent incoming side is exactly
+            // the fade-out-then-hole this path exists to remove.
+            standby.seekTo(
+                index,
+                UpgradeFadeAlignment.incomingPositionMs(
+                    active.currentPosition,
+                    offsetMs,
+                    standby.duration,
+                ),
+            )
+            standby.play()
+            val startBy = SystemClock.elapsedRealtime() + UPGRADE_FADE_START_MS
+            while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
+                SystemClock.elapsedRealtime() < startBy
+            ) {
+                delay(10)
+            }
+            if (standby.playerError != null) return UpgradeSwap.Failed
+            if (!standby.isProducingAudio()) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade standby never started; keeping the original",
+                    about = mediaId,
+                )
+                return UpgradeSwap.Abandoned
+            }
+
+            // Not merely running — running at the same point in the song. A
+            // seek lands the incoming player at the position read a moment
+            // earlier, so it re-enters the blend by the seek's own resume
+            // latency every time; that is the doubled word the old single
+            // resync still produced. The correction aims that latency ahead
+            // and iterates until both clocks agree.
+            var resumeLatencyMs = alignIncomingToLive(
+                standby,
+                active,
+                index,
+                offsetMs,
+                UPGRADE_FADE_RESYNC_MS,
+                mediaId,
+            ) ?: run {
+                // A pause makes the direct swap free; a running session keeps
+                // the original rather than cutting it for a blend there is no
+                // time left to prove.
+                if (!active.isPlaying) return UpgradeSwap.Fallback
+                TrackLog.d("BitChord", "upgrade fade could not align; keeping the original", about = mediaId)
+                return UpgradeSwap.Abandoned
+            }
+
+            // Prove it is advancing samples, not merely flagged playing for the
+            // tick before the seek's load task reports BUFFERING.
+            val probeAt = standby.currentPosition
+            delay(120)
+            if (!standby.isProducingAudio() || standby.currentPosition <= probeAt) {
+                if (!active.isPlaying) return UpgradeSwap.Fallback
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade standby is not advancing; keeping the original",
+                    about = mediaId,
+                )
+                return UpgradeSwap.Abandoned
+            }
+
+            // Never blend into the track's own ending: both players would then
+            // run out together and the adopt would have nothing to adopt. The
+            // length is read from the player now rather than from [at]: the
+            // waits above can span seconds, and a stale one would arm a blend
+            // that runs past the end.
+            val duration = active.duration.takeIf { it > 0 } ?: at.duration
+            val remaining = if (duration > 0) duration - active.currentPosition else Long.MAX_VALUE
+            if (remaining < UPGRADE_FADE_MIN_REMAINING_MS) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade skipped: ${remaining}ms left is too little to blend",
+                    about = mediaId,
+                )
+                return UpgradeSwap.Abandoned
+            }
+            val fadeMs = if (remaining == Long.MAX_VALUE) {
+                UPGRADE_CROSSFADE_MS
+            } else {
+                minOf(UPGRADE_CROSSFADE_MS, remaining - 1_000L).coerceAtLeast(400L)
+            }
+
+            TrackLog.d(
+                "BitChord",
+                "upgrade fade armed: standby at ${standby.currentPosition}ms, buffered through " +
+                    "${standby.bufferedPosition}ms, live at ${active.currentPosition}ms, " +
+                    "shift ${offsetMs}ms, resume latency ${resumeLatencyMs}ms, blend ${fadeMs}ms",
+                about = mediaId,
+            )
+
+            var progress = 0f
+            var lastTick = SystemClock.elapsedRealtime()
+            var pausedSince: Long? = null
+            var stalledSince: Long? = null
+            while (currentCoroutineContext().isActive) {
+                val tick = SystemClock.elapsedRealtime()
+                val delta = tick - lastTick
+                lastTick = tick
+                if (player !== active || active.currentMediaItemIndex != index ||
+                    active.currentMediaItem?.mediaId != mediaId
+                ) {
+                    return UpgradeSwap.Abandoned
+                }
+                if (standby.playerError != null) return UpgradeSwap.Failed
+                if (standby.playWhenReady != active.playWhenReady) {
+                    standby.playWhenReady = active.playWhenReady
+                }
+                val activeRunning = active.isPlaying
+                val standbyRunning = standby.isProducingAudio()
+                if (activeRunning && standbyRunning) {
+                    pausedSince = null
+                    stalledSince = null
+                    // Frozen whenever either side is not running, so a pause or
+                    // a re-buffer picks the blend up rather than jumping it to
+                    // wherever the clock got to.
+                    progress = (progress + delta.toFloat() / fadeMs).coerceAtMost(1f)
+                    // A listener seek moves only the active player. Follow it
+                    // rather than let the two recordings part company — and
+                    // follow it in *content* terms, so the measured shift is
+                    // part of the comparison and the correction, not an error
+                    // the loop keeps trying to erase.
+                    val drift = UpgradeFadeAlignment.driftMs(
+                        active.currentPosition,
+                        standby.currentPosition,
+                        offsetMs,
+                    )
+                    if (abs(drift) > UPGRADE_FADE_MAX_DRIFT_MS) {
+                        // The full loop rather than one seek: it aims the
+                        // resume latency ahead and reads the result back,
+                        // so a listener seek does not leave the two sides
+                        // a fixed resume-time apart for the rest of the
+                        // blend.
+                        val corrected = alignIncomingToLive(
+                            standby,
+                            active,
+                            index,
+                            offsetMs,
+                            UPGRADE_FADE_RESYNC_MS,
+                            mediaId,
+                        )
+                        if (corrected == null) {
+                            if (!active.isPlaying) return UpgradeSwap.Fallback
+                            TrackLog.d(
+                                "BitChord",
+                                "upgrade fade lost alignment mid-blend; keeping the original",
+                                about = mediaId,
+                            )
+                            restoreOutgoingVolume(active)
+                            return UpgradeSwap.Abandoned
+                        }
+                        resumeLatencyMs = corrected
+                        // The correction held the blend still while it
+                        // sought and waited to resume; that time is not
+                        // blend time.
+                        lastTick = SystemClock.elapsedRealtime()
+                    }
+                } else if (activeRunning) {
+                    // The incoming side stalled after it was proved running — a
+                    // seek crossed the end of its buffer, or the network
+                    // hiccupped. Hold the blend where it is instead of fading
+                    // the original into silence. If it does not catch up, keep
+                    // the original: swapping directly here is the choice that
+                    // cuts the audio, and a proved upgrade is not worth a hole.
+                    pausedSince = null
+                    val since = stalledSince ?: tick.also { stalledSince = tick }
+                    if (tick - since >= UPGRADE_FADE_STALL_MS) {
+                        TrackLog.d("BitChord", "upgrade fade standby stalled; keeping the original", about = mediaId)
+                        restoreOutgoingVolume(active)
+                        return UpgradeSwap.Abandoned
+                    }
+                } else {
+                    stalledSince = null
+                    val since = pausedSince ?: tick.also { pausedSince = tick }
+                    if (tick - since >= UPGRADE_FADE_PAUSE_MS) {
+                        TrackLog.d("BitChord", "upgrade fade paused out; swapping directly", about = mediaId)
+                        return UpgradeSwap.Fallback
+                    }
+                }
+                val inGain = sin(progress * (PI / 2.0)).toFloat()
+                val outGain = cos(progress * (PI / 2.0)).toFloat()
+                standby.volume = inGain
+                active.volume = outGain
+                // The same headroom a crossfade takes, and for the same
+                // reason — see [LoudnessProcessor].
+                val trim = 1f / sqrt((inGain + outGain).coerceAtLeast(1f))
+                loudnessA.setBlendTrim(trim)
+                loudnessB.setBlendTrim(trim)
+                if (progress >= 1f && activeRunning && standbyRunning) break
+                delay(16)
+            }
+            if (!currentCoroutineContext().isActive) return UpgradeSwap.Abandoned
+
+            adoptPlayerForQualityUpgrade(active, standby, fadeMs)
+            adopted = true
+            return UpgradeSwap.Crossfaded
+        } finally {
+            // A measurement that outlived the fade it was started for has no
+            // reader left; cancelling it releases the decoder and the cache
+            // readers rather than letting them run out their timeout.
+            alignmentJob?.cancel()
+            upgradeFadeActive = false
+            AppSettings.versionAlignmentInProgress.value = false
+            loudnessA.setBlendTrim(1f)
+            loudnessB.setBlendTrim(1f)
+            // The role check guards an exception thrown *inside* the adoption,
+            // after the fields have already moved: stopping `standby` there
+            // would stop the new session player.
+            if (!adopted && player === active) {
+                standby.stop()
+                standby.clearMediaItems()
+                standby.playWhenReady = false
+                standby.volume = 1f
+                active.volume = 1f
+            }
+        }
+    }
+
+    /**
+     * The shift between the two files a quality upgrade joins, measured on the
+     * copies both players actually read.
+     *
+     * [VersionAudioAligner.findOffsetMs] cannot answer this: an upgrade is the
+     * *same* song id on both sides, and it short-circuits those to zero. The
+     * two files can still be different masters — a music video against the
+     * album cut, or a catalogue that pads the opening — so the fade has to be
+     * told where the same musical moment is in the incoming copy. The
+     * upgrade's rendition key says which bytes to open, which is what
+     * [VersionAudioAligner.findRenditionOffsetMs] takes.
+     *
+     * Runs beside the standby's prepare rather than in front of the fade:
+     * the outgoing copy plays through all of it.
+     *
+     * @return the measured shift, or null when neither the openings nor the
+     *   playback window correlated convincingly. Null is "no measurement",
+     *   never zero — the caller fades at the same timestamp when there is no
+     *   better answer, but the log says which of the two happened.
+     */
+    private suspend fun measureUpgradeAlignment(
+        at: SwapPoint,
+        upgradedUri: String,
+        fromMs: Long,
+    ): Long? {
+        val sourceUri = Uri.parse(at.uri)
+        val targetUri = Uri.parse(upgradedUri)
+        val sourceKey = AudioCache.cacheKeyOf(sourceUri)
+        val targetKey = AudioCache.cacheKeyOf(targetUri)
+        if (sourceKey == targetKey) return 0L
+
+        // The incoming copy is still being filled by the standby's prepare.
+        // A decode that starts before the loader reaches [fromMs] reads a hole
+        // and reports nothing, which is how a measurement that would have
+        // worked a second later came back empty. Wait for the bytes actually
+        // to be there — bounded, because this runs while the original plays
+        // and nothing is audible either way.
+        val cachedBy = SystemClock.elapsedRealtime() + UPGRADE_ALIGNMENT_CACHE_WAIT_MS
+        while (currentCoroutineContext().isActive &&
+            !AudioCache.hasCachedBytesAt(targetUri, fromMs) &&
+            SystemClock.elapsedRealtime() < cachedBy
+        ) {
+            delay(100)
+        }
+
+        return try {
+            withTimeoutOrNull(UPGRADE_FADE_ALIGNMENT_TIMEOUT_MS) {
+                var attempt = 0
+                while (currentCoroutineContext().isActive) {
+                    val offset = VersionAudioAligner.findRenditionOffsetMs(
+                        source = VersionAudioAligner.RenditionSource(sourceUri, sourceKey),
+                        target = VersionAudioAligner.RenditionSource(targetUri, targetKey),
+                        fromMs = fromMs,
+                        durationMs = at.duration,
+                        // Not cached: an upgrade's rendition key names a slot,
+                        // and the next candidate to fill it is a different file.
+                        cache = false,
+                    )
+                    // One retry, because the reader can land on the span the
+                    // standby is still writing and see a hole that is a moment
+                    // from closing. A second empty answer is the answer.
+                    if (offset != null || attempt >= 1) return@withTimeoutOrNull offset
+                    attempt++
+                    delay(400)
+                }
+                null
+            }.also { offset ->
+                if (offset != null) {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade alignment measured: ${offset}ms between $sourceKey and $targetKey",
+                        about = at.item.mediaId,
+                    )
+                } else {
+                    TrackLog.d(
+                        "BitChord",
+                        "upgrade alignment found no convincing shift between $sourceKey and $targetKey",
+                        about = at.item.mediaId,
+                    )
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            TrackLog.w("BitChord", "upgrade alignment failed: ${e.message}", about = at.item.mediaId)
+            null
+        }
+    }
+
+    /**
+     * Collects [measureUpgradeAlignment]'s answer before the standby is put
+     * where the listener is.
+     *
+     * The measurement normally finishes while the standby prepares — it is
+     * started first and the prepare takes seconds — so this is a wait on work
+     * already in flight, not an extra stage. It is bounded on its own because
+     * a stuck decoder must not hold the fade forever; past the bound the
+     * original keeps playing and the blend uses the same timestamp on both
+     * sides, which is what it did before alignment existed.
+     */
+    private suspend fun awaitUpgradeAlignment(mediaId: String, job: Deferred<Long?>?): Long {
+        if (job == null) return 0L
+        AppSettings.versionAlignmentInProgress.value = true
+        try {
+            val offset = withTimeoutOrNull(UPGRADE_FADE_ALIGNMENT_TIMEOUT_MS + 1_000L) {
+                job.await()
+            }
+            if (offset == null) {
+                TrackLog.d(
+                    "BitChord",
+                    "upgrade fade has no measured shift; both copies start at the same timestamp",
+                    about = mediaId,
+                )
+            }
+            return offset ?: 0L
+        } finally {
+            AppSettings.versionAlignmentInProgress.value = false
+        }
+    }
+
+    /**
+     * Puts the incoming player on the outgoing player's musical position and
+     * proves it stayed there.
+     *
+     * A seek is not instantaneous. The player reports its target at once,
+     * becomes ready a resume-time later, and resumes at that target while the
+     * outgoing player has moved on by exactly the resume time — so seeking to
+     * the live position re-enters the blend the same number of milliseconds
+     * behind every time, which is the doubled word a "successful" fade still
+     * had. [UpgradeFadeAlignment.correctionPositionMs] aims that far ahead
+     * using what the previous correction measured, and this loops until the
+     * clocks agree to [UpgradeFadeAlignment.FINE_DRIFT_MS] or the corrections
+     * run out.
+     *
+     * @return the residual resume latency the blend should use for later
+     *   corrections, or null when the standby never settled or the listener
+     *   paused out from under it. Zero is a valid, perfectly aligned answer.
+     */
+    private suspend fun alignIncomingToLive(
+        standby: ExoPlayer,
+        active: ExoPlayer,
+        index: Int,
+        offsetMs: Long,
+        budgetMs: Long,
+        mediaId: String,
+    ): Long? {
+        var resumeLatencyMs = 0L
+        for (attempt in 0..UpgradeFadeAlignment.MAX_CORRECTIONS) {
+            if (!currentCoroutineContext().isActive) return null
+            if (!active.isPlaying) return null
+            val live = active.currentPosition
+            val drift = UpgradeFadeAlignment.driftMs(live, standby.currentPosition, offsetMs)
+            if (abs(drift) <= UpgradeFadeAlignment.FINE_DRIFT_MS) {
+                TrackLog.d(
+                    "BitChord",
+                    "incoming player aligned after $attempt correction(s): drift ${drift}ms, shift ${offsetMs}ms",
+                    about = mediaId,
+                )
+                return resumeLatencyMs
+            }
+            if (attempt == UpgradeFadeAlignment.MAX_CORRECTIONS) {
+                if (abs(drift) <= UpgradeFadeAlignment.MAX_ACCEPTABLE_DRIFT_MS) {
+                    TrackLog.d(
+                        "BitChord",
+                        "incoming player settled ${drift}ms out after " +
+                            "${UpgradeFadeAlignment.MAX_CORRECTIONS} corrections; blending on that",
+                        about = mediaId,
+                    )
+                    return resumeLatencyMs
+                }
+                TrackLog.d(
+                    "BitChord",
+                    "incoming player still ${drift}ms out after " +
+                        "${UpgradeFadeAlignment.MAX_CORRECTIONS} corrections",
+                    about = mediaId,
+                )
+                return null
+            }
+            standby.seekTo(
+                index,
+                UpgradeFadeAlignment.correctionPositionMs(live, offsetMs, resumeLatencyMs),
+            )
+            val resumeBy = SystemClock.elapsedRealtime() + budgetMs
+            while (currentCoroutineContext().isActive && !standby.isProducingAudio() &&
+                SystemClock.elapsedRealtime() < resumeBy
+            ) {
+                delay(10)
+            }
+            if (!standby.isProducingAudio()) {
+                TrackLog.d("BitChord", "incoming player did not resume after a correction", about = mediaId)
+                return null
+            }
+            // Off the seek target and back onto the clock: until a buffer or
+            // two has played, currentPosition is still reporting the number the
+            // seek gave it, and reading it back would measure nothing at all.
+            delay(80)
+            if (!standby.isProducingAudio()) {
+                TrackLog.d("BitChord", "incoming player re-buffered after a correction", about = mediaId)
+                return null
+            }
+            val residual = UpgradeFadeAlignment.driftMs(
+                active.currentPosition,
+                standby.currentPosition,
+                offsetMs,
+            )
+            // The target already carried the previous estimate; only the
+            // leftover is this seek's resume time. Accumulating rather than
+            // replacing is what stops the correction oscillating between
+            // "aimed ahead" and "aimed straight".
+            resumeLatencyMs = (resumeLatencyMs + residual)
+                .coerceIn(0L, UpgradeFadeAlignment.MAX_RESUME_LATENCY_MS)
+        }
+        return null
+    }
+
+    /**
+     * [adoptPlayerForVersionSwap] for the same song at a better bitrate: the
+     * roles move, but none of the track-change bookkeeping runs. Scrobbling,
+     * history, ListenBrainz, sleep-after-this-song, the Autoplay refill and the
+     * gain read all belong to a *different* song, and the upgrade comments in
+     * [onTrackBecameCurrent] say why rerunning them here is audible: a second
+     * scrobble, a second history entry, and the running upgrade job cancelled
+     * by its own swap.
+     */
+    private fun adoptPlayerForQualityUpgrade(outgoing: ExoPlayer, incoming: ExoPlayer, fadeMs: Long) {
+        setSessionOwner(outgoing, owns = false)
+        setSessionOwner(incoming, owns = true)
+
+        outgoing.removeListener(playbackListener)
+        outgoing.removeAnalyticsListener(formatListener)
+
+        player = incoming
+        spare = outgoing
+        val heldFilter = activeFilter
+        activeFilter = spareFilter
+        spareFilter = heldFilter
+
+        incoming.addListener(playbackListener)
+        incoming.addAnalyticsListener(formatListener)
+
+        mediaSession?.player = newSessionPlayer(incoming, requireNotNull(crossfade))
+
+        // The analytics listener was attached just now, after this player had
+        // already configured its decoder as the standby, so it will not report
+        // that format again. Carry the decoder's own facts across instead of
+        // leaving stats naming the stream just replaced.
+        currentAudioInputFormat = incoming.audioFormat ?: currentAudioInputFormat
+        activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(incoming.audioFormat?.sampleMimeType)
+        applySpatialAudioEnabled()
+        publishNerdStats()
+
+        // Before the outgoing player is stopped: the controller's listener now
+        // sits on the player about to be silenced.
+        crossfade?.rebind()
+
+        incoming.volume = 1f
+        outgoing.stop()
+        outgoing.clearMediaItems()
+        outgoing.volume = 1f
+
+        // No transition will clear these: the session never changed items in
+        // the player's own eyes. Left set, `swappingMediaId` would swallow the
+        // next genuine queue move, and `swapCutAt` would charge an unrelated
+        // restart with a seam this fade never made.
+        swappingMediaId = null
+        swapCutAt = null
+        savePlaybackState(incoming)
+        refreshCustomLayouts()
+        publishWidgetState()
+        TrackLog.d(
+            "BitChord",
+            "upgrade crossfade: ${fadeMs}ms overlap",
+            about = incoming.currentMediaItem?.mediaId,
         )
     }
 
@@ -2741,11 +3723,12 @@ class PlaybackService : MediaLibraryService() {
         sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
         equalizer: EqualizerProcessor,
+        jamesDsp: JamesDspProcessor,
         filter: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
         ownsSession: Boolean,
     ): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, equalizer, filter, loudness))
+        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, equalizer, jamesDsp, filter, loudness))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
@@ -3263,6 +4246,17 @@ class PlaybackService : MediaLibraryService() {
             error,
             about = mediaId,
         )
+        if (activeTrackIsDolbyAtmos) {
+            // A failure here is the other end of the [ATMOS] line in
+            // [formatListener]: the stream was recognised and handed to a
+            // decoder, and the decoder did not carry it. Name it before the
+            // recovery below rewrites the badge for a different stream.
+            TrackLog.w(
+                "ATMOS",
+                "$mediaId failed while decoding the Dolby stream (${error.errorCodeName}); recovering",
+                about = mediaId,
+            )
+        }
         // A local file that is not there is the one failure retrying cannot
         // touch, and the only one where the fix is to stop asking for the file.
         //
@@ -3312,22 +4306,35 @@ class PlaybackService : MediaLibraryService() {
             }
             return
         }
+        // A manifest read as audio is not a broken stream, and everything below
+        // this line would treat it as one. Ahead of the verdict and the attempt
+        // budget for the same reason as the local-file case above: this is not
+        // an attempt spent on the same stream, it is the same stream opened
+        // correctly for the first time.
+        //
+        // Ahead of the substitute fallback below as well, and that ordering is
+        // the whole point. An addon's DASH/HLS rendition is served through a
+        // progressive source until its type is declared, so its *first* open
+        // fails as unreadable audio — and a module substitution is exactly the
+        // sort of item that fallback exists for. It used to run first, so the
+        // stream was rebuilt as YouTube before this could reopen it: a working
+        // Atmos (or Hi-Res FLAC) rendition was never tried with the right
+        // source, and on a track started from YouTube the listener got Opus
+        // with no Atmos badge instead. [replayAsManifest] reopens the one
+        // stream that has not actually failed yet; if it is not a manifest, or
+        // is already declared and still unreadable, it returns false and the
+        // substitute fallback below proceeds as before.
+        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
+            replayAsManifest(player, item, uri, position)
+        ) {
+            return
+        }
         // An addon/JioSaavn stream gets one chance. If it fails after selection,
         // retrying the ordinary item only lets the same deterministic lookup win
         // again. Rebuild it as an explicit YouTube request instead. This also
         // clears a DASH/HLS MIME left on an upgraded item, which otherwise makes
         // Media3 parse YouTube's WebM bytes as a manifest forever.
         if (fallbackFailedAlternativeToYouTube(item, uri, position)) return
-        // A manifest read as audio is not a broken stream, and everything below
-        // this line would treat it as one. Ahead of the verdict and the attempt
-        // budget for the same reason as the local-file case above: this is not
-        // an attempt spent on the same stream, it is the same stream opened
-        // correctly for the first time.
-        if (error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED &&
-            replayAsManifest(player, item, uri, position)
-        ) {
-            return
-        }
         // Giving up on the *retry*, not on everything below it.
         //
         // A track that has exhausted its attempts is not finished with.
@@ -3476,6 +4483,11 @@ class PlaybackService : MediaLibraryService() {
         position: Long,
     ): Boolean {
         val playbackUri = uri ?: return false
+        // The escape hatch this function builds is an explicit YouTube item.
+        // With YouTube switched off there is no escape to build: the ordinary
+        // recovery below asks the remaining sources again, which is the only
+        // thing the switch leaves available.
+        if (!SourceRegistry.youtubeEnabled()) return false
         val videoId = playbackUri.getQueryParameter("v")
         val substituted = videoId?.let(StreamChoice::isSubstitute) == true
         if (!PlaybackFallback.isAlternative(playbackUri.toString(), substituted)) return false
@@ -3819,6 +4831,26 @@ class PlaybackService : MediaLibraryService() {
     private var swapCutAt: Long? = null
 
     /**
+     * True while [crossfadeUpgradeIn] owns the standby player. Read by
+     * [CrossfadeController] through [versionSwapActive] and by
+     * [smoothSwapCurrentTrackVersion]: both would otherwise arm the same
+     * standby under the fade.
+     */
+    private var upgradeFadeActive = false
+
+    /**
+     * The shift the upgrade fade measured between the playing copy and the
+     * incoming one — target position = source position + this.
+     *
+     * Set by [crossfadeUpgradeIn] once the measurement lands and read by the
+     * caller only when the fade falls back to the direct swap. Without it a
+     * pause during the fade's waits resumed at the outgoing file's timestamp
+     * in a file whose matching passage is somewhere else. Zero is a valid
+     * value and means both copies share a timeline.
+     */
+    private var upgradeFadeOffsetMs = 0L
+
+    /**
      * The track [ExoPlayer.getAudioFormat] is currently describing.
      *
      * `audioFormat` is a property of the *renderer*, not of the queue item, and
@@ -3857,8 +4889,14 @@ class PlaybackService : MediaLibraryService() {
      * served from the disk cache was never resolved at all and is judged here
      * instead — see [adoptCachedTrack] and [QualityUpgrade.adoptUnresolved].
      */
-    private fun lookForBetterCopy(player: ExoPlayer) {
+    private fun lookForBetterCopy(player: ExoPlayer, byHand: Boolean = false) {
         if (offlineBlocksUpgrades()) return
+        // A search and an audition pull a whole replacement stream while the
+        // listener may be on mobile data with the screen off. That is the
+        // listener's data and battery, so automatic hunts wait for a screen,
+        // a charger or an unmetered connection. A hand-asked upgrade is an
+        // explicit request and always goes ahead.
+        if (!byHand && !PlaybackNetworkPolicy.allowHeavyBackgroundWork(this)) return
         val item = player.currentMediaItem ?: return
         val mediaId = item.mediaId
         val uri = item.localConfiguration?.uri
@@ -4009,7 +5047,7 @@ class PlaybackService : MediaLibraryService() {
         SourceRegistry.clearCompletedAddonTrackCalls()
         QualityUpgrade.askByHand(mediaId)
         TrackLog.d("BitChord", "upgrade asked for by hand for $mediaId", about = mediaId)
-        lookForBetterCopy(player)
+        lookForBetterCopy(player, byHand = true)
     }
 
     /**
@@ -4166,6 +5204,23 @@ class PlaybackService : MediaLibraryService() {
             return
         }
 
+        // The opening again, before rather than after the swap this time: the
+        // fade's alignment searches the first seconds of both files for the
+        // same passage, and the header warmed for the swap is one megabyte —
+        // a few seconds of audio, often too little to search a video's intro
+        // against the album master. Fetched during the wait for a transition
+        // to clear, where nothing is on the listener's critical path. The warm
+        // after the swap asks for the same range, so this moves the download
+        // rather than adding one.
+        if (AppSettings.smartVersionAlignment.value &&
+            AppSettings.seamlessQualityUpgrade.value &&
+            !ListenTogether.state.value.inParty
+        ) {
+            scope.launch(Dispatchers.IO) {
+                AudioCache.warmRange(Uri.parse(upgradedUri), 0, ANALYSIS_HEAD_BYTES)
+            }
+        }
+
         // There used to be an unconditional five-second hold here, keyed off the
         // track's own position, so that an upgrade arriving with the first note
         // could not cut the song a millisecond in. Its own reasoning said it was
@@ -4286,30 +5341,62 @@ class PlaybackService : MediaLibraryService() {
             // NerdStats cleanup for why the pre-upgrade claim has to be
             // captured here rather than looked up again on revert.
             val previousFormat = NerdStats.declaredFormat(mediaId)
-            swappingMediaId = mediaId
-            swapCutAt = SystemClock.elapsedRealtime()
             val upgradedMetadata = now.item.mediaMetadata.buildUpon()
                 .setExtras(Bundle(now.item.mediaMetadata.extras ?: Bundle()).apply {
                     putBoolean(EXTRA_QUALITY_UPGRADED, true)
                 })
                 .build()
-            player.replaceMediaItem(
-                player.currentMediaItemIndex,
-                now.item.buildUpon()
-                    .setUri(upgradedUri)
-                    .setMediaMetadata(upgradedMetadata)
-                    .withResolvedStreamType(stream.url)
-                    .build(),
-            )
+            val upgradedItem = now.item.buildUpon()
+                .setUri(upgradedUri)
+                .setMediaMetadata(upgradedMetadata)
+                .withResolvedStreamType(stream.url)
+                .build()
             val upgradedSourceName = stream.sourceConfigId?.let { SourceRegistry.config(it)?.displayName }
                 ?: "Upgrade"
+            var upgradedAt = now.position
+            when (crossfadeUpgradeIn(mediaId, now, upgradedItem, upgradedUri)) {
+                UpgradeSwap.Crossfaded -> {
+                    // Adopted without touching the outgoing item; the fade's own
+                    // log already recorded the overlap.
+                    upgradedAt = player?.currentPosition ?: now.position
+                }
+                UpgradeSwap.Fallback -> {
+                    // Today's swap, unchanged: the source is replaced under the
+                    // active player and the audio stops while it rebuilds. The
+                    // position is taken here rather than from [now], which may
+                    // be seconds old if the fade spent time preparing.
+                    val active = player ?: return@withContext
+                    val index = active.currentMediaItemIndex
+                    // The same content, not the same timestamp: a fade that
+                    // measured a shift and then fell back still has to land
+                    // on the passage the listener is hearing.
+                    upgradedAt = (active.currentPosition + upgradeFadeOffsetMs).coerceAtLeast(0L)
+                    swappingMediaId = mediaId
+                    swapCutAt = SystemClock.elapsedRealtime()
+                    active.replaceMediaItem(index, upgradedItem)
+                    active.seekTo(index, upgradedAt)
+                    active.prepare()
+                }
+                UpgradeSwap.Abandoned -> {
+                    QualityUpgrade.shelve(mediaId, stream)
+                    TrackLog.d("BitChord", "upgrade for $mediaId shelved: the fade could not land")
+                    return@withContext
+                }
+                UpgradeSwap.Failed -> {
+                    QualityUpgrade.forget(mediaId)
+                    withContext(Dispatchers.IO) { AudioCache.discardRendition(Uri.parse(upgradedUri)) }
+                    TrackLog.w("BitChord", "upgrade for $mediaId dropped: the standby could not open it")
+                    return@withContext
+                }
+            }
             NerdStats.onSourceStream(mediaId, stream.format, upgradedSourceName)
             NerdStats.recordSource(mediaId, upgradedSourceName)
-            player.seekTo(player.currentMediaItemIndex, now.position)
-            player.prepare()
             QualityUpgrade.unshelve(mediaId)
-            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${now.position}ms ($upgradedSourceName)")
-            watchUpgrade(mediaId, now.uri, now.position, now.duration, previousFormat)
+            TrackLog.d("BitChord", "upgraded to ${stream.format.summary} at ${upgradedAt}ms ($upgradedSourceName)")
+            // The position the swap actually landed at, not the one it started
+            // from: a crossfade spends seconds preparing, and a revert (or the
+            // next swap point) should not jump back over them.
+            watchUpgrade(mediaId, now.uri, upgradedAt, now.duration, previousFormat)
             if (QualityUpgrade.continueAfterLossySwap(mediaId)) {
                 // The immediate JioSaavn improvement stays audible while a
                 // slower lossless source is checked against its higher-quality
@@ -4747,43 +5834,38 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** What [resolveWithModulePriority] settled on. */
+
     private sealed interface Resolved {
         data class Module(val stream: SourceStream) : Resolved
         data class YouTube(val url: String) : Resolved
     }
 
     /**
-     * Resolves a YouTube-queued track by racing the higher-ranked modules
-     * against YouTube itself, and handing whatever the modules are still doing
-     * to [QualityUpgrade] if YouTube gets there first.
+     * Resolves a YouTube-queued track by giving the sources ranked above
+     * YouTube a bounded head start, and handing whatever they are still doing
+     * to [QualityUpgrade] if YouTube has to start the track.
      *
-     * Nobody gets a head start. An earlier version gave the modules six
-     * seconds of silence to answer in before the fallback was even *asked*
-     * for, on the reasoning that a module answering inside that window plays
-     * with no seam in it. What that actually bought, on every track the
-     * modules were slow on, was six seconds of nothing followed by a YouTube
-     * client walk starting from cold — the wait and the seam, rather than one
-     * or the other. Starting both at once removes the first of those: the
-     * track begins as soon as *anything* can serve it.
+     * The ranking had stopped meaning anything: this used to be an even race,
+     * and YouTube's client walk answers in about a second while a module's
+     * search takes several, so first-past-the-post was YouTube on essentially
+     * every track — including tracks an addon was ordered above and did hold.
+     * Reversing the finish line would trade that for a silent track on every
+     * lookup that misses; [MODULE_HEAD_START_MS] is the compromise. While any
+     * source outranks YouTube, its lookup is the only leg running for that
+     * window. A module quick enough to answer inside it starts the track on
+     * its own copy with no seam at all; one that answers later still gets the
+     * mid-song upgrade below.
      *
-     * The speculative resolve this reinstates was dropped once before, for a
-     * real reason — it is several round trips to `youtubei.googleapis.com`
-     * competing for the same radio and connection pool as the lookup beside
-     * it, and on a track the modules do have, that work is thrown away. What
-     * changed is that it is no longer speculative: YouTube is now the expected
-     * outcome for anything the modules don't answer quickly, so its walk is on
-     * the critical path rather than hedging one. It is also coalesced and
-     * cached — see [StreamResolver.resolve] — so even a discarded walk warms
-     * the URL this track will want if the upgrade later falls through.
+     * The window ends the moment the lookup does, a miss included, so a source
+     * that says "not here" quickly does not delay YouTube by the rest of it.
+     * And when nothing outranks YouTube — a fresh install, addons off — there
+     * is nothing to wait for at all: the fallback starts immediately and the
+     * first note is as instant as it always was.
      *
-     * A module that wins the race outright still wins the track, which is the
-     * one thing worth keeping from the old head start: the lossless copy plays
-     * from the first note and there is no swap at all. That is a narrower
-     * window than it sounds, and deliberately so — read-ahead warms the
-     * YouTube URL for the queue (see [AudioCache.prefetchQueue]), so on a
-     * track that was read ahead the fallback answers in milliseconds and
-     * almost always wins. The swap is the ordinary path now; playing from the
-     * first note is the prize for a module quick enough to beat a cached URL.
+     * The YouTube walk itself is still worth what it costs: it is coalesced
+     * and cached (see [StreamResolver.resolve]), so a walk that ends up as
+     * the upgrade's fallback has warmed the URL this track will want if the
+     * module's copy fails later.
      *
      * A lookup that loses is not cancelled. It is handed over still running,
      * because it is not wrong, only late, and the thing it is about to return
@@ -4804,8 +5886,14 @@ class PlaybackService : MediaLibraryService() {
         // Skipped entirely rather than merely deprioritised, because a lookup
         // that loses is handed to [QualityUpgrade] rather than dropped, and
         // handing over the search that just cost three attempts would only
-        // schedule a fourth.
+        // schedule a fourth. With YouTube switched off the one answer that
+        // hasn't failed is the one the switch forbids, so there is no answer.
         if (StreamChoice.substitutesRefused(videoId)) {
+            if (!SourceRegistry.youtubeEnabled()) {
+                throw java.io.IOException(
+                    "YouTube Music is turned off and '${target.title}' failed on every other source",
+                )
+            }
             return Resolved.YouTube(StreamResolver.resolve(videoId))
         }
         NerdStats.onLosslessRaceStart(videoId)
@@ -4817,12 +5905,37 @@ class PlaybackService : MediaLibraryService() {
         val lookup = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
             withTimeoutOrNull(SUBSTITUTE_TIMEOUT_MS) { SourceResolver.substituteForYouTube(target) }
         }
-        // Started now rather than after the modules have had their say, and
-        // wrapped rather than thrown from: it is awaited only on the paths
+        val youtubeEnabled = SourceRegistry.youtubeEnabled()
+        // Whether a head start is owed at all, answered from the source list
+        // alone — no search — because it is what decides whether YouTube runs
+        // now or after the window.
+        val moduleCandidate = youtubeEnabled && SourceResolver.canSubstituteForYouTube()
+        // Wrapped rather than thrown from: it is awaited only on the paths
         // that need it, and an async that fails without ever being awaited is
         // an unhandled exception in this service's scope.
+        //
+        // With YouTube off there is no fallback leg to start, but the failure
+        // is put in the same place rather than in a second code path: every
+        // branch below already treats "the fallback finished without a URL" as
+        // "wait for the lookup", and then reads this result as the outcome
+        // when the lookup had nothing.
         val fallback = scope.async(Dispatchers.IO + TrackLog.about(videoId)) {
-            runCatching { StreamResolver.resolve(videoId) }
+            if (youtubeEnabled) {
+                if (moduleCandidate) {
+                    // The head start above, expressed as a wait on the lookup
+                    // rather than a fixed sleep: it ends early when the lookup
+                    // finishes — including when it misses — so only a slow
+                    // lookup spends the window.
+                    withTimeoutOrNull(MODULE_HEAD_START_MS) { lookup.join() }
+                }
+                runCatching { StreamResolver.resolve(videoId) }
+            } else {
+                Result.failure<String>(
+                    java.io.IOException(
+                        "YouTube Music is turned off and no other source could serve '${target.title}'",
+                    ),
+                )
+            }
         }
 
         // First past the post. A null because [lookup] won is a module miss; a
@@ -4845,52 +5958,14 @@ class PlaybackService : MediaLibraryService() {
             fallback.onAwait { resolved -> if (resolved.isSuccess) null else lookup.await() }
         }
 
-        // A manifest cannot be substituted here, however good it is. This
-        // function runs on the loader thread, *inside* the open of a media
-        // source that was built minutes ago from an extensionless
-        // `bitchord://` URI — so the source is already progressive and cannot
-        // be told otherwise, and handing it a manifest is a track that fails
-        // at 0ms rather than a track that plays lossless. See [StreamContainer]
-        // for the log of exactly that.
-        //
-        // Nothing is thrown away for it. What the modules found is passed to
-        // the second look already answered, which is the same handover a lookup
-        // that merely lost the race gets — and [QualityUpgrade]'s swap does
-        // declare the type, so the manifest plays there. The cost is a seam a
-        // few seconds in instead of a clean start, which is the trade this
-        // whole path is built to make.
-        if (quick != null && StreamContainer.isManifest(quick.url)) {
-            val url = runCatching { fallback.await().getOrThrow() }.getOrNull()
-            if (url != null) {
-                TrackLog.d(
-                    "BitChord",
-                    "'${target.title}' was offered ${quick.format.summary} as a manifest; " +
-                        "starting on YouTube and swapping to it under the music",
-                    about = videoId,
-                )
-                val handed = QualityUpgrade.settledForLess(
-                    mediaId = videoId,
-                    target = target,
-                    inFlight = CompletableDeferred(quick),
-                    playing = NerdStats.pickedBitrateKbps(videoId)?.let { StreamFormat(kbps = it) },
-                )
-                if (!handed) NerdStats.onLosslessRaceEnd(videoId)
-                return Resolved.YouTube(url)
-            }
-            // YouTube cannot serve it either, so there is nothing to start on
-            // and nothing to swap from. The manifest goes out as it is: it will
-            // fail its first read, and [replayAsManifest] rebuilds the item
-            // with the type declared and prepares it again. A cut before the
-            // first note beats a track that does not play at all.
-            TrackLog.w(
-                "BitChord",
-                "'${target.title}' has only a manifest and YouTube cannot serve it; " +
-                    "letting it fail once to declare its type",
-                about = videoId,
-            )
-            NerdStats.onLosslessRaceEnd(videoId)
-            return Resolved.Module(quick)
-        }
+        // A manifest is returned like any other module answer, and its first
+        // open is expected to fail. That is not a wasted attempt: the resolving
+        // data source has recorded the URL in [StreamContainer], and
+        // [replayAsManifest] rebuilds the item with the type declared — the
+        // same path that makes a mid-track upgrade's DASH/HLS stream play.
+        // Falling back to YouTube here instead (the old shape) meant the one
+        // rendition the listener asked for — frequently the Atmos master —
+        // was found, logged as substituted, and never opened at all.
 
         if (quick != null) {
             // The modules got there first, so the YouTube walk is genuinely
@@ -4917,7 +5992,14 @@ class PlaybackService : MediaLibraryService() {
             return Resolved.Module(quick)
         }
 
-        val url = fallback.await().getOrThrow()
+        val url = fallback.await().getOrElse { failure ->
+            // No stream came from anywhere: with YouTube off this is the
+            // switch's ordinary outcome for a track nothing else holds, and
+            // the badge has to go out with it rather than keep claiming a
+            // search is still running over a track that is not going to play.
+            NerdStats.onLosslessRaceEnd(videoId)
+            throw failure
+        }
         // Marked pending only here, with the fallback's own bitrate in hand:
         // that figure is the answer to "better than what?" the second look
         // measures candidates against, and it isn't known until the client
@@ -5575,6 +6657,20 @@ class PlaybackService : MediaLibraryService() {
         } else {
             emptyList()
         }
+        // The item's own playback URI, which read-ahead needs to warm a
+        // source-backed track: its resolver has config and track ids plus the
+        // title, artist and runtime a cross-source match is made on, and none
+        // of that is reconstructible from a media id. See [AudioCache.Upcoming].
+        val upcomingUris = if (nextIndex != C.INDEX_UNSET) {
+            val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
+            (nextIndex..end).associate { index ->
+                player.getMediaItemAt(index).let { item ->
+                    item.mediaId to item.localConfiguration?.uri
+                }
+            }
+        } else {
+            emptyMap()
+        }
         // So whatever read-ahead writes for these can be named in the Cached
         // songs folder; its own requests carry nothing but an id.
         AudioCache.noteSongs(upcomingSongs)
@@ -5593,6 +6689,7 @@ class PlaybackService : MediaLibraryService() {
                     AudioCache.Upcoming(
                         mediaId = song.videoId,
                         target = TrackMatcher.targetOf(song),
+                        uri = upcomingUris[song.videoId],
                     )
                 },
             )
@@ -5634,13 +6731,21 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * The sampler's job, alive only while the session player is playing. Every
+     * figure below is wall-clock or played-time evidence, so a tick with no
+     * audio behind it is a wake-up that records nothing.
+     */
+    private var progressJob: Job? = null
+
+    /**
      * Feeds played-seconds to [PlaybackTracker]. The tracker can't read the
      * player itself — ExoPlayer is confined to this thread — and a history
      * entry with no watchtime behind it barely registers as a listen, so the
      * sampling has to come from here.
      */
     private fun reportProgress() {
-        scope.launch {
+        if (progressJob?.isActive == true) return
+        progressJob = scope.launch {
             while (isActive) {
                 // Re-read every tick rather than captured once: the session
                 // moves between two players, and a sampler pinned to the one
@@ -5688,6 +6793,11 @@ class PlaybackService : MediaLibraryService() {
                 delay(PROGRESS_SAMPLE_MS)
             }
         }
+    }
+
+    private fun stopProgressReporting() {
+        progressJob?.cancel()
+        progressJob = null
     }
 
     /**
@@ -5776,19 +6886,29 @@ class PlaybackService : MediaLibraryService() {
         sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
         equalizer: EqualizerProcessor,
+        jamesDsp: JamesDspProcessor,
         transition: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
     ) = object : DefaultRenderersFactory(this) {
         init {
             // Do not force PCM_FLOAT onto an OEM speaker mixer merely because
-            // the preference asks for it. The selected route must advertise
-            // the format; otherwise Media3 uses its stable PCM16 path.
+            // the preference asks for it. External routes are allowed to open
+            // float without advertising it — a Bluetooth device advertises
+            // PCM16 because its codec encoder sits behind the mixer — and the
+            // sink falls back to PCM16 by itself if the track will not open.
             //
             // Which way this cuts is worth stating, because it reads backwards:
             // float is what *preserves* a hi-res source rather than what
             // embellishes it, since it is the only AudioTrack encoding Media3
             // will open that carries a 24-bit sample intact.
             setEnableAudioFloatOutput(configuredFloatOutput)
+            // A platform decoder that initialises and then cannot carry the
+            // format should not be the end of the track. Media3 will try the
+            // next decoder the selector offered, which on an E-AC-3 JOC
+            // stream is regularly the software E-AC-3 core behind it. The
+            // alternative is a decoder-init error that spends the recovery
+            // budget and lands on YouTube — no Atmos badge, no surround.
+            setEnableDecoderFallback(true)
             // c2.sec.flac.decoder produces one extra 232.2ms timestamp
             // advance per decoded buffer when Media3 requests float PCM.
             // Decode FLAC through the platform software codec on affected Samsung devices.
@@ -5828,6 +6948,57 @@ class PlaybackService : MediaLibraryService() {
             eventListener: AudioRendererEventListener,
             out: ArrayList<Renderer>,
         ) {
+            // The platform's own Immersive renderer, first. Android's Dolby
+            // HAL and Spatializer are what decode E-AC-3 JOC with the object
+            // layer intact and with hardware dialogue normalization; the
+            // bundled FFmpeg after this chain decodes only the 5.1 core. Let
+            // the stock renderer take it and a phone that advertises a JOC
+            // decoder it cannot actually initialise never reaches the other
+            // path at all.
+            //
+            // Restricted to the Dolby and spatial mimes so every ordinary
+            // codec still falls straight through to the stock MediaCodec
+            // renderer below it — this changes only what a Dolby stream is
+            // handed to first. This is the same shape another player uses,
+            // and it is what makes its Atmos support work on phones whose
+            // vendor image ships only the E-AC-3 core.
+            out.add(
+                object : MediaCodecAudioRenderer(
+                    context,
+                    mediaCodecSelector,
+                    enableDecoderFallback,
+                    eventHandler,
+                    eventListener,
+                    audioSink,
+                ) {
+                    private val logged = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+                    override fun supportsFormat(
+                        mediaCodecSelector: MediaCodecSelector,
+                        format: Format,
+                    ): Int {
+                        val mime = format.sampleMimeType?.lowercase(Locale.ROOT).orEmpty()
+                        val dolbyOrSpatial = mime.contains("eac3") || mime.contains("ec-3") ||
+                            mime.contains("ac-3") || mime.contains("ac3") || mime.contains("ac4") ||
+                            mime.contains("mha1") || mime.contains("mhm1")
+                        if (!dolbyOrSpatial) {
+                            return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_TYPE)
+                        }
+                        val support = super.supportsFormat(mediaCodecSelector, format)
+                        // One line per mime per process: the owner's log then
+                        // says whether the platform decoder exists at all, and
+                        // whether the software core below is what will play it.
+                        if (logged.add("$mime:$support")) {
+                            TrackLog.i(
+                                "ATMOS",
+                                "platform renderer for $mime ${format.channelCount}ch/" +
+                                    "${format.sampleRate}Hz: ${describeSupport(support)}",
+                            )
+                        }
+                        return support
+                    }
+                },
+            )
             super.buildAudioRenderers(
                 context,
                 extensionRendererMode,
@@ -5840,6 +7011,16 @@ class PlaybackService : MediaLibraryService() {
             )
             out.add(FfmpegAudioRenderer(eventHandler, eventListener, audioSink))
         }
+
+        /** The support level in [capabilities], without the adaptive/decoder flags around it. */
+        private fun describeSupport(capabilities: Int): String =
+            when (RendererCapabilities.getFormatSupport(capabilities)) {
+                C.FORMAT_HANDLED -> "handled by the platform"
+                C.FORMAT_EXCEEDS_CAPABILITIES -> "platform decoder present but exceeds capabilities"
+                C.FORMAT_UNSUPPORTED_SUBTYPE -> "no platform decoder; software path takes it"
+                C.FORMAT_UNSUPPORTED_TYPE -> "not this renderer's type"
+                else -> "support=$capabilities"
+            }
 
         override fun buildAudioSink(
             context: Context,
@@ -5888,12 +7069,31 @@ class PlaybackService : MediaLibraryService() {
             // them for the same reason: it belongs to the listener and
             // the whole session, while the transition filter belongs to
             // one handoff and has to have the last word on it.
-            val dspChain = DspChain(sing, spatial, equalizer, transition, loudness)
+            val dspChain = DspChain(sing, spatial, equalizer, jamesDsp, transition, loudness)
             return PrecisionAudioSink(
                 delegate = defaultSink,
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
                 preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
+                // Read per buffer by the sink, not captured once: the switch
+                // takes effect on the next decoder buffer and needs no rebuild
+                // of the player when the output encoding itself is unchanged.
+                bitPerfect = { AppSettings.bitPerfect.value },
+                // The userspace USB session, when a DAC has granted access.
+                // The sink only engages it for stereo tracks at the source
+                // rate; anything else stays on AudioTrack and says so.
+                exclusiveUsb = exclusiveUsb,
+                // Do not attempt a claim until there is a DAC on the bus and
+                // the listener has granted direct access. The sink re-reads
+                // this per buffer, so a grant while a track plays is adopted.
+                exclusiveWanted = { exclusiveUsbWanted() },
+                // A decoded Float32 buffer cannot name the source's depth on
+                // its own; the stream's own figure is the honest hint for the
+                // wire format (otherwise the DAC alt falls back to 16-bit).
+                bitDepthHint = {
+                    NerdStats.current.value?.bitDepth
+                        ?: currentAudioInputFormat?.let { bitDepthOf(it.pcmEncoding) }
+                },
                 // Which of the two sinks the listener can hear, told by the
                 // role its transition filter currently holds — [activeFilter]
                 // and [spareFilter] trade places at every handoff. Only the
@@ -5976,17 +7176,41 @@ class PlaybackService : MediaLibraryService() {
             DirectAudioProbe.DirectSupport.NONE
         }
         val btTelemetry = if (routeKind == AudioRouting.Kind.BLUETOOTH) bluetoothTracker.telemetry.value else null
+        val floatEnabled = shouldEnableFloatOutput()
 
         AudioOutputStatus.publish(
             manager = manager,
-            requestedPcmMode = AppSettings.outputPcmMode.value,
+            requestedPcmMode = AudioOutputPolicy.requestedPcmMode(
+                AppSettings.outputPcmMode.value,
+                AppSettings.bitPerfect.value,
+            ),
             preferred = activeDevice,
-            floatEnabled = shouldEnableFloatOutput(),
+            floatEnabled = floatEnabled,
             routeKind = routeKind,
             directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             bluetoothTelemetry = btTelemetry,
-            systemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
+        )
+
+        AudioOutputStatus.publishBitPerfectMixer(
+            BitPerfectMixer.apply(
+                manager = manager,
+                device = activeDevice,
+                enabled = AppSettings.bitPerfect.value,
+                sampleRateHz = sampleRate,
+                channelCount = channels,
+                // The request has to name what the sink will actually write:
+                // a float preference against a PCM16 track is converted at the
+                // seam exactly as a PCM16 preference against a float one.
+                sinkEncoding = if (floatEnabled) {
+                    AudioFormat.ENCODING_PCM_FLOAT
+                } else {
+                    AudioFormat.ENCODING_PCM_16BIT
+                },
+                // The platform view of the same attributes the tracks carry:
+                // the mixer preference only applies to playback that matches it.
+                audioAttributes = AUDIO_ATTRIBUTES.platformAudioAttributes,
+            ),
         )
 
         if (format != null) {
@@ -6073,7 +7297,10 @@ class PlaybackService : MediaLibraryService() {
             deviceName = activeDevice?.productName?.toString()?.ifBlank { null } ?: "System default",
             advertisedEncodings = advertisedEncodings,
             advertisedSampleRates = advertisedSampleRates,
-            requestedMode = AppSettings.outputPcmMode.value,
+            requestedMode = AudioOutputPolicy.requestedPcmMode(
+                AppSettings.outputPcmMode.value,
+                AppSettings.bitPerfect.value,
+            ),
             directUsbProbe = directUsbProbe,
             directSupport = directSupport,
             bluetoothTelemetry = btTelemetry,
@@ -6086,7 +7313,6 @@ class PlaybackService : MediaLibraryService() {
             // silently re-converted, costing an extra quantization and leaving
             // this readout naming a bit depth that was never written.
             delegateSupportsPcm24 = false,
-            knownSystemMixerRateHz = if (routeKind == AudioRouting.Kind.USB) 48000 else null,
         )
 
         AudioOutputStatus.publishNegotiation(negotiation)
@@ -6137,6 +7363,7 @@ class PlaybackService : MediaLibraryService() {
             singProcessorA,
             spatialAudioProcessorA,
             equalizerProcessorA,
+            jamesDspProcessorA,
             transitionFilterA,
             loudnessA,
             ownsSession = true,
@@ -6145,6 +7372,7 @@ class PlaybackService : MediaLibraryService() {
             singProcessorB,
             spatialAudioProcessorB,
             equalizerProcessorB,
+            jamesDspProcessorB,
             transitionFilterB,
             loudnessB,
             ownsSession = false,
@@ -6187,6 +7415,59 @@ class PlaybackService : MediaLibraryService() {
         )
     }
 
+    /**
+     * Asks for direct USB access when bit-perfect is on and a DAC is attached
+     * without a grant. This is the system's own dialog ("Allow … to access
+     * <device>"), the same one LastWave shows, and the grant returns to our
+     * private receiver in [UsbDacMonitor].
+     */
+    private fun ensureUsbPermission() {
+        usbDacMonitor.refresh()
+        val dac = usbDacMonitor.state.value.dac ?: return
+        if (dac.hasUsbPeripheral && !dac.usbPermissionGranted) {
+            usbDacMonitor.requestPermission()
+        }
+    }
+
+    /**
+     * Bit-perfect asks for the userspace path, but the claim only makes sense
+     * once a DAC is on the bus and the listener has let us open it. Reading
+     * the monitor directly means a grant that arrives mid-track is picked up
+     * by the sink's per-buffer adoption attempt.
+     */
+    private fun exclusiveUsbWanted(): Boolean {
+        if (!AppSettings.bitPerfect.value) return false
+        val dac = usbDacMonitor.state.value.dac ?: return false
+        return dac.hasUsbPeripheral && dac.usbPermissionGranted
+    }
+
+    /**
+     * States what still stands between the listener and a mixer-free path,
+     * in the dialog's own row. The sink overwrites this at configure with the
+     * measured result or its own failure reason, so those sink-owned reasons
+     * are never replaced by one of these generic lines.
+     */
+    private fun publishExclusiveUsbAvailability() {
+        if (AudioOutputStatus.current.value.exclusiveUsbActive) return
+        if (!AppSettings.bitPerfect.value) {
+            lastUsbAvailabilityDetail = null
+            AudioOutputStatus.publishExclusiveUsb(active = false, detail = null)
+            return
+        }
+        val current = AudioOutputStatus.current.value.exclusiveUsbDetail
+        if (current != null && current != lastUsbAvailabilityDetail) return
+        val dac = usbDacMonitor.state.value.dac
+        val detail = when {
+            dac == null ->
+                "Bit-perfect output needs a USB DAC; the system mixer may resample"
+            !dac.usbPermissionGranted ->
+                "Waiting for USB access; the system mixer stays in the path until it is granted"
+            else -> "USB DAC ready; exclusive output starts with the next track"
+        }
+        lastUsbAvailabilityDetail = detail
+        AudioOutputStatus.publishExclusiveUsb(active = false, detail = detail)
+    }
+
     private fun preferredUsbDevice(): AudioDeviceInfo? = audioManager
         ?.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         ?.firstOrNull { device ->
@@ -6211,10 +7492,6 @@ class PlaybackService : MediaLibraryService() {
     private fun shouldEnableFloatOutput(): Boolean {
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
-        val advertisesFloat = activeDevice?.encodings?.contains(AudioFormat.ENCODING_PCM_FLOAT) == true
-        val directFloatSupported = audioManager?.let { mgr ->
-            DirectAudioProbe.probeDirectSupport(mgr, 48000, 2, activeDevice).supportsFloat
-        } ?: false
         // Worth knowing which way this cuts for a hi-res stream: with float
         // off, Media3 downconverts *every* input encoding to 16-bit, because
         // float and 16-bit are the only two linear-PCM tracks its sink can
@@ -6222,9 +7499,11 @@ class PlaybackService : MediaLibraryService() {
         // so "32-bit float" in Output precision is the setting that preserves
         // a hi-res source, not the one that embellishes it.
         return AudioOutputPolicy.shouldUseFloatOutput(
-            requestedMode = AppSettings.outputPcmMode.value,
+            requestedMode = AudioOutputPolicy.requestedPcmMode(
+                AppSettings.outputPcmMode.value,
+                AppSettings.bitPerfect.value,
+            ),
             routeKind = routeKind,
-            advertisesPcmFloat = advertisesFloat || directFloatSupported,
         )
     }
 
@@ -6254,6 +7533,31 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
+            AppSettings.bitPerfect.collect { enabled ->
+                if (enabled) ensureUsbPermission()
+                exclusiveUsb.setWanted(exclusiveUsbWanted())
+                publishExclusiveUsbAvailability()
+                requestOutputReconfiguration()
+            }
+        }
+        scope.launch {
+            // Attach/detach and the permission grant both land here. Only a
+            // change in device or grant state acts, so a denial does not
+            // re-prompt in a loop.
+            usbDacMonitor.state
+                .map { st -> st.dac?.let { Triple(it.vendorId, it.productId, it.usbPermissionGranted) } }
+                .distinctUntilChanged()
+                .collect {
+                    if (AppSettings.bitPerfect.value) ensureUsbPermission()
+                    exclusiveUsb.setWanted(exclusiveUsbWanted())
+                    if (!AppSettings.bitPerfect.value) {
+                        lastUsbAvailabilityDetail = null
+                        AudioOutputStatus.publishExclusiveUsb(active = false, detail = null)
+                    }
+                    publishExclusiveUsbAvailability()
+                }
         }
         scope.launch {
             // Not applied to a player mid-transition: [CrossfadeController]
@@ -6336,6 +7640,49 @@ class PlaybackService : MediaLibraryService() {
                 AppSettings.equalizerBands,
             ) { }.collect { applyEqualizer() }
         }
+        scope.launch {
+            // One snapshot per change, then both players get the same one.
+            // JamesDspProcessor publishes it to the audio thread as an
+            // immutable value; no lock is taken in the process path.
+            combine(
+                AppSettings.jamesDspEnabled,
+                AppSettings.jamesDspBassGainDb,
+                AppSettings.jamesDspStereoLevel,
+                AppSettings.jamesDspTubeLevel,
+                AppSettings.jamesDspReverbPreset,
+            ) { enabled, bass, stereo, tube, reverb ->
+                JamesDspConfig(
+                    enabled = enabled,
+                    bassGainDb = bass,
+                    stereoLevel = stereo,
+                    tubeLevel = tube,
+                    reverbPreset = reverb,
+                )
+            }
+                .combine(AppSettings.jamesDspPreGainDb) { config, gain ->
+                    config.copy(preGainDb = gain)
+                }
+                .combine(AppSettings.jamesDspLimiter) { config, limiter ->
+                    config.copy(limiterEnabled = limiter)
+                }
+                .distinctUntilChanged()
+                .collect { config -> applyJamesDsp(config) }
+        }
+    }
+
+    /**
+     * Hands the same JamesDSP snapshot to both players.
+     *
+     * Both, because the idle player is the one the next transition starts on;
+     * a crossfade whose halves had different tone controls would sweep the
+     * settings in over the blend. The native library is loaded here (on the
+     * service thread) rather than on the audio thread, where dlopen could
+     * underrun the first block.
+     */
+    private fun applyJamesDsp(config: JamesDspConfig) {
+        if (config.enabled) JamesDspNative.warmUp()
+        jamesDspProcessorA.update(config)
+        jamesDspProcessorB.update(config)
     }
 
     /**
@@ -6747,14 +8094,15 @@ class PlaybackService : MediaLibraryService() {
                 .collect { metered ->
                     if (metered == null) return@collect
                     val rpc = discordRpc ?: return@collect
+                    // Nothing is published while paused, and the socket was let
+                    // go on purpose; waking it here would undo that teardown.
+                    if (!discordPresenceUp) return@collect
                     withContext(Dispatchers.IO) { runCatching { rpc.wakeUp() } }
                     // Re-pushed rather than left to the gateway's own replay,
                     // because a handover can strand the socket in a state where
                     // it believes it is still connected: the push is what makes
                     // it prove otherwise.
-                    if (discordPresenceUp) {
-                        player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
-                    }
+                    player?.takeIf { p -> p.isPlaying }?.let(::pushDiscordPresence)
                 }
         }
     }
@@ -6817,14 +8165,32 @@ class PlaybackService : MediaLibraryService() {
     /**
      * Takes the presence down but leaves the socket up, so resuming doesn't pay
      * for a reconnect. Discord clears the card on an activity-less presence.
+     *
+     * [releaseSocket] goes further, for a pause that happened out of sight: the
+     * gateway is dropped too. Left up, it would keep heartbeating every ~41
+     * seconds — and reconnect with backoff after every network change — for a
+     * session that has nothing to show, for as long as the app stays closed.
      */
-    private fun clearDiscordPresence() {
+    private fun clearDiscordPresence(releaseSocket: Boolean = false) {
         val rpc = discordRpc ?: return
-        if (!discordPresenceUp) return
+        if (!discordPresenceUp) {
+            if (releaseSocket) rpc.disconnect()
+            return
+        }
         discordPresenceUp = false
         discordUpdateJob?.cancel()
         discordUpdateJob = scope.launch(Dispatchers.IO) {
             runCatching { rpc.close() }
+            if (!releaseSocket) return@launch
+            // Re-checked here, on the player's own thread: a resume may have
+            // landed while the clear was in flight, and cancelling that
+            // half-finished job is not enough to stop this from closing a
+            // socket the resume just reopened.
+            withContext(Dispatchers.Main) {
+                if (!AndroidPresence.isForeground && player?.isPlaying != true) {
+                    rpc.disconnect()
+                }
+            }
         }
     }
 
@@ -6857,13 +8223,27 @@ class PlaybackService : MediaLibraryService() {
         mediaSession
 
     /**
+     * A paused session is not resurrected.
+     *
+     * [MediaSessionService] answers `START_STICKY` while it holds a session, so
+     * a process the system reclaimed could be rebuilt — Application, party
+     * socket and all — for a player that was not even playing. An explicit
+     * start (the notification, a media button, a controller) still works; this
+     * only refuses the implicit restart after death.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        return START_NOT_STICKY
+    }
+
+    /**
      * Called by Android when the user swipes this app's task away from the
      * recent apps screen.
      *
-     * When [AppSettings.stopOnTaskRemoved] is on we stop the player and let the
-     * service die naturally; otherwise we leave it running in the background so
-     * music continues past the swipe, which is the default Android behaviour for
-     * a foreground-service-backed media session.
+     * When [AppSettings.stopOnTaskRemoved] is on — the default — we stop the
+     * player and let the service die naturally; with it off we leave the
+     * service running so music continues past the swipe, which is the ordinary
+     * Android behaviour for a foreground-service-backed media session.
      */
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
@@ -6881,12 +8261,21 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(discordIdleObserver)
         // Let go of the receiver's player but leave its session alone: a
         // service that idles out while casting is not the listener choosing to
         // stop, and the next one picks the session up where it was.
         CastController.detach(castPlayback)
         castPlayback.release()
         closeAudioEffectSession()
+        // The mixer preference is per device and outlives this process, so it
+        // is withdrawn before the service goes rather than left pointing at a
+        // format nothing is playing any more.
+        BitPerfectMixer.clear(audioManager)
+        // Close the usbdevfs session and let go of the monitor before the
+        // service goes; the next one re-opens it on its first configure.
+        exclusiveUsb.release()
+        usbDacMonitor.release()
         bluetoothTracker.stop()
         audioManager?.unregisterAudioDeviceCallback(outputDeviceCallback)
         partySync?.stop()
@@ -7020,9 +8409,12 @@ class PlaybackService : MediaLibraryService() {
     private fun startLyricsTicker() {
         if (lyricsTickerJob?.isActive == true) return
         lyricsTickerJob = scope.launch(Dispatchers.Main) {
+            // The subtitle is read on the notification and lock screen, where a
+            // line a second late is invisible; twice a second was a wake-up per
+            // half second for a string that changes every few seconds at best.
             while (isActive) {
                 updateLyricSubtitle()
-                delay(500L)
+                delay(1_000L)
             }
         }
     }
@@ -7577,6 +8969,32 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /**
+     * Moves off a track that strict mode refuses to play.
+     *
+     * Scans forward for the first item that [AppSettings.isSongBlocked] does
+     * not reject rather than stepping one item at a time: a radio can contain
+     * a run of marked tracks, and one posted seek per track would flash each of
+     * them through the notification. When nothing ahead is allowed the player
+     * pauses instead of wrapping into the same blocked run.
+     */
+    private fun skipBlockedMediaItem(exoPlayer: ExoPlayer) {
+        Handler(Looper.getMainLooper()).post {
+            val current = exoPlayer.currentMediaItem ?: return@post
+            if (!AppSettings.isSongBlocked(current.toSong())) return@post
+            val nextIndex = (exoPlayer.currentMediaItemIndex + 1 until exoPlayer.mediaItemCount)
+                .firstOrNull { index ->
+                    !AppSettings.isSongBlocked(exoPlayer.getMediaItemAt(index).toSong())
+                }
+            if (nextIndex != null) {
+                exoPlayer.seekTo(nextIndex, 0L)
+                exoPlayer.play()
+            } else {
+                exoPlayer.pause()
+            }
+        }
+    }
+
+    /**
      * Handles browsing and content resolution for Android Auto and other MediaBrowser clients.
      */
     private inner class MediaLibraryCallback : MediaLibrarySession.Callback {
@@ -7853,7 +9271,8 @@ class PlaybackService : MediaLibraryService() {
                                 emptyList()
                             }
                             songs.forEach { songCache[it.videoId] = it }
-                            songs.map { it.toMediaItem() }
+                            songs.filterNot(AppSettings::isSongBlocked)
+                                .map { it.toMediaItem(parentBrowseId = parentId) }
                         }
                         parentId.startsWith("browse:") -> {
                             val browseId = parentId.removePrefix("browse:")
@@ -7865,7 +9284,8 @@ class PlaybackService : MediaLibraryService() {
                                 emptyList()
                             }
                             songs.forEach { songCache[it.videoId] = it }
-                            songs.map { it.toMediaItem() }
+                            songs.filterNot(AppSettings::isSongBlocked)
+                                .map { it.toMediaItem(parentBrowseId = parentId) }
                         }
                         else -> {
                             val cachedSong = songCache[parentId]
@@ -8047,6 +9467,10 @@ class PlaybackService : MediaLibraryService() {
             startIndex: Int,
             startPositionMs: Long,
         ): ListenableFuture<MediaSession.MediaItemsWithStartPosition> = scope.future(Dispatchers.IO) {
+            // Android Auto hands over the tapped song, not the playlist around
+            // it. Rebuild the folder so the queue follows the playlist's own
+            // order and AutoPlay only starts after its last track.
+            expandPlaylistContext(mediaItems, startIndex)?.let { return@future it }
             val resolved = resolveMediaItems(mediaItems)
             val validIndex = startIndex.coerceIn(0, (resolved.size - 1).coerceAtLeast(0))
             MediaSession.MediaItemsWithStartPosition(
@@ -8062,6 +9486,37 @@ class PlaybackService : MediaLibraryService() {
             mediaItems: List<MediaItem>,
         ): ListenableFuture<List<MediaItem>> = scope.future(Dispatchers.IO) {
             resolveMediaItems(mediaItems)
+        }
+
+        /**
+         * Rebuilds the browsable folder a handed-over Auto item came from.
+         *
+         * Auto's usual shape is a single playable child, which is a queue of
+         * one and therefore indistinguishable from a station: AutoPlay would
+         * append suggestions and the second tap played one of those instead of
+         * the playlist's own next track. Every child listed from a playlist or
+         * browse folder carries [EXTRA_AUTO_PARENT], so the folder can be read
+         * back and the tapped song found in it.
+         *
+         * Returns null when there is no single parent, or when the incoming
+         * list is already the full folder — the caller then resolves it as-is.
+         */
+        private suspend fun expandPlaylistContext(
+            mediaItems: List<MediaItem>,
+            startIndex: Int,
+        ): MediaSession.MediaItemsWithStartPosition? {
+            val parents = mediaItems
+                .mapNotNull { it.mediaMetadata.extras?.getString(EXTRA_AUTO_PARENT) }
+                .distinct()
+            if (parents.size != 1) return null
+            val parent = parents.first()
+            val tapped = mediaItems
+                .getOrNull(startIndex.coerceIn(0, (mediaItems.size - 1).coerceAtLeast(0)))
+                ?.mediaId
+            val full = resolveMediaItems(listOf(MediaItem.Builder().setMediaId(parent).build()))
+            if (full.size <= 1 || full.size < mediaItems.size) return null
+            val index = full.indexOfFirst { it.mediaId == tapped }.takeIf { it >= 0 } ?: 0
+            return MediaSession.MediaItemsWithStartPosition(ImmutableList.copyOf(full), index, 0L)
         }
 
         private suspend fun resolveMediaItems(mediaItems: List<MediaItem>): List<MediaItem> {
@@ -8263,7 +9718,7 @@ class PlaybackService : MediaLibraryService() {
                 is SearchResult.TopTrack -> it.song
                 else -> null
             }
-        }.distinctBy { it.videoId }
+        }.filterNot(AppSettings::isSongBlocked).distinctBy { it.videoId }
         val browses = results.mapNotNull { (it as? SearchResult.Browse)?.item }
             .distinctBy { it.browseId }
         return songs to browses
@@ -8534,6 +9989,31 @@ class PlaybackService : MediaLibraryService() {
         const val SUBSTITUTE_TIMEOUT_MS = 20_000L
 
         /**
+         * How long a YouTube-queued track waits for the sources ranked above
+         * YouTube before its own walk starts — see [resolveWithModulePriority].
+         *
+         * Enough for the sources that answer in a round trip (JioSaavn
+         * measures ~0.4s) and for a warm module; short enough that a cold
+         * module's 7-13s search still starts the track on YouTube and upgrades
+         * under it. The wait ends early whenever the lookup does.
+         */
+        const val MODULE_HEAD_START_MS = 1_500L
+
+        /**
+         * How long a track's first open may wait for a read-ahead pin that is
+         * still being looked up — see the resolving data source.
+         *
+         * This runs on the loader thread for the *next* item while the current
+         * one is still playing, so it costs preload time rather than sound.
+         * Long enough for a preparation that is nearly done, short enough that
+         * a track the sources have never heard of is not held at the hand-over.
+         */
+        const val PREPARED_PIN_WAIT_MS = 1_500L
+
+        /** How often the wait above re-asks whether the pin has landed. */
+        private const val PREPARED_PIN_POLL_MS = 25L
+
+        /**
          * How much of a track has to be left for a mid-track quality swap to
          * be worth the break in the audio it costs.
          */
@@ -8570,6 +10050,105 @@ class PlaybackService : MediaLibraryService() {
          * ordinary swap, minutes from any blend, is as immediate as it was.
          */
         const val UPGRADE_AFTER_CROSSFADE_MS = 5_000L
+
+        /**
+         * Overlap for an upgrade the listener opted into fading. Both sides are
+         * preloaded, so this is not buying buffer time — it is only long enough
+         * for two recordings of the same song to be heard as one changing
+         * quality rather than as a splice.
+         *
+         * Kept near a second rather than the two it first shipped with: the
+         * blend is only clean while the two clocks agree, and a short overlap
+         * exposes an imperfect measurement far less than a long one does.
+         */
+        const val UPGRADE_CROSSFADE_MS = 1_000L
+
+        /**
+         * How long the standby gets to open the proved stream before the fade
+         * is abandoned.
+         *
+         * Generous on purpose: this runs while the original keeps playing, so
+         * the only cost of waiting is that the better stream arrives later.
+         * The old four seconds was measured against a warm cache and loses the
+         * upgrade outright on a cold, large file — which is exactly the case an
+         * upgrade exists for.
+         */
+        const val UPGRADE_FADE_PREPARE_MS = 12_000L
+
+        /** How long the standby gets to actually start producing audio after `play()`. */
+        const val UPGRADE_FADE_START_MS = 2_000L
+
+        /**
+         * How long the measurement started beside the prepare may take.
+         *
+         * It decodes two regions concurrently while the standby opens, and the
+         * outgoing copy plays throughout, so a slow answer delays the blend but
+         * never costs audio — while no answer leaves the blend at the same
+         * timestamp on both sides.
+         */
+        const val UPGRADE_FADE_ALIGNMENT_TIMEOUT_MS = 25_000L
+
+        /**
+         * How long the measurement waits for the standby's own fetch to cover
+         * the position it is about to decode.
+         *
+         * Not a second prepare: the standby is seeking exactly there, so the
+         * bytes arrive with or without this. The wait exists because the
+         * measurement starts beside the prepare, and a decode that beats the
+         * loader reads a hole and returns nothing.
+         */
+        const val UPGRADE_ALIGNMENT_CACHE_WAIT_MS = 12_000L
+
+        /** Below this much music left, a blend has nothing to hand over to. */
+        const val UPGRADE_FADE_MIN_REMAINING_MS = 3_000L
+
+        /**
+         * How far past the live position the standby's buffer must reach before
+         * it is seeked there. The item was prepared at the position the
+         * listener held when the fade was armed, and the original keeps playing
+         * while it buffers; without this margin the near-seek crosses the end
+         * of the buffer and re-buffers exactly when the blend begins.
+         */
+        const val UPGRADE_FADE_BUFFER_AHEAD_MS = 3_000L
+
+        /**
+         * How long the buffer gets to reach that mark before the fade gives up
+         * and the original keeps the track.
+         *
+         * The position it has to reach is the live one *plus the measured
+         * shift*, which can jump it seconds beyond what the prepare fetched;
+         * the old three seconds was timed for a same-timestamp upgrade only.
+         */
+        const val UPGRADE_FADE_ALIGN_MS = 8_000L
+
+        /** How long each near-seek to the live position gets to resume before the fade gives up. */
+        const val UPGRADE_FADE_RESYNC_MS = 3_000L
+
+        /**
+         * How long the standby may stall mid-fade before the untouched original
+         * takes the track back. The blend freezes while it waits, so a stall
+         * ducks the song rather than fading it into silence.
+         */
+        const val UPGRADE_FADE_STALL_MS = 1_500L
+
+        /**
+         * Drift between the two players that is quiet enough to leave alone.
+         * More than this and the standby is re-seeked to the live position;
+         * less would seek on every frame of ordinary jitter.
+         *
+         * Measured in content terms (see [UpgradeFadeAlignment.driftMs]) and
+         * kept well below the 120ms this first used: 120ms is a syllable, and a
+         * syllable of the same word twice is the doubling the fade is meant to
+         * remove.
+         */
+        const val UPGRADE_FADE_MAX_DRIFT_MS = 50L
+
+        /**
+         * How long the fade may sit frozen on a paused session before it gives
+         * up and lets the paused direct swap have the track instead. Nothing
+         * is audible while paused, so the replace is free there.
+         */
+        const val UPGRADE_FADE_PAUSE_MS = 15_000L
 
         /**
          * How long a replacement gets to report a length before it is

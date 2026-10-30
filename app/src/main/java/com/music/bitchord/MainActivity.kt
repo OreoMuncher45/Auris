@@ -29,6 +29,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -70,6 +71,7 @@ import androidx.compose.material.icons.rounded.CloudOff
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Sort
 import androidx.compose.material.icons.rounded.Upgrade
 import com.music.bitchord.data.listentogether.ServerConnectionState
@@ -123,6 +125,7 @@ import com.music.bitchord.auth.DiscordLoginScreen
 import com.music.bitchord.auth.GoogleAccountSession
 import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.auth.YtMusicLoginScreen
+import com.music.bitchord.data.AppAnnouncements
 import com.music.bitchord.data.AppUpdateChecker
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.listentogether.JamInviteLink
@@ -188,6 +191,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.playback.autoplayEnabledFor
 import com.music.bitchord.playback.autoplaySectionStart
 import com.music.bitchord.playback.beginRadioQueue
+import com.music.bitchord.playback.claimedDurationMs
 import com.music.bitchord.playback.commitRadioQueue
 import com.music.bitchord.playback.fromAutoplay
 import com.music.bitchord.playback.hasYouTubeOriginal
@@ -244,6 +248,7 @@ import com.music.bitchord.ui.components.LocalGlassEffectConfig
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
+import com.music.bitchord.ui.components.isGlassAllowed
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.data.sources.SourceConfig
 import com.music.bitchord.data.sources.SourceKind
@@ -265,6 +270,7 @@ import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.TranslationLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.components.ServerEditorHost
+import com.music.bitchord.ui.components.AnnouncementDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.components.WebDavConflictAlert
 import com.music.bitchord.ui.components.FieldConfig
@@ -303,6 +309,7 @@ import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
+import com.music.bitchord.ui.screens.RadioScreen
 import com.music.bitchord.ui.screens.SearchScreen
 import com.music.bitchord.data.settings.SongSort
 import com.music.bitchord.ui.replay.ReplayScreen
@@ -467,6 +474,25 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
+/**
+ * The screen's root surface.
+ *
+ * This exists so [BitChordApp]'s body reaches Compose as a lambda rather than
+ * through an inlined `Box`: inlined, the whole screen ended up in one method
+ * and crossed the JVM's 64 KB limit. The wrapper does the same layout, but a
+ * non-inline lambda is compiled separately, which keeps the caller small.
+ */
+@Composable
+private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+    ) {
+        content()
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BitChordApp(
@@ -490,7 +516,11 @@ private fun BitChordApp(
     val hazeState = remember { HazeState() }
     // Recording the backdrop layer costs a draw pass, so it only runs when a
     // liquid-glass surface (the nav bar or artwork-page back button) can sample it.
-    val glassActive = LocalLiquidGlassEnabled.current && isGlassSupported()
+    // [isGlassAllowed] also rules out low-RAM devices. Without that term the
+    // nav bar asked for glass and the per-surface gate refused it, so the
+    // expensive part — recording the whole backdrop into a layer every frame —
+    // ran anyway on the hardware least able to afford it.
+    val glassActive = LocalLiquidGlassEnabled.current && isGlassAllowed()
     // "Reduce dynamic blur" keeps the glass bar's *shape* — the folding
     // now-playing-and-tabs component is a layout, not an effect, and dropping
     // back to the two stacked bars would be answering a question about material
@@ -722,6 +752,15 @@ private fun BitChordApp(
     // Flow: unlock gate + temp playlist + tuner.
     var showFlow by remember { mutableStateOf(false) }
     val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
+    val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
+    val homeShelfOrder by AppSettings.homeShelfOrder.collectAsStateWithLifecycle()
+    val playerAccentColor by AppSettings.playerAccentColor.collectAsStateWithLifecycle()
+    val transportSmoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
+    val aiArtists by AppSettings.aiArtists.collectAsStateWithLifecycle()
+    val playerSeekbarColor by AppSettings.playerSeekbarColor.collectAsStateWithLifecycle()
+    val playerTextColor by AppSettings.playerTextColor.collectAsStateWithLifecycle()
+    val playerLyricsColor by AppSettings.playerLyricsColor.collectAsStateWithLifecycle()
+    val libraryReplayVisible by AppSettings.libraryReplayVisible.collectAsStateWithLifecycle()
     val flowQueueState by viewModel.flowQueue.collectAsStateWithLifecycle()
     val flowLoading by viewModel.flowLoading.collectAsStateWithLifecycle()
     val flowSaved by viewModel.flowSaved.collectAsStateWithLifecycle()
@@ -758,10 +797,25 @@ private fun BitChordApp(
      */
     val updateNotice = updateAvailable
 
-    LaunchedEffect(updateNotice) {
-        if (updateNotice != null && !updateDialogShown) {
+    // Announcements are the other half of the same news channel: one per
+    // launch, and only once the update popup (if any) has been dealt with, so
+    // the two cards never stack or fight for the screen.
+    val announcement by viewModel.announcement.collectAsStateWithLifecycle()
+    var announcementShown by rememberSaveable { mutableStateOf(false) }
+    var showAnnouncementDialog by remember { mutableStateOf(false) }
+    // The announcement key is here as well as in the effect below: if the
+    // slower check lands while a notice is on screen, the update waits its
+    // turn instead of stacking a second scrim on top of the first.
+    LaunchedEffect(updateNotice, showAnnouncementDialog) {
+        if (updateNotice != null && !updateDialogShown && !showAnnouncementDialog) {
             updateDialogShown = true
             showUpdateDialog = true
+        }
+    }
+    LaunchedEffect(announcement, showUpdateDialog) {
+        if (announcement != null && !showUpdateDialog && !announcementShown) {
+            announcementShown = true
+            showAnnouncementDialog = true
         }
     }
     LaunchedEffect(flowSaveNotice) {
@@ -780,6 +834,7 @@ private fun BitChordApp(
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
     val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     LaunchedEffect(selectedTab) {
+        if (selectedTab == TAB_EXPLORE || selectedTab == TAB_RADIO) viewModel.ensureExploreLoaded()
         if (selectedTab == TAB_SEARCH) {
             searchVisualActive = true
         } else {
@@ -835,48 +890,94 @@ private fun BitChordApp(
     val flowArt = (flowQueueState as? UiState.Success)?.data?.firstOrNull()?.thumbnailUrl
     val offlineActive by AppSettings.effectiveOffline.collectAsStateWithLifecycle()
     val offlinePicksTitle = stringResource(R.string.shelf_quick_picks)
-    val homeWithFlow by remember(homeState, flowStatus, flowArt, offlineActive, offlinePicksTitle) {
+    val flowTile: ShelfItem? = if (flowStatus.unlocked && homeFlowVisible) {
+        ShelfItem(
+            title = "Flow",
+            subtitle = "Your personal soundtrack · endless",
+            thumbnailUrl = flowArt,
+            videoId = null,
+            browseId = com.music.bitchord.data.flow.FlowRules.FLOW_BROWSE_ID,
+        )
+    } else {
+        null
+    }
+    val homeWithFlow by remember(homeState, flowTile, homeShelfOrder, offlineActive, offlinePicksTitle) {
         derivedStateOf {
-            val base = (homeState as? UiState.Success)?.data
-            val flowShelf = HomeShelf(
-                title = com.music.bitchord.data.flow.FlowRules.FLOW_SHELF_TITLE,
-                items = listOf(
-                    ShelfItem(
-                        title = "Flow",
-                        subtitle = "Your personal soundtrack · endless",
-                        thumbnailUrl = flowArt,
-                        videoId = null,
-                        browseId = com.music.bitchord.data.flow.FlowRules.FLOW_BROWSE_ID,
-                    ),
-                ),
-            )
-            val flowShelves = when {
-                base == null -> emptyList()
-                !flowStatus.unlocked -> emptyList()
-                base.any { it.title == flowShelf.title } -> emptyList()
-                else -> listOf(flowShelf)
-            }
-            val online = if (base == null) homeState else UiState.Success(flowShelves + base)
-            if (!offlineActive) return@derivedStateOf online
-            val picks = Downloads.snapshotSongs()
-                .sortedByDescending { it.localDateAddedSeconds ?: 0L }
-                .take(20)
-                .mapNotNull { song ->
-                    song.videoId.takeIf { it.isNotBlank() }?.let { videoId ->
-                        ShelfItem(
-                            title = song.title,
-                            subtitle = "Song • ${song.artist}",
-                            thumbnailUrl = song.thumbnailUrl,
-                            videoId = videoId,
-                            browseId = null,
-                        )
+            // Offline: the home is what is on disk. The feed needs a connection
+            // that is not there, so the shelf that matters is the downloads —
+            // and it has to be able to stand alone, because the feed request
+            // behind [homeState] is exactly what fails without a connection.
+            if (offlineActive) {
+                val picks = Downloads.snapshotSongs()
+                    .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+                    .take(20)
+                    .mapNotNull { song ->
+                        song.videoId.takeIf { it.isNotBlank() }?.let { videoId ->
+                            ShelfItem(
+                                title = song.title,
+                                subtitle = "Song • ${song.artist}",
+                                thumbnailUrl = song.thumbnailUrl,
+                                videoId = videoId,
+                                browseId = null,
+                            )
+                        }
                     }
+                if (picks.isNotEmpty()) {
+                    return@derivedStateOf UiState.Success(
+                        listOf(HomeShelf(title = offlinePicksTitle, items = picks)),
+                    )
                 }
-            if (picks.isEmpty()) return@derivedStateOf online
-            UiState.Success(
-                listOf(HomeShelf(title = offlinePicksTitle, items = picks)) + flowShelves + (base ?: emptyList()),
-            )
+            }
+            val base = (homeState as? UiState.Success)?.data ?: return@derivedStateOf homeState
+            // Quick Picks is the top row, always. Flow is not a shelf at all
+            // any more — it rides at the head of that row — so reordering the
+            // other topics can never bury either of them. This is what used to
+            // happen: the synthetic Flow shelf was not in the saved order, so
+            // it sorted to Int.MAX_VALUE and vanished off the bottom.
+            val quickPicks = base.firstOrNull {
+                com.music.bitchord.ui.screens.isQuickPicksShelf(it.title)
+            }
+            val rest = base.filterNot {
+                com.music.bitchord.ui.screens.isQuickPicksShelf(it.title)
+            }
+            val orderedRest = if (homeShelfOrder.isEmpty()) {
+                rest
+            } else {
+                // Stable sort: listed titles take their chosen rank, anything
+                // YouTube added later keeps its feed position after them.
+                val rank = homeShelfOrder.withIndex().associate { (i, title) -> title to i }
+                rest.sortedBy { rank[it.title] ?: Int.MAX_VALUE }
+            }
+            val shelves = buildList {
+                if (quickPicks != null) {
+                    add(quickPicks)
+                }
+                addAll(orderedRest)
+            }
+            UiState.Success(shelves)
         }
+    }
+    // The Flow and Replay cards ride at the head of the page: in the quick
+    // picks row when the feed has one, in a row of their own when it does not.
+    // They are never a shelf of their own — a shelf at the top of Home is a
+    // full-width hero, which is the old huge Flow.
+    val homeFlowLeading: ShelfItem? = flowTile
+    // Radio's seed row: what was played recently, so a station can be started
+    // from something the listener already chose rather than a cold suggestion.
+    val radioSeeds: List<ShelfItem> = remember(homeState) {
+        (homeState as? UiState.Success)?.data
+            ?.firstOrNull { shelf ->
+                shelf.title.trim().let { title ->
+                    title.equals("Recents", ignoreCase = true) ||
+                        title.equals("Recently played", ignoreCase = true) ||
+                        title.equals("Gần đây", ignoreCase = true) ||
+                        title.equals("最近", ignoreCase = true)
+                }
+            }
+            ?.items
+            ?.filter { it.videoId != null }
+            ?.take(10)
+            .orEmpty()
     }
     val lyrics by viewModel.lyrics.collectAsStateWithLifecycle()
     val lyricsSource by viewModel.lyricsSource.collectAsStateWithLifecycle()
@@ -1111,6 +1212,7 @@ private fun BitChordApp(
     val homeListState = rememberLazyListState()
     val exploreListState = rememberLazyListState()
     val moodGenreListState = rememberLazyListState()
+    val radioListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
     val libraryShowAllGridState = rememberLazyGridState()
@@ -1118,6 +1220,7 @@ private fun BitChordApp(
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
         TAB_EXPLORE -> if (selectedMoodGenre == null) exploreListState else moodGenreListState
+        TAB_RADIO -> if (selectedMoodGenre == null) radioListState else moodGenreListState
         TAB_LIBRARY -> libraryListState
         else -> searchListState
     }
@@ -1206,16 +1309,18 @@ private fun BitChordApp(
     val homeLabel = stringResource(R.string.home)
     val playLabel = stringResource(R.string.play)
     val exploreLabel = stringResource(R.string.explore)
+    val radioLabel = stringResource(R.string.radio)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
     val historyLabel = stringResource(R.string.history)
     val replayLabel = stringResource(R.string.replay)
     val queueLabel = stringResource(R.string.queue)
     val sharedLinkLabel = stringResource(R.string.shared_link)
-    val tabs = remember(homeLabel, exploreLabel, libraryLabel, searchLabel) {
+    val tabs = remember(homeLabel, exploreLabel, radioLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(homeLabel, BitChordIcons.Home),
             BottomTab(exploreLabel, BitChordIcons.TabExplore),
+            BottomTab(radioLabel, Icons.Rounded.Radio),
             BottomTab(libraryLabel, BitChordIcons.TabLibrary),
             BottomTab(searchLabel, BitChordIcons.TabSearch),
         )
@@ -2351,7 +2456,7 @@ private fun BitChordApp(
     // which includes the Library tab, since the cards live at the top of it.
     // See [rememberReplayState].
     val replayOpen = showReplay || replayStory != null || showReplayShare ||
-        (selectedTab == TAB_LIBRARY && detail == null && !showSettings)
+        (libraryReplayVisible && selectedTab == TAB_LIBRARY && detail == null && !showSettings)
     val (replay, setReplayPeriod) = rememberReplayState(replayOpen)
     val replayCards = remember(replay.summary) {
         replay.summary?.takeUnless { it.isEmpty }?.cards(context).orEmpty()
@@ -2425,6 +2530,16 @@ private fun BitChordApp(
         NowPlayingScreen(
             song = displayedSong,
             playedBy = playedBy,
+            colors = com.music.bitchord.ui.player.PlayerColorOverrides(
+                accent = playerAccentColor?.let { Color(it) },
+                seekbar = playerSeekbarColor?.let { Color(it) },
+                text = playerTextColor?.let { Color(it) },
+                lyrics = playerLyricsColor?.let { Color(it) },
+            ),
+            isAiTrack = remember(displayedSong, aiArtists) {
+                AppSettings.isSongAi(displayedSong)
+            },
+            transportSmoothness = transportSmoothness,
             accountName = account?.name,
             windowWidth = windowWidth,
             windowHeight = windowHeight,
@@ -2448,8 +2563,17 @@ private fun BitChordApp(
                     // the duration, so a fraction dropped seconds after
                     // a transition would otherwise be scaled by the
                     // previous song's length.
-                    val duration = player.duration
-                    if (duration > 0) {
+                    //
+                    // The row's claimed runtime stands in when the player
+                    // has none — an addon stream with no stated length
+                    // leaves the timeline at C.TIME_UNSET, and scaling a
+                    // tap by "unknown" is why the scrubber stopped
+                    // responding on those sources. See
+                    // [com.music.bitchord.playback.claimedDurationMs].
+                    val duration = player.duration.takeIf { it > 0L }
+                        ?: player.currentMediaItem?.claimedDurationMs()
+                        ?: 0L
+                    if (duration > 0L) {
                         player.seekTo(
                             (fraction * duration).toLong()
                                 .coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L)),
@@ -2471,9 +2595,11 @@ private fun BitChordApp(
                     // final millisecond, which ends the track and starts
                     // the next one: tapping the last line of a song
                     // skipped it.
-                    val duration = player.duration
+                    val duration = player.duration.takeIf { it > 0L }
+                        ?: player.currentMediaItem?.claimedDurationMs()
+                        ?: 0L
                     player.seekTo(
-                        if (duration > 0) {
+                        if (duration > 0L) {
                             target.coerceIn(0L, (duration - SEEK_END_GUARD_MS).coerceAtLeast(0L))
                         } else {
                             target.coerceAtLeast(0L)
@@ -2671,11 +2797,7 @@ private fun BitChordApp(
         )
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-    ) {
+    AppRootBox {
         // A pushed album/artist/playlist page replaces the tab content but
         // leaves the tab bar and mini player in place.
         // Replay's three layers unwind in the order they were opened. Ahead of
@@ -3127,6 +3249,10 @@ private fun BitChordApp(
                             },
                             onSpotifyCanvasAuth = { showSpotifyCanvasAuth = true },
                             onAppLanguage = { showAppLanguage = true },
+                            homeShelfTitles = (homeState as? UiState.Success)?.data
+                                ?.map { it.title }
+                                ?.filterNot { com.music.bitchord.ui.screens.isQuickPicksShelf(it) }
+                                .orEmpty(),
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -3291,6 +3417,14 @@ private fun BitChordApp(
                             onArtistClick = { id, name ->
                                 viewModel.openDetail(id, name, "Artist", null, BrowseType.ARTIST)
                             },
+                            // Hiding is a local preference, not an account
+                            // action: the page is popped so the act stops
+                            // being in front of the listener immediately,
+                            // and every filtered surface picks it up at once.
+                            onHideArtist = {
+                                AppSettings.blockArtist(page.browseId, page.title)
+                                viewModel.closeDetail()
+                            },
                             onAddSuggested = { song -> viewModel.addSuggestedSong(page.browseId, song) },
                             // Saving is an account action, so it isn't offered to a
                             // guest at all — same as the like and add-to-playlist rows
@@ -3324,7 +3458,7 @@ private fun BitChordApp(
                             listState = homeListState,
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
-                            title = stringResource(R.string.listen_now),
+                            title = stringResource(R.string.home),
                             signedIn = signedIn,
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onItemClick = { item, shelfTitle ->
@@ -3353,6 +3487,12 @@ private fun BitChordApp(
                                         thumbnailUrl = item.thumbnailUrl,
                                     )
                                 }
+                            },
+                            flowItem = homeFlowLeading,
+                            onFlowClick = { showFlow = true },
+                            onOpenReplay = {
+                                replayLandingPage = ReplayStoryPage.INTRO
+                                showReplay = true
                             },
                             onItemLongPress = onShelfLongPress,
                             onRetry = viewModel::loadHome,
@@ -3400,6 +3540,65 @@ private fun BitChordApp(
                             state = exploreState,
                             listState = exploreListState,
                             onCategoryClick = viewModel::openMoodGenre,
+                            onRetry = viewModel::loadExplore,
+                            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
+                            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
+                            pullState = explorePull,
+                            contentPadding = listPadding,
+                        )
+                        TAB_RADIO -> selectedMoodGenre?.let { category ->
+                            MoodGenrePlaylistsScreen(
+                                title = category.title,
+                                state = moodGenreShelves,
+                                listState = moodGenreListState,
+                                onItemClick = { item ->
+                                    item.videoId?.let { videoId ->
+                                        playRadio(
+                                            Song(
+                                                videoId = videoId,
+                                                title = item.title,
+                                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                                                thumbnailUrl = item.thumbnailUrl,
+                                            ),
+                                            QueueSource(
+                                                category.title,
+                                                PlaybackSourceType.EXPLORE,
+                                                category.browseId,
+                                            ),
+                                        )
+                                    } ?: item.browseId?.let { browseId ->
+                                        viewModel.openDetail(
+                                            browseId = browseId,
+                                            title = item.title,
+                                            subtitle = item.subtitle,
+                                            thumbnailUrl = item.thumbnailUrl,
+                                        )
+                                    }
+                                },
+                                onRetry = { viewModel.openMoodGenre(category) },
+                                contentPadding = listPadding,
+                            )
+                        } ?: RadioScreen(
+                            state = exploreState,
+                            listState = radioListState,
+                            flowItem = flowTile,
+                            onFlowClick = { showFlow = true },
+                            seeds = radioSeeds,
+                            onSeedClick = { item ->
+                                val videoId = item.videoId
+                                if (videoId != null) {
+                                    startRadio(
+                                        Song(
+                                            videoId = videoId,
+                                            title = item.title,
+                                            artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                                            thumbnailUrl = item.thumbnailUrl,
+                                        ),
+                                    )
+                                }
+                            },
+                            onStationClick = viewModel::openMoodGenre,
+                            onStartStation = { selectedTab = TAB_SEARCH },
                             onRetry = viewModel::loadExplore,
                             refreshing = MainViewModel.Feed.EXPLORE in refreshing,
                             onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
@@ -3577,16 +3776,18 @@ private fun BitChordApp(
                             onImportSpotifyPlaylist = { showSpotifyImportDialog = true },
                             onShowAll = { shelf -> libraryShowAll = shelf },
                             replay = {
-                                LibraryReplayEntry(
-                                    cards = replayCards,
-                                    loading = replay.loading,
-                                    holder = account?.name.orEmpty(),
-                                    memberSince = replay.memberSince,
-                                    onOpenReplay = { page ->
-                                        replayLandingPage = page
-                                        showReplay = true
-                                    },
-                                )
+                                if (libraryReplayVisible) {
+                                    LibraryReplayEntry(
+                                        cards = replayCards,
+                                        loading = replay.loading,
+                                        holder = account?.name.orEmpty(),
+                                        memberSince = replay.memberSince,
+                                        onOpenReplay = { page ->
+                                            replayLandingPage = page
+                                            showReplay = true
+                                        },
+                                    )
+                                }
                             },
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
                             onRetry = viewModel::loadLibrary,
@@ -3790,9 +3991,7 @@ private fun BitChordApp(
                         detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
                         detail != null -> detail.title
                         selectedMoodGenre != null -> selectedMoodGenre?.title.orEmpty()
-                        else -> tabs[selectedTab].let {
-                            if (it.label == "Play") stringResource(R.string.listen_now) else it.label
-                        }
+                        else -> tabs[selectedTab].label
                     },
                     // Every page, in either material, uses separated floating
                     // circles over the shared gradient — no full-width pane.
@@ -5161,7 +5360,7 @@ private fun BitChordApp(
             activeAccountId = activeAccountId,
             viewModel = viewModel,
             onDismiss = { webSession = null },
-            onSignedIn = { selectedTab = 2 },
+            onSignedIn = { selectedTab = TAB_LIBRARY },
         )
 
         // ---- Support popup (once ever) ----
@@ -5204,6 +5403,32 @@ private fun BitChordApp(
                         AppUpdateChecker.resetDownload()
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.releaseUrl)))
                         showUpdateDialog = false
+                    },
+                )
+            }
+        }
+
+        // ---- Server-driven announcement (once per id) ----
+        if (showAnnouncementDialog) {
+            announcement?.let { news ->
+                AnnouncementDialog(
+                    title = news.title,
+                    body = news.body,
+                    actionLabel = news.action,
+                    url = news.url,
+                    hazeState = hazeState,
+                    onDismiss = {
+                        showAnnouncementDialog = false
+                        AppAnnouncements.dismiss(context, news.id)
+                    },
+                    onOpenUrl = {
+                        showAnnouncementDialog = false
+                        AppAnnouncements.dismiss(context, news.id)
+                        news.url?.let { link ->
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                            }
+                        }
                     },
                 )
             }
@@ -5956,8 +6181,9 @@ private fun AppGlassNav(
 
 private const val TAB_HOME = 0
 private const val TAB_EXPLORE = 1
-private const val TAB_LIBRARY = 2
-private const val TAB_SEARCH = 3
+private const val TAB_RADIO = 2
+private const val TAB_LIBRARY = 3
+private const val TAB_SEARCH = 4
 
 /**
  * What a tab's key is prefixed with in the content switcher above.

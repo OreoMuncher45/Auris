@@ -1,6 +1,7 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.sources.AddonSource
 import com.music.bitchord.data.sources.DeviceCodecs
 import com.music.bitchord.data.sources.SourceConfig
@@ -271,6 +272,9 @@ class AddonSourceTest {
 
     @Test
     fun `manual refresh asks again for a cached stream URL`() = runBlocking {
+        // The Atmos rung is a request of its own; this test is counting the
+        // ordinary one. Pinned off so the count is one lookup, not two.
+        AppSettings.dolbyAtmos.value = false
         route("/manifest.json", manifest())
         route("/stream/track", json("""{"url":"https://cdn/old.flac","codec":"flac"}"""))
         val source = AddonSource(config())
@@ -330,6 +334,8 @@ class AddonSourceTest {
      */
     @Test
     fun `an addon that enumerates no options is sent the tier verbatim`() = runBlocking {
+        // No immersive attempt: this is the negotiation of the ordinary tier.
+        AppSettings.dolbyAtmos.value = false
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac"}"""))
 
@@ -388,7 +394,7 @@ class AddonSourceTest {
      * search is where a row's advertised quality is read.
      */
     @Test
-    fun `the atmos hint travels on search and stream when the device and the user both want it`() =
+    fun `the atmos hint travels on search and on the immersive rung when both want it`() =
         runBlocking {
             route("/manifest.json", manifest())
             route("/search", json("""{"tracks":[]}"""))
@@ -402,7 +408,17 @@ class AddonSourceTest {
             // track with no immersive mix is an error rather than a stereo
             // answer — which would turn every ordinary track into a miss.
             assertEquals("auto", requestFor("/search").queryParameter("atmos"))
-            assertEquals("auto", requestFor("/stream/t1").queryParameter("atmos"))
+
+            // Stream is a waterfall now: the immersive rung asks for the
+            // spatial tier with the hint, and the stereo rungs below it say
+            // `none` so a failed attempt is not answered with the same mix.
+            // A stereo answer to the immersive rung is not a hit, so the walk
+            // continues to the hi-res rung the reference host uses next.
+            val streams = streamRequests()
+            assertEquals("atmos", streams[0].queryParameter("quality"))
+            assertEquals("auto", streams[0].queryParameter("atmos"))
+            assertEquals("hi_res", streams[1].queryParameter("quality"))
+            assertEquals("none", streams[1].queryParameter("atmos"))
         }
 
     /**
@@ -410,43 +426,50 @@ class AddonSourceTest {
      * and a wired-headphones listener may want the bit-exact stereo FLAC. Not
      * asking is what gets them it, rather than asking and then refusing the
      * answer.
+     *
+     * The value is `none`, not an absent parameter. An addon whose schema
+     * defaults `atmos` to `auto` would otherwise keep offering a mix this
+     * device is about to refuse.
      */
     @Test
-    fun `no atmos hint is sent when the setting is off`() = runBlocking {
+    fun `atmos is explicitly declined when the setting is off`() = runBlocking {
         AppSettings.dolbyAtmos.value = false
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
 
         AddonSource(config()).stream("t1", StreamRequest.Lossless)
 
-        assertNull(requestFor("/stream/t1").queryParameter("atmos"))
+        assertEquals("none", requestFor("/stream/t1").queryParameter("atmos"))
     }
 
     /** A device with no E-AC-3 decoder would only have to refuse what it asked for. */
     @Test
-    fun `no atmos hint is sent when the device cannot decode it`() = runBlocking {
+    fun `atmos is explicitly declined when the device cannot decode it`() = runBlocking {
         DeviceCodecs.forced = false
         route("/manifest.json", manifest())
         route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
 
         AddonSource(config()).stream("t1", StreamRequest.Lossless)
 
-        assertNull(requestFor("/stream/t1").queryParameter("atmos"))
+        assertEquals("none", requestFor("/stream/t1").queryParameter("atmos"))
     }
 
     /**
-     * An addon that declared its own `atmos` setting has already said what it
-     * wants. Its default stands; the hint is only ever filling a gap.
+     * The manifest's declared `atmos` value is a default for a host with no
+     * preference, and this host has one: the Settings switch. Leaving the
+     * default in place is what made an addon whose schema declares `off` serve
+     * stereo forever while Atmos was switched on — "enabled but not working,
+     * with the same addon".
      */
     @Test
-    fun `a declared atmos default is not overridden by the hint`() = runBlocking {
+    fun `the Settings switch overrides a declared atmos default`() = runBlocking {
         route(
             "/manifest.json",
             json(
                 """
                 {"id":"a","name":"A","resources":["search","stream","settings"],
-                 "settings":[{"key":"atmos","type":"select","default":"only",
-                              "options":[{"value":"only"},{"value":"auto"},{"value":"off"}]}]}
+                 "settings":[{"key":"atmos","type":"select","default":"off",
+                              "options":[{"value":"only"},{"value":"auto"},{"value":"none"}]}]}
                 """.trimIndent(),
             ),
         )
@@ -454,7 +477,248 @@ class AddonSourceTest {
 
         AddonSource(config()).stream("t1", StreamRequest.Lossless)
 
-        assertEquals("only", requestFor("/stream/t1").queryParameter("atmos"))
+        assertEquals("auto", requestFor("/stream/t1").queryParameter("atmos"))
+    }
+
+    /** The same override in the other direction: a declared `auto` is declined. */
+    @Test
+    fun `switching Atmos off overrides a declared auto default`() = runBlocking {
+        AppSettings.dolbyAtmos.value = false
+        route(
+            "/manifest.json",
+            json(
+                """
+                {"id":"a","name":"A","resources":["search","stream","settings"],
+                 "settings":[{"key":"atmos","type":"select","default":"auto",
+                              "options":[{"value":"only"},{"value":"auto"},{"value":"none"}]}]}
+                """.trimIndent(),
+            ),
+        )
+        route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
+
+        AddonSource(config()).stream("t1", StreamRequest.Lossless)
+
+        assertEquals("none", requestFor("/stream/t1").queryParameter("atmos"))
+    }
+
+    /**
+     * The quality picker's Dolby Atmos rung, end to end on the wire.
+     *
+     * It is not permission — `atmos=auto` was already sent — but the addon's
+     * own `quality=atmos` rung, which is where a Tidal-backed catalogue files
+     * the spatial mix. The reference host's waterfall always asks that value
+     * before walking down to lossless, and this is the same walk.
+     */
+    @Test
+    fun `the immersive rung is asked first and a hit never asks the stereo rung`() = runBlocking {
+        route("/manifest.json", manifest())
+        server.dispatcher = atmosDispatcher("https://cdn.example.com/dash/tidal-atmos")
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertTrue(stream.format.isDolbyAtmos)
+        val streams = streamRequests()
+        assertEquals(1, streams.size)
+        assertEquals("atmos", streams[0].queryParameter("quality"))
+        assertEquals("auto", streams[0].queryParameter("atmos"))
+    }
+
+    /**
+     * A track with no spatial master must play exactly as it did before the
+     * rung existed: the immersive attempt misses, and the lossless request
+     * behind it comes back with the stereo copy. The fallback says `none` so
+     * an addon that ignores `quality` cannot answer the same mix twice.
+     */
+    @Test
+    fun `a stereo answer to the immersive rung still plays the lossless copy`() = runBlocking {
+        route("/manifest.json", manifest())
+        route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("flac", stream.format.codec)
+        assertEquals(false, stream.format.isDolbyAtmos)
+        val streams = streamRequests()
+        assertEquals(2, streams.size)
+        assertEquals("atmos", streams[0].queryParameter("quality"))
+        assertEquals("auto", streams[0].queryParameter("atmos"))
+        assertEquals("hi_res", streams[1].queryParameter("quality"))
+        assertEquals("none", streams[1].queryParameter("atmos"))
+    }
+
+    /**
+     * The rest of the reference host's waterfall: atmos, then hi-res, then CD
+     * lossless, then 320. A backend that files 24-bit copies under their own
+     * tier answers none of the requests above it, and a walk that stopped at
+     * `lossless` never reached it.
+     */
+    @Test
+    fun `the stereo waterfall continues to hi-res and lossless when earlier rungs miss`() = runBlocking {
+        route("/manifest.json", manifest())
+        server.dispatcher = qualityDispatcher(
+            "atmos" to MockResponse().setResponseCode(404),
+            "hi_res" to MockResponse().setResponseCode(404),
+            "LOSSLESS" to json("""{"url":"https://cdn/a.flac","codec":"flac"}"""),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("flac", stream.format.codec)
+        assertEquals(listOf("atmos", "hi_res", "LOSSLESS"), streamRequests().map { it.queryParameter("quality") })
+    }
+
+    /**
+     * Nothing above the floor answers. The lossy copy is still better than
+     * falling to YouTube, but it is marked below the request so the resolver's
+     * second look knows to keep asking.
+     */
+    @Test
+    fun `a lossy floor is kept and marked below the request`() = runBlocking {
+        route("/manifest.json", manifest())
+        server.dispatcher = qualityDispatcher(
+            "atmos" to MockResponse().setResponseCode(404),
+            "hi_res" to MockResponse().setResponseCode(404),
+            "LOSSLESS" to MockResponse().setResponseCode(404),
+            "HIGH" to json("""{"url":"https://cdn/a.mp3","codec":"mp3","bitrate":128}"""),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("mp3", stream.format.codec)
+        assertTrue(stream.belowRequest)
+        assertEquals(
+            listOf("atmos", "hi_res", "LOSSLESS", "HIGH"),
+            streamRequests().map { it.queryParameter("quality") },
+        )
+    }
+
+    /**
+     * Choosing the rung is a statement on its own. The master switch is a
+     * standing preference and defaults on, so the rung has to carry the
+     * request when it has been turned off — a rung labelled Dolby Atmos that
+     * served stereo would be the same failure the rung exists to fix.
+     */
+    @Test
+    fun `the Dolby Atmos quality rung is enough with the master switch off`() = runBlocking {
+        AppSettings.dolbyAtmos.value = false
+        AppSettings.audioQualityWifi.value = AudioQuality.DOLBY
+        AppSettings.audioQualityCellular.value = AudioQuality.DOLBY
+        try {
+            route("/manifest.json", manifest())
+            server.dispatcher = atmosDispatcher("https://cdn.example.com/dash/tidal-atmos")
+
+            val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+            assertTrue(stream.format.isDolbyAtmos)
+            assertEquals("atmos", streamRequests()[0].queryParameter("quality"))
+        } finally {
+            AppSettings.audioQualityWifi.value = AudioQuality.LOSSLESS
+            AppSettings.audioQualityCellular.value = AudioQuality.LOSSLESS
+        }
+    }
+
+    /**
+     * A catalogue that enumerates its quality options but has no Atmos entry
+     * still gets the literal rung: the reference host does not negotiate this
+     * value, and falling back to `options.first()` would quietly turn the
+     * request into an ordinary lossless one.
+     */
+    @Test
+    fun `the immersive rung is not negotiated down to an enumerated option`() = runBlocking {
+        route(
+            "/manifest.json",
+            json(
+                """
+                {"id":"a","name":"A","resources":["search","stream","settings"],
+                 "settings":[{"key":"quality","type":"select","default":"normal",
+                              "options":[{"value":"lossless"},{"value":"high"},{"value":"normal"}]}]}
+                """.trimIndent(),
+            ),
+        )
+        route("/stream/t1", json("""{"url":"https://cdn/a.flac","codec":"flac"}"""))
+
+        AddonSource(config()).stream("t1", StreamRequest.Lossless)
+
+        assertEquals("atmos", streamRequests()[0].queryParameter("quality"))
+    }
+
+    /**
+     * The spellings a real backend uses for the E-AC-3 core, with a container
+     * mime alongside it. The old codec chain let `audio/mp4` win and recorded
+     * the answer as an ordinary MP4 — no Atmos, no badge, and [`SourceResolver`]
+     * then treated the mix as a lossy stream to look past.
+     */
+    @Test
+    fun `an Atmos answer with a stated eac3 codec and an mp4 mime stays Atmos`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/stream/t1",
+            json(
+                """{"url":"https://cdn/a.mp4","codec":"eac3","mimeType":"audio/mp4",
+                   "quality":"Dolby Atmos","atmos":true}""",
+            ),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("eac3-joc", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+        assertEquals(false, stream.format.isLossless)
+    }
+
+    /** `ec-3` is the DASH `codecs` spelling of the same thing. */
+    @Test
+    fun `an ec-3 spelling is normalised to the JOC codec`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/stream/t1",
+            json(
+                """{"url":"https://cdn/a.mp4","codec":"ec-3","mimeType":"audio/mp4",
+                   "quality":"Tidal · Dolby Atmos","format":"dash"}""",
+            ),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("eac3-joc", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+    }
+
+    /**
+     * The underscore spelling without any free-text hint. It used to reach
+     * `eac3-joc` only through [AddonStream.isDolbyAtmos]'s fallback; now the
+     * codec field itself is normalised, so the label no longer depends on a
+     * quality string the backend may have left blank.
+     */
+    @Test
+    fun `an underscore JOC codec is normalised with no quality text`() = runBlocking {
+        route("/manifest.json", manifest())
+        route("/stream/t1", json("""{"url":"https://cdn/a.mp4","codec":"eac3_joc","mimeType":"audio/mp4"}"""))
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("eac3-joc", stream.format.codec)
+        assertTrue(stream.format.isDolbyAtmos)
+    }
+
+    /**
+     * The guard on the other side: a codec that names a different, specific
+     * payload is not overwritten by an Atmos-sounding quality label. FLAC is
+     * the more specific claim, and ranking it as E-AC-3 would send it to a
+     * decoder that cannot read it.
+     */
+    @Test
+    fun `a stated FLAC codec outranks an Atmos quality label`() = runBlocking {
+        route("/manifest.json", manifest())
+        route(
+            "/stream/t1",
+            json("""{"url":"https://cdn/a.flac","codec":"flac","quality":"Dolby Atmos"}"""),
+        )
+
+        val stream = AddonSource(config()).stream("t1", StreamRequest.Lossless)!!
+
+        assertEquals("flac", stream.format.codec)
+        assertFalse(stream.format.isDolbyAtmos)
     }
 
     /**
@@ -462,11 +726,9 @@ class AddonSourceTest {
      * the hint goes out, the DASH answer comes back, and every field that
      * identifies it as immersive is one this app reads.
      *
-     * Note what is *not* in `AUDIO_CODECS`: the underscore spelling
-     * `eac3_joc`. Adding it there would have `formatOf` return it verbatim,
-     * which then misses the hyphenated `DOLBY_ATMOS_CODECS` and silently
-     * breaks [StreamFormat.isDolbyAtmos]. The free-text fallback is the
-     * correct path, and this is what locks it.
+     * The underscore spelling `eac3_joc` is normalised to the hyphenated codec
+     * id before [StreamFormat.isDolbyAtmos] sees it — passing it through
+     * verbatim would miss `DOLBY_ATMOS_CODECS` and silently drop the label.
      */
     @Test
     fun `asking for atmos gets an immersive answer the player is told how to open`() = runBlocking {
@@ -596,6 +858,23 @@ class AddonSourceTest {
             } else {
                 json("""{"url":"https://cdn.example.com/a.flac","codec":"flac","container":"flac"}""")
             }
+        }
+    }
+
+    /**
+     * Answers each rung of the waterfall by the `quality` value it was asked
+     * for. A rung with no entry is a miss, the way a catalogue that does not
+     * stock that tier answers.
+     */
+    private fun qualityDispatcher(vararg byQuality: Pair<String, MockResponse>) = object : Dispatcher() {
+        override fun dispatch(request: RecordedRequest): MockResponse {
+            synchronized(seen) { seen += request }
+            val url = request.requestUrl
+            val path = url?.encodedPath.orEmpty()
+            if (!path.startsWith("/stream/")) return routes[path] ?: MockResponse().setResponseCode(404)
+            val quality = url?.queryParameter("quality").orEmpty()
+            return byQuality.firstOrNull { it.first.equals(quality, ignoreCase = true) }?.second
+                ?: MockResponse().setResponseCode(404)
         }
     }
 
@@ -759,6 +1038,9 @@ class AddonSourceTest {
      */
     @Test
     fun `a rate-limited request is waited out and retried`() = runBlocking {
+        // The queue below is one stream lookup long; the immersive attempt
+        // would consume it first. This test is about the 429, not the rung.
+        AppSettings.dolbyAtmos.value = false
         route("/manifest.json", manifest())
         val answers = ArrayDeque(
             listOf(
@@ -1004,6 +1286,11 @@ class AddonSourceTest {
     /** The URL of the first request the server saw for [path]. */
     private fun requestFor(path: String) = synchronized(seen) {
         seen.first { it.requestUrl?.encodedPath == path }.requestUrl!!
+    }
+
+    /** Every request the server saw for [path], in order — a waterfall is more than one. */
+    private fun streamRequests(path: String = "/stream/t1") = synchronized(seen) {
+        seen.mapNotNull { it.requestUrl }.filter { it.encodedPath == path }
     }
 
     @Test

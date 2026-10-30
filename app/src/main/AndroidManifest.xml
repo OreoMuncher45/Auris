@@ -26,6 +26,14 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <!--
+      Lets bit-perfect mode ask Android 14's mixer to pass the app's own format
+      through to the device untouched (setPreferredMixerAttributes). Normal
+      permission, granted at install; without it the request is simply refused
+      and the pipeline readout says so.
+    -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!--
       In-app updates: handing a downloaded APK to the system installer. The
       per-app "install unknown apps" switch is still the user's to flip; this
       only lets the request reach the installer.
@@ -104,11 +112,20 @@
           uiMode is deliberately *not* in the list: a day/night change should
           still recreate the Activity so the theme is rebuilt from resources.
         -->
+        <!--
+          Resize rather than pan. The search field sits at the bottom of the
+          folding nav bar and lifts itself with imePadding; with the default
+          adjustUnspecified the window is panned to reveal that field as well,
+          so the two offsets stacked and the pill landed around the middle of
+          the screen. adjustResize leaves the offset to the inset, which is the
+          one the bar is already written against.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.BitChord">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

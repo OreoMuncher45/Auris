@@ -36,6 +36,7 @@ val androidSdk: String? = file("local.properties")
 
 if (androidSdk != null && file(androidSdk).isDirectory) {
     include(":app")
+    include(":audio:decent-usb-audio-driver")
 } else {
     logger.lifecycle("No Android SDK found — building the desktop targets only.")
 }

@@ -273,7 +273,7 @@ fun ClassipodHost(
         if (playlists.isEmpty()) {
             return ClassipodPage.Menu(
                 song.title,
-                listOf(MenuItem("No playlists yet", "Create one in BitChord")),
+                listOf(MenuItem("No playlists yet", "Create one in Auris")),
             )
         }
         return ClassipodPage.Menu(
@@ -370,7 +370,10 @@ fun ClassipodHost(
     // Cycling a rung re-pushes a fresh page (values are snapshots).
     fun qualityPage(): ClassipodPage.Menu {
         fun cycle(current: AudioQuality, setter: (AudioQuality) -> Unit): () -> Unit = {
-            val order = listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW)
+            val order = listOf(
+                AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                AudioQuality.MEDIUM, AudioQuality.LOW,
+            )
             setter(order[(order.indexOf(current) + 1) % order.size])
         }
         return ClassipodPage.Menu(
@@ -407,7 +410,7 @@ fun ClassipodHost(
     fun interfacePage(): ClassipodPage.Menu = ClassipodPage.Menu(
         "Interface",
         listOf(
-            MenuItem("Theme: BitChord") { AppSettings.setAppUi(AppUi.BITCHORD) },
+            MenuItem("Theme: Auris") { AppSettings.setAppUi(AppUi.BITCHORD) },
             MenuItem(
                 "Faceplate",
                 AppSettings.classipodColorway.value,
@@ -442,7 +445,7 @@ fun ClassipodHost(
     fun aboutPage(): ClassipodPage.Menu = ClassipodPage.Menu(
         "About",
         listOf(
-            MenuItem("BitChord Next", "v" + BuildConfig.VERSION_NAME),
+            MenuItem("Auris", "v" + BuildConfig.VERSION_NAME),
             MenuItem("Tracks", allKnown.size.toString()),
             MenuItem("Liked", likedAll.size.toString()),
         ),
@@ -502,10 +505,16 @@ fun ClassipodHost(
         "Audio",
         listOf(
             cyc("Wi-Fi ceiling", wifiQuality.label, wifiQuality,
-                listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW),
+                listOf(
+                    AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                    AudioQuality.MEDIUM, AudioQuality.LOW,
+                ),
                 AppSettings::setAudioQualityWifi, ::advAudioPage),
             cyc("Data ceiling", cellularQuality.label, cellularQuality,
-                listOf(AudioQuality.LOSSLESS, AudioQuality.HIGH, AudioQuality.MEDIUM, AudioQuality.LOW),
+                listOf(
+                    AudioQuality.DOLBY, AudioQuality.LOSSLESS, AudioQuality.HIGH,
+                    AudioQuality.MEDIUM, AudioQuality.LOW,
+                ),
                 AppSettings::setAudioQualityCellular, ::advAudioPage),
             tog("Dolby Atmos", atmosOn, AppSettings::setDolbyAtmos, ::advAudioPage),
             cyc("Download quality", dlQuality.label, dlQuality,

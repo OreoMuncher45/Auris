@@ -48,6 +48,14 @@ interface PlayerHost {
     @Composable
     fun rememberRemoteArtworkUrl(song: Song?): String?
 
+    /**
+     * The Flow station's own looping clip: the wide cut for the radio banner
+     * and the square cut for its home tile. Null where the platform ships no
+     * such asset, in which case callers keep their gradient.
+     */
+    @Composable
+    fun rememberFlowVideo(square: Boolean): CanvasArtwork? = null
+
     /** The system output level the player's volume bar drives, if it drives one. */
     val volume: SystemVolume
 
@@ -146,6 +154,7 @@ interface PlayerSettingsSource {
     val lastPlayerScreen: StateFlow<LastPlayerScreen>
     val legacyMeshGradient: StateFlow<Boolean>
     val lyricsBlur: StateFlow<Boolean>
+    val textGlow: StateFlow<Boolean>
     val lyricsOffsetMs: StateFlow<Int>
     val lyricsSourceOrder: StateFlow<List<LyricsSource>>
     val meteredConnection: StateFlow<Boolean?>
@@ -154,6 +163,14 @@ interface PlayerSettingsSource {
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>
+    /** Whether the Automix "this song / next song" line under the sleeve is drawn. */
+    val showNextTrackStatus: StateFlow<Boolean>
+    /** Whether the "Upgrading quality" badge is drawn while a better copy is sought. */
+    val showUpgradeBadge: StateFlow<Boolean>
+    /** Whether the "Lossless" badge is drawn for a losslessly decoded stream. */
+    val showLosslessBadge: StateFlow<Boolean>
+    /** Whether that badge may say "Hi-Res Lossless" instead of "Lossless". */
+    val showHiResBadge: StateFlow<Boolean>
     val smartAnalysis: StateFlow<SmartAnalysis>
     val smartFadeEnabled: StateFlow<Boolean>
     /** True only while an analysed Automix transition is audibly mixing two tracks. */
@@ -163,6 +180,7 @@ interface PlayerSettingsSource {
     val smartTransitionWindow: StateFlow<TransitionWindow?>
     val spotifyCanvasAutoHide: StateFlow<Boolean>
     val syncedLyrics: StateFlow<Boolean>
+    val showNowPlayingLyrics: StateFlow<Boolean>
     val translationLanguage: StateFlow<String>
     val versionAlignmentInProgress: StateFlow<Boolean>
 
@@ -318,6 +336,10 @@ internal fun rememberOutputPicker(onOpen: () -> Unit): () -> Unit =
 @Composable
 internal fun rememberRemoteArtworkUrl(song: Song?): String? =
     PlayerPlatform.host.rememberRemoteArtworkUrl(song)
+
+@Composable
+internal fun rememberFlowVideo(square: Boolean): CanvasArtwork? =
+    PlayerPlatform.host.rememberFlowVideo(square)
 
 @Composable
 internal fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) =

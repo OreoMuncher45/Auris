@@ -61,6 +61,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -149,7 +150,8 @@ internal fun PlaybackOriginCaption(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     Text(
         text = text,
         style = MaterialTheme.typography.labelSmall.copy(
@@ -159,7 +161,7 @@ internal fun PlaybackOriginCaption(
                 blurRadius = 4f,
             ),
         ),
-        color = ink,
+        color = ink.copy(alpha = alphas.tertiary),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         textAlign = textAlign,
@@ -191,7 +193,8 @@ internal fun PlayerScrubber(
     centerLabel: @Composable BoxScope.() -> Unit = {},
 ) {
     val shown = shown()
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     // Held as a State and read only inside the bar's draw: the blend republishes
     // every fade tick, and collecting it by value here would recompose the
     // scrubber and its labels thirty times a second for a change only the
@@ -209,9 +212,9 @@ internal fun PlayerScrubber(
             mixing = mixing,
             mixPulse = mixPulse,
             transitionWindow = transitionWindow,
-            activeColor = ink.copy(alpha = 0.92f),
-            inactiveColor = ink.copy(alpha = 0.26f),
-            markerColor = ink.copy(alpha = 0.5f),
+            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
+            inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
+            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
         )
         Box(
             modifier = Modifier
@@ -230,12 +233,12 @@ internal fun PlayerScrubber(
                 Text(
                     text = formatTime((shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = 0.55f),
+                    color = ink.copy(alpha = alphas.secondary),
                 )
                 Text(
                     text = "-" + formatTime(durationMs - (shown * durationMs).toLong()),
                     style = timeStyle,
-                    color = ink.copy(alpha = 0.55f),
+                    color = ink.copy(alpha = alphas.secondary),
                 )
             }
             // Pinned to the box's own centre rather than squeezed into the gap
@@ -266,7 +269,8 @@ internal fun PlayerScrubber(
  */
 @Composable
 private fun MixingLabel(pulse: MixPulse, modifier: Modifier = Modifier) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     Text(
         text = stringResource(Res.string.mixing),
         modifier = modifier.graphicsLayer { alpha = pulse.cover * pulse.alpha(1f, restShare = MIXING_LABEL_REST) },
@@ -275,7 +279,7 @@ private fun MixingLabel(pulse: MixPulse, modifier: Modifier = Modifier) {
             fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
             shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
         ),
-        color = ink.copy(alpha = 0.85f),
+        color = ink.copy(alpha = alphas.secondary),
         maxLines = 1,
     )
 }
@@ -324,9 +328,13 @@ internal fun PlaybackQualityLabel(
  */
 @Composable
 internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     val showNerdStats by PlayerSettings.showNerdStats.collectAsStateWithLifecycle()
     if (!showNerdStats) return
+    // Its own switch rather than riding on [showNerdStats]: the measured line
+    // above answers "what is playing", this one answers "what is the app doing
+    // about the next song", and either is worth having without the other.
+    val showNextStatus by PlayerSettings.showNextTrackStatus.collectAsStateWithLifecycle()
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val smartFadeOn by PlayerSettings.smartFadeEnabled.collectAsStateWithLifecycle()
     val smartAnalysis by PlayerSettings.smartAnalysis.collectAsStateWithLifecycle()
@@ -369,7 +377,7 @@ internal fun SleeveNerdStats(song: Song, modifier: Modifier = Modifier) {
         // Only when Automix is actually switched on: otherwise this would
         // report on analysis nothing is going to use, which is noise rather
         // than a stat.
-        if (smartFadeOn) {
+        if (smartFadeOn && showNextStatus) {
             Text(
                 // Both sides always named, even when they agree, so the line
                 // reads the same way every time and the eye can find the half
@@ -423,12 +431,14 @@ internal fun TransportRow(
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     compact: Boolean = false,
+    /** Rounds the transport polygons; see [DEFAULT_TRANSPORT_SMOOTHNESS]. */
+    smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
 ) {
     // The pause glyph, measured against Apple's player: 0.60x the height it
     // had when the measurements were taken — 38.3pt tall on Apple's own
     // numbers. The touch box is untouched, so the button hits exactly as it
     // ever did.
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     val playSize = if (compact) 30.dp else 38.dp
     val playTouch = if (compact) 76.dp else 92.dp
     val skipSize = if (compact) 36.dp else PLAYER_SKIP_ICON_SIZE
@@ -443,11 +453,12 @@ internal fun TransportRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         TransportGlyph(
-            icon = PlayerIcons.SkipPrevious,
+            shape = TransportShape.PREVIOUS,
             contentDescription = stringResource(Res.string.widget_previous),
             size = skipSize,
             touchSize = PLAYER_SKIP_TOUCH_SIZE,
             heightScale = PLAYER_SKIP_HEIGHT_SCALE,
+            smoothness = smoothness,
             onClick = onPrevious,
             enabled = previousEnabled,
             haptic = Haptic.SkipPrevious,
@@ -464,29 +475,28 @@ internal fun TransportRow(
             }
         } else {
             TransportGlyph(
-                icon = if (isPlaying) PlayerIcons.Pause else PlayerIcons.Play,
+                shape = if (isPlaying) TransportShape.PAUSE else TransportShape.PLAY,
                 contentDescription = stringResource(if (isPlaying) Res.string.pause else Res.string.play),
                 size = playSize,
                 touchSize = playTouch,
+                smoothness = smoothness,
                 onClick = onPlayPause,
                 haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
             )
         }
         TransportGlyph(
-            icon = PlayerIcons.SkipNext,
+            shape = TransportShape.NEXT,
             contentDescription = stringResource(Res.string.widget_next),
             size = skipSize,
             touchSize = PLAYER_SKIP_TOUCH_SIZE,
             heightScale = PLAYER_SKIP_HEIGHT_SCALE,
+            smoothness = smoothness,
             onClick = onNext,
             enabled = nextEnabled,
             haptic = Haptic.SkipNext,
         )
     }
 }
-
-/** ThinSlider's fixed touch target at the volume bar's size: 10dp + 22dp. */
-internal val VOLUME_ROW_HEIGHT = 32.dp
 
 /** The volume bar between its two speaker glyphs. */
 @Composable
@@ -499,7 +509,8 @@ internal fun VolumeRow(
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
 ) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -507,7 +518,7 @@ internal fun VolumeRow(
         Icon(
             painter = PlayerIcons.VolumeLow.painter(),
             contentDescription = null,
-            tint = ink.copy(alpha = 0.5f),
+            tint = ink.copy(alpha = alphas.tertiary),
             modifier = Modifier
                 .size(20.dp),
         )
@@ -518,16 +529,16 @@ internal fun VolumeRow(
             onValueChangeFinished = onValueChangeFinished,
             idleHeight = 6.dp,
             activeHeight = 10.dp,
-            activeColor = ink.copy(alpha = 0.92f),
-            inactiveColor = ink.copy(alpha = 0.26f),
-            markerColor = ink.copy(alpha = 0.5f),
+            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
+            inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
+            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(10.dp))
         Icon(
             painter = PlayerIcons.VolumeHigh.painter(),
             contentDescription = null,
-            tint = ink.copy(alpha = 0.5f),
+            tint = ink.copy(alpha = alphas.tertiary),
             modifier = Modifier
                 .size(20.dp),
         )
@@ -656,27 +667,25 @@ internal fun PlayerActionRow(
 /**
  * Translucent circular button used for the track menu and the like control.
  *
- * [active] brightens the disc rather than only the glyph: this sits on album
- * artwork of any colour, and a white icon on a white-ish sleeve has no tint
- * change left to make. The filled star carries the state as a shape too —
- * see [PlayerIcons.Liked].
+ * The disc stays at one translucency whatever the state, because the palette's
+ * icon contrast is measured against that fill. A liked track is drawn with a
+ * filled star instead — see [PlayerIcons.Liked].
  */
 @Composable
 internal fun CircleGlyph(
     icon: PlayerIcon,
     contentDescription: String,
     onClick: () -> Unit,
-    active: Boolean = false,
     haptic: Haptic = Haptic.Tap,
     /** Optical size override for glyphs that sit small or large in their box. */
     glyphSize: Dp = 19.dp,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerInk.current
-    val discAlpha by animateFloatAsState(
-        targetValue = if (active) 0.34f else 0.18f,
-        label = "glyphDisc",
-    )
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
+    // The shape carries "on" (a filled star), so the disc stays at the table's
+    // 20% rather than brightening and changing the icon's contrast with it.
+    val discAlpha = alphas.buttonFill
     Box(
         modifier = Modifier
             .size(34.dp)
@@ -714,7 +723,8 @@ internal fun CircleGlyph(
  */
 @Composable
 private fun TransportGlyph(
-    icon: PlayerIcon,
+    icon: PlayerIcon? = null,
+    shape: TransportShape? = null,
     contentDescription: String,
     size: androidx.compose.ui.unit.Dp,
     touchSize: androidx.compose.ui.unit.Dp = size,
@@ -723,9 +733,11 @@ private fun TransportGlyph(
     haptic: Haptic = Haptic.Tap,
     /** Vertical squash of the glyph alone; its width and touch box are untouched. */
     heightScale: Float = 1f,
+    /** Corner softness for [shape]; ignored by icon glyphs. */
+    smoothness: Float = DEFAULT_TRANSPORT_SMOOTHNESS,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     // Faded rather than hidden: the row keeps its shape at the ends of a queue.
     val alpha by animateFloatAsState(
         targetValue = if (enabled) 1f else 0.3f,
@@ -744,14 +756,24 @@ private fun TransportGlyph(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            painter = icon.painter(),
-            contentDescription = contentDescription,
-            tint = ink.copy(alpha = alpha),
-            modifier = Modifier
-                .size(size)
-                .then(if (heightScale != 1f) Modifier.graphicsLayer { scaleY = heightScale } else Modifier),
-        )
+        val glyphModifier = Modifier
+            .size(size)
+            .then(if (heightScale != 1f) Modifier.graphicsLayer { scaleY = heightScale } else Modifier)
+        when {
+            shape != null -> TransportShapeGlyph(
+                shape = shape,
+                tint = ink.copy(alpha = alpha),
+                contentDescription = contentDescription,
+                smoothness = smoothness,
+                modifier = glyphModifier,
+            )
+            icon != null -> Icon(
+                painter = icon.painter(),
+                contentDescription = contentDescription,
+                tint = ink.copy(alpha = alpha),
+                modifier = glyphModifier,
+            )
+        }
     }
 }
 
@@ -803,7 +825,7 @@ private fun Pill(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     Row(
         modifier = modifier
             .height(BOTTOM_ACTION_SIZE)
@@ -822,7 +844,7 @@ private fun Pill(
 
 @Composable
 private fun PillDivider() {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
     Box(
         Modifier
             .width(1.dp)
@@ -854,13 +876,14 @@ private fun PillSegment(
     width: Dp = PILL_SEGMENT_WIDTH_TRIPLE,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
     Box(
         modifier = Modifier
             .width(width)
             .height(BOTTOM_ACTION_SIZE)
-            .background(if (highlighted) ink.copy(alpha = 0.14f) else Color.Transparent)
+            .background(if (highlighted) ink.copy(alpha = alphas.buttonFill) else Color.Transparent)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -876,7 +899,7 @@ private fun PillSegment(
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        val tint = ink.copy(alpha = if (highlighted) 1f else 0.75f)
+        val tint = ink.copy(alpha = if (highlighted) alphas.primary else alphas.tertiary)
         Crossfade(
             targetState = loading,
             animationSpec = tween(durationMillis = 200),
@@ -933,7 +956,8 @@ internal fun OutputCaption(
     /** Who's in it, before the settings page — see [ListenTogetherMembersSheet]. */
     onOpenMembers: () -> Unit,
 ) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     val badge = rememberPartyBadge()
     val outputName = rememberAudioOutputName(accountName)
     val outputFormat by PlayerPlatform.host.outputFormat.collectAsStateWithLifecycle()
@@ -981,7 +1005,7 @@ internal fun OutputCaption(
         Text(
             text = if (badge.inParty) jamName else outputName,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-            color = ink.copy(alpha = 0.55f),
+            color = ink.copy(alpha = alphas.tertiary),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
@@ -1062,7 +1086,8 @@ private fun BottomGlyph(
     tapWindowMs: Long = 0L,
 ) {
     val haptics = rememberHaptics()
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     // Read only from the click handler, never during composition, so writing it
     // costs no recomposition. Starts a full window in the past so the first tap
     // is never the one that gets swallowed.
@@ -1072,7 +1097,7 @@ private fun BottomGlyph(
             .size(BOTTOM_ACTION_SIZE)
             .clip(CircleShape)
             .background(
-                if (highlighted) ink.copy(alpha = 0.20f) else Color.Transparent,
+                if (highlighted) ink.copy(alpha = alphas.buttonFill) else Color.Transparent,
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1088,7 +1113,7 @@ private fun BottomGlyph(
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
-        val tint = ink.copy(alpha = if (highlighted) 1f else 0.75f)
+        val tint = ink.copy(alpha = if (highlighted) alphas.primary else alphas.tertiary)
         if (icon != null) {
             Icon(
                 painter = icon.painter(),
@@ -1454,6 +1479,14 @@ private fun LosslessOrStats(
     nerdStats: NerdStats.Snapshot?,
     modifier: Modifier = Modifier,
 ) {
+    // Three switches, because the three read as three different claims: "we
+    // are still looking", "this is lossless", "this is beyond CD". Someone
+    // decluttering the player may want to keep the last and drop the first.
+    // A hidden lossless badge hides its Hi-Res wording with it — the finer
+    // label lives inside that badge, not beside it.
+    val showUpgrade by PlayerSettings.showUpgradeBadge.collectAsStateWithLifecycle()
+    val showLossless by PlayerSettings.showLosslessBadge.collectAsStateWithLifecycle()
+    val showHiRes by PlayerSettings.showHiResBadge.collectAsStateWithLifecycle()
     when {
         // Still resolving — either the player itself is buffering, or a
         // module is still racing YouTube for this track in the background
@@ -1477,7 +1510,7 @@ private fun LosslessOrStats(
         // only a genuinely unmeasured track — or a real race via
         // [stillRacing] — earns this label.
         (stillRacing && nerdStats?.isLossless != true) ||
-            (isLoading && losslessRequested && nerdStats == null) -> LosslessLabel(
+            (isLoading && losslessRequested && nerdStats == null) -> if (showUpgrade) LosslessLabel(
             // What is already true, ahead of what is still being looked for.
             // A race running over JioSaavn's 320kbps AAC and one running over
             // YouTube's 160kbps Opus were both drawn as a bare "Upgrading
@@ -1506,10 +1539,13 @@ private fun LosslessOrStats(
             animated = false,
             modifier = modifier,
         )
-        nerdStats?.isLossless == true -> LosslessLabel(
+        showLossless && nerdStats?.isLossless == true -> LosslessLabel(
             // Same line Tidal, Deezer and Apple Music draw it at — see
-            // [NerdStats.Snapshot.isHiRes].
-            text = stringResource(if (nerdStats.isHiRes) Res.string.hi_res_lossless else Res.string.lossless),
+            // [NerdStats.Snapshot.isHiRes]. The Hi-Res wording is a switch of
+            // its own: turning it off keeps the badge and drops the claim.
+            text = stringResource(
+                if (nerdStats.isHiRes && showHiRes) Res.string.hi_res_lossless else Res.string.lossless,
+            ),
             // Apple's lossless glyph, as upstream v1.8.1 draws it here.
             iconPainter = painterResource(Res.drawable.ic_lossless),
             // Shimmer is reserved for the thing that was asked for and
@@ -1555,13 +1591,14 @@ private fun LosslessLabel(
     icon: PlayerIcon? = PlayerIcons.Output,
     iconPainter: Painter? = null,
 ) {
-    val ink = LocalPlayerInk.current
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        val tint = ink.copy(alpha = if (animated) 0.7f else 0.45f)
+        val tint = ink.copy(alpha = alphas.secondary)
         if (iconPainter != null) {
             Icon(
                 painter = iconPainter,
@@ -1588,7 +1625,7 @@ private fun LosslessLabel(
                 style = MaterialTheme.typography.labelMedium.copy(
                     fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
                 ),
-                color = ink.copy(alpha = 0.45f),
+                color = ink.copy(alpha = alphas.secondary),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1616,19 +1653,27 @@ private fun ShimmerText(
         fontWeight = FontWeight.SemiBold,
         fontSize = (MaterialTheme.typography.labelMedium.fontSize.value + 1).sp,
     ),
-    baseAlpha: Float = 0.55f,
+    baseAlpha: Float = LocalPlayerAlphas.current.secondary,
 ) {
-    val ink = LocalPlayerInk.current
-    val transition = rememberInfiniteTransition(label = "lossless-shimmer")
-    val progress = transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 3_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "lossless-shimmer-progress",
-    )
+    val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
+    // Under "reduce animation" the band parks mid-word rather than sweeping:
+    // the badge still reads as special, but a lossless track no longer keeps
+    // an offscreen text layer redrawing for as long as it plays.
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val progress: State<Float> = if (reduceAnimation) {
+        remember { mutableFloatStateOf(0.5f) }
+    } else {
+        val transition = rememberInfiniteTransition(label = "lossless-shimmer")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 3_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "lossless-shimmer-progress",
+        )
+    }
     val baseColor = ink.copy(alpha = baseAlpha)
     // The glyphs are laid out and drawn once, in plain white, and the moving
     // band is painted over them in the draw phase with SrcIn — which keeps the

@@ -121,6 +121,16 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
             currentLowPassHz < OPEN_HZ - SETTLED_HZ || currentHighPassHz > OFF_HZ + SETTLED_HZ
 
     /**
+     * Whether anything here has work to do: the filters, or an echo out.
+     *
+     * Not `isActive`: [BaseAudioProcessor] already owns that name for "this
+     * processor has been configured", which says nothing about whether it
+     * would alter a sample.
+     */
+    val isEngaged: Boolean
+        get() = isFiltering || echoEngaged
+
+    /**
      * Engages the echo out, or moves it: [delaySeconds] between repeats, [send]
      * how much of the signal is fed into the delay, [dry] how much of it is
      * passed through. Both glide across the next block rather than stepping.

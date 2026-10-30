@@ -86,6 +86,24 @@ object JamInviteLink {
         }
     }
 
+    /**
+     * The public invite page, carrying the server that holds the party.
+     *
+     * The page itself knows nothing about party servers — it is a web page on
+     * a marketing host — so the server travels in the query, where the app
+     * reads it. Without it the app falls back to whichever server this
+     * device happens to use, which is the wrong one for anyone who has a
+     * custom server configured, and a party on the public server then reads
+     * as "no party with this code".
+     */
+    fun websiteUrl(code: String, server: String? = null): String {
+        val path = "$ORIGIN/invite/${code.uppercase()}"
+        val base = server?.trim()?.trimEnd('/')
+        if (base.isNullOrBlank() || base.equals(ORIGIN, ignoreCase = true)) return path
+        val encoded = runCatching { URLEncoder.encode(base, "UTF-8") }.getOrDefault(base)
+        return "$path?server=$encoded"
+    }
+
     fun schemeUrl(code: String, customServer: String? = null): String {
         val normalizedCode = code.uppercase()
         val base = customServer?.trim()?.trimEnd('/')

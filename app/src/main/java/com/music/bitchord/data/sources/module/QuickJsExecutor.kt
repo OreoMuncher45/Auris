@@ -232,7 +232,11 @@ internal object QuickJsExecutor {
         val pool = synchronized(engineLock) { pools[moduleId] }
             ?: return Result.failure(IllegalStateException("Module $moduleId is not loaded"))
 
-        TrackLog.d(TAG, "QuickJsExecutor.callExport($moduleId, $functionName) args=$args")
+        // The trailing argument is the module's context object, which carries
+        // the app identity key. It is never logged — not the whole argument
+        // list, and not a truncated prefix that could still contain it. What
+        // was called and with which query/trackId is logged by ModuleManager.
+        TrackLog.d(TAG, "QuickJsExecutor.callExport($moduleId, $functionName)")
         return withContext(Dispatchers.Default) {
             val qjs = try {
                 acquire(moduleId, pool)
@@ -389,13 +393,14 @@ internal object QuickJsExecutor {
                     val url = resolveUrl(rawUrl, fetchBase)
 
                     TrackLog.d(TAG, "  → fetch $method ${redactModuleUrl(url)}")
-                    val (statusCode, responseBody) = fetchUrlSync(url, method, headersJson, body)
-                    TrackLog.d(TAG, "    HTTP $statusCode (${responseBody.length} bytes)")
+                    val result = fetchUrlSync(url, method, headersJson, body)
+                    TrackLog.d(TAG, "    HTTP ${result.code} (${result.body.length} bytes)")
 
                     val respObj = JSONObject().apply {
-                        put("status", statusCode)
-                        put("ok", statusCode in 200..299)
-                        put("body", responseBody)
+                        put("status", result.code)
+                        put("ok", result.code in 200..299)
+                        put("body", result.body)
+                        put("headers", result.headers)
                     }
                     return respObj.toString()
                 }
@@ -445,7 +450,12 @@ internal object QuickJsExecutor {
                     text: function() { return respBody; },
                     arrayBuffer: function() { throw new Error('Not implemented'); },
                     clone: function() { return this; },
-                    headers: { get: function(k) { return null; } }
+                    headers: { get: function(k) {
+                        if (k == null) return null;
+                        var map = raw.headers || {};
+                        var value = map[String(k).toLowerCase()];
+                        return value == null ? null : String(value);
+                    } }
                 };
             };
 
@@ -473,12 +483,14 @@ internal object QuickJsExecutor {
         }
     }
 
+    private data class FetchResult(val code: Int, val body: String, val headers: JSONObject)
+
     private fun fetchUrlSync(
         url: String,
         method: String,
         headersJson: String,
         body: String?,
-    ): Pair<Int, String> {
+    ): FetchResult {
         val builder = Request.Builder().url(url)
 
         var hasUserAgent = false
@@ -510,13 +522,26 @@ internal object QuickJsExecutor {
 
         syncHttpClient.newCall(builder.build()).execute().use { response ->
             val responseBody = response.body?.string() ?: ""
-            return response.code to responseBody
+            val responseHeaders = JSONObject()
+            response.headers.names().forEach { name ->
+                responseHeaders.put(
+                    name.lowercase(Locale.ROOT),
+                    response.headers.values(name).joinToString(", "),
+                )
+            }
+            return FetchResult(response.code, responseBody, responseHeaders)
         }
     }
 
     // ── Polyfills ────────────────────────────────────────────────────────
 
-    private const val POLYFILLS = """
+    private val POLYFILLS = """
+        // The host identity a locked module can read at load time. Other
+        // module hosts do not define it, and a plain id is not the lock: the
+        // key is only present in this build, which is how an Auris-only
+        // module refuses to initialise anywhere else.
+        var __spine_app = ${AurisModuleIdentity.json};
+
         if (typeof AbortController === 'undefined') {
             var AbortController = function() { this.signal = { aborted: false }; };
             AbortController.prototype.abort = function() { this.signal.aborted = true; };

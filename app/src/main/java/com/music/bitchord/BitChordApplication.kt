@@ -17,6 +17,7 @@ import com.music.bitchord.data.liked.LikedCache
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.ui.components.backdrop.GlassShaderWarmup
+import com.music.bitchord.ui.components.isLowRamDevice
 import com.music.bitchord.ui.player.AndroidPlayerHost
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.data.canvas.CanvasCache
@@ -24,6 +25,7 @@ import com.music.bitchord.data.smb.SmbCoverFetcher
 import com.music.bitchord.data.webdav.WebDavCoilAuth
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.playback.AudioCache
+import com.music.bitchord.playback.FallbackArtwork
 import com.music.bitchord.playback.LastPlayed
 import com.music.bitchord.playback.OriginalVersion
 import com.music.bitchord.data.innertube.Innertube
@@ -46,6 +48,13 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
+        // One system-service probe needs a context; answered once, cached for
+        // the process. See DeviceCodecs for what it is and is not.
+        com.music.bitchord.data.sources.DeviceCodecs.init(this)
+        // The sleeve a track with no artwork of its own is drawn with, on
+        // every system surface that would otherwise reach for the app's own
+        // full-colour icon. See [FallbackArtwork].
+        FallbackArtwork.install(this)
         // The player is drawn by the shared UI module; this is what it reads
         // underneath — settings, the Canvas decoder, outputs, the party.
         AndroidStreamHooks.installEarly()
@@ -71,7 +80,12 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // animation for a background-priority thread to compete with. See
         // GlassShaderWarmup for why a background thread is safe and what this
         // does and does not warm.
-        GlassShaderWarmup.warmUp()
+        //
+        // Skipped on low-RAM devices: glass is gated off there (see
+        // GlassEffect.isGlassAllowed), so compiling programs no surface will
+        // ever ask for is pure startup burn — a thread, a graphics context and
+        // five shader compiles on the hardware least able to spare them.
+        if (!isLowRamDevice(this)) GlassShaderWarmup.warmUp()
         // The per-app language picker, which YouTube Music's `hl` follows.
         Innertube.appLanguage = { AppCompatDelegate.getApplicationLocales().get(0)?.language }
         LyricsTranslation.cacheDir = cacheDir
@@ -83,9 +97,15 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // opens at startup — SourceRegistry's encrypted store most of all.
         // Started only once [AuthStore] exists, because both encrypted stores
         // share one keystore master key and a first launch must not have two
-        // threads racing to create it. Joined before onCreate returns, so
-        // nothing that runs after startup can see any of them half open.
-        val backgroundInit = thread(name = "startup-init") {
+        // threads racing to create it.
+        //
+        // Deliberately not joined: waiting for it here serialised a Keystore
+        // open, an InnerTubeX config read and a cache database open ahead of
+        // the first frame, which was a large part of the cold-start stall. Each
+        // consumer tolerates the short window before this finishes — the
+        // sources flow simply publishes once ready, and CanvasCache falls back
+        // to streaming uncached if the player somehow opens that early.
+        thread(name = "startup-init") {
             SourceRegistry.init(this)
             AndroidStreamHooks.initInnerTubeX(this)
             // Its own directory: canvas clips are looping video, not audio, and
@@ -174,16 +194,21 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // bytes from a cache the new code didn't write.
         if (AppSettings.consumeVersionUpdate(BuildConfig.VERSION_CODE)) {
             AudioCache.clear()
-            SingletonImageLoader.get(this).let { loader ->
-                loader.memoryCache?.clear()
-                loader.diskCache?.clear()
+            // Walking and deleting up to 100 MB of image files is real disk
+            // I/O; on the main thread it ran ahead of the first frame on the
+            // first launch of every update. Off the main thread, the UI is
+            // already up while it happens.
+            CoroutineScope(Dispatchers.IO).launch {
+                SingletonImageLoader.get(this@BitChordApplication).let { loader ->
+                    loader.memoryCache?.clear()
+                    loader.diskCache?.clear()
+                }
             }
         }
         // Initialize LastFM with saved settings if available
         initLastfm()
         // The public "apps open right now" count; see Presence.
         com.music.bitchord.data.presence.AndroidPresence.install(this)
-        backgroundInit.join()
     }
 
     /**

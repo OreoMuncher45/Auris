@@ -53,13 +53,13 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Cloud
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dns
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Icon
@@ -176,8 +176,7 @@ fun SourcesScreen(
         "@${losslessOutput.capable}"
     LaunchedEffect(probeKey) {
         configs.filter {
-            it.kind.needsServer &&
-                it.enabled && it.isComplete && !it.awaitsLosslessOutput
+            it.kind.needsServer && it.enabled && it.isComplete && !it.awaitsLosslessOutput
         }.forEach { config ->
             val source = SourceRegistry.instance(config.id) ?: return@forEach
             health[config.id] = withContext(Dispatchers.IO) {
@@ -211,8 +210,12 @@ fun SourcesScreen(
     // the user onto Wi-Fi. See [AudioQuality.permits].
     val ceiling = if (metered == true) cellularQuality else wifiQuality
 
-    /** Whether the ceiling in force right now would cap a lossless stream anyway. */
-    val cappedByQuality = ceiling != AudioQuality.LOSSLESS
+    /**
+     * Whether the ceiling in force right now would cap a lossless stream
+     * anyway. The immersive rung does not: it looks for Atmos first and takes
+     * the lossless ladder below it when a track has no spatial master.
+     */
+    val cappedByQuality = ceiling != AudioQuality.LOSSLESS && ceiling != AudioQuality.DOLBY
     // Asked of the kinds themselves rather than of the module specifically, so
     // a source added later answers this on its own terms instead of being
     // invisible to it.
@@ -235,6 +238,10 @@ fun SourcesScreen(
             header = stringResource(R.string.sources_order_header),
             footer = buildString {
                 append(stringResource(R.string.sources_order_footer))
+                if (configs.none { it.kind == SourceKind.YOUTUBE && it.enabled }) {
+                    append("\n\n")
+                    append(stringResource(R.string.sources_youtube_off))
+                }
                 if (cappedByQuality) {
                     append("\n\n")
                     append(stringResource(R.string.sources_quality_capped))
@@ -277,25 +284,22 @@ fun SourcesScreen(
                         // Anything the user configured is theirs to edit or
                         // delete. JioSaavn and YouTube have no address to
                         // change, so a tap on them would open an empty editor.
-                        // The lossless source is sealed: branded row, toggle
-                        // only, no editor and no address anywhere.
+                        // The *stock* sources are sealed — branded row, toggle
+                        // only, no address anywhere — but a link the listener
+                        // pasted keeps its editor even when its protocol was
+                        // recognised as one of those kinds, which is what makes
+                        // its delete button reachable.
                         onClick = when {
-                            config.kind.needsServer && config.kind != SourceKind.TIDAL ->
+                            config.kind.needsServer && !config.stock ->
                                 ({ onEditSource(config) })
                             else -> null
                         },
-                        // YouTube gets no switch at all — see
-                        // [SourceRegistry.setEnabled] for why one would be a lie.
-                        onToggle = if (config.kind == SourceKind.YOUTUBE) {
-                            null
-                        } else {
-                            ({ enabled ->
-                                if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
-                                    onConfirmJioSaavn()
-                                } else {
-                                    SourceRegistry.setEnabled(config.id, enabled)
-                                }
-                            })
+                        onToggle = { enabled ->
+                            if (config.kind == SourceKind.JIOSAAVN && enabled && !config.enabled) {
+                                onConfirmJioSaavn()
+                            } else {
+                                SourceRegistry.setEnabled(config.id, enabled)
+                            }
                         },
                         handle = handle,
                     )
@@ -329,12 +333,6 @@ fun SourcesScreen(
             AddSourceRow(
                 onClick = { onEditSource(SourceConfig(kind = SourceKind.ADDON)) },
             )
-            // Community instances rot, so the pool refreshes itself daily from
-            // a curated list — off, and only the primary URL is ever touched.
-            if (configs.any { it.kind == SourceKind.TIDAL }) {
-                RowDivider()
-                TidalAutoUpdateRow()
-            }
         }
 
         // A personal library rather than a catalogue in the order above: it
@@ -671,41 +669,6 @@ private const val SWAP_THRESHOLD = 0.6f
  * put another one in here".
  */
 @Composable
-private fun TidalAutoUpdateRow() {
-    val autoUpdate by com.music.bitchord.data.tidal.TidalInstances.autoUpdate
-        .collectAsStateWithLifecycle()
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = ROW_INSET, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = stringResource(R.string.tidal_auto_update),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Text(
-                text = stringResource(R.string.tidal_auto_update_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Switch(
-            checked = autoUpdate,
-            onCheckedChange = {
-                com.music.bitchord.data.tidal.TidalInstances.setAutoUpdate(it)
-            },
-            colors = SwitchDefaults.colors(
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                checkedBorderColor = MaterialTheme.colorScheme.primary,
-            ),
-        )
-    }
-}
-
-@Composable
 private fun AddSourceRow(onClick: () -> Unit) {
     Row(
         modifier = Modifier
@@ -827,8 +790,7 @@ private fun SourceRow(
     config: SourceConfig,
     health: SourceHealth?,
     onClick: (() -> Unit)?,
-    /** Null for a source that cannot be switched off, which gets a label instead. */
-    onToggle: ((Boolean) -> Unit)?,
+    onToggle: (Boolean) -> Unit,
     /** On, but skipped by the ceiling the current connection is set to. */
     skippedByQuality: Boolean = false,
     /** On, but its addon needs a lossless output and this is what is connected instead. Null when not waiting. */
@@ -871,8 +833,6 @@ private fun SourceRow(
                 SourceKind.CUSTOM_MODULE -> Icons.Rounded.Extension
                 SourceKind.MODULE -> Icons.Rounded.Extension
                 SourceKind.JIOSAAVN -> Icons.Rounded.GraphicEq // or some other icon
-                SourceKind.TIDAL -> Icons.Rounded.MusicNote
-                SourceKind.HIRES -> Icons.Rounded.MusicNote
                 SourceKind.YOUTUBE -> Icons.Rounded.PlayCircle
             },
             contentDescription = null,
@@ -933,22 +893,14 @@ private fun SourceRow(
             )
         }
         Spacer(Modifier.width(8.dp))
-        if (onToggle == null) {
-            Text(
-                text = stringResource(R.string.always_on),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Switch(
-                checked = config.enabled,
-                onCheckedChange = onToggle,
-                colors = SwitchDefaults.colors(
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    checkedBorderColor = MaterialTheme.colorScheme.primary,
-                ),
-            )
-        }
+        Switch(
+            checked = config.enabled,
+            onCheckedChange = onToggle,
+            colors = SwitchDefaults.colors(
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                checkedBorderColor = MaterialTheme.colorScheme.primary,
+            ),
+        )
         // Outside the dimming above, and last in the row. A source switched off
         // still has a position worth setting for when it is switched back on,
         // so the grip stays at full strength on a row that is otherwise faded.
@@ -966,12 +918,25 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
         AudioQuality.MEDIUM -> R.string.medium
         AudioQuality.HIGH -> R.string.high
         AudioQuality.LOSSLESS -> R.string.lossless
+        AudioQuality.DOLBY -> R.string.dolby_atmos
     },
 )
 
 /** The second line of a row: what this source is, or what is wrong with it. */
 @Composable
 private fun SourceConfig.statusLine(health: SourceHealth?): String = when {
+    // A source that is switched off is never probed — see the probe filter in
+    // [SourcesScreen] — so its health stays null and the `needsServer` fallback
+    // below would go on saying "Checking…" for as long as it stayed off, which
+    // describes a request that was never made. The switch answers the question
+    // the line was asking.
+    !enabled -> stringResource(
+        if (kind.isUserAdded || kind == SourceKind.MODULE) {
+            R.string.source_addon_turned_off
+        } else {
+            R.string.source_turned_off
+        },
+    )
     !isComplete -> stringResource(R.string.source_setup_required)
     kind == SourceKind.JIOSAAVN -> stringResource(R.string.jiosaavn_mismatch_warning)
     health is SourceHealth.Ok -> listOfNotNull(
@@ -1142,21 +1107,13 @@ internal fun SourceEditorAlert(
         } else {
             config.displayName
         },
-        description = stringResource(
-            when (config.kind) {
-                SourceKind.TIDAL -> R.string.tidal_url_description
-                else -> R.string.addon_url_description
-            },
-        ),
+        description = stringResource(R.string.addon_url_description),
         urlValue = baseUrl,
         // A result describes the address it was run against, so the moment that
         // address is edited it stops being true and is cleared. Left up, it
         // would report "Connected" over a URL nobody has tried.
         onUrlChange = { baseUrl = it; status = null; secretSettings = emptyList(); secretValues.clear() },
-        urlPlaceholder = when (config.kind) {
-            SourceKind.TIDAL -> "https://lossless.example.com"
-            else -> "https://my-addon.example.com"
-        },
+        urlPlaceholder = "https://my-addon.example.com",
         status = status,
         statusIsGood = statusIsGood,
         testing = busy,

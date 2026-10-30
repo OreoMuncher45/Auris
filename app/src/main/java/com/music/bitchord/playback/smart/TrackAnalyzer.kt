@@ -35,6 +35,7 @@ import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AutomixPerformanceMode
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.TrackMatcher
 import com.music.bitchord.playback.AudioCache
@@ -118,6 +119,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
     private val sourceResolutionAttempted = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Source-backed tracks whose YouTube match came up empty, so the copy they
+     * are playing from is the one to analyse. See [analysisUriFor].
+     */
+    private val sourceAnalysisFallback = ConcurrentHashMap.newKeySet<String>()
     private val sourceResolutionScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Tracks whose result came from [analyzeHead] and is waiting to be superseded. */
@@ -273,10 +280,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         if (trackId in running) return
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
-        // Only the canonical YouTube rendition of this recording will do, not
-        // the source substitute the player happens to be on: see
-        // [chooseRendition]. Waiting on the live URI is what made analysis
-        // arrive after the transition that needed it.
+        // Any complete copy of this recording will do, not only the YouTube
+        // Opus one: [chooseRendition] takes the lightest and checks it is the
+        // same cut. The analysis URI is still the YouTube-backed entry when a
+        // match exists, because that copy is the cheapest to decode — but it
+        // is no longer the only one that may count.
         // Queued before the cache is even consulted, so a track measured in an
         // earlier session short-circuits the whole path rather than being
         // re-earned from audio the cache may since have evicted.
@@ -303,7 +311,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
             emptyList()
         } else {
             cache.renditionsOf(analysisUri)
-                .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(analysisUri.getQueryParameter("v"), it.key) }
                 .filter { it.isComplete && it.key !in badRenditions }
         }
         val usableComplete = local || complete.isNotEmpty()
@@ -496,7 +503,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // minutes earlier reported zero here, because the question was being
         // asked of the wrong copy of it.
         val candidate = cache.renditionsOf(uri)
-            .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(uri.getQueryParameter("v"), it.key) }
             .filter { it.cachedPrefix > 0L && it.key !in badRenditions }
             // The growth guard, applied as a filter rather than to the winner.
             // Applied afterwards it did not skip a copy, it ended the search: the
@@ -714,7 +720,6 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         durationSeconds: Double,
     ): AudioCache.Rendition? {
         val complete = cache.renditionsOf(uri)
-            .filter { AutomixAnalysisSource.isCanonicalYouTubeRendition(uri.getQueryParameter("v"), it.key) }
             .filter { it.isComplete && it.key !in badRenditions }
         if (complete.isEmpty()) return null
 
@@ -811,14 +816,31 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
     }
 
     /**
-     * Source-backed playback URIs (JioSaavn, module/lossless, etc.) carry the
-     * same title/artist/runtime matching hints as a YouTube item. Resolve that
-     * identity once, then keep playback on its original URI while analysis
-     * fills and reads the separately pinned YouTube Opus entry.
+     * Where Automix reads [trackId]'s audio from.
+     *
+     * A YouTube-backed or local track is analysed where it lives: its URI
+     * already names every rendition of the recording, and
+     * [AudioCache.renditionsOf] answers with them.
+     *
+     * A source-backed track is different. Its own cache key names its copy,
+     * and a YouTube Opus entry is a *second* copy that has to be fetched. That
+     * copy is worth having when it works — it is the lightest one, and a
+     * whole-track pass over it is cheap — but it used to be the only option, so
+     * a track with no YouTube match, or a listener with YouTube switched off,
+     * was never analysed at all. Now the copy the track is playing from is the
+     * answer whenever there is no match to use.
      */
     private fun analysisUriFor(trackId: String, playbackUri: Uri): Uri? {
         if (playbackUri.getQueryParameter("v") != null || playbackUri.authority != "source") return playbackUri
+        // With YouTube switched off there is nothing to match against and
+        // nothing that may fetch an Opus copy: the stream being played is the
+        // recording.
+        if (!SourceRegistry.youtubeEnabled()) return playbackUri
         sourceAnalysisUris[trackId]?.let { return it }
+        // A finished attempt with no match leaves the source copy in charge.
+        if (trackId in sourceAnalysisFallback) return playbackUri
+        // While the match is still being looked up, wait for it: it names the
+        // cheaper copy to decode, and this runs again on the next tick.
         if (trackId in sourceResolutionAttempted) return null
         if (!sourceResolutions.add(trackId)) return null
         val target = SourceResolver.targetIn(playbackUri)
@@ -829,9 +851,11 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
                     sourceAnalysisUris[trackId] = Uri.parse(AutomixAnalysisSource.opusUri(match.videoId))
                     Log.d(TAG, "Automix analysis for $trackId will use YouTube Opus ${match.videoId}")
                 } else {
-                    Log.d(TAG, "No YouTube match for Automix analysis of $trackId")
+                    sourceAnalysisFallback.add(trackId)
+                    Log.d(TAG, "No YouTube match for Automix analysis of $trackId; using its own copy")
                 }
             } catch (error: Throwable) {
+                sourceAnalysisFallback.add(trackId)
                 Log.d(TAG, "YouTube match failed for Automix analysis of $trackId: ${error.message}")
             } finally {
                 sourceResolutionAttempted.add(trackId)
@@ -1270,6 +1294,7 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         sourceAnalysisUris.clear()
         sourceResolutions.clear()
         sourceResolutionAttempted.clear()
+        sourceAnalysisFallback.clear()
         headAttempts.clear()
         headSkipLogged.clear()
         provisional.clear()

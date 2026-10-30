@@ -47,6 +47,9 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
 
     private var configuredSampleRate: Int = VocalCutDsp.DEFAULT_SAMPLE_RATE
 
+    /** Whether the engine has already been cleared since the last active block. */
+    private var idle = true
+
     /**
      * Switch engines, configured for the rate this processor is already
      * running at and reset so no filter memory from the last method leaks into
@@ -78,10 +81,24 @@ class VocalCutProcessor : BaseAudioProcessor(), FloatAudioProcessor {
      * Processes interleaved Float32 audio samples in [block] in-place.
      * Returns before touching a sample when idle or non-stereo, so a
      * disabled Sing — or a mono track — passes through byte-identical.
+     *
+     * Idle costs nothing at all: the kernels' filter scan used to run every
+     * sample even at cut = 0 purely to keep their state current. The engine is
+     * cleared once on going idle instead, so a later enable starts from a clean
+     * state and settles into the cut without a click.
      */
     override fun process(block: AudioBlock) {
         if (block.channelCount != 2 || block.frameCount == 0) return
-        engine.processSpan(block.samples, block.frameCount * 2, level)
+        val cut = level
+        if (cut <= 0.001f) {
+            if (!idle) {
+                idle = true
+                engine.reset()
+            }
+            return
+        }
+        idle = false
+        engine.processSpan(block.samples, block.frameCount * 2, cut)
     }
 
     /**

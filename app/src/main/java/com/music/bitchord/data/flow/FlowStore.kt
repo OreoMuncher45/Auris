@@ -2,6 +2,7 @@ package com.music.bitchord.data.flow
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.flow.FlowConfig
 import com.music.bitchord.data.flow.FlowMood
 import com.music.bitchord.data.flow.FlowTuner
@@ -60,6 +61,17 @@ object FlowStore {
 
     private const val KEY_FLOW_SNAPSHOT = "flow_snapshot"
     private const val KEY_FLOW_BUILT_AT = "flow_built_at"
+    private const val KEY_FLOW_SNAPSHOT_VERSION = "flow_snapshot_version"
+    private const val KEY_FLOW_SNAPSHOT_APP = "flow_snapshot_app"
+
+    /**
+     * The shape of a stored mix.
+     *
+     * Bumped whenever what a snapshot holds changes. A snapshot written by an
+     * older build is read back as if it were current otherwise, and the mix
+     * the listener sees is the one the previous build built.
+     */
+    private const val SNAPSHOT_VERSION = 2
 
     /** A snapshot older than this rebuilds instead of restoring. */
     const val FLOW_TTL_MS = 24L * 60 * 60 * 1000
@@ -76,17 +88,44 @@ object FlowStore {
         prefs.edit()
             .putString(KEY_FLOW_SNAPSHOT, encodeFlowSnapshot(songs))
             .putLong(KEY_FLOW_BUILT_AT, System.currentTimeMillis())
+            .putInt(KEY_FLOW_SNAPSHOT_VERSION, SNAPSHOT_VERSION)
+            .putInt(KEY_FLOW_SNAPSHOT_APP, BuildConfig.VERSION_CODE)
             .apply()
     }
 
-    /** The stored mix and when it was built, or null when there is none. */
+    /**
+     * The stored mix and when it was built, or null when there is none.
+     *
+     * A mix written by another build, or by another shape of mix, is not
+     * restored: it is dropped, and the next use builds a fresh one. The file
+     * is preferences, so it outlives an update — restoring yesterday's mix
+     * after today's build is how the old layout came back with the old
+     * contents.
+     */
     fun readSnapshot(): Pair<List<Song>, Long>? {
         if (!this::prefs.isInitialized) return null
+        val version = prefs.getInt(KEY_FLOW_SNAPSHOT_VERSION, 0)
+        val app = prefs.getInt(KEY_FLOW_SNAPSHOT_APP, 0)
+        if (version != SNAPSHOT_VERSION || app != BuildConfig.VERSION_CODE) {
+            clearSnapshot()
+            return null
+        }
         val text = prefs.getString(KEY_FLOW_SNAPSHOT, null)?.takeIf { it.isNotEmpty() }
             ?: return null
         val songs = decodeFlowSnapshot(text)
         if (songs.isEmpty()) return null
         return songs to prefs.getLong(KEY_FLOW_BUILT_AT, 0L)
+    }
+
+    /** Forgets the stored mix, so the next use builds a fresh one. */
+    fun clearSnapshot() {
+        if (!this::prefs.isInitialized) return
+        prefs.edit()
+            .remove(KEY_FLOW_SNAPSHOT)
+            .remove(KEY_FLOW_BUILT_AT)
+            .remove(KEY_FLOW_SNAPSHOT_VERSION)
+            .remove(KEY_FLOW_SNAPSHOT_APP)
+            .apply()
     }
 
     fun init(context: Context) {

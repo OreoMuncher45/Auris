@@ -12,10 +12,15 @@ import com.music.bitchord.playback.VocalCutProcessor
  * Composite DSP chain executing BitChord's custom audio processors in their canonical sequence:
  *
  * AudioBlock(Float32) -> VocalCutProcessor -> SpatialAudioProcessor -> EqualizerProcessor
- *   -> TransitionFilterProcessor -> LoudnessProcessor -> AudioBlock(Float32)
+ *   -> JamesDspProcessor -> TransitionFilterProcessor -> LoudnessProcessor -> AudioBlock(Float32)
  *
  * Sing's vocal cut runs first: it removes the center the other stages would
  * otherwise widen, equalise and level along with everything else.
+ *
+ * JamesDSP runs after the equaliser and before the per-track transition and
+ * loudness stages. It is a tone/space stage here, not a second output chain:
+ * its own limiter protects the boosts it applies, then LoudnessProcessor has
+ * the last word on level. It is bypassed entirely when switched off.
  *
  * Operates purely on in-place Float32 audio blocks without intermediate fixed-point quantization,
  * preserving full dynamic range and headroom.
@@ -28,15 +33,18 @@ import com.music.bitchord.playback.VocalCutProcessor
  * ## Staying out of the way
  *
  * Every stage here self-bypasses when its own setting is off, returning before
- * it reads a single sample rather than multiplying through by unity. With all
- * three idle the block leaves this class byte-identical to how it arrived,
+ * it reads a single sample rather than multiplying through by unity. With every
+ * stage idle the block leaves this class byte-identical to how it arrived,
  * which is what lets [PcmBoundary]'s power-of-two scaling round-trip 16- and
  * 24-bit integers unchanged — see `PrecisionAudioSink.publishOutputExactness`.
+ * [isBypassed] lets the sink skip the decode-and-re-encode around that
+ * byte-identical trip entirely.
  */
 class DspChain(
     val sing: VocalCutProcessor = VocalCutProcessor(),
     val spatial: SpatialAudioProcessor = SpatialAudioProcessor(),
     val equalizer: EqualizerProcessor = EqualizerProcessor(),
+    val jamesDsp: JamesDspProcessor = JamesDspProcessor(),
     val transition: TransitionFilterProcessor = TransitionFilterProcessor(),
     val loudness: LoudnessProcessor = LoudnessProcessor(),
 ) : FloatAudioProcessor {
@@ -49,6 +57,7 @@ class DspChain(
         sing.configure(sampleRate, channelCount)
         spatial.configure(sampleRate, channelCount)
         equalizer.configure(sampleRate, channelCount)
+        jamesDsp.configure(sampleRate, channelCount)
         transition.configure(sampleRate, channelCount)
         loudness.configure(sampleRate, channelCount)
     }
@@ -57,6 +66,22 @@ class DspChain(
     fun onStreamBoundary() {
         loudness.onStreamBoundary()
     }
+
+    /**
+     * Whether [process] would return the block byte-identical, i.e. every stage
+     * is idle. Read on the audio thread once per decoder buffer; when true and
+     * the input and output encodings already match, the sink hands the decoder's
+     * buffer straight to the delegate instead of decoding it to float and
+     * encoding it back.
+     */
+    fun isBypassed(): Boolean =
+        currentSampleRate > 0 &&
+            sing.level <= 0.001f &&
+            !spatial.enabled &&
+            !equalizer.isEnabled &&
+            !jamesDsp.isEnabled &&
+            !transition.isEngaged &&
+            loudness.isParked()
 
     override fun process(block: AudioBlock) {
         if (block.frameCount == 0) return
@@ -84,6 +109,7 @@ class DspChain(
         sing.process(block)
         spatial.process(block)
         equalizer.process(block)
+        jamesDsp.process(block)
         transition.process(block)
         loudness.process(block)
     }
@@ -93,6 +119,7 @@ class DspChain(
         sing.flush()
         spatial.flush()
         equalizer.flush()
+        jamesDsp.flush()
         transition.flush()
         loudness.flush()
     }
@@ -102,6 +129,7 @@ class DspChain(
         sing.reset()
         spatial.reset()
         equalizer.reset()
+        jamesDsp.reset()
         transition.reset()
         loudness.reset()
     }

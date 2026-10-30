@@ -2,20 +2,25 @@ package com.music.bitchord.ui.player
 
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import com.music.bitchord.ui.graphics.ColorUtils
 
 /**
  * Ink for the controls laid directly over album artwork.
  *
  * White by default, so every surface outside the expanded player keeps its
- * existing look. The player swaps this to near-black when the sleeve's lower
- * half is bright enough that white glyphs would wash out.
+ * existing look. The player supplies a light tint of the artwork's own accent
+ * here — see [computeNowPlayingPalette].
  */
 internal val LocalPlayerInk = staticCompositionLocalOf { Color.White }
 
 /**
- * A soft text shadow, so dark ink stays legible where it crosses a dark patch
- * of an otherwise bright sleeve, and white ink keeps its edge over a bright one.
- *
- * Transparent by default, so nothing outside the expanded player changes.
+ * A soft text shadow, so the ink keeps its edge where it crosses a lighter
+ * patch of the artwork. Transparent by default, and transparent in the player
+ * whenever the listener has switched glow off.
  */
 internal val LocalPlayerInkGlow = staticCompositionLocalOf { Color.Transparent }
+
+/** Light ink needs the dark glow, and the reverse. */
+internal fun Color.isLightInk(): Boolean =
+    ColorUtils.calculateLuminance(toArgb()) >= 0.5f

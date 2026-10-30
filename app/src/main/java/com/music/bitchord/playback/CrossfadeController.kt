@@ -624,6 +624,13 @@ class CrossfadeController(
 
         override fun onPlayerError(error: PlaybackException) = bail()
 
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            // A non-idle phase still needs ticks after a pause: the outgoing
+            // and incoming playWhenReady flags are mirrored there, and stopping
+            // the ticker mid-blend would let the other half carry on alone.
+            if (isPlaying || phase != Phase.IDLE) ensureTicker() else stopTicker()
+        }
+
         // The session reached the end of a track [holdAtEnd] is holding, before
         // the handoff took it off that track. Only ever a late handoff or a
         // transition that never started; either way the hold must not leave
@@ -663,10 +670,31 @@ class CrossfadeController(
 
     fun start() {
         listenTo(active())
-        tickerJob?.cancel()
+        if (active().isPlaying || phase != Phase.IDLE) ensureTicker()
+    }
+
+    /**
+     * Re-points the controller at the session player after the service swapped
+     * the two roles itself — a version swap or a quality-upgrade fade. Without
+     * this the listener stays on the demoted player, and the next arm loads a
+     * queue under a listener that reads it as the queue being replaced.
+     */
+    fun rebind() {
+        listenTo(active())
+        if (active().isPlaying || phase != Phase.IDLE) ensureTicker()
+    }
+
+    /**
+     * The ticker is only worth running while one of the players is producing
+     * audio, or a transition is in flight. An idle, paused session was still
+     * waking four times a second to rediscover that there was nothing to do.
+     */
+    private fun ensureTicker() {
+        if (tickerJob?.isActive == true) return
         tickerJob = scope.launch {
             while (isActive) {
                 tick()
+                if (phase == Phase.IDLE && !active().isPlaying) break
                 delay(
                     when (phase) {
                         Phase.IDLE -> IDLE_STEP_MS
@@ -680,13 +708,20 @@ class CrossfadeController(
         }
     }
 
+    private fun stopTicker() {
+        tickerJob?.cancel()
+        tickerJob = null
+    }
+
     fun release() {
+        // First, so the teardown below cannot deliver an isPlaying change that
+        // starts a replacement ticker on a controller that is being discarded.
+        listeningTo?.removeListener(listener)
+        listeningTo = null
         tickerJob?.cancel()
         tickerJob = null
         endEase(clickless = false)
         releaseHold()
-        listeningTo?.removeListener(listener)
-        listeningTo = null
         active().volume = 1f
         AppSettings.smartMixInProgress.value = false
         AppSettings.smartMixBlend.value = null
@@ -756,6 +791,22 @@ class CrossfadeController(
     private fun considerAutoTransition() {
         val player = active()
         if (!player.isPlaying) return
+        // Bit-perfect output promises the samples are unaltered, and a blend
+        // of two tracks is the largest alteration this app can make. Nothing
+        // is armed while it is on — including Automix, which runs through
+        // this same point — and any window already marked is cleared so the
+        // screen does not describe a transition that will not happen. Turning
+        // the switch on mid-blend lets that blend finish rather than cutting
+        // it; the next pair is the first to play straight through.
+        //
+        // The sleep timer is the one exception: fading the last track out to
+        // silence is how the session ends, not a blend into the next one, and
+        // the ordinary paths below still run for it.
+        if (AppSettings.bitPerfect.value) {
+            AppSettings.smartTransitionWindow.value = null
+            AppSettings.smartMixInProgress.value = false
+            if (!SleepTimer.afterTrack.value) return
+        }
         // Not while a version swap owns the standby player — see
         // [versionSwapActive]. Nothing to clean up on the way out unlike the
         // party case below: a version swap is a between-tracks affair on the
@@ -793,8 +844,16 @@ class CrossfadeController(
             return
         }
 
-        val duration = player.duration
-        if (duration == C.TIME_UNSET || duration <= 0L) return
+        // The player's duration is the measured answer; an addon stream that
+        // never states a length leaves it unset, and the row's own runtime is
+        // the only scale left — without it every branch below returns and the
+        // queue plays straight through, which is what "AutoMix became v1"
+        // looked like. See [claimedDurationMs].
+        val duration = playbackDurationMs(
+            player.duration,
+            player.currentMediaItem?.claimedDurationMs() ?: 0L,
+        )
+        if (duration <= 0L) return
 
         // Repeating one track would crossfade it into itself, so nothing is
         // armed and no window is marked — but the queue behind the loop has not
@@ -842,6 +901,9 @@ class CrossfadeController(
             beginSleepFadeOut(fade)
             return
         }
+        // Bit-perfect: the sleep fade above is allowed, a blend into the next
+        // track is not.
+        if (AppSettings.bitPerfect.value) return
         // Arm early: the standby has to open the incoming track and buffer to
         // its cue point, and that work has to be finished by the time the fade
         // is due rather than started then. And before this player starts
@@ -988,6 +1050,8 @@ class CrossfadeController(
             beginSleepFadeOut(fade)
             return
         }
+        // Bit-perfect: the sleep fade above is allowed, an Automix blend is not.
+        if (AppSettings.bitPerfect.value) return
         // Same arm-ahead margin as the standard path, just measured against
         // the plan's own start rather than a fixed offset from track end —
         // an analyzed mix-out anchor can place that start well before the
@@ -1125,21 +1189,7 @@ class CrossfadeController(
                 .takeIf { it != C.TIME_UNSET && it > 0 }
                 ?.let { return it }
         }
-        return queuedDurationMs(item)
-    }
-
-    /**
-     * The runtime the queue row carried, in milliseconds, or 0 when the item
-     * doesn't state one — a local file, or a track queued without a duration.
-     *
-     * Deliberately forgiving: [Uri.getQueryParameter] throws on an opaque URI,
-     * and a missing or unparsable value is simply an absent duration rather than
-     * anything worth failing a tick over.
-     */
-    private fun queuedDurationMs(item: MediaItem): Long {
-        val uri = item.localConfiguration?.uri ?: return 0L
-        val seconds = runCatching { uri.getQueryParameter("d") }.getOrNull()?.toLongOrNull() ?: return 0L
-        return if (seconds > 0) seconds * 1000L else 0L
+        return item.claimedDurationMs()
     }
 
     /** BitChord doesn't carry album metadata on [MediaMetadata] yet, so [TransitionTrackInfo.album] stays blank. */

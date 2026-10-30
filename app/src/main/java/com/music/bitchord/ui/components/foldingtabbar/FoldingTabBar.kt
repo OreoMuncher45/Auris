@@ -47,6 +47,19 @@ internal const val ExpandMorphMs = 470
 private val BarSurfaceExpandSpring = SpringEasing(zeta = 0.74f)
 
 /**
+ * Whether the bar is drawn folded.
+ *
+ * The scroll connection decides this everywhere except search, which has no
+ * folded form: the field is drawn only at fold 0, so a bar left folded by a
+ * scroll would swallow the screen the search icon just opened. The search page
+ * is therefore held open while either its field is showing ([inSearch]) or its
+ * tab is selected ([onSearchTab]) — the latter covering a page opened without
+ * the field, straight to results.
+ */
+internal fun navBarFolded(isInline: Boolean, inSearch: Boolean, onSearchTab: Boolean): Boolean =
+    isInline && !inSearch && !onSearchTab
+
+/**
  * The bottom bar as one layout folded by one number: the tab group shrinks onto the
  * selected tab, search detaches into its own circle, and the mini player slides into the
  * row between them. Nothing changes parent mid-fold, so there is no shared-element overlay
@@ -76,12 +89,18 @@ fun FoldingTabBar(
     val scope = FloatingTabBarScopeImpl().apply { content() }
     val isInline = scrollConnection.isInline
     val inSearch = searchMode && searchBarContent != null
+    // Search has no folded form, and it is the page the listener is on rather
+    // than a resting state to minimise. The scroll state is ignored rather
+    // than reset: leaving it alone means closing search returns the bar to
+    // the fold the page underneath is actually at.
+    val onSearchTab = scope.tabs.lastOrNull()?.key == selectedTabKey
+    val folded = navBarFolded(isInline, inSearch, onSearchTab)
 
-    val fold = remember { Animatable(if (isInline) 1f else 0f) }
-    LaunchedEffect(isInline) {
+    val fold = remember { Animatable(if (folded) 1f else 0f) }
+    LaunchedEffect(folded) {
         fold.animateTo(
-            if (isInline) 1f else 0f,
-            if (isInline) {
+            if (folded) 1f else 0f,
+            if (folded) {
                 tween(CollapseMorphMs, easing = FoldCollapseSpring)
             } else {
                 tween(ExpandMorphMs, easing = BarSurfaceExpandSpring)
@@ -101,7 +120,7 @@ fun FoldingTabBar(
     val selectedIndex = scope.tabs.indexOf(selected).coerceAtLeast(0)
     val tabsCount = scope.tabs.size.coerceAtLeast(1)
     val surfaceBackdrop = rememberLayerBackdrop()
-    val foldedOrSearching = isInline || inSearch
+    val foldedOrSearching = folded || inSearch
     val noTap = remember { MutableInteractionSource() }
     val glowScope = rememberCoroutineScope()
     val selectedGlow = remember(glowScope) { InteractiveHighlight(animationScope = glowScope) }
@@ -151,7 +170,7 @@ fun FoldingTabBar(
                     .then(
                         if (foldedOrSearching) {
                             Modifier.then(selectedGlow.gestureModifier).clickable(noTap, null) {
-                                if (isInline) scrollConnection.expand() else selected?.onClick?.invoke()
+                                if (folded) scrollConnection.expand() else selected?.onClick?.invoke()
                             }
                         } else {
                             Modifier.clearAndSetSemantics {}
@@ -184,7 +203,7 @@ fun FoldingTabBar(
                         alpha = maxOf(p, s) * (1f - s * (1f - p))
                     }
                     .then(
-                        if (foldedOrSearching && (!inSearch || isInline)) {
+                        if (foldedOrSearching && (!inSearch || folded)) {
                             Modifier.then(searchGlow.gestureModifier).clickable(noTap, null) { searchTab?.onClick?.invoke() }
                         } else {
                             Modifier.clearAndSetSemantics {}
@@ -201,7 +220,7 @@ fun FoldingTabBar(
             Box(
                 Modifier
                     .graphicsLayer { alpha = (search.value * (1f - fold.value)).coerceIn(0f, 1f) }
-                    .then(if (!inSearch || isInline) Modifier.clearAndSetSemantics {} else Modifier)
+                    .then(if (!inSearch || folded) Modifier.clearAndSetSemantics {} else Modifier)
             ) {
                 if (inSearch || search.value > 0f) {
                     searchBarContent?.invoke(Modifier.fillMaxSize())
@@ -212,10 +231,10 @@ fun FoldingTabBar(
                 accessory?.invoke(
                     Modifier
                         .fillMaxWidth()
-                        .pillShadow(shapes.accessoryShape, if (isInline) elevations.inlineElevation else elevations.expandedElevation)
+                        .pillShadow(shapes.accessoryShape, if (folded) elevations.inlineElevation else elevations.expandedElevation)
                         .clip(shapes.accessoryShape)
                         .background(colors.accessoryBackgroundColor, shapes.accessoryShape),
-                    isInline,
+                    folded,
                 )
             }
         },

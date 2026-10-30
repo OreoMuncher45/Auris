@@ -50,11 +50,13 @@ import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Forum
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.VisibilityOff
@@ -69,7 +71,9 @@ import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SurroundSound
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewWeek
 import androidx.compose.material.icons.rounded.VolumeOff
@@ -81,14 +85,15 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import com.music.bitchord.data.lyrics.translationLanguageName
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -105,6 +110,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -128,6 +134,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
+import com.music.bitchord.ui.components.AurisSlider
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.components.languageDisplayNameRes
 import com.music.bitchord.ui.components.DonationRow
@@ -185,6 +192,7 @@ fun SettingsScreen(
     onListenTogether: () -> Unit,
     onSpotifyCanvasAuth: () -> Unit,
     onAppLanguage: () -> Unit,
+    homeShelfTitles: List<String> = emptyList(),
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
 ) {
@@ -195,6 +203,7 @@ fun SettingsScreen(
     val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val smartFade by AppSettings.smartFadeEnabled.collectAsStateWithLifecycle()
+    val seamlessQualityUpgrade by AppSettings.seamlessQualityUpgrade.collectAsStateWithLifecycle()
     val automixPerformance by AppSettings.automixPerformanceMode.collectAsStateWithLifecycle()
     val automixEngine by AppSettings.automixEngine.collectAsStateWithLifecycle()
     val skipSilence by AppSettings.skipSilence.collectAsStateWithLifecycle()
@@ -210,6 +219,9 @@ fun SettingsScreen(
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
+    val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
+    val blockedArtists by AppSettings.blockedArtists.collectAsStateWithLifecycle()
+    val blockAi by AppSettings.blockAiMusic.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
     val lyricsBlur by AppSettings.lyricsBlur.collectAsStateWithLifecycle()
     val animatedCanvas by AppSettings.animatedCanvas.collectAsStateWithLifecycle()
@@ -223,6 +235,7 @@ fun SettingsScreen(
     val appUi by AppSettings.appUi.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
+    val bitPerfect by AppSettings.bitPerfect.collectAsStateWithLifecycle()
     val preferUsbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
     val loudnessOffOnSpeaker by AppSettings.loudnessOffOnSpeaker.collectAsStateWithLifecycle()
@@ -291,8 +304,12 @@ fun SettingsScreen(
     var importStatus by remember { mutableStateOf<String?>(null) }
     var confirmImport by remember { mutableStateOf(false) }
     var confirmClearSongCache by remember { mutableStateOf(false) }
+    var showBlockedArtists by remember { mutableStateOf(false) }
+    var showCustomization by remember { mutableStateOf(false) }
+    var showJamesDsp by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
+    var showSeamlessUpgradeConfirmation by remember { mutableStateOf(false) }
     val backupScope = rememberCoroutineScope()
 
     val batterySettingsLauncher = rememberLauncherForActivityResult(
@@ -399,6 +416,11 @@ fun SettingsScreen(
             placeholder = stringResource(R.string.settings_search_hint),
             modifier = Modifier.padding(start = 20.dp, end = 20.dp, bottom = 4.dp),
         )
+
+        if (search.matches("community", "discord", "reddit", "beta", "bugs", "features")) {
+            Spacer(Modifier.height(14.dp))
+            CommunityCard()
+        }
 
         SearchableSettingsGroup(search) {
             val accountTitle = stringResource(R.string.account_integrations)
@@ -575,7 +597,7 @@ fun SettingsScreen(
                     title = exportDownloadsTitle,
                     checked = exportDownloads,
                     onCheckedChange = AppSettings::setExportDownloads,
-                    subtitle = "Music/BitChord".takeIf { exportDownloads },
+                    subtitle = "Music/Auris".takeIf { exportDownloads },
                 )
             }
         }
@@ -620,6 +642,23 @@ fun SettingsScreen(
                     selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
                     onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
                     modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+            }
+            val bitPerfectTitle = stringResource(R.string.bit_perfect)
+            row(
+                bitPerfectTitle,
+                "bit perfect",
+                "bypass",
+                "dsp",
+                "crossfade",
+                "lossless",
+                divided = false,
+            ) {
+                SettingsSubRow(
+                    title = bitPerfectTitle,
+                    checked = bitPerfect,
+                    onCheckedChange = AppSettings::setBitPerfect,
+                    subtitle = stringResource(R.string.bit_perfect_subtitle),
                 )
             }
             val preferUsbDacTitle = stringResource(R.string.prefer_usb_dac)
@@ -730,6 +769,40 @@ fun SettingsScreen(
                     onClick = { pickingAutomixPerformance = true },
                 )
             }
+            // Off by default and behind a confirmation, because the blend can
+            // be heard as doubling when the two masters differ. The switch only
+            // asks; nothing is written until the dialog is confirmed.
+            val seamlessUpgradeTitle = stringResource(R.string.seamless_quality_upgrades)
+            row(seamlessUpgradeTitle, "lossless", "flac", "quality", "upgrade", "crossfade", "gapless") {
+                SettingsRow(
+                    icon = Icons.Rounded.SwapHoriz,
+                    title = seamlessUpgradeTitle,
+                    subtitle = stringResource(R.string.seamless_quality_upgrades_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = seamlessQualityUpgrade,
+                            onCheckedChange = { enabled ->
+                                if (enabled) {
+                                    showSeamlessUpgradeConfirmation = true
+                                } else {
+                                    AppSettings.setSeamlessQualityUpgrade(false)
+                                }
+                            },
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = {
+                        if (seamlessQualityUpgrade) {
+                            AppSettings.setSeamlessQualityUpgrade(false)
+                        } else {
+                            showSeamlessUpgradeConfirmation = true
+                        }
+                    },
+                )
+            }
             val skipSilenceTitle = stringResource(R.string.skip_silence)
             row(skipSilenceTitle, "silence") {
                 SettingsRow(
@@ -804,9 +877,27 @@ fun SettingsScreen(
                     onClick = onEqualizer,
                 )
             }
+            val jamesDspTitle = stringResource(R.string.jamesdsp)
+            row(jamesDspTitle, "jamesdsp", "dsp", "reverb", "bass", "tube") {
+                SettingsRow(
+                    icon = Icons.Rounded.GraphicEq,
+                    title = jamesDspTitle,
+                    subtitle = stringResource(R.string.jamesdsp_subtitle),
+                    onClick = { showJamesDsp = true },
+                )
+            }
         }
 
         SearchableSettingsGroup(search, header = stringResource(R.string.appearance)) {
+            val customizationTitle = stringResource(R.string.customization)
+            row(customizationTitle, "custom", "style", "color", "colour", "home", "theme") {
+                SettingsRow(
+                    icon = Icons.Rounded.Palette,
+                    title = customizationTitle,
+                    subtitle = stringResource(R.string.customization_subtitle),
+                    onClick = { showCustomization = true },
+                )
+            }
             val themeTitle = stringResource(R.string.theme)
             row(themeTitle, "dark mode", "light mode") {
                 SettingsRow(icon = Icons.Rounded.Brightness4, title = themeTitle)
@@ -848,6 +939,57 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
+                )
+            }
+            val homeFlowVisibleTitle = stringResource(R.string.show_flow_on_home)
+            row(homeFlowVisibleTitle, "flow", "home", "hide") {
+                SettingsRow(
+                    icon = Icons.Rounded.Home,
+                    title = homeFlowVisibleTitle,
+                    subtitle = stringResource(R.string.show_flow_on_home_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = homeFlowVisible,
+                            onCheckedChange = AppSettings::setHomeFlowVisible,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setHomeFlowVisible(!homeFlowVisible) },
+                )
+            }
+            val blockedArtistsTitle = stringResource(R.string.blocked_artists)
+            row(blockedArtistsTitle, "block", "hide", "artist") {
+                SettingsRow(
+                    icon = Icons.Rounded.VisibilityOff,
+                    title = blockedArtistsTitle,
+                    subtitle = if (blockedArtists.isEmpty()) {
+                        stringResource(R.string.blocked_artists_subtitle)
+                    } else {
+                        stringResource(R.string.blocked_artists_count, blockedArtists.size)
+                    },
+                    onClick = { showBlockedArtists = true },
+                )
+            }
+            val blockAiTitle = stringResource(R.string.block_ai_music)
+            row(blockAiTitle, "ai", "block") {
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = blockAiTitle,
+                    subtitle = stringResource(R.string.block_ai_music_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = blockAi,
+                            onCheckedChange = AppSettings::setBlockAiMusic,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setBlockAiMusic(!blockAi) },
                 )
             }
             val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)
@@ -1520,14 +1662,6 @@ fun SettingsScreen(
                     DonationRow(rail)
                 }
             }
-            row("ko-fi", "kofi", "kushagra", "donate", "upstream", "author") {
-                SettingsRow(
-                    icon = Icons.Rounded.Favorite,
-                    title = stringResource(R.string.support_kushagra_kofi),
-                    subtitle = stringResource(R.string.support_kushagra_subtitle),
-                    onClick = { SupportDonations.openKoFi(context) },
-                )
-            }
         }
 
         // The version line is the page's colophon, not a setting: it belongs to
@@ -1535,26 +1669,18 @@ fun SettingsScreen(
         if (searchQuery.isBlank()) {
         Text(
             text = buildAnnotatedString {
-                append("bitchord $version  ")
+                append("Auris $version  ")
                 val linkStyles = TextLinkStyles(
                     style = SpanStyle(
                         color = MaterialTheme.colorScheme.primary,
                         textDecoration = TextDecoration.Underline,
                     ),
                 )
-                withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx/BitChord", linkStyles)) {
-                    append("GitHub")
-                }
-                append("  ")
-                withLink(LinkAnnotation.Url("https://github.com/kushagrasinghx", linkStyles)) {
-                    append("Developer")
-                }
-                append("  ")
-                withLink(LinkAnnotation.Url("https://discord.gg/pDdKfrdHY6", linkStyles)) {
+                withLink(LinkAnnotation.Url("https://discord.gg/8VnWqcuzqg", linkStyles)) {
                     append("Discord")
                 }
                 append("  ")
-                withLink(LinkAnnotation.Url("https://bitchord.kushagrasingh.in/", linkStyles)) {
+                withLink(LinkAnnotation.Url("https://auris.shehriyar.ink", linkStyles)) {
                     append("Website")
                 }
                 append("\n~YouTube Music & Listen Together Backend")
@@ -1567,6 +1693,21 @@ fun SettingsScreen(
                 .padding(top = 24.dp, bottom = 8.dp),
         )
         }
+    }
+
+    if (showBlockedArtists) {
+        BlockedArtistsSheet(onDismiss = { showBlockedArtists = false })
+    }
+
+    if (showCustomization) {
+        CustomizationSheet(
+            homeShelfTitles = homeShelfTitles,
+            onDismiss = { showCustomization = false },
+        )
+    }
+
+    if (showJamesDsp) {
+        JamesDspSheet(onDismiss = { showJamesDsp = false })
     }
 
     picking?.let { target ->
@@ -1731,6 +1872,29 @@ fun SettingsScreen(
         )
     }
 
+    if (showSeamlessUpgradeConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showSeamlessUpgradeConfirmation = false },
+            title = { Text(stringResource(R.string.enable_seamless_upgrades_title)) },
+            text = { Text(stringResource(R.string.enable_seamless_upgrades_confirmation)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showSeamlessUpgradeConfirmation = false
+                        AppSettings.setSeamlessQualityUpgrade(true)
+                    },
+                ) {
+                    Text(stringResource(R.string.enable))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSeamlessUpgradeConfirmation = false }) {
+                    Text(stringResource(R.string.not_yet))
+                }
+            },
+        )
+    }
+
     if (showListenBrainzTokenDialog) {
         var tokenInput by remember { mutableStateOf(listenBrainzToken) }
         AlertDialog(
@@ -1866,6 +2030,7 @@ private fun AudioQuality.localizedLabel(): String = stringResource(
         AudioQuality.MEDIUM -> R.string.medium
         AudioQuality.HIGH -> R.string.high
         AudioQuality.LOSSLESS -> R.string.lossless
+        AudioQuality.DOLBY -> R.string.dolby_atmos
     },
 )
 
@@ -2251,6 +2416,114 @@ private fun DownloadQualitySheet(
 
 // ---- Building blocks --------------------------------------------------------
 
+private const val COMMUNITY_DISCORD_URL = "https://discord.gg/8VnWqcuzqg"
+private const val COMMUNITY_REDDIT_URL = "https://reddit.com/r/BitChordNext"
+
+private fun openCommunityLink(context: Context, url: String) {
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
+}
+
+/**
+ * The first thing under the search field: where to report a bug, ask for a
+ * feature, get into the beta, or just talk about the app. Discord is the
+ * primary action because that is where the builds and quick replies live;
+ * Reddit stays one tap away without turning the card into a menu.
+ */
+@Composable
+private fun CommunityCard() {
+    val context = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = GROUP_INSET)
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ),
+            )
+            .padding(18.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Groups,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = stringResource(R.string.community_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = stringResource(R.string.community_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(14.dp))
+        Button(
+            onClick = { openCommunityLink(context, COMMUNITY_DISCORD_URL) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF5865F2),
+                contentColor = Color.White,
+            ),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_discord),
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = Color.White,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.community_join_discord))
+        }
+        Spacer(Modifier.height(8.dp))
+        FilledTonalButton(
+            onClick = { openCommunityLink(context, COMMUNITY_REDDIT_URL) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 10.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Forum,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = Color(0xFFFF4500),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = stringResource(R.string.community_reddit),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 internal val GroupShape = RoundedCornerShape(14.dp)
 internal val GROUP_INSET = 16.dp
 internal val ROW_INSET = 16.dp
@@ -2576,7 +2849,6 @@ internal fun Chevron() {
 }
 
 /** A continuous setting: label and current value on one line, track beneath. */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SliderRow(
     icon: ImageVector,
@@ -2588,11 +2860,6 @@ internal fun SliderRow(
     steps: Int,
     subtitle: String? = null,
 ) {
-    val colors = SliderDefaults.colors(
-        thumbColor = MaterialTheme.colorScheme.primary,
-        activeTrackColor = MaterialTheme.colorScheme.primary,
-        inactiveTrackColor = MaterialTheme.colorScheme.outline,
-    )
     Column(Modifier.padding(start = ROW_INSET, end = ROW_INSET, top = 12.dp, bottom = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -2623,22 +2890,11 @@ internal fun SliderRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Slider(
+        AurisSlider(
             value = sliderValue,
             onValueChange = onSliderValue,
             valueRange = valueRange,
             steps = steps,
-            colors = colors,
-            // Bare track: the step ticks and the end-stop dot are noise when the
-            // value is already spelled out on the line above.
-            track = { state ->
-                SliderDefaults.Track(
-                    sliderState = state,
-                    colors = colors,
-                    drawStopIndicator = null,
-                    drawTick = { _, _ -> },
-                )
-            },
             modifier = Modifier.padding(start = ICON_SIZE + ICON_GAP),
         )
     }
@@ -2726,7 +2982,13 @@ internal fun SegmentedControl(
                     text = label,
                     style = MaterialTheme.typography.labelMedium,
                     color = labelColor,
-                    maxLines = 1,
+                    // Four segments on a phone leave ~85dp each. "Now Playing"
+                    // on one line was clipped to "Now" and the rest of the word
+                    // simply vanished — the label has to be allowed to wrap.
+                    maxLines = 2,
+                    textAlign = TextAlign.Center,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
             }
         }

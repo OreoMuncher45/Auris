@@ -652,23 +652,32 @@ val PlayingAccent = Color(0xFFFB4A62)
 
 @Composable
 fun SearchPlayingBars(modifier: Modifier = Modifier) {
-    val heights = listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
-        val transition = rememberInfiniteTransition(label = "search playing bar $index")
-        val height by transition.animateFloat(
-            initialValue = minimum,
-            targetValue = 1f - (index * 0.12f),
-            animationSpec = infiniteRepeatable(
-                animation = keyframes {
-                    durationMillis = 520 + index * 130
-                    minimum at 0
-                    1f at (260 + index * 50)
-                    minimum at durationMillis
-                },
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "search bar height $index",
-        )
-        height
+    // Three infinite transitions per visible marker, redrawn at the display's
+    // refresh rate for as long as a list row is on screen. With "reduce
+    // animation" they settle into a fixed shape and stop scheduling frames.
+    val reduceAnimation by com.music.bitchord.ui.player.PlayerSettings.reduceAnimation
+        .collectAsStateWithLifecycle()
+    val heights = if (reduceAnimation) {
+        listOf(0.78f, 1f, 0.88f)
+    } else {
+        listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
+            val transition = rememberInfiniteTransition(label = "search playing bar $index")
+            val height by transition.animateFloat(
+                initialValue = minimum,
+                targetValue = 1f - (index * 0.12f),
+                animationSpec = infiniteRepeatable(
+                    animation = keyframes {
+                        durationMillis = 520 + index * 130
+                        minimum at 0
+                        1f at (260 + index * 50)
+                        minimum at durationMillis
+                    },
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "search bar height $index",
+            )
+            height
+        }
     }
     // The plate is a fixed square so only the bars move, never the box around them.
     Box(

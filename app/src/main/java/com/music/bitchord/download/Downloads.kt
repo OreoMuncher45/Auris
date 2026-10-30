@@ -11,6 +11,7 @@ import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.DownloadQuality
+import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.SourceResolver
 import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
@@ -217,9 +218,18 @@ object Downloads {
         // rewrote the entire settings file atomically, temp file and fsync and
         // all, carrying the whole library with it, four times over on a batch.
         migrateLegacy(legacy)
-        _saved.value = decode(KEY_SAVED, serializer) { prefs.getString(it, null) }
-        _savedMetadata.value = decode(KEY_SAVED_METADATA, metadataSerializer) { prefs.getString(it, null) }
-        _collections.value = decode(KEY_SAVED_COLLECTIONS, collectionSerializer) { prefs.getString(it, null) }
+        // These blobs reach hundreds of kilobytes for a large library, and
+        // parsing them ran before the first frame. Loaded off the main thread
+        // and merged *under* the live flows, so an edit that somehow lands
+        // first wins instead of being overwritten by this snapshot.
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val saved = decode(KEY_SAVED, serializer) { prefs.getString(it, null) }
+            val metadata = decode(KEY_SAVED_METADATA, metadataSerializer) { prefs.getString(it, null) }
+            val collections = decode(KEY_SAVED_COLLECTIONS, collectionSerializer) { prefs.getString(it, null) }
+            _saved.updateAndGet { saved + it }
+            _savedMetadata.updateAndGet { metadata + it }
+            _collections.updateAndGet { collections + it }
+        }
     }
 
     /**
@@ -1534,6 +1544,12 @@ object Downloads {
         // Keep Opus for app-private downloads, but pin exported downloads to
         // AAC-in-MP4 for both the initial resolve and any mid-transfer retry.
         val requireM4a = AppSettings.exportDownloads.value
+        // The route below files YouTube's own bytes. With YouTube switched off
+        // there is no such file to file, and saving one anyway would be the
+        // same broken promise the sources screen's switch exists to fix.
+        if (!SourceRegistry.youtubeEnabled()) {
+            error("YouTube Music is turned off; this track can't be downloaded from your sources")
+        }
         val stream = StreamResolver.resolveForDownload(track.videoId, quality.maxKbps, requireM4a)
         return Route(
             extension = stream.downloadExtension,

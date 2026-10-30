@@ -196,12 +196,19 @@ object AudioCache {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     /**
+     * This object has no Context of its own, and the background data policy
+     * needs system services. Set once from [init].
+     */
+    private var appContext: Context? = null
+
+    /**
      * Kept in the app's cache directory: this is disposable by definition, and
      * that is where the system and the "clear cache" button expect to reclaim
      * it from. [SimpleCache] copes with files disappearing underneath it by
      * dropping the spans that named them.
      */
     fun init(context: Context) {
+        appContext = context.applicationContext
         evictor.maxBytes = AppSettings.audioCacheLimitBytes.value
         cache = SimpleCache(
             File(context.cacheDir, "audio"),
@@ -431,7 +438,7 @@ object AudioCache {
      * rather than re-fetching it.
      */
     private fun atmosKeySuffix(): String =
-        if (DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value) "" else "-noatmos"
+        if (DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos) "" else "-noatmos"
 
     /**
      * Which kind of server a cache entry's bytes came from, as recorded by
@@ -889,20 +896,29 @@ object AudioCache {
         android.util.Log.d("BCFetchDebug", "prefetchQueue: head ${pendingQueue.firstOrNull()} -> ${mediaIds.firstOrNull()}")
         pendingQueue = mediaIds
         job?.cancel()
-        // Both halves of the read-ahead below go through [StreamResolver],
-        // which speaks YouTube ids and nothing else. A source-backed track
-        // handed to it resolves to a failure, so filtering here saves a dead
-        // round trip per queued track rather than changing any outcome —
-        // read-ahead for those is a separate job, and their servers are
-        // typically a good deal closer than googlevideo anyway.
-        //
+        // YouTube's half of read-ahead speaks [StreamResolver]'s language and
+        // nothing else, so its id list is separate. The track chosen for the
+        // byte pass below is not: an addon track is worth warming just as much,
+        // and nothing used to choose one. A queue made only of source-backed
+        // tracks got no read-ahead at all, which left
+        // [com.music.bitchord.playback.smart.TrackAnalyzer] with no bytes to
+        // read for the incoming side and AutoMix planning from nothing — the
+        // "it became the old engine" report, which was really "there is
+        // nothing to analyse here".
         val videoIds = mediaIds.filter { SourceRegistry.parseTrackKey(it) == null }
-            // A track already on disk needs no reading ahead, and read-ahead
-            // speaks only to googlevideo: warming one would spend mobile data
-            // fetching a second copy of a file the listener deliberately saved,
-            // then cache it under a key playback is never going to ask for —
-            // it plays the download instead. See [Song.toMediaItem].
+            // A track already on disk needs no reading ahead: warming one
+            // would spend mobile data fetching a second copy of a file the
+            // listener deliberately saved, then cache it under a key playback
+            // is never going to ask for — it plays the download instead. See
+            // [Song.toMediaItem].
             .filter { it !in Downloads.saved.value }
+        // The first queue entry with something to warm, of either kind. A
+        // source-backed one is only warmable when the caller handed its own
+        // playback URI along — see [Upcoming.uri].
+        val nextUpcoming = upcoming.firstOrNull {
+            it.mediaId !in Downloads.saved.value &&
+                (SourceRegistry.parseTrackKey(it.mediaId) == null || it.uri != null)
+        }
         // With substitution possible, only the *bytes* half drops out. Read-
         // ahead builds its own spec below from an id alone and carries none of
         // the title and artist a substitution is matched on — so it resolves
@@ -920,8 +936,9 @@ object AudioCache {
         // whenever the modules are slow, and warming it here is what makes the
         // race worth running at all.
         val substitutable = SourceResolver.canSubstituteForYouTube()
-        job = videoIds.firstOrNull()?.let { next ->
-            val target = upcoming.firstOrNull { it.mediaId == next }?.target
+        job = nextUpcoming?.let { head ->
+            val next = head.mediaId
+            val target = head.target
             // A track the listener reverted plays from its own `#original`
             // rendition — see [OriginalVersion] — while read-ahead builds its
             // spec from an id alone and so writes under the plain key. Every
@@ -931,6 +948,26 @@ object AudioCache {
             // reverted track resolves through YouTube, which is what it warms.
             val pinnedToYouTube = OriginalVersion.isPinned(next)
             scope.launch {
+                // Measured from the queue change, not from whenever the patient
+                // search below returns: that search can take seconds, and a
+                // settle delay counted after it would push the byte fetch out
+                // past the point the track is needed — exactly the gap this
+                // read-ahead exists to close.
+                val readyAt = SystemClock.elapsedRealtime() + PREFETCH_DELAY_MS
+                // A source-backed track is filled from its own URI. It is not
+                // a substitute and must not pass through the YouTube resolution
+                // below, which would write a different recording's bytes under
+                // an entry this track owns.
+                if (SourceRegistry.parseTrackKey(next) != null) {
+                    // The settle delay is about not spending data on a queue
+                    // the listener is still rearranging; it has nothing to add
+                    // to the resolver preparation below, which is cheap and
+                    // was deliberately started the moment the queue changed.
+                    val wait = readyAt - SystemClock.elapsedRealtime()
+                    if (wait > 0) delay(wait)
+                    prefetchSourceTrack(next, head.uri!!)
+                    return@launch
+                }
                 // With substitution on, the *bytes* half above used to be
                 // switched off outright, and the paragraph explaining why is
                 // still correct as far as it goes: read-ahead resolving to
@@ -938,45 +975,96 @@ object AudioCache {
                 // higher-ranked source is about to fill.
                 //
                 // What it treated as impossible was knowing the answer in
-                // advance. A quick source can be asked *here* — see
-                // [SourceResolver.prefetchSubstitute] — and once its stream is
+                // advance. A source can be asked *here* — see
+                // [SourceResolver.prepareForPlayback] — and once its stream is
                 // recorded in [StreamChoice], the question stops being open:
                 // every later resolve for this track, read-ahead's own included,
                 // is held to that one stream. Both writers then agree on the
                 // file and on the `#alt` key it lands under, which is exactly
                 // the condition the byte half was missing.
                 //
-                // A source that is disabled, doesn't have the track, or fails
-                // leaves nothing pinned, and this falls through to the same
-                // URL-only warm-up it did before — YouTube resolves the track at
-                // playback time as usual.
-                val warmed = if (substitutable && target != null && !pinnedToYouTube) {
-                    runCatching { SourceResolver.prefetchSubstitute(target) }
-                        .onFailure { TrackLog.d(TAG, "warm-up substitute failed for $next: ${it.message}", about = next) }
-                        .getOrNull()
-                        ?.also { StreamChoice.remember(next, it, substituted = true) }
+                // The old shape asked only [SourceKind.worthPrefetching]
+                // sources, which excluded every addon and module — so the case
+                // this is for, a listener whose sources are addons (or whose
+                // YouTube is off), got no preparation at all and paid the live
+                // race between the tracks. The patient pass asks every ranked
+                // source and starts as soon as the queue is known, so a slow
+                // lookup that takes ten seconds is done long before the track
+                // is needed rather than after.
+                //
+                // A pin somebody else already made — the analyzer's copy
+                // fallback, or a search warm-up — is the identity playback will
+                // read, so it is reused rather than replaced: a second stream
+                // pinned over it could write one server's bytes at the offsets
+                // another server had filled.
+                val alreadyPinned = StreamChoice.of(next)
+                    ?.takeIf { !pinnedToYouTube && StreamChoice.isSubstitute(next) }
+                val prepared = alreadyPinned ?: if (substitutable && target != null && !pinnedToYouTube) {
+                    // Announced before the search, not after: the player opens
+                    // a queue's next item before it is reached, and that open
+                    // reads this to wait for the pin rather than racing YouTube
+                    // and locking the hand-over into the wrong server.
+                    StreamChoice.beginPreparing(next)
+                    try {
+                        runCatching { SourceResolver.prepareForPlayback(target) }
+                            .onFailure {
+                                TrackLog.d(TAG, "next-track preparation failed for $next: ${it.message}", about = next)
+                            }
+                            .getOrNull()
+                            ?.also { StreamChoice.remember(next, it, substituted = true) }
+                    } finally {
+                        StreamChoice.endPreparing(next)
+                    }
                 } else {
                     null
                 }
                 // Safe to fill for the same reason in both cases: either nothing
                 // outranks YouTube and read-ahead is the only writer, or a
                 // source has been pinned and every writer now resolves to it.
-                val cacheBytes = (!substitutable || warmed != null) && !pinnedToYouTube
+                // With YouTube switched off the first case no longer exists:
+                // an unpinned entry would be filled from a source the listener
+                // turned off, so only a prepared substitute is worth caching.
+                val cacheBytes = (!substitutable || prepared != null) && !pinnedToYouTube &&
+                    (prepared != null || SourceRegistry.youtubeEnabled())
                 if (cacheBytes) {
                     launch(TrackLog.about(next)) {
-                        delay(PREFETCH_DELAY_MS)
+                        val wait = readyAt - SystemClock.elapsedRealtime()
+                        if (wait > 0) delay(wait)
                         fetch(next, 0, PRELOAD_BYTES)
-                        fetchWhole(next)
+                        // Enough to start the track is worth having everywhere.
+                        // The rest is a guess about where the listener will
+                        // seek, and a whole-track download of a guess is what
+                        // waits for a screen, a charger or an unmetered link.
+                        //
+                        // YouTube's own file only. [fetchWhole] sizes its ranges
+                        // from [StreamResolver]'s answer for the video id, which
+                        // knows nothing about an addon's copy — asking for
+                        // YouTube's offsets against another server's bytes
+                        // would stop short or run past the end. A prepared
+                        // substitute's opening is what a hand-over reads; the
+                        // rest streams while the track plays.
+                        if (prepared == null) {
+                            val context = appContext
+                            if (context == null || PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) {
+                                fetchWhole(next)
+                            }
+                        }
                     }
                 }
-                launch {
-                    delay(PREFETCH_DELAY_MS)
+                // The URL warm-up below is YouTube's. With YouTube switched
+                // off nothing will ask for one of those URLs — a miss here
+                // ends in a source lookup at playback time, not in a client
+                // walk — so minting them would spend network on every queued
+                // track for a cache entry nothing reads.
+                if (SourceRegistry.youtubeEnabled()) launch {
+                    val wait = readyAt - SystemClock.elapsedRealtime()
+                    if (wait > 0) delay(wait)
                     for (id in videoIds.take(QUEUE_LOOKAHEAD + 1).let { if (cacheBytes) it.drop(1) else it }) {
                         // A track already pinned to another source has no use
                         // for a YouTube URL: nothing will ask for one, and
                         // minting it spends a client walk to fill a cache entry
                         // that is never read.
-                        if (id == next && warmed != null) continue
+                        if (id == next && prepared != null) continue
                         runCatching { StreamResolver.resolve(id) }
                             .onFailure { TrackLog.d(TAG, "queue warm-up skipped $id: ${it.message}", about = id) }
                         delay(QUEUE_RESOLVE_STAGGER_MS)
@@ -995,8 +1083,19 @@ object AudioCache {
      * `bitchord://watch?v=…` URI it builds for itself carries an id and nothing
      * else. It rides along from the queue instead — see
      * [PlaybackService.prefetchAround][com.music.bitchord.playback.PlaybackService].
+     *
+     * [uri] is the item's own playback URI, and it is what makes read-ahead
+     * possible for a source-backed track at all. YouTube's copies are resolved
+     * from an id; an addon's are not — they need the config and track ids, and
+     * the resolver's cross-source match needs the title, artist and runtime
+     * that ride in the same URI. Null when the caller has no item to read one
+     * from, in which case only the YouTube path is warmed.
      */
-    data class Upcoming(val mediaId: String, val target: TrackMatcher.Target)
+    data class Upcoming(
+        val mediaId: String,
+        val target: TrackMatcher.Target,
+        val uri: Uri? = null,
+    )
 
     /**
      * Nothing to read ahead for once playback stops. The queue is cleared with
@@ -1224,6 +1323,11 @@ object AudioCache {
      */
     suspend fun awaitAnalysisHead(uri: Uri, timeoutMs: Long = 20_000L): Boolean {
         if (!::cache.isInitialized) return false
+        // No YouTube copy can be fetched while the switch is off, and waiting
+        // the deadline for one that will never arrive costs the transition it
+        // is meant to inform. The analyzer's ordinary path does not come
+        // through here — see [TrackAnalyzer].
+        if (!SourceRegistry.youtubeEnabled()) return false
         val videoId = uri.getQueryParameter("v") ?: return false
         if (alignmentHeadComplete(videoId)) return true
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
@@ -1318,6 +1422,10 @@ object AudioCache {
             TrackLog.w(TAG, "analysis head for $uri not started: no upstream yet")
             return
         }
+        // The head is a YouTube copy, and with the switch off the resolver
+        // refuses one by design. The analyzer reads the copy the track is
+        // already playing from instead — see [TrackAnalyzer].
+        if (!SourceRegistry.youtubeEnabled()) return
         val videoId = uri.getQueryParameter("v") ?: return
         // One round per track per session, and it is sized correctly up front
         // rather than grown into. See [analysisHeadSize] for why growing it was
@@ -1446,7 +1554,7 @@ object AudioCache {
     }
 
     /**
-     * Writes [videoId]'s real size into its cache metadata, which a bounded
+     * Writes [cacheKey]'s real size into its cache metadata, which a bounded
      * fetch does not.
      *
      * Media3 records a resource's length from a response that describes the
@@ -1458,18 +1566,20 @@ object AudioCache {
      * a sliver of an unusable one. That is how a track whose opening had just
      * been downloaded went on reading as having nothing.
      *
-     * Cheap because [StreamResolver] has the number already: it was read to
-     * resolve the stream this fetch just pulled from.
+     * Cheap for the analysis-head caller because [StreamResolver] has the
+     * number already: it was read to resolve the stream this fetch just pulled
+     * from. The source read-ahead has no such answer and asks the stream itself
+     * — see [measureUpstream].
      */
-    private fun recordContentLength(videoId: String, total: Long) {
-        if (ContentMetadata.getContentLength(cache.getContentMetadata(videoId)) > 0) return
+    private fun recordContentLength(cacheKey: String, total: Long) {
+        if (ContentMetadata.getContentLength(cache.getContentMetadata(cacheKey)) > 0) return
         if (total <= 0) return
         runCatching {
             cache.applyContentMetadataMutations(
-                videoId,
+                cacheKey,
                 ContentMetadataMutations().apply { ContentMetadataMutations.setContentLength(this, total) },
             )
-        }.onFailure { TrackLog.d(TAG, "could not record length for $videoId: ${it.message}", about = videoId) }
+        }.onFailure { TrackLog.d(TAG, "could not record length for $cacheKey: ${it.message}", about = cacheKey) }
     }
 
     /**
@@ -1537,6 +1647,23 @@ object AudioCache {
         val probe = contentLengthOf(uri).takeIf { it > 0 } ?: HEAD_PROBE_BYTES
         // Negative means "this many bytes of hole", i.e. position 0 isn't cached at all.
         return cache.getCachedLength(key, 0, probe).coerceAtLeast(0L)
+    }
+
+    /**
+     * Whether [uri]'s rendition has any bytes on disk at [position].
+     *
+     * The upgrade fade measures the incoming copy at the position it is about
+     * to join, while the standby player is still fetching that region. This is
+     * how it knows the bytes have landed instead of decoding a hole and
+     * concluding there is nothing to measure.
+     */
+    fun hasCachedBytesAt(uri: Uri, position: Long): Boolean {
+        if (!::cache.isInitialized) return false
+        val total = contentLengthOf(uri)
+        if (total > 0 && position >= total) return true
+        val key = keyFactory.buildCacheKey(DataSpec(uri))
+        val probe = if (total > 0) (total - position).coerceAtMost(HEAD_PROBE_BYTES) else HEAD_PROBE_BYTES
+        return cache.getCachedLength(key, position, probe) > 0
     }
 
     /**
@@ -1644,6 +1771,13 @@ object AudioCache {
                 .createDataSource(),
             uri,
         )
+
+    /**
+     * The same reader for a key already in hand, without needing a [Rendition]
+     * built first — the upgrade fade names both sides by key.
+     */
+    fun dataSourceForKey(uri: Uri, cacheKey: String): MediaDataSource =
+        renditionDataSource(uri, Rendition(cacheKey, contentLength = 0L, cachedPrefix = 0L))
 
     /**
      * A random-access reader over [uri]'s cached bytes, for the analyzer to hand
@@ -1812,6 +1946,104 @@ object AudioCache {
             if (cache.getCachedBytes(cacheKey, position, LOCK_PROBE_BYTES) < LOCK_PROBE_BYTES) return
         }
         pull(cacheKey, uri, position, length, pinKey)
+    }
+
+    /**
+     * Fills the cache entry for a source-backed track before the player reaches
+     * it — the addon counterpart of the YouTube read-ahead above.
+     *
+     * This exists for AutoMix, not for start latency. The analyzer reads a
+     * track's own cached copy when YouTube is switched off (see
+     * [com.music.bitchord.playback.smart.TrackAnalyzer]), and a copy that is
+     * still filling in cannot answer the whole-track pass: the rendition is not
+     * complete until the player itself has read the last byte, which is exactly
+     * when the mix-out it was meant to describe is already due. Nothing warmed
+     * source-backed tracks at all, so a queue served only by addons reached
+     * every transition with no analysis on either side and fell back to the
+     * plain fade — the reported "AutoMix became v1".
+     *
+     * The opening goes first, because that is all a head pass needs and it is
+     * what makes the track start instantly when it is reached. The rest is
+     * filled only under the same policy as [fetchWhole] — a whole lossless
+     * album side is not something to pull down over a metered link for a track
+     * the listener may skip.
+     */
+    private suspend fun prefetchSourceTrack(mediaId: String, uri: Uri) {
+        val key = cacheKeyOf(uri)
+        if (cache.getCachedBytes(key, 0, PRELOAD_BYTES) < PRELOAD_BYTES) {
+            TrackLog.d(TAG, "read-ahead fetching the opening of $mediaId from its source", about = mediaId)
+            fetch(key, uri, 0, PRELOAD_BYTES, pinKey = true)
+        }
+        if (pendingQueue.firstOrNull() != mediaId) return
+        val context = appContext ?: return
+        if (!PlaybackNetworkPolicy.allowHeavyBackgroundWork(context)) return
+
+        // A bounded fetch cannot teach us the length — see [recordContentLength]
+        // — so unless something already opened this rendition unbounded (the
+        // player, on a previous queue), ask the stream itself. This is what
+        // makes the pass below possible at all: without a total there is
+        // nothing to iterate to, which left addon tracks with an opening and
+        // no more.
+        val total = contentLengthOf(uri).takeIf { it > 0L } ?: measureUpstream(uri)
+        if (total <= 0L) {
+            TrackLog.d(
+                TAG,
+                "no length for $mediaId; read-ahead keeps only its opening",
+                about = mediaId,
+            )
+            return
+        }
+        recordContentLength(key, total)
+        var position = 0L
+        while (position < total) {
+            if (pendingQueue.firstOrNull() != mediaId) return
+            val length = minOf(CHUNK_BYTES, total - position)
+            if (cache.getCachedBytes(key, position, length) < length) {
+                fetch(key, uri, position, length, pinKey = true)
+                // Written nowhere means another writer owns the entry — the
+                // player, if it has been reached after all. The rest of this
+                // pass would be spent for the same answer.
+                if (cache.getCachedBytes(key, position, length) < length) {
+                    TrackLog.d(TAG, "read-ahead stopped at $position/$total for $mediaId", about = mediaId)
+                    return
+                }
+            }
+            position += length
+        }
+        TrackLog.d(TAG, "read-ahead has all $total bytes of $mediaId", about = mediaId)
+    }
+
+    /**
+     * Asks the stream how many bytes it holds, without reading any of them.
+     *
+     * Every read-ahead fetch is a range, and [CacheDataSource] records a
+     * rendition's length only when the response describes the *whole*
+     * resource — so the opening fetched above leaves the entry with no length,
+     * and [contentLengthOf] cannot answer. An unbounded open at position 0
+     * returns the response's remaining length, which is the total, and closing
+     * at once costs the headers rather than the file.
+     *
+     * Goes through [upstreamFactory] rather than around it on purpose: that is
+     * the chain playback uses, so a `bitchord://source` URI is resolved and an
+     * `smb://` one is read by the same code that will later fetch the bytes.
+     *
+     * Zero when the source states no length — a chunked response genuinely has
+     * none — and read-ahead then keeps just the opening.
+     */
+    private suspend fun measureUpstream(uri: Uri): Long {
+        val upstream = upstreamFactory ?: return 0L
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val source = upstream.createDataSource()
+                try {
+                    source.open(DataSpec.Builder().setUri(uri).setPosition(0).build())
+                } finally {
+                    runCatching { source.close() }
+                }
+            }.onFailure {
+                TrackLog.d(TAG, "could not measure $uri: ${it.message}", about = mediaIdIn(uri))
+            }.getOrDefault(0L).coerceAtLeast(0L)
+        }
     }
 
     /** The actual network pull behind [fetch], unconditional and unchecked. */

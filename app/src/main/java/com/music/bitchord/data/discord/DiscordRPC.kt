@@ -120,11 +120,15 @@ class DiscordRPC(
             // the icon of whichever application [APPLICATION_ID] points at, and
             // that icon isn't ours to set. A track with no artwork — or with
             // artwork Discord can't reach, which is anything that isn't an http
-            // URL — gets our own launcher icon instead.
+            // URL — gets our own white-only mark instead.
             largeImage = RpcImage.ExternalImage(
                 song.artworkAt(ART_PX)?.takeIf { it.startsWith("http") } ?: FALLBACK_ART_URL,
             ),
-            smallImage = null,
+            // The small image is the app icon as Discord shows it next to the
+            // sleeve, and left empty it is the icon of the registered Discord
+            // application — the old full-colour logo again. The same white-only
+            // mark stands in for it.
+            smallImage = RpcImage.ExternalImage(FALLBACK_ART_URL),
             // The card's optional third information line. Kept absent for
             // ordinary lossy streams so Discord only calls attention to a
             // measured premium format.
@@ -167,10 +171,10 @@ class DiscordRPC(
          */
         private const val APPLICATION_ID = "1411019391843172514"
 
-        const val PROJECT_URL = "https://github.com/OreoMuncher45/BitChord"
+        const val PROJECT_URL = "https://auris.shehriyar.ink"
 
         const val DEFAULT_BUTTON_1 = "Listen on YouTube Music"
-        const val DEFAULT_BUTTON_2 = "Visit BitChord Next"
+        const val DEFAULT_BUTTON_2 = "Visit Auris"
 
         /** Discord draws the sleeve at roughly 96dp; 480px covers it on any density. */
         private const val ART_PX = 480
@@ -179,11 +183,20 @@ class DiscordRPC(
          * The sleeve drawn for a track with no usable artwork.
          *
          * Has to be a URL Discord's mirroring endpoint can fetch, so it points
-         * at the launcher icon in the repo rather than the copy bundled in the
-         * APK — a `res/` drawable has no address the presence can carry.
+         * at the mark in the repo rather than the copy bundled in the APK — a
+         * `res/` drawable has no address the presence can carry.
+         *
+         * The white-only mark and not the full-colour launcher icon: the whole
+         * logo at sleeve size reads as the old artwork, which is exactly what
+         * this fallback exists to stop showing.
+         *
+         * Addressed by tag rather than by branch, because the presence of an
+         * installed app outlives the branch it was built from — a branch that
+         * is renamed or deleted leaves every presence pointing at nothing, and
+         * the fallback is the one thing that must never be missing.
          */
         private const val FALLBACK_ART_URL =
-            "https://raw.githubusercontent.com/OreoMuncher45/BitChord/main/app/src/main/ic_launcher-playstore.png"
+            "https://raw.githubusercontent.com/OreoMuncher45/Auris/presence-icon-v1/app/src/main/res/drawable-nodpi/ic_launcher_monochrome.png"
 
         fun watchUrl(song: Song): String =
             "https://music.youtube.com/watch?v=${song.videoId}"

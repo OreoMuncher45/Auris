@@ -1,6 +1,7 @@
 package com.music.bitchord.playback
 
 import com.music.bitchord.data.settings.OutputPcmMode
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,43 +57,29 @@ class AudioOutputPolicyTest {
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.PHONE,
-                advertisesPcmFloat = true,
             ),
         )
     }
 
     @Test
-    fun routeAwareUsbAllowsFloatWhenAdvertised() {
+    fun routeAwareUsbAllowsFloatWithoutDeviceAdvertisement() {
+        // A USB DAC's AudioDeviceInfo describes what its HAL accepts after
+        // AudioFlinger, not what AudioTrack can open; the sink's delegate probe
+        // is the real gate and falls back to PCM16 when float will not open.
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.USB,
-                advertisesPcmFloat = true,
-            ),
-        )
-        assertFalse(
-            AudioOutputPolicy.shouldUseFloatOutput(
-                OutputPcmMode.FLOAT_32,
-                routeKind = AudioRouting.Kind.USB,
-                advertisesPcmFloat = false,
             ),
         )
     }
 
     @Test
-    fun routeAwareBluetoothAllowsFloatOnlyWhenAdvertised() {
+    fun routeAwareBluetoothAllowsFloatWithoutDeviceAdvertisement() {
         assertTrue(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.FLOAT_32,
                 routeKind = AudioRouting.Kind.BLUETOOTH,
-                advertisesPcmFloat = true,
-            ),
-        )
-        assertFalse(
-            AudioOutputPolicy.shouldUseFloatOutput(
-                OutputPcmMode.FLOAT_32,
-                routeKind = AudioRouting.Kind.BLUETOOTH,
-                advertisesPcmFloat = false,
             ),
         )
     }
@@ -103,14 +90,12 @@ class AudioOutputPolicyTest {
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.PCM_16,
                 routeKind = AudioRouting.Kind.BLUETOOTH,
-                advertisesPcmFloat = true,
             ),
         )
         assertFalse(
             AudioOutputPolicy.shouldUseFloatOutput(
                 OutputPcmMode.PCM_16,
                 routeKind = AudioRouting.Kind.USB,
-                advertisesPcmFloat = true,
             ),
         )
     }
@@ -120,5 +105,32 @@ class AudioOutputPolicyTest {
         assertTrue(AudioOutputPolicy.isUnsafeFloatFlacDecoder("c2.sec.flac.decoder"))
         assertTrue(AudioOutputPolicy.isUnsafeFloatFlacDecoder("OMX.SEC.FLAC.Decoder"))
         assertFalse(AudioOutputPolicy.isUnsafeFloatFlacDecoder("c2.android.flac.decoder"))
+    }
+
+    @Test
+    fun bitPerfectStartsAtFloatWhateverThePrecisionMenuSays() {
+        // Float is the only encoding Media3 will open that carries a 24-bit
+        // sample; leaving hi-res on the menu's PCM16 would truncate it before
+        // the route ever got a say.
+        assertEquals(
+            OutputPcmMode.FLOAT_32,
+            AudioOutputPolicy.requestedPcmMode(OutputPcmMode.PCM_16, bitPerfect = true),
+        )
+        assertEquals(
+            OutputPcmMode.FLOAT_32,
+            AudioOutputPolicy.requestedPcmMode(OutputPcmMode.FLOAT_32, bitPerfect = true),
+        )
+    }
+
+    @Test
+    fun bitPerfectOffKeepsThePrecisionMenuChoice() {
+        assertEquals(
+            OutputPcmMode.PCM_16,
+            AudioOutputPolicy.requestedPcmMode(OutputPcmMode.PCM_16, bitPerfect = false),
+        )
+        assertEquals(
+            OutputPcmMode.FLOAT_32,
+            AudioOutputPolicy.requestedPcmMode(OutputPcmMode.FLOAT_32, bitPerfect = false),
+        )
     }
 }

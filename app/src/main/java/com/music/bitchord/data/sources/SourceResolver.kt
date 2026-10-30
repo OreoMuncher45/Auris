@@ -12,6 +12,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Turns a queued track into an openable stream, using whichever source can
@@ -63,7 +64,11 @@ object SourceResolver {
         // sources. It was a switch whose only real effect was to downgrade the
         // one source that could do better.
         return when {
-            ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
+            // The immersive rung is the lossless walk plus an Atmos answer
+            // preferred ahead of it: a track with no Atmos master must still
+            // play its FLAC, and [preferred]/[isBetter] already put an
+            // immersive rendition first when one is on offer.
+            ceiling == AudioQuality.DOLBY || ceiling == AudioQuality.LOSSLESS -> StreamRequest.Lossless
             ceiling.maxKbps == Int.MAX_VALUE -> StreamRequest.Best
             else -> StreamRequest.Capped(ceiling.maxKbps)
         }
@@ -188,8 +193,8 @@ object SourceResolver {
     }
 
     /**
-     * The stream for a YouTube track from a source the user ranked above
-     * YouTube, or null when none of them has the recording.
+     * The stream for a YouTube track from a source ranked above YouTube, or
+     * null when none of them has the recording.
      *
      * A YouTube track keeps its bare video id rather than a
      * [SourceRegistry.trackKey] — see [YouTubeSource] for why — so it reaches
@@ -198,6 +203,10 @@ object SourceResolver {
      * *queued* from YouTube: the library, a playlist, radio, the home feed —
      * which is very nearly everything. The list said "prefer my server" and
      * only search results honoured it.
+     *
+     * "Ranked above YouTube" is [candidatesForYouTube], which also answers for
+     * the case where YouTube is switched off: everything enabled is then the
+     * candidate set, and nothing plays from YouTube.
      *
      * The match is the same strict one [resolve] uses, for the same reason:
      * this substitutes something else for the track the user picked, and a
@@ -215,10 +224,10 @@ object SourceResolver {
         // explicitly converts the current item in the player. A module match
         // is another recording and can be a wrong song altogether.
         if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
+        if (candidates.isEmpty()) return null
         val request = requestForNow()
-        val (source, stream) = bestAcross(rankedAbove(youtube.configId, active), target, request)
+        val (source, stream) = bestAcross(candidates, target, request)
             ?: return null
         // Says what was found, not what the caller will do with it. This
         // line used to read "substituted" unconditionally, including for
@@ -284,14 +293,64 @@ object SourceResolver {
      */
     suspend fun prefetchSubstitute(target: TrackMatcher.Target): SourceStream? {
         if (target.title.isBlank() || target.isVideo) return null
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
-        val quick = rankedAbove(youtube.configId, active).filter { it.kind.worthPrefetching }
+        val quick = candidatesForYouTube(SourceRegistry.activeForPlayback())
+            .filter { it.kind.worthPrefetching }
         if (quick.isEmpty()) return null
         val (source, stream) = bestAcross(quick, target, requestForNow()) ?: return null
         TrackLog.d(
             TAG,
             "warmed: '${target.title}' from ${source.displayName} at ${stream.format.summary}",
+        )
+        return stream
+    }
+
+    /**
+     * Chooses the copy a queued track should open on, with the length of the
+     * track in front of it to do the choosing.
+     *
+     * [substituteForYouTube] takes the first usable answer because a listener
+     * is waiting for the next note. This runs while the *previous* track is
+     * still playing, so it can afford the patient version of the same search:
+     * every candidate is asked, and the best rendition among the answers wins
+     * ([bestAcross] with [waitForAll]) instead of whichever source happened to
+     * be quickest. Two things follow, and they are the point of it:
+     *
+     *  - the next track starts on the best copy the enabled sources hold rather
+     *    than on JioSaavn's 320 and then being cut mid-song for a module's
+     *    FLAC — the "highest quality available, per the settings" case; and
+     *  - playback has a pinned stream before it needs one, so the resolve race
+     *    that used to run between two tracks (and was measured at 0.4s to
+     *    13.5s) simply does not happen at the hand-over.
+     *
+     * Bounded by [PREPARE_BUDGET_MS]. A module search is measured at 7-13s; a
+     * conversion-based source can take minutes, which is longer than the next
+     * track can be held for. Answers inside the budget are kept and the rest
+     * are dropped — the live path still asks the same sources if it needs to.
+     *
+     * The caller must pin the result with [StreamChoice] before caching a byte
+     * of it: see [prefetchSubstitute], which has the same requirement and the
+     * corruption that follows from skipping it.
+     */
+    suspend fun prepareForPlayback(target: TrackMatcher.Target): SourceStream? {
+        if (target.title.isBlank() || target.isVideo) return null
+        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
+        if (candidates.isEmpty()) return null
+        val (source, stream) = bestAcross(
+            candidates,
+            target,
+            requestForNow(),
+            waitForAll = true,
+            waitMs = PREPARE_BUDGET_MS,
+            // Only when the queue row carried a runtime. A strict search against
+            // a null one matches nothing rather than matching loosely — see
+            // matchAndStream — so it is opted into, not defaulted on.
+            strictLength = target.durationSec != null,
+            requireSharedArtist = true,
+        ) ?: return null
+        TrackLog.d(
+            TAG,
+            "prepared next: '${target.title}' from ${source.displayName} at ${stream.format.summary}" +
+                if (stream.belowRequest) " (below request)" else "",
         )
         return stream
     }
@@ -354,8 +413,8 @@ object SourceResolver {
     ): SourceStream? {
         if (target.title.isBlank() || target.durationSec == null || target.isVideo) return null
         val request = requestForNow()
-        val active = SourceRegistry.activeForPlayback()
-        val youtube = active.firstOrNull { it.kind == SourceKind.YOUTUBE } ?: return null
+        val candidates = candidatesForYouTube(SourceRegistry.activeForPlayback())
+        if (candidates.isEmpty()) return null
         // Every source gets asked, whether or not it can serve lossless, and
         // they are asked at once.
         //
@@ -385,7 +444,7 @@ object SourceResolver {
         // and the seam then landed mid-song rather than near its start. Raced,
         // the same swap happens inside a second.
         val (source, chosen) = bestAcross(
-            rankedAbove(youtube.configId, active).filterNot { it.configId == servedBy },
+            candidates.filterNot { it.configId == servedBy },
             target,
             request,
             waitForAll = true,
@@ -513,10 +572,12 @@ object SourceResolver {
         // YouTube one. Minus any addon whose manifest says `allowDownloads: 0`:
         // that one plays, but the file comes from whoever is next in line.
         val active = SourceRegistry.activeForDownload()
-        // YouTube can be switched off, and a download still goes to it when
-        // nothing here answers — the download path never consults this list. So
-        // an absent YouTube means everything enabled outranks it, which is
-        // already what [rankedAbove] says about a config that isn't in the list.
+        // An absent YouTube means every enabled source outranks it, which is
+        // already what [rankedAbove] says about a config that isn't in the
+        // list. What an absent YouTube changes is the end of the walk: the
+        // caller no longer has a YouTube file to fall back to, so a miss here
+        // is a failure rather than a quieter ordinary outcome — see the
+        // download route in `Downloads`.
         val youtubeId = active.firstOrNull { it.kind == SourceKind.YOUTUBE }?.configId
         val ranked = rankedAbove(youtubeId.orEmpty(), active)
         val strictLength = target.durationSec != null
@@ -609,7 +670,12 @@ object SourceResolver {
             if (isBetter(stream.format, best?.second?.format)) best = source to stream
         }
         val (winner, chosen) = best ?: return@coroutineScope null
-        if (!beatsYouTubeAac(chosen.format)) {
+        // The floor only applies while YouTube is the alternative. With YouTube
+        // switched off there is no AAC ladder to prefer, and refusing a thin
+        // file here would turn "my sources only" into "no download at all" for
+        // a track one of them did have — the caller has nothing left to fall
+        // back to either.
+        if (SourceRegistry.youtubeEnabled() && !beatsYouTubeAac(chosen.format)) {
             TrackLog.d(
                 TAG,
                 "best offered for '${target.title}' is ${winner.displayName}'s " +
@@ -619,8 +685,8 @@ object SourceResolver {
         }
         TrackLog.d(
             TAG,
-            "download: '${target.title}' from ${winner.displayName} at ${chosen.format.summary}, " +
-                "over YouTube's AAC",
+            "download: '${target.title}' from ${winner.displayName} at ${chosen.format.summary}" +
+                if (SourceRegistry.youtubeEnabled()) ", over YouTube's AAC" else ", YouTube is off",
         )
         chosen
     }
@@ -687,16 +753,33 @@ object SourceResolver {
     }
 
     /**
-     * Whether anything outranks YouTube right now — i.e. whether a YouTube
-     * track is worth offering around before it is resolved.
+     * Whether anything can stand in for a YouTube track right now — i.e.
+     * whether a substitute is worth looking for at all.
      *
      * Answerable from the source list alone, without a search, which is what
      * lets the cache and the read-ahead in
      * [AudioCache][com.music.bitchord.playback.AudioCache] decide how to treat
-     * a YouTube id before anyone has asked a source for it.
+     * a YouTube id before anyone has asked a source for it. With YouTube
+     * switched off it is true whenever any enabled source remains: the switch
+     * is exactly the statement that YouTube's stream is the one not to use.
      */
     fun canSubstituteForYouTube(): Boolean =
-        SourceRegistry.activeForPlayback().indexOfFirst { it.kind == SourceKind.YOUTUBE } > 0
+        candidatesForYouTube(SourceRegistry.activeForPlayback()).isNotEmpty()
+
+    /**
+     * The sources a YouTube track may be served from, in rank order.
+     *
+     * Normally that is everything ranked above YouTube — the sources the user
+     * deliberately put there, and not YouTube itself, since substituting YouTube
+     * for YouTube is not a substitution. With YouTube switched off the list is
+     * every enabled source instead: there is no YouTube rung left to protect,
+     * and the ordinary ranking already says the addons come first. The two
+     * readings agree on the empty list, which is a walk with nothing to ask.
+     */
+    internal fun candidatesForYouTube(active: List<MusicSource>): List<MusicSource> {
+        val at = active.indexOfFirst { it.kind == SourceKind.YOUTUBE }
+        return if (at < 0) active else active.take(at)
+    }
 
     /**
      * The sources ranked above [configId], in order.
@@ -759,6 +842,11 @@ object SourceResolver {
      * usable stream and cancelled the rest, which could discard an exact Tidal
      * FLAC or JioSaavn 320 result during an upgrade.
      *
+     * @param waitMs how long the patient mode may keep the search open. Only
+     *   read when [waitForAll] is true, because nothing else waits at all. A
+     *   caller preparing a track before it plays gives a budget it can afford;
+     *   the background upgrade keeps the default and waits however long the
+     *   sources take.
      * @return the winning source alongside its stream, so callers can name it in
      *   a log line without searching the list again.
      */
@@ -767,6 +855,7 @@ object SourceResolver {
         target: TrackMatcher.Target,
         request: StreamRequest,
         waitForAll: Boolean = false,
+        waitMs: Long = Long.MAX_VALUE,
         strictLength: Boolean = false,
         requireSharedArtist: Boolean = false,
         accept: (MusicSource, SourceStream) -> Boolean = { _, _ -> true },
@@ -786,7 +875,7 @@ object SourceResolver {
             }
             .toMutableList()
         var best: Pair<MusicSource, SourceStream>? = null
-        try {
+        val collect: suspend () -> Unit = {
             while (running.isNotEmpty()) {
                 val first = select {
                     running.forEach { candidate -> candidate.onAwait { candidate } }
@@ -809,6 +898,18 @@ object SourceResolver {
                 // patient result. Let every source finish so a fast lower tier
                 // cannot cancel a later, better rendition.
                 if (best != null && !waitForAll) break
+            }
+        }
+        try {
+            // The budget bounds patient callers, never the live path: a queue's
+            // next track has a finite amount of time before the hand-over, and
+            // a source whose stream is a conversion job can take longer than
+            // that. Whatever has arrived by the deadline is still worth having;
+            // the finally below is what stops the laggards.
+            if (waitForAll && waitMs != Long.MAX_VALUE) {
+                withTimeoutOrNull(waitMs) { collect() }
+            } else {
+                collect()
             }
         } finally {
             running.forEach { it.cancel() }
@@ -972,13 +1073,15 @@ object SourceResolver {
     }
 
     /**
-     * Whether an immersive mix is worth preferring right now — the same two
-     * gates the playback side enforces in [ModuleSource.unplayable] and the
-     * addon path sends its `?atmos=` hint on, asked in the one place that
-     * chooses between rows.
+     * Whether an immersive mix is worth preferring right now — device
+     * capability plus the listener's answer, which is either the master switch
+     * or the Dolby Atmos rung on this connection. The same two gates the
+     * playback side enforces in [ModuleSource.unplayable] and the addon path
+     * sends its `?atmos=` hint on, asked in the one place that chooses between
+     * rows.
      */
     private fun atmosWanted(): Boolean =
-        DeviceCodecs.playsDolbyAtmos && AppSettings.dolbyAtmos.value
+        DeviceCodecs.playsDolbyAtmos && AppSettings.wantsDolbyAtmos
 
     private suspend fun streamBest(
         source: MusicSource,
@@ -1089,6 +1192,17 @@ object SourceResolver {
         TrackLog.w(TAG, "${source.displayName} failed: ${e.javaClass.simpleName}: ${e.message}")
         null
     }
+
+    /**
+     * How long [prepareForPlayback] keeps its search open.
+     *
+     * Past the slowest module measured (13.5s) with room for a second attempt,
+     * and short enough that a source whose stream is a conversion job cannot
+     * hold the answer for a track that is about to be needed. Whatever answered
+     * inside the budget still counts; the live path asks the rest again if it
+     * has to.
+     */
+    private const val PREPARE_BUDGET_MS = 20_000L
 
     /**
      * How many answers per query are worth weighing.

@@ -1489,14 +1489,22 @@ private fun Modifier.lyricParticles(
  */
 @Composable
 private fun LyricsSkeleton(modifier: Modifier = Modifier) {
-    val sweep = rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            tween(SKELETON_PERIOD_MS, easing = LinearEasing),
-        ),
-        label = "sweep",
-    )
+    // Under "reduce animation" the bars are still there, with one fixed
+    // highlight instead of a full-width band sweeping the panel on every frame
+    // for as long as the lookup takes.
+    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val sweep: State<Float> = if (reduceAnimation) {
+        remember { mutableStateOf(0.5f) }
+    } else {
+        rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                tween(SKELETON_PERIOD_MS, easing = LinearEasing),
+            ),
+            label = "sweep",
+        )
+    }
     BoxWithConstraints(
         // No gutter of its own: the list this stands in for bleeds out to the
         // panel's full width and puts the gutter back as content padding, so
@@ -1689,9 +1697,10 @@ internal fun LyricsPanel(
 
     val reduceDynamicBlur by PlayerSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val lyricsBlur by PlayerSettings.lyricsBlur.collectAsStateWithLifecycle()
+    val textGlow by PlayerSettings.textGlow.collectAsStateWithLifecycle()
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
 
-    val glowing = !reduceAnimation && !reduceDynamicBlur && lyricsBlur &&
+    val glowing = textGlow && !reduceAnimation && !reduceDynamicBlur && lyricsBlur &&
         renderEffectBlurSupported
 
     LaunchedEffect(listState) {
@@ -2549,7 +2558,11 @@ private fun CurrentLyricLine(
     modifier: Modifier = Modifier,
 ) {
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
-    val ink = LocalPlayerInk.current
+    // A pinned lyric colour wins; otherwise the strip follows the player ink,
+    // which is always a light tint of the sleeve's accent — see
+    // [computeNowPlayingPalette].
+    val ink = LocalPlayerLyrics.current ?: LocalPlayerInk.current
+    val alphas = LocalPlayerAlphas.current
     val lineStyle = MaterialTheme.typography.titleMedium.copy(
         shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
     )
@@ -2674,7 +2687,11 @@ private fun CurrentLyricLine(
                 Text(
                     text = lineText,
                     style = lineStyle,
-                    color = if (itemInstrumental) ink.copy(alpha = 0.5f) else ink,
+                    color = if (itemInstrumental) {
+                        ink.copy(alpha = alphas.tertiary)
+                    } else {
+                        ink.copy(alpha = alphas.secondary)
+                    },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -2704,7 +2721,7 @@ private fun LyricsUnavailableLine(trackKey: Any, modifier: Modifier = Modifier) 
         visible = false
     }
     val alpha by animateFloatAsState(
-        targetValue = if (visible) 0.55f else 0f,
+        targetValue = if (visible) LocalPlayerAlphas.current.secondary else 0f,
         animationSpec = tween(durationMillis = LYRICS_UNAVAILABLE_FADE_MS),
         label = "lyricsUnavailableAlpha",
     )
@@ -2713,7 +2730,7 @@ private fun LyricsUnavailableLine(trackKey: Any, modifier: Modifier = Modifier) 
         style = MaterialTheme.typography.titleMedium.copy(
             shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
         ),
-        color = LocalPlayerInk.current,
+        color = LocalPlayerLyrics.current ?: LocalPlayerInk.current,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier
@@ -2730,7 +2747,8 @@ private fun LyricsLoadingLine(text: String, modifier: Modifier = Modifier) {
         style = MaterialTheme.typography.titleMedium.copy(
             shadow = Shadow(LocalPlayerInkGlow.current, blurRadius = 9f),
         ),
-        color = LocalPlayerInk.current.copy(alpha = 0.55f),
+        color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current)
+            .copy(alpha = LocalPlayerAlphas.current.secondary),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
         modifier = modifier.padding(vertical = 4.dp),

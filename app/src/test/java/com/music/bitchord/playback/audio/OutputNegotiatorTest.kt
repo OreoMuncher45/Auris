@@ -70,22 +70,27 @@ class OutputNegotiatorTest {
     }
 
     @Test
-    fun bluetoothNegotiatesFloatOnlyWhenAdvertised() {
-        val btWithFloat = OutputNegotiator.negotiate(
+    fun bluetoothOpensFloatEvenWhenDeviceAdvertisesOnlyPcm16() {
+        // A2DP devices advertise PCM16 because the codec encoder sits behind
+        // AudioFlinger; the AudioTrack can still take float, so the source's
+        // 24-bit samples are not quantized by the app before the codec.
+        val btPcm16Only = OutputNegotiator.negotiate(
             source = flac96kHz24BitSource,
             decoderName = "c2.android.flac.decoder",
             sampleRateHz = 96000,
             channelCount = 2,
             routeKind = AudioRouting.Kind.BLUETOOTH,
             deviceName = "Sony WH-1000XM4 (LDAC)",
-            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_FLOAT),
+            advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT),
             advertisedSampleRates = listOf(44100, 48000, 96000),
             requestedMode = OutputPcmMode.FLOAT_32,
         )
-        assertEquals(PcmEncoding.PCM_FLOAT, btWithFloat.output.encoding)
-        assertEquals(FallbackReason.NONE, btWithFloat.output.fallbackReason)
+        assertEquals(PcmEncoding.PCM_FLOAT, btPcm16Only.output.encoding)
+        assertEquals(FallbackReason.NONE, btPcm16Only.output.fallbackReason)
 
-        val btPcm16Only = OutputNegotiator.negotiate(
+        // The sink is the real gate: when its delegate cannot open float, the
+        // negotiator says so instead of blaming the device's descriptors.
+        val sinkCapped = OutputNegotiator.negotiate(
             source = flac96kHz24BitSource,
             decoderName = "c2.android.flac.decoder",
             sampleRateHz = 96000,
@@ -95,9 +100,11 @@ class OutputNegotiatorTest {
             advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT),
             advertisedSampleRates = listOf(44100, 48000),
             requestedMode = OutputPcmMode.FLOAT_32,
+            delegateSupportsFloat = false,
         )
-        assertEquals(PcmEncoding.PCM_16BIT, btPcm16Only.output.encoding)
-        assertEquals(FallbackReason.ROUTE_LIMITATION, btPcm16Only.output.fallbackReason)
+        assertEquals(PcmEncoding.PCM_16BIT, sinkCapped.output.encoding)
+        assertEquals(FallbackReason.ROUTE_LIMITATION, sinkCapped.output.fallbackReason)
+        assertTrue(sinkCapped.output.fallbackDetail!!.contains("could not open float"))
     }
 
     @Test
@@ -129,6 +136,7 @@ class OutputNegotiatorTest {
             advertisedSampleRates = listOf(8000, 48000),
             requestedMode = OutputPcmMode.FLOAT_32,
             directUsbProbe = portronicsProbe,
+            delegateSupportsFloat = false,
             knownSystemMixerRateHz = 48000,
         )
 
@@ -249,6 +257,7 @@ class OutputNegotiatorTest {
             advertisedEncodings = listOf(AudioFormat.ENCODING_PCM_16BIT, AudioFormat.ENCODING_PCM_24BIT_PACKED),
             advertisedSampleRates = listOf(96000),
             requestedMode = OutputPcmMode.FLOAT_32,
+            delegateSupportsFloat = false,
         )
 
         assertEquals(TransportType.AUDIO_TRACK, result.output.transport)

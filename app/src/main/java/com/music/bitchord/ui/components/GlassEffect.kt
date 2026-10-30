@@ -6,6 +6,7 @@
 package com.music.bitchord.ui.components
 
 import android.app.ActivityManager
+import android.content.Context
 import android.os.Build
 import com.music.bitchord.ui.components.backdrop.LocalAmbientBackgroundColor
 import com.music.bitchord.ui.components.backdrop.LocalAmbientDarkChrome
@@ -173,12 +174,15 @@ fun glassResolutionScale(blurRadiusDp: Float): Float {
 fun isGlassSupported(sdkInt: Int = Build.VERSION.SDK_INT): Boolean = sdkInt >= Build.VERSION_CODES.S
 
 /** Whether Android classifies this device as low-RAM. */
+fun isLowRamDevice(context: Context): Boolean =
+    runCatching { context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true }
+        .getOrDefault(false)
+
+/** Whether Android classifies this device as low-RAM. */
 @Composable
 fun isLowRamDevice(): Boolean {
     val context = LocalContext.current
-    return remember {
-        context.getSystemService(ActivityManager::class.java)?.isLowRamDevice ?: false
-    }
+    return remember { isLowRamDevice(context) }
 }
 
 /** Combines the API-level check with the low-RAM device check; use this to gate glass. */

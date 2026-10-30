@@ -201,25 +201,28 @@ fun rememberArtworkMesh(
     // its own thumbnail. Wrong colour for one decode is the trade; absent
     // colour was the flicker.
     val heldMesh = remember { mutableStateOf<ArtworkMesh?>(null) }
+    val cacheKey = imageUrl?.let(::meshKey)
     // Seeded from the cache so a cover that has been seen before is on colour
     // in its first frame, with nothing to fade in from — and from
     // [heldMesh] otherwise, carried over for the reason above.
-    var mesh by remember(imageUrl) {
-        mutableStateOf(imageUrl?.let(meshCache::get) ?: heldMesh.value)
+    var mesh by remember(cacheKey) {
+        mutableStateOf(cacheKey?.let(meshCache::get) ?: heldMesh.value)
     }
     // What the mesh on screen was actually read from: null while it is a
     // carry-over from the previous cover. Without this the guard below would
     // read the carried mesh as this cover's own answer and never decode the
     // new one.
-    var meshUrl by remember(imageUrl) {
-        mutableStateOf(if (imageUrl != null && meshCache.get(imageUrl) != null) imageUrl else null)
+    var meshUrl by remember(cacheKey) {
+        mutableStateOf(if (cacheKey != null && meshCache.get(cacheKey) != null) cacheKey else null)
     }
     LaunchedEffect(mesh) { heldMesh.value = mesh }
 
     LaunchedEffect(imageUrl, artPx) {
-        if (imageUrl == null || meshUrl == imageUrl) return@LaunchedEffect
+        val url = imageUrl ?: return@LaunchedEffect
+        val key = meshKey(url)
+        if (meshUrl == key) return@LaunchedEffect
         val request = ImageRequest.Builder(context)
-            .data(imageUrl.artworkAt(artPx))
+            .data(url.artworkAt(artPx))
             .size(MESH_PX)
             .forPixelAccess() // the sleeve has to be read back pixel by pixel
             .build()
@@ -234,14 +237,16 @@ fun rememberArtworkMesh(
             val result = SingletonImageLoader.get(context).execute(request)
             val bitmap = (result as? SuccessResult)?.image?.toImageBitmap()
             if (bitmap != null) {
-                val found = withContext(Dispatchers.Default) { meshOf(bitmap, imageUrl.hashCode()) }
+                val found = withContext(Dispatchers.Default) {
+                    meshOf(bitmap, url.hashCode())
+                }
                 if (found != null) {
-                    meshCache[imageUrl] = found
+                    meshCache[key] = found
                     mesh = found
                 }
                 // A cover that decoded but had no mesh in it — see [meshOf] —
                 // is an answer, not a failure. Asking again gets the same one.
-                meshUrl = imageUrl
+                meshUrl = key
                 return@LaunchedEffect
             }
         }
@@ -254,8 +259,10 @@ fun rememberArtworkMesh(
         // decoded real content.  A frame whose mean luminance is below this
         // threshold is discarded; the last valid mesh is kept instead.
         if (isLikelyBlackFrame(frame)) return@LaunchedEffect
-        mesh = withContext(Dispatchers.Default) { meshOf(frame, imageUrl?.hashCode() ?: 0) } ?: mesh
-        meshUrl = imageUrl
+        mesh = withContext(Dispatchers.Default) {
+            meshOf(frame, cacheKey?.hashCode() ?: 0)
+        } ?: mesh
+        meshUrl = cacheKey
     }
     return mesh
 }
@@ -377,9 +384,9 @@ fun ArtworkMeshBackdrop(
         incoming?.let { drawMesh(it, seamY, alpha = fade.value) }
 
         // Enough of a scrim to keep white text off a bright sleeve, and no
-        // more. The old backdrop needed a heavier one because it lightened
-        // every colour it drew to a fixed band; these are the sleeve's own,
-        // and a sleeve that ends dark should leave a dark screen.
+        // more. The mesh keeps the sleeve's own lightness now, so a bright
+        // cover needs this underneath the controls; a sleeve that ends dark
+        // leaves a dark screen.
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(
@@ -494,9 +501,9 @@ private fun boxBlurPass(
 }
 
 /**
- * Meshes already read, keyed by artwork URL — the artwork at a URL cannot
- * change, so reading it twice buys a decode and a downsample for the same
- * answer. Touched from composition and from the resumption of
+ * Meshes already read, keyed by artwork URL and lightness cap — the artwork
+ * at a URL cannot change, so reading it twice buys a decode and a downsample
+ * for the same answer. Touched from composition and from the resumption of
  * [rememberArtworkMesh]'s effect, both on the main thread, so it needs no lock.
  *
  * Clip frames never land here: the next one for the same URL is a different
@@ -505,6 +512,8 @@ private fun boxBlurPass(
 private val meshCache = object : LinkedHashMap<String, ArtworkMesh>(0, 0.75f, true) {
     override fun removeEldestEntry(eldest: Map.Entry<String, ArtworkMesh>) = size > MESH_CACHE_ENTRIES
 }
+
+private fun meshKey(url: String): String = url
 
 /** A session's worth of covers, at four kilobytes of texture each. */
 private const val MESH_CACHE_ENTRIES = 64
@@ -589,7 +598,10 @@ private const val MESH_SAMPLE = 128
  * what a blur of the artwork would leave there, and a blur has no opinion about
  * which colour in the frame was the interesting one.
  */
-private fun meshOf(source: ImageBitmap, seed: Int): ArtworkMesh? {
+private fun meshOf(
+    source: ImageBitmap,
+    seed: Int,
+): ArtworkMesh? {
     val width = source.width
     val height = source.height
     if (width < 1 || height < 1) return null
@@ -630,7 +642,8 @@ private fun meshOf(source: ImageBitmap, seed: Int): ArtworkMesh? {
 
     val grid = IntArray(cells) { cell ->
         val n = count[cell].coerceAtLeast(1)
-        argb((red[cell] / n).toInt(), (green[cell] / n).toInt(), (blue[cell] / n).toInt()).lifted()
+        argb((red[cell] / n).toInt(), (green[cell] / n).toInt(), (blue[cell] / n).toInt())
+            .lifted()
     }
     val texels = grid.rotatedBelowSeam(cols, rows, seed).resampled(cols, rows, MESH_TEX)
     return ArtworkMesh(imageBitmapOf(texels, MESH_TEX, MESH_TEX))

@@ -1,6 +1,7 @@
 package com.music.bitchord.data.settings
 
 import com.music.bitchord.data.webdav.update
+import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
 import android.content.SharedPreferences
@@ -12,6 +13,7 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
 import com.music.bitchord.data.canvas.SpotifyToken
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
@@ -28,6 +30,7 @@ import com.music.bitchord.playback.SingMethod
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.Locale
 
 
 /**
@@ -49,7 +52,10 @@ import kotlinx.coroutines.flow.asStateFlow
  * above it are skipped.
  */
 fun AudioQuality.permits(kind: SourceKind): Boolean = when (this) {
-    AudioQuality.LOSSLESS -> true
+    // Atmos is additive rather than a cap: the immersive mix is looked for
+    // first, and every source that could serve the lossless ladder below it
+    // is still in the walk.
+    AudioQuality.DOLBY, AudioQuality.LOSSLESS -> true
     // No lossless answer is wanted here, and a source that can serve one is
     // the slow half of the list: an addon fronting several catalogues walks
     // all of them before it answers, which is seconds spent to land on a
@@ -119,7 +125,7 @@ enum class ThemeMode(val label: String) {
  * ways, from either shell's settings.
  */
 enum class AppUi(val label: String) {
-    BITCHORD("BitChord"), CLASSIPOD("Classipod")
+    BITCHORD("Auris"), CLASSIPOD("Classipod")
 }
 
 /**
@@ -256,6 +262,14 @@ object AppSettings {
      */
     val smartFadeEnabled = MutableStateFlow(false)
 
+    /**
+     * Blends a proved lossless copy in over the lossy stream it replaces,
+     * instead of cutting the audio while the player rebuilds its source.
+     * Off by default: the two masters can differ enough to double or phase
+     * during the overlap, so it is only turned on after a confirmation.
+     */
+    val seamlessQualityUpgrade = MutableStateFlow(false)
+
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
 
@@ -265,6 +279,19 @@ object AppSettings {
 
     /** Requested PCM representation at the Android AudioTrack boundary. */
     val outputPcmMode = MutableStateFlow(OutputPcmMode.PCM_16)
+
+    /**
+     * Bit-perfect output: the decoder's samples reach the output unchanged.
+     *
+     * Not the same question as [outputPcmMode], which picks a *representation*
+     * while every DSP stage still runs its own settings. This is a promise
+     * about the whole path: the equaliser, spatial widening, vocal cut,
+     * levelling and transition filtering are bypassed whatever their switches
+     * say, and a crossfade — which mixes two tracks — is never armed. The
+     * route still has the last word; where it cannot carry the source
+     * encoding the pipeline readout says so rather than claiming otherwise.
+     */
+    val bitPerfect = MutableStateFlow(false)
 
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
@@ -317,6 +344,22 @@ object AppSettings {
      * quietly rewriting itself.
      */
     val dolbyAtmos = MutableStateFlow(true)
+
+    /**
+     * Whether the listener wants the immersive mix on the connection in hand.
+     *
+     * Two ways to say yes, and they are not duplicates: the master switch is a
+     * standing preference, while [AudioQuality.DOLBY] is the same statement
+     * made on the Wi-Fi or mobile-data rung, where most people actually look
+     * for a quality picker. Choosing the rung is the more specific answer and
+     * is honoured even with the switch off — a rung that says "Dolby Atmos"
+     * and then serves stereo would be the same bug the rung exists to fix.
+     *
+     * Callers still pair this with [DeviceCodecs.playsDolbyAtmos]; capability
+     * is the phone's answer, not the listener's.
+     */
+    val wantsDolbyAtmos: Boolean
+        get() = dolbyAtmos.value || effectiveAudioQuality == AudioQuality.DOLBY
 
     /**
      * Widens stereo output via [com.music.bitchord.playback.SpatialAudioProcessor],
@@ -389,6 +432,34 @@ object AppSettings {
      */
     val equalizerPreset = MutableStateFlow(EqualizerPreset.FLAT)
 
+    // ---- JamesDSP ---------------------------------------------------------
+    //
+    // A second, native tone/space stage after BitChord's own equaliser. It is
+    // deliberately opt-in and neutral by default: bass, widening, tube drive
+    // and reverb all start at zero, so turning the engine on alone does not
+    // change the sound beyond its final safety limiter. See
+    // `JamesDspProcessor` for why this runs in-process rather than capturing
+    // the audio session.
+    val jamesDspEnabled = MutableStateFlow(false)
+
+    /** Auto bass boost, 0..15 dB. Zero means the effect is bypassed. */
+    val jamesDspBassGainDb = MutableStateFlow(0f)
+
+    /** Stereo widening, 0..100. Zero means bypassed. */
+    val jamesDspStereoLevel = MutableStateFlow(0f)
+
+    /** Vacuum-tube harmonic drive, 0..100. Zero means bypassed. */
+    val jamesDspTubeLevel = MutableStateFlow(0f)
+
+    /** -1 is off; otherwise an SF2 reverb preset index (0..18). */
+    val jamesDspReverbPreset = MutableStateFlow(-1)
+
+    /** Pre-level trim, -15..+15 dB. */
+    val jamesDspPreGainDb = MutableStateFlow(0f)
+
+    /** Final limiter, at -1 dBFS. Off leaves only the engine's 0 dB clamp. */
+    val jamesDspLimiter = MutableStateFlow(true)
+
     val playbackSpeed = MutableStateFlow(1.0f)
     val themeMode = MutableStateFlow(ThemeMode.DARK)
 
@@ -397,6 +468,41 @@ object AppSettings {
 
     /** Keep playing similar music once the queue runs out. */
     val autoplay = MutableStateFlow(true)
+
+    // ---- Now Playing customisation ---------------------------------------
+    //
+    // Null means "follow the artwork", which is the behaviour the player has
+    // always had. A stored ARGB value pins one role; the three roles are kept
+    // apart so a listener can recolour the transport without also recolouring
+    // the title or the scrubber.
+    val playerAccentColor = MutableStateFlow<Int?>(null)
+    val playerSeekbarColor = MutableStateFlow<Int?>(null)
+    val playerTextColor = MutableStateFlow<Int?>(null)
+
+    /** The one-line lyric above the scrubber; null follows the artwork ink. */
+    val playerLyricsColor = MutableStateFlow<Int?>(null)
+
+    /**
+     * How round the transport glyphs' corners are, 0 (sharp) to 1 (soft).
+     *
+     * The play triangle and both skip arrows are drawn from polygons, so the
+     * corner radius can follow this value instead of being baked into a vector.
+     * Kept below 1 by default: the reference shape is a fill, not a lozenge.
+     */
+    val transportSmoothness = MutableStateFlow(DEFAULT_TRANSPORT_SMOOTHNESS)
+
+    /** Most recently picked colours, newest first, shared by all three roles. */
+    val recentPlayerColors = MutableStateFlow<List<Int>>(emptyList())
+
+    /**
+     * Home shelf titles in the listener's order. Titles not present in the
+     * feed are ignored; shelves missing from the list keep their feed order
+     * after the ones that are listed. Empty means "leave YouTube's order".
+     */
+    val homeShelfOrder = MutableStateFlow<List<String>>(emptyList())
+
+    /** Never play a track YouTube has labelled as generated with AI. */
+    val blockAiMusic = MutableStateFlow(false)
 
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
@@ -417,7 +523,7 @@ object AppSettings {
     val performanceRefreshRate = MutableStateFlow(DEFAULT_PERFORMANCE_REFRESH_RATE)
 
     /** Stop playback when the app is swiped away from the recent apps screen. */
-    val stopOnTaskRemoved = MutableStateFlow(false)
+    val stopOnTaskRemoved = MutableStateFlow(true)
 
     /** Hides the volume slider on the main player, leaving the rest of the layout to reflow. */
     val hideVolumeBar = MutableStateFlow(false)
@@ -470,6 +576,34 @@ object AppSettings {
 
     /** Blurs unfocused lyric lines, keeping the active line sharp. */
     val lyricsBlur = MutableStateFlow(true)
+
+    /** Draws the bloom behind lyrics and the shadow behind player text. */
+    val textGlow = MutableStateFlow(true)
+
+    /** Shows the current lyric line above the player's controls. */
+    val showNowPlayingLyrics = MutableStateFlow(true)
+
+    /**
+     * Shows the Automix analysis line under the sleeve — "this song: … · next:
+     * …", or why analysis is off for this one. Separate from
+     * [showNerdStats] because the measured-stream line above it is a different
+     * fact: someone can want the format readout without the next track's
+     * analysis state beside it.
+     */
+    val showNextTrackStatus = MutableStateFlow(true)
+
+    /** Shows "Upgrading quality" while a better copy is still being looked for. */
+    val showUpgradeBadge = MutableStateFlow(true)
+
+    /** Shows the "Lossless" badge once the stream decodes losslessly. */
+    val showLosslessBadge = MutableStateFlow(true)
+
+    /**
+     * Whether the lossless badge may say "Hi-Res" rather than the plain
+     * "Lossless" on high-resolution streams. Only consulted while
+     * [showLosslessBadge] is on — a hidden badge has no wording to keep.
+     */
+    val showHiResBadge = MutableStateFlow(true)
 
     /** Positive values delay synced lyrics; negative values bring them forward. */
     val lyricsOffsetMs = MutableStateFlow(0)
@@ -629,7 +763,149 @@ object AppSettings {
     val downloadedMusicViewType = MutableStateFlow(LibraryViewType.LIST)
     /** Layout used by the Recents shelf on Play; compact tracks are the default. */
     val homeRecentsViewType = MutableStateFlow(LibraryViewType.LIST)
+
+    /**
+     * Whether the synthetic Flow card is offered on Home.
+     *
+     * The Flow feature itself is untouched: this hides only the Home entry, so
+     * the Flow route and an in-progress mix survive turning the card off.
+     * Quick Picks is deliberately not part of this switch.
+     */
+    val homeFlowVisible = MutableStateFlow(true)
+
+    /**
+     * Artists the listener has hidden, encoded as `<identity>\t<display name>`.
+     *
+     * An identity is the artist's own channel id when a row carried one, or the
+     * normalised name when it didn't — never both, so hiding the same act from a
+     * song, a search row and an artist page collapses to one entry. The display
+     * name is kept beside it so the settings list can say who was hidden
+     * without a network lookup.
+     */
+    val blockedArtists = MutableStateFlow<Set<String>>(emptySet())
+
+    /** Every identity currently hidden, for cheap membership tests. */
+    private val blockedArtistKeys: Set<String>
+        get() = blockedArtists.value.mapTo(HashSet()) { it.substringBefore('\t') }
+
+    fun blockArtist(artistId: String?, name: String?) {
+        val entry = artistEntry(artistId, name) ?: return
+        blockedArtists.value = blockedArtists.value + entry
+        prefs.edit().putStringSet(KEY_BLOCKED_ARTISTS, blockedArtists.value).apply()
+    }
+
+    fun unblockArtist(entry: String) {
+        blockedArtists.value = blockedArtists.value - entry
+        prefs.edit().putStringSet(KEY_BLOCKED_ARTISTS, blockedArtists.value).apply()
+    }
+
+    fun isArtistBlocked(artistId: String?, name: String?): Boolean {
+        val keys = blockedArtistKeys
+        if (keys.isEmpty()) return false
+        if (!artistId.isNullOrBlank() && "id:$artistId" in keys) return true
+        val normalized = normalizeArtistName(name) ?: return false
+        return "name:$normalized" in keys
+    }
+
+    /** True when any credit on [song] is hidden, including a collaboration. */
+    fun isSongBlocked(song: Song): Boolean {
+        // isSongAi covers both YouTube's own disclosure and the listener's
+        // marks, so a strict build has one definition of "AI track" rather
+        // than two that can disagree.
+        if (blockAiMusic.value && isSongAi(song)) return true
+        if (blockedArtists.value.isEmpty()) return false
+        if (isArtistBlocked(song.artistId, song.artist)) return true
+        if (song.artists.any { isArtistBlocked(it.browseId, it.name) }) return true
+        // A byline that never linked its artists still names them.
+        return song.artist.split(CREDIT_ARTIST_SEPARATOR).any {
+            isArtistBlocked(null, it)
+        }
+    }
+
+    /**
+     * Acts the listener has marked as AI-generated.
+     *
+     * YouTube's disclosure never reaches the clients BitChord reads: the live
+     * WEB_REMIX search rows and player-overlay payloads for known AI acts
+     * (Xania Monet, Blue Monroe) contain no marker at all, so
+     * [GenAiDisclosure] can only ever be a bonus for the day YouTube starts
+     * sending one. This list is what makes the strict switch mean something —
+     * marking an act once flags every track it is credited on, and strict mode
+     * refuses to queue them. Same entry format as [blockedArtists], so identity
+     * matching stays in one place.
+     */
+    val aiArtists = MutableStateFlow<Set<String>>(emptySet())
+
+    private val aiArtistKeys: Set<String>
+        get() = aiArtists.value.mapTo(HashSet()) { it.substringBefore('\t') }
+
+    /** Marks the act as AI, or clears the mark. One call, so the menu can't drift. */
+    fun toggleArtistAi(artistId: String?, name: String?) {
+        val entry = artistEntry(artistId, name) ?: return
+        aiArtists.value = if (entry in aiArtists.value) {
+            aiArtists.value - entry
+        } else {
+            aiArtists.value + entry
+        }
+        prefs.edit().putStringSet(KEY_AI_ARTISTS, aiArtists.value).apply()
+    }
+
+    fun isArtistAi(artistId: String?, name: String?): Boolean {
+        val keys = aiArtistKeys
+        if (keys.isEmpty()) return false
+        if (!artistId.isNullOrBlank() && "id:$artistId" in keys) return true
+        val normalized = normalizeArtistName(name) ?: return false
+        if ("name:$normalized" in keys) return true
+        // The artist page is the natural place to mark an act, and it always
+        // supplies a channel id, so the stored key is usually `id:`. Songs from
+        // a radio or `next` do not always carry that id. Fall back to the
+        // display name kept beside every key, or a marked act would only be
+        // filtered on the surfaces that happened to include the channel.
+        return aiArtists.value.any { entry ->
+            normalizeArtistName(entry.substringAfter('\t', "")) == normalized
+        }
+    }
+
+    /** True when the track, or any act credited on it, is known to be AI. */
+    fun isSongAi(song: Song): Boolean {
+        if (song.genAi == com.music.bitchord.data.model.GenAiDisclosure.FULLY ||
+            song.genAi == com.music.bitchord.data.model.GenAiDisclosure.PARTLY
+        ) return true
+        if (aiArtists.value.isEmpty()) return false
+        if (isArtistAi(song.artistId, song.artist)) return true
+        if (song.artists.any { isArtistAi(it.browseId, it.name) }) return true
+        return song.artist.split(CREDIT_ARTIST_SEPARATOR).any { isArtistAi(null, it) }
+    }
+
+    /** What the settings list shows for one stored entry. */
+    fun blockedArtistName(entry: String): String =
+        entry.substringAfter('\t', entry.substringAfter(':'))
+
+    private fun artistEntry(artistId: String?, name: String?): String? {
+        if (!artistId.isNullOrBlank()) return "id:$artistId\t${name.orEmpty().cleanArtistName()}"
+        val normalized = normalizeArtistName(name) ?: return null
+        return "name:$normalized\t${name.orEmpty().cleanArtistName()}"
+    }
+
+    private fun normalizeArtistName(name: String?): String? =
+        name?.trim()?.lowercase(Locale.ROOT)?.replace(Regex("\\s+"), " ")?.takeIf { it.isNotEmpty() }
+
+    private fun String.cleanArtistName(): String =
+        replace('\t', ' ').replace('\n', ' ').trim()
+
+    private val CREDIT_ARTIST_SEPARATOR = Regex(
+        """,\s*|\s*&\s*|\s+(?:x|and|feat\.?|ft\.?|with)\s+""",
+        RegexOption.IGNORE_CASE,
+    )
+
     val librarySort = MutableStateFlow(LibrarySort.DEFAULT)
+
+    /**
+     * Whether the Replay cards sit at the head of the Library. Off by default:
+     * Replay now leads Home's Top Picks, so the Library row is optional rather
+     * than the first thing every visit starts with.
+     */
+    val libraryReplayVisible = MutableStateFlow(false)
 
     /**
      * Each album/playlist page's track-list order, keyed by browse id —
@@ -877,9 +1153,22 @@ object AppSettings {
      * each open of the encrypted store is a keystore round trip, and a second
      * one here was a measurable slice of cold start.
      */
+    /**
+     * Whether Android classifies this device as low-RAM, read once at startup.
+     *
+     * Used only as the default for the motion and blur switches, so the app
+     * arrives already lean on hardware that cannot afford to draw it — and a
+     * listener who wants the effects back still can, because an explicit choice
+     * written to disk always wins over this.
+     */
+    private var lowEndDevice = false
+
     fun init(context: Context, authStore: AuthStore) {
         prefs = context.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         this.authStore = authStore
+        lowEndDevice = runCatching {
+            context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        }.getOrDefault(false)
         offlineModeFlow.value =
             runCatching { prefs.getBoolean(KEY_OFFLINE_MODE, false) }.getOrDefault(false)
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
@@ -917,6 +1206,7 @@ object AppSettings {
         exportDownloads.value = prefs.getBoolean(KEY_EXPORT_DOWNLOADS, false)
         crossfadeSeconds.value = prefs.getInt(KEY_CROSSFADE, 0)
         smartFadeEnabled.value = prefs.getBoolean(KEY_SMART_FADE, false)
+        seamlessQualityUpgrade.value = prefs.getBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, false)
         automixPerformanceMode.value = runCatching {
             AutomixPerformanceMode.valueOf(
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
@@ -934,6 +1224,7 @@ object AppSettings {
                     ?: OutputPcmMode.PCM_16.name,
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
+        bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         loudnessNormalization.value = prefs.getBoolean(KEY_LOUDNESS_NORMALIZATION, true)
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
@@ -951,6 +1242,13 @@ object AppSettings {
         equalizerBalance.value = prefs.getFloat(KEY_EQ_BALANCE, 0f).coerceIn(-1f, 1f)
         equalizerBands.value = readEqualizerBands()
         equalizerPreset.value = EqualizerPreset.matching(equalizerBands.value)
+        jamesDspEnabled.value = prefs.getBoolean(KEY_JAMESDSP_ENABLED, false)
+        jamesDspBassGainDb.value = prefs.getFloat(KEY_JAMESDSP_BASS_DB, 0f).coerceIn(0f, 15f)
+        jamesDspStereoLevel.value = prefs.getFloat(KEY_JAMESDSP_STEREO, 0f).coerceIn(0f, 100f)
+        jamesDspTubeLevel.value = prefs.getFloat(KEY_JAMESDSP_TUBE, 0f).coerceIn(0f, 100f)
+        jamesDspReverbPreset.value = prefs.getInt(KEY_JAMESDSP_REVERB, -1).coerceIn(-1, 18)
+        jamesDspPreGainDb.value = prefs.getFloat(KEY_JAMESDSP_PREGAIN_DB, 0f).coerceIn(-15f, 15f)
+        jamesDspLimiter.value = prefs.getBoolean(KEY_JAMESDSP_LIMITER, true)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f)
         themeMode.value = runCatching {
             ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "DARK")
@@ -963,27 +1261,55 @@ object AppSettings {
         classipodClicks.value = prefs.getBoolean(KEY_CLASSIPOD_CLICKS, true)
         classipodWheelSteps.value = prefs.getInt(KEY_CLASSIPOD_WHEEL_STEPS, 36).coerceIn(12, 72)
         autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
+        playerAccentColor.value = prefs.getInt(KEY_PLAYER_ACCENT, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerSeekbarColor.value = prefs.getInt(KEY_PLAYER_SEEKBAR, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerTextColor.value = prefs.getInt(KEY_PLAYER_TEXT, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        playerLyricsColor.value = prefs.getInt(KEY_PLAYER_LYRICS, RESET_COLOR)
+            .takeUnless { it == RESET_COLOR }
+        recentPlayerColors.value = prefs.getString(KEY_RECENT_PLAYER_COLORS, null)
+            ?.split(',')
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.take(MAX_RECENT_PLAYER_COLORS)
+            .orEmpty()
+        homeShelfOrder.value = prefs.getString(KEY_HOME_SHELF_ORDER, null)
+            ?.split('\u001F')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+        transportSmoothness.value = prefs
+            .getFloat(KEY_TRANSPORT_SMOOTHNESS, DEFAULT_TRANSPORT_SMOOTHNESS)
+            .coerceIn(0f, 1f)
+        blockAiMusic.value = prefs.getBoolean(KEY_BLOCK_AI_MUSIC, false)
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
-        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, false)
+        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
         )
-        stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
+        stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, true)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
         hideSongStatus.value = prefs.getBoolean(KEY_HIDE_SONG_STATUS, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         preferMusicOnly.value = prefs.getBoolean(KEY_PREFER_MUSIC_ONLY, false)
         smartVersionAlignment.value = prefs.getBoolean(KEY_SMART_VERSION_ALIGNMENT, true)
-        reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
+        reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, lowEndDevice)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         foldingNavBar.value = prefs.getBoolean(KEY_FOLDING_NAV_BAR, true)
         liquidGlassIntensity.value = prefs.getFloat(KEY_LIQUID_GLASS_INTENSITY, 1f)
             .coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
-        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, true)
+        lyricsBlur.value = prefs.getBoolean(KEY_LYRICS_BLUR, !lowEndDevice)
+        textGlow.value = prefs.getBoolean(KEY_TEXT_GLOW, !lowEndDevice)
+        showNowPlayingLyrics.value = prefs.getBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, true)
+        showNextTrackStatus.value = prefs.getBoolean(KEY_SHOW_NEXT_TRACK_STATUS, true)
+        showUpgradeBadge.value = prefs.getBoolean(KEY_SHOW_UPGRADE_BADGE, true)
+        showLosslessBadge.value = prefs.getBoolean(KEY_SHOW_LOSSLESS_BADGE, true)
+        showHiResBadge.value = prefs.getBoolean(KEY_SHOW_HI_RES_BADGE, true)
         lyricsOffsetMs.value = prefs.getInt(KEY_LYRICS_OFFSET_MS, 0)
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
@@ -991,7 +1317,7 @@ object AppSettings {
             reduceAnimation.value = false
             reduceDynamicBlur.value = false
         }
-        animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, true)
+        animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, !lowEndDevice)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
         prioritizeSpotifyCanvas.value = prefs.getBoolean(KEY_PRIORITIZE_SPOTIFY_CANVAS, false)
@@ -1033,9 +1359,15 @@ object AppSettings {
         localMusicViewType.value = readLibraryViewType(KEY_LOCAL_MUSIC_VIEW_TYPE)
         downloadedMusicViewType.value = readLibraryViewType(KEY_DOWNLOADED_MUSIC_VIEW_TYPE)
         homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE)
+        homeFlowVisible.value = prefs.getBoolean(KEY_HOME_FLOW_VISIBLE, true)
+        blockedArtists.value = prefs.getStringSet(KEY_BLOCKED_ARTISTS, emptySet())
+            .orEmpty().filter { it.isNotBlank() }.toSet()
+        aiArtists.value = prefs.getStringSet(KEY_AI_ARTISTS, emptySet())
+            .orEmpty().filter { it.isNotBlank() }.toSet()
         librarySort.value = prefs.getString(KEY_LIBRARY_SORT, null)
             ?.let { saved -> LibrarySort.entries.firstOrNull { it.name == saved } }
             ?: LibrarySort.DEFAULT
+        libraryReplayVisible.value = prefs.getBoolean(KEY_LIBRARY_REPLAY_VISIBLE, false)
         detailSongSorts.value = readDetailSongSorts()
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_URI, "").orEmpty()
         webdavUrl.value = prefs.getString(KEY_WEBDAV_URL, "").orEmpty()
@@ -1227,6 +1559,68 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_AUTOPLAY, value).apply()
     }
 
+    /** Which part of Now Playing a colour pick applies to. */
+    enum class PlayerColorTarget { ACCENT, SEEKBAR, TEXT, LYRICS }
+
+    fun setPlayerColor(target: PlayerColorTarget, argb: Int?) {
+        when (target) {
+            PlayerColorTarget.ACCENT -> playerAccentColor.value = argb
+            PlayerColorTarget.SEEKBAR -> playerSeekbarColor.value = argb
+            PlayerColorTarget.TEXT -> playerTextColor.value = argb
+            PlayerColorTarget.LYRICS -> playerLyricsColor.value = argb
+        }
+        prefs.edit()
+            .putInt(
+                when (target) {
+                    PlayerColorTarget.ACCENT -> KEY_PLAYER_ACCENT
+                    PlayerColorTarget.SEEKBAR -> KEY_PLAYER_SEEKBAR
+                    PlayerColorTarget.TEXT -> KEY_PLAYER_TEXT
+                    PlayerColorTarget.LYRICS -> KEY_PLAYER_LYRICS
+                },
+                argb ?: RESET_COLOR,
+            )
+            .apply()
+        if (argb != null) rememberPlayerColor(argb)
+    }
+
+    fun setTransportSmoothness(value: Float) {
+        val clean = value.coerceIn(0f, 1f)
+        transportSmoothness.value = clean
+        prefs.edit().putFloat(KEY_TRANSPORT_SMOOTHNESS, clean).apply()
+    }
+
+    fun resetPlayerColors() {
+        playerAccentColor.value = null
+        playerSeekbarColor.value = null
+        playerTextColor.value = null
+        playerLyricsColor.value = null
+        prefs.edit()
+            .putInt(KEY_PLAYER_ACCENT, RESET_COLOR)
+            .putInt(KEY_PLAYER_SEEKBAR, RESET_COLOR)
+            .putInt(KEY_PLAYER_TEXT, RESET_COLOR)
+            .putInt(KEY_PLAYER_LYRICS, RESET_COLOR)
+            .apply()
+    }
+
+    private fun rememberPlayerColor(argb: Int) {
+        val next = (listOf(argb) + recentPlayerColors.value)
+            .distinct()
+            .take(MAX_RECENT_PLAYER_COLORS)
+        recentPlayerColors.value = next
+        prefs.edit().putString(KEY_RECENT_PLAYER_COLORS, next.joinToString(",")).apply()
+    }
+
+    fun setHomeShelfOrder(titles: List<String>) {
+        val clean = titles.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        homeShelfOrder.value = clean
+        prefs.edit().putString(KEY_HOME_SHELF_ORDER, clean.joinToString("\u001F")).apply()
+    }
+
+    fun setBlockAiMusic(value: Boolean) {
+        blockAiMusic.value = value
+        prefs.edit().putBoolean(KEY_BLOCK_AI_MUSIC, value).apply()
+    }
+
     fun setShuffleEnabled(value: Boolean) {
         shuffleEnabled.value = value
         prefs.edit().putBoolean(KEY_SHUFFLE_ENABLED, value).apply()
@@ -1276,6 +1670,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SMART_FADE, value).apply()
     }
 
+    fun setSeamlessQualityUpgrade(value: Boolean) {
+        seamlessQualityUpgrade.value = value
+        prefs.edit().putBoolean(KEY_SEAMLESS_QUALITY_UPGRADE, value).apply()
+    }
+
     fun setAutomixPerformanceMode(value: AutomixPerformanceMode) {
         automixPerformanceMode.value = value
         prefs.edit().putString(KEY_AUTOMIX_PERFORMANCE_MODE, value.name).apply()
@@ -1310,6 +1709,46 @@ object AppSettings {
     fun setEqualizerEnabled(value: Boolean) {
         equalizerEnabled.value = value
         prefs.edit().putBoolean(KEY_EQ_ENABLED, value).apply()
+    }
+
+    fun setJamesDspEnabled(value: Boolean) {
+        jamesDspEnabled.value = value
+        prefs.edit().putBoolean(KEY_JAMESDSP_ENABLED, value).apply()
+    }
+
+    fun setJamesDspBassGain(value: Float) {
+        val clamped = value.coerceIn(0f, 15f)
+        jamesDspBassGainDb.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_BASS_DB, clamped).apply()
+    }
+
+    fun setJamesDspStereoLevel(value: Float) {
+        val clamped = value.coerceIn(0f, 100f)
+        jamesDspStereoLevel.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_STEREO, clamped).apply()
+    }
+
+    fun setJamesDspTubeLevel(value: Float) {
+        val clamped = value.coerceIn(0f, 100f)
+        jamesDspTubeLevel.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_TUBE, clamped).apply()
+    }
+
+    fun setJamesDspReverbPreset(value: Int) {
+        val clamped = value.coerceIn(-1, 18)
+        jamesDspReverbPreset.value = clamped
+        prefs.edit().putInt(KEY_JAMESDSP_REVERB, clamped).apply()
+    }
+
+    fun setJamesDspPreGain(value: Float) {
+        val clamped = value.coerceIn(-15f, 15f)
+        jamesDspPreGainDb.value = clamped
+        prefs.edit().putFloat(KEY_JAMESDSP_PREGAIN_DB, clamped).apply()
+    }
+
+    fun setJamesDspLimiter(value: Boolean) {
+        jamesDspLimiter.value = value
+        prefs.edit().putBoolean(KEY_JAMESDSP_LIMITER, value).apply()
     }
 
     fun setEqualizerMode(value: EqualizerMode) {
@@ -1507,6 +1946,36 @@ object AppSettings {
     fun setLyricsBlur(value: Boolean) {
         lyricsBlur.value = value
         prefs.edit().putBoolean(KEY_LYRICS_BLUR, value).apply()
+    }
+
+    fun setTextGlow(value: Boolean) {
+        textGlow.value = value
+        prefs.edit().putBoolean(KEY_TEXT_GLOW, value).apply()
+    }
+
+    fun setShowNowPlayingLyrics(value: Boolean) {
+        showNowPlayingLyrics.value = value
+        prefs.edit().putBoolean(KEY_SHOW_NOW_PLAYING_LYRICS, value).apply()
+    }
+
+    fun setShowNextTrackStatus(value: Boolean) {
+        showNextTrackStatus.value = value
+        prefs.edit().putBoolean(KEY_SHOW_NEXT_TRACK_STATUS, value).apply()
+    }
+
+    fun setShowUpgradeBadge(value: Boolean) {
+        showUpgradeBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_UPGRADE_BADGE, value).apply()
+    }
+
+    fun setShowLosslessBadge(value: Boolean) {
+        showLosslessBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_LOSSLESS_BADGE, value).apply()
+    }
+
+    fun setShowHiResBadge(value: Boolean) {
+        showHiResBadge.value = value
+        prefs.edit().putBoolean(KEY_SHOW_HI_RES_BADGE, value).apply()
     }
 
     fun setLyricsOffsetMs(value: Int) {
@@ -1736,6 +2205,11 @@ object AppSettings {
         prefs.edit().putString(KEY_OUTPUT_PCM_MODE, value.name).apply()
     }
 
+    fun setBitPerfect(value: Boolean) {
+        bitPerfect.value = value
+        prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
+    }
+
     fun setPreferUsbDac(value: Boolean) {
         preferUsbDac.value = value
         prefs.edit().putBoolean(KEY_PREFER_USB_DAC, value).apply()
@@ -1903,6 +2377,11 @@ object AppSettings {
         prefs.edit().putString(KEY_LIBRARY_SORT, value.name).apply()
     }
 
+    fun setLibraryReplayVisible(value: Boolean) {
+        libraryReplayVisible.value = value
+        prefs.edit().putBoolean(KEY_LIBRARY_REPLAY_VISIBLE, value).apply()
+    }
+
     fun setDetailSongSort(browseId: String, value: SongSort) {
         detailSongSorts.value = detailSongSorts.value + (browseId to value)
         prefs.edit().putString(
@@ -1924,6 +2403,11 @@ object AppSettings {
     fun setHomeRecentsViewType(value: LibraryViewType) {
         homeRecentsViewType.value = value
         prefs.edit().putString(KEY_HOME_RECENTS_VIEW_TYPE, value.name).apply()
+    }
+
+    fun setHomeFlowVisible(value: Boolean) {
+        homeFlowVisible.value = value
+        prefs.edit().putBoolean(KEY_HOME_FLOW_VISIBLE, value).apply()
     }
 
     fun setLocalMusicFolderUri(value: String) {
@@ -2175,6 +2659,9 @@ object AppSettings {
     const val MIN_LIQUID_GLASS_INTENSITY = 0.1f
     const val MAX_LIQUID_GLASS_INTENSITY = 1f
 
+    /** Mid-soft transport corners: visibly rounder than the old glyphs, not pills. */
+    const val DEFAULT_TRANSPORT_SMOOTHNESS = 0.55f
+
     fun normalizeLiquidGlassIntensity(value: Float): Float =
         value.coerceIn(MIN_LIQUID_GLASS_INTENSITY, MAX_LIQUID_GLASS_INTENSITY)
 
@@ -2193,10 +2680,12 @@ object AppSettings {
     private const val KEY_LOSSLESS = "lossless_audio"
     private const val KEY_CROSSFADE = "crossfade_seconds"
     private const val KEY_SMART_FADE = "smart_fade_enabled"
+    private const val KEY_SEAMLESS_QUALITY_UPGRADE = "seamless_quality_upgrade"
     private const val KEY_AUTOMIX_PERFORMANCE_MODE = "automix_performance_mode"
     private const val KEY_AUTOMIX_ENGINE = "automix_engine"
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
+    private const val KEY_BIT_PERFECT = "bit_perfect"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
@@ -2214,6 +2703,13 @@ object AppSettings {
     private const val KEY_EQ_FOCUSED = "equalizer_focused"
     private const val KEY_EQ_BALANCE = "equalizer_balance"
     private const val KEY_EQ_BANDS = "equalizer_bands"
+    private const val KEY_JAMESDSP_ENABLED = "jamesdsp_enabled"
+    private const val KEY_JAMESDSP_BASS_DB = "jamesdsp_bass_db"
+    private const val KEY_JAMESDSP_STEREO = "jamesdsp_stereo_level"
+    private const val KEY_JAMESDSP_TUBE = "jamesdsp_tube_level"
+    private const val KEY_JAMESDSP_REVERB = "jamesdsp_reverb_preset"
+    private const val KEY_JAMESDSP_PREGAIN_DB = "jamesdsp_pregain_db"
+    private const val KEY_JAMESDSP_LIMITER = "jamesdsp_limiter"
     private const val KEY_SPEED = "playback_speed"
     private const val KEY_THEME = "theme_mode"
     private const val KEY_APP_UI = "app_ui"
@@ -2221,6 +2717,18 @@ object AppSettings {
     private const val KEY_CLASSIPOD_CLICKS = "classipod_clicks"
     private const val KEY_CLASSIPOD_WHEEL_STEPS = "classipod_wheel_steps"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_TRANSPORT_SMOOTHNESS = "transport_smoothness"
+    private const val KEY_PLAYER_ACCENT = "player_accent_color"
+    private const val KEY_PLAYER_SEEKBAR = "player_seekbar_color"
+    private const val KEY_PLAYER_TEXT = "player_text_color"
+    private const val KEY_PLAYER_LYRICS = "player_lyrics_color"
+    private const val KEY_RECENT_PLAYER_COLORS = "recent_player_colors"
+    private const val KEY_HOME_SHELF_ORDER = "home_shelf_order"
+    private const val KEY_BLOCK_AI_MUSIC = "block_ai_music"
+
+    /** Sentinel for "no override"; distinct from every opaque ARGB value. */
+    private const val RESET_COLOR = Int.MIN_VALUE
+    private const val MAX_RECENT_PLAYER_COLORS = 12
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
@@ -2240,6 +2748,12 @@ object AppSettings {
     private const val KEY_FOLDING_NAV_BAR = "folding_nav_bar"
     private const val KEY_LIQUID_GLASS_INTENSITY = "liquid_glass_intensity"
     private const val KEY_LYRICS_BLUR = "lyrics_blur"
+    private const val KEY_TEXT_GLOW = "text_glow"
+    private const val KEY_SHOW_NOW_PLAYING_LYRICS = "show_now_playing_lyrics"
+    private const val KEY_SHOW_NEXT_TRACK_STATUS = "show_next_track_status"
+    private const val KEY_SHOW_UPGRADE_BADGE = "show_upgrade_badge"
+    private const val KEY_SHOW_LOSSLESS_BADGE = "show_lossless_badge"
+    private const val KEY_SHOW_HI_RES_BADGE = "show_hi_res_badge"
     private const val KEY_LYRICS_OFFSET_MS = "lyrics_offset_ms"
     private const val KEY_TRANSLATION_LANGUAGE = "translation_language"
     private const val KEY_ANIMATED_CANVAS = "animated_canvas"
@@ -2261,10 +2775,14 @@ object AppSettings {
     private const val KEY_LOCAL_MUSIC_SORT = "local_music_sort"
     private const val KEY_DOWNLOADED_MUSIC_SORT = "downloaded_music_sort"
     private const val KEY_LIBRARY_SORT = "library_sort"
+    private const val KEY_LIBRARY_REPLAY_VISIBLE = "library_replay_visible"
     private const val KEY_DETAIL_SONG_SORTS = "detail_song_sorts"
     private const val KEY_LOCAL_MUSIC_VIEW_TYPE = "local_music_view_type"
     private const val KEY_DOWNLOADED_MUSIC_VIEW_TYPE = "downloaded_music_view_type"
     private const val KEY_HOME_RECENTS_VIEW_TYPE = "home_recents_view_type"
+    private const val KEY_HOME_FLOW_VISIBLE = "home_flow_visible"
+    private const val KEY_BLOCKED_ARTISTS = "blocked_artists"
+    private const val KEY_AI_ARTISTS = "ai_artists"
     private const val KEY_LOCAL_MUSIC_FOLDER_URI = "local_music_folder_uri"
     private const val KEY_WEBDAV_URL = "webdav_url"
     private const val KEY_WEBDAV_USERNAME = "webdav_username"

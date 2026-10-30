@@ -201,8 +201,23 @@ object NerdStats {
         if (hz < 1_000_000) null
         else java.math.BigDecimal(hz).movePointLeft(6).stripTrailingZeros().toPlainString() + " MHz"
 
-    fun isDolbyAtmosMime(mimeType: String?): Boolean =
-        mimeType != null && (mimeType.endsWith("eac3-joc") || mimeType.endsWith("eac3"))
+    /**
+     * Whether [mimeType] is the decoder being handed a Dolby mix.
+     *
+     * The AC-3/E-AC-3 family, not only JOC. A DASH manifest routinely states
+     * `ec-3` and leaves the object coding to a supplemental property, so the
+     * decoder's input is `audio/eac3` on a stream that is genuinely Atmos; the
+     * FFmpeg bed fallback reports the same. Matching only the exact
+     * `audio/eac3-joc` suffix hid the badge on precisely the paths that were
+     * playing the mix at all. This is the same test another player uses: the
+     * decoder mime contains `eac3`, `ec-3`, `ac-3` or `ac3`, whatever the case
+     * and whatever parameters a container appended.
+     */
+    fun isDolbyAtmosMime(mimeType: String?): Boolean {
+        if (mimeType == null) return false
+        val bare = mimeType.substringBefore(';').trim().lowercase(java.util.Locale.ROOT)
+        return "eac3" in bare || "ec-3" in bare || "ac-3" in bare || "ac3" in bare
+    }
 
     fun isRawPcm(mimeType: String?): Boolean =
         mimeType != null && (mimeType == "audio/raw" || mimeType.endsWith("wav", ignoreCase = true) || mimeType == "audio/x-wav")
