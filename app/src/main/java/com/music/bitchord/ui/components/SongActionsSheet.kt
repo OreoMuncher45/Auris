@@ -146,6 +146,20 @@ fun SongActionsSheet(
     onToggleLike: () -> Unit,
     onToggleDislike: () -> Unit,
     onAddToPlaylist: () -> Unit,
+    /**
+     * Opens the sheet that puts this track into one of the listener's own
+     * folders. Null hides the row — a host with no folders of its own has
+     * nowhere to put the track.
+     *
+     * Offered whether or not anyone is signed in: a folder belongs to the
+     * device, not to an account, so this works offline too.
+     */
+    onAddToFolder: (() -> Unit)? = null,
+    /**
+     * Takes this track back out of the folder it is being shown in. Null
+     * hides the row.
+     */
+    onRemoveFromFolder: (() -> Unit)? = null,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -324,6 +338,27 @@ fun SongActionsSheet(
                 )
             }
             GroupSeparator(palette)
+        }
+
+        // The folders are on this device, not on an account, so these two rows
+        // are here whether anyone is signed in or not — the account's playlists
+        // are the rows above, and a folder is the answer when there is no
+        // account to have a playlist on.
+        onAddToFolder?.let {
+            ActionRow(
+                icon = BitChordIcons.Plus,
+                label = stringResource(R.string.add_to_folder),
+                accent = palette.accent,
+                onClick = it,
+            )
+        }
+        onRemoveFromFolder?.let {
+            ActionRow(
+                icon = Icons.Rounded.PlaylistRemove,
+                label = stringResource(R.string.remove_from_folder),
+                accent = palette.accent,
+                onClick = it,
+            )
         }
 
         DownloadRow(song, palette, isOffline, onDownload)

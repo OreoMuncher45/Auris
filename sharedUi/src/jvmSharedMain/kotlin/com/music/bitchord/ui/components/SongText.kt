@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.model.Song
 
@@ -61,6 +62,7 @@ fun ExplicitSongTitle(
             color = color,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            textAlign = if (isRtlText(song.title)) TextAlign.End else TextAlign.Start,
             modifier = Modifier.weight(1f),
         )
         if (qualityBadge && song.sourceQuality == "LOSSLESS") {

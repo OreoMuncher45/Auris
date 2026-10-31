@@ -145,6 +145,8 @@
     <string name="library">Library</string>
     <string name="library_sign_in_description">Sign in to your Google account to see your liked songs, playlists, and YouTube Music history.</string>
     <string name="new_playlist">New playlist</string>
+    <string name="new_folder">New folder</string>
+    <string name="folders">Folders</string>
     <string name="on_device">On Device</string>
     <string name="personalized_recommendations">Get personalized recommendations for you</string>
     <string name="pinned">Pinned</string>

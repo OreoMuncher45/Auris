@@ -18,6 +18,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import com.decent.usbaudio.UsbAudioDevice
 import com.decent.usbaudio.UsbAudioStream
+import com.music.bitchord.playback.audio.PrecisionAudioSink
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -304,7 +305,7 @@ class ExclusiveUsbOutput(
         if (!wanted) return false
         if (format.sampleMimeType != MimeTypes.AUDIO_RAW ||
             format.sampleRate <= 0 ||
-            format.channelCount !in 1..2
+            format.channelCount !in 1..PrecisionAudioSink.MAX_CHANNELS
         ) {
             return false
         }

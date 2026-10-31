@@ -1321,4 +1321,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Tambahkan ke folder</string>
+    <string name="remove_from_folder">Hapus dari folder</string>
+    <string name="new_folder">Folder baru</string>
+    <string name="folders">Folder</string>
+    <string name="folder_name">Nama folder</string>
+    <string name="create_folder">Buat folder</string>
+    <string name="no_folders_yet">Belum ada folder. Gunakan baris di atas untuk membuat satu.</string>
+    <string name="folder_created">Folder dibuat</string>
+    <string name="track_added_to_folder">Ditambahkan ke %1$s</string>
+    <string name="folder_empty">Folder ini kosong. Tambahkan lagu dari menu lagu.</string>
+    <string name="track_added_to_folders">Ditambahkan ke %1$d folder</string>
+    <string name="track_already_in_folder">Sudah ada di folder itu</string>
+    <string name="rename_folder">Ganti nama folder</string>
+    <string name="delete_folder">Hapus folder</string>
+    <string name="delete_folder_confirmation">Hapus “%1$s”? Ketuk lagi untuk mengonfirmasi.</string>
 </resources>

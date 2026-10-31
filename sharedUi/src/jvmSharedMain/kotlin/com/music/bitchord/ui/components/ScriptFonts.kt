@@ -57,21 +57,47 @@ private fun Char.isArabicBlock(): Boolean = this in '؀'..'ۿ'
 /**
  * Which script a piece of text is written in.
  *
- * The first letter that belongs to a script decides it, and Latin before
- * Arabic: a title with an artist name in Latin and the song in Urdu is set
- * in Urdu, and one that opens with an English word is set in Latin, because
- * that is the word the listener reads first.
+ * The first strong letter decides Latin versus Arabic, but every Urdu-only
+ * letter in the text is considered before that decision is final. Urdu shares
+ * almost its whole alphabet with Arabic, so looking only at the opening
+ * character set most Urdu lines in the Arabic naskh face — the exact failure
+ * this check exists to prevent. A line that opens with an English word still
+ * stays Latin, because that is the word the listener reads first.
  *
  * [TextScript.Latin] for everything else, including text with no letters at
  * all — a number, a timestamp.
  */
 fun detectScript(text: String): TextScript {
+    var first: TextScript? = null
+    var urdu = false
     for (character in text) {
-        if (character in UrduOnly) return TextScript.Urdu
-        if (character.isArabicBlock()) return TextScript.Arabic
-        if (character.isLetter()) return TextScript.Latin
+        if (character in UrduOnly) {
+            urdu = true
+            if (first == null) first = TextScript.Urdu
+        } else if (character.isArabicBlock()) {
+            if (first == null) first = TextScript.Arabic
+        } else if (character.isLetter()) {
+            if (first == null) first = TextScript.Latin
+        }
     }
-    return TextScript.Latin
+    if (first == TextScript.Latin) return TextScript.Latin
+    if (urdu) return TextScript.Urdu
+    return if (first == null) TextScript.Latin else TextScript.Arabic
+}
+
+/** Whether [text] is written right-to-left. */
+fun isRtlText(text: String): Boolean = text.any { character ->
+    character in '\u0590'..'\u05FF' || // Hebrew
+        character in '\u0600'..'\u06FF' || // Arabic
+        character in '\u0700'..'\u074F' || // Syriac
+        character in '\u0750'..'\u077F' || // Arabic Supplement
+        character in '\u0780'..'\u07BF' || // Thaana
+        character in '\u07C0'..'\u07FF' || // NKo
+        character in '\u0800'..'\u083F' || // Samaritan
+        character in '\u0840'..'\u085F' || // Mandaic
+        character in '\u08A0'..'\u08FF' || // Arabic Extended-A
+        character in '\uFB1D'..'\uFDFF' || // Hebrew/Arabic presentation forms A
+        character in '\uFE70'..'\uFEFF' // Arabic presentation forms B
 }
 
 /** The faces the script-aware text uses. */

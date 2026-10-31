@@ -1349,4 +1349,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">הוספה לתיקייה</string>
+    <string name="remove_from_folder">הסרה מהתיקייה</string>
+    <string name="new_folder">תיקייה חדשה</string>
+    <string name="folders">תיקיות</string>
+    <string name="folder_name">שם התיקייה</string>
+    <string name="create_folder">יצירת תיקייה</string>
+    <string name="no_folders_yet">אין עדיין תיקיות. השתמש בשורה שלמעלה כדי ליצור אחת.</string>
+    <string name="folder_created">התיקייה נוצרה</string>
+    <string name="track_added_to_folder">נוסף אל %1$s</string>
+    <string name="folder_empty">התיקייה הזאת ריקה. הוסף שירים דרך התפריט של שיר.</string>
+    <string name="track_added_to_folders">נוסף אל %1$d תיקיות</string>
+    <string name="track_already_in_folder">כבר בתיקייה הזאת</string>
+    <string name="rename_folder">שניית שם התיקייה</string>
+    <string name="delete_folder">מחיקת תיקייה</string>
+    <string name="delete_folder_confirmation">למחוק את „%1$s”? הקש שוב כדי לאשר.</string>
 </resources>

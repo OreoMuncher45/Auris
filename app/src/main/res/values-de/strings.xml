@@ -1344,4 +1344,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">In Ordner hinzufügen</string>
+    <string name="remove_from_folder">Aus Ordner entfernen</string>
+    <string name="new_folder">Neuer Ordner</string>
+    <string name="folders">Ordner</string>
+    <string name="folder_name">Ordnername</string>
+    <string name="create_folder">Ordner erstellen</string>
+    <string name="no_folders_yet">Noch keine Ordner. Nutze die Zeile darüber, um einen anzulegen.</string>
+    <string name="folder_created">Ordner erstellt</string>
+    <string name="track_added_to_folder">Zu %1$s hinzugefügt</string>
+    <string name="folder_empty">Dieser Ordner ist leer. Füge Titel über das Menü eines Titels hinzu.</string>
+    <string name="track_added_to_folders">Zu %1$d Ordnern hinzugefügt</string>
+    <string name="track_already_in_folder">Bereits in diesem Ordner</string>
+    <string name="rename_folder">Ordner umbenennen</string>
+    <string name="delete_folder">Ordner löschen</string>
+    <string name="delete_folder_confirmation">„%1$s“ löschen? Zum Bestätigen erneut tippen.</string>
 </resources>

@@ -1283,4 +1283,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Aggiungi alla cartella</string>
+    <string name="remove_from_folder">Rimuovi dalla cartella</string>
+    <string name="new_folder">Nuova cartella</string>
+    <string name="folders">Cartelle</string>
+    <string name="folder_name">Nome della cartella</string>
+    <string name="create_folder">Crea cartella</string>
+    <string name="no_folders_yet">Ancora nessuna cartella. Usa la riga qui sopra per crearne una.</string>
+    <string name="folder_created">Cartella creata</string>
+    <string name="track_added_to_folder">Aggiunto a %1$s</string>
+    <string name="folder_empty">Questa cartella è vuota. Aggiungi brani dal menu di un brano.</string>
+    <string name="track_added_to_folders">Aggiunto a %1$d cartelle</string>
+    <string name="track_already_in_folder">Già in quella cartella</string>
+    <string name="rename_folder">Rinomina cartella</string>
+    <string name="delete_folder">Elimina cartella</string>
+    <string name="delete_folder_confirmation">Eliminare «%1$s»? Tocca di nuovo per confermare.</string>
 </resources>

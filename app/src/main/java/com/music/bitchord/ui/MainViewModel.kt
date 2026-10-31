@@ -988,6 +988,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Renames a collection of the listener's own — a folder — and says so
+     * everywhere it is named, its open page most of all.
+     *
+     * The store does the naming; this restates it on the page, which reads
+     * [DetailPage.title] and would otherwise keep the old one.
+     */
+    fun renameLocalCollection(browseId: String, title: String) {
+        val name = title.trim()
+        if (name.isBlank()) return
+        _detailStack.value = _detailStack.value.map {
+            if (it.browseId == browseId) it.copy(title = name) else it
+        }
+    }
+
+    /**
+     * Closes the page of a collection that is gone — a folder that was
+     * deleted, which has nothing left to show.
+     */
+    fun closeLocalCollection(browseId: String) {
+        _detailStack.value = _detailStack.value.filterNot { it.browseId == browseId }
+    }
+
+    /**
      * Adds [song] to every playlist in [playlists] — the picker's ticked rows —
      * and reports how each went, once, when they all have.
      *
@@ -2686,8 +2709,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     name = localPlaylist.title
                     credit = getApplication<Application>().getString(R.string.local_playlist_subtitle, localPlaylist.songs.size)
                     artwork = localPlaylist.songs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
-                    if (localPlaylist.songs.isEmpty()) UiState.Error(text(R.string.spotify_import_empty_playlist))
-                    else UiState.Success(localPlaylist.songs)
+                    // An empty folder is not an import that failed — it is a
+                    // folder nobody has put anything in yet.
+                    if (localPlaylist.songs.isEmpty()) {
+                        UiState.Error(
+                            text(
+                                if (localPlaylist.isFolder) R.string.folder_empty else R.string.spotify_import_empty_playlist,
+                            ),
+                        )
+                    } else {
+                        UiState.Success(localPlaylist.songs)
+                    }
                 }
                 remote != null -> remoteSongsState(remote)
                 Downloads.recordIdOf(browseId) != null -> {
@@ -2918,8 +2950,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val remote = remoteLibrary(browseId)
             val state: UiState<List<Song>> = when {
                 localPlaylist != null -> {
-                    if (localPlaylist.songs.isEmpty()) UiState.Error(text(R.string.spotify_import_empty_playlist))
-                    else UiState.Success(localPlaylist.songs)
+                    if (localPlaylist.songs.isEmpty()) {
+                        UiState.Error(
+                            text(
+                                if (localPlaylist.isFolder) R.string.folder_empty else R.string.spotify_import_empty_playlist,
+                            ),
+                        )
+                    } else {
+                        UiState.Success(localPlaylist.songs)
+                    }
                 }
                 remote != null -> remoteSongsState(remote)
                 Downloads.recordIdOf(browseId) != null -> {
@@ -3141,6 +3180,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val result = when {
                 remote != null -> runCatching {
                     remote.songs().ifEmpty { error(text(remote.emptyRes)) }
+                }
+                // One of the listener's own playlists or folders: the listing is
+                // on this device, and there is nothing to fetch.
+                com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId) != null -> runCatching {
+                    val local = com.music.bitchord.data.spotify.LocalPlaylistStore.getPlaylist(browseId)!!
+                    local.songs.ifEmpty {
+                        error(
+                            text(
+                                if (local.isFolder) R.string.folder_empty else R.string.spotify_import_empty_playlist,
+                            ),
+                        )
+                    }
                 }
                 Downloads.recordIdOf(browseId) != null -> runCatching {
                     downloadedPlaylist(browseId).ifEmpty {

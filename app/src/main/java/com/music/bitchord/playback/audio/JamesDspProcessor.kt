@@ -114,14 +114,11 @@ class JamesDspProcessor : FloatAudioProcessor {
         this.sampleRate = sampleRate
         this.channelCount = channelCount
         this.framesSinceApply = 0L
-        if (channelCount in 1..2) {
-            val frames = maxOf(4096, AudioBlock.DEFAULT_CAPACITY_FRAMES)
-            scratchIn = FloatArray(frames * 2)
-            scratchOut = FloatArray(frames * 2)
-        } else {
-            scratchIn = FloatArray(0)
-            scratchOut = FloatArray(0)
-        }
+        // Scratch is per stereo pair; multichannel blocks are processed pair by
+        // pair, so a 2-frame scratch is always sufficient.
+        val frames = maxOf(4096, AudioBlock.DEFAULT_CAPACITY_FRAMES)
+        scratchIn = FloatArray(frames * 2)
+        scratchOut = FloatArray(frames * 2)
     }
 
     override fun process(block: AudioBlock) {
@@ -134,9 +131,7 @@ class JamesDspProcessor : FloatAudioProcessor {
             applied = null
             return
         }
-        if (failed || block.frameCount <= 0 || block.channelCount !in 1..2) {
-            return
-        }
+        if (failed || block.frameCount <= 0) return
         if (sampleRate <= 0) return
         if (engine == 0L && !ensureEngine()) return
 
@@ -162,12 +157,13 @@ class JamesDspProcessor : FloatAudioProcessor {
 
         val frames = block.frameCount
         val samples = block.samples
+        val channels = block.channelCount
         ensureScratch(frames)
-        if (block.channelCount == 2) {
+        if (channels == 2) {
             System.arraycopy(samples, 0, scratchIn, 0, frames * 2)
             JamesDspNative.nativeProcess(engine, scratchIn, scratchOut, frames)
             System.arraycopy(scratchOut, 0, samples, 0, frames * 2)
-        } else {
+        } else if (channels == 1) {
             var write = 0
             for (frame in 0 until frames) {
                 val sample = samples[frame]
@@ -177,6 +173,26 @@ class JamesDspProcessor : FloatAudioProcessor {
             JamesDspNative.nativeProcess(engine, scratchIn, scratchOut, frames)
             for (frame in 0 until frames) {
                 samples[frame] = (scratchOut[frame * 2] + scratchOut[frame * 2 + 1]) * 0.5f
+            }
+        } else {
+            // Multichannel: run the stereo engine over each channel pair
+            // (front L/R, then surrounds, …), leaving any odd trailing
+            // channel untouched. The single engine handle is reused pair by
+            // pair, so its reverb tail carries across pairs — an inaudible
+            // cross-talk on music content.
+            var c = 0
+            while (c + 1 < channels) {
+                val base = c
+                for (frame in 0 until frames) {
+                    scratchIn[frame * 2] = samples[frame * channels + base]
+                    scratchIn[frame * 2 + 1] = samples[frame * channels + base + 1]
+                }
+                JamesDspNative.nativeProcess(engine, scratchIn, scratchOut, frames)
+                for (frame in 0 until frames) {
+                    samples[frame * channels + base] = scratchOut[frame * 2]
+                    samples[frame * channels + base + 1] = scratchOut[frame * 2 + 1]
+                }
+                c += 2
             }
         }
     }

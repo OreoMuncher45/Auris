@@ -15,6 +15,8 @@ import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.components.SearchField
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -86,15 +88,18 @@ import com.music.bitchord.ui.components.librarySkeleton
 /**
  * The Library's segments.
  *
- * One bar, and what is under it is one kind of thing at a time: what is on
- * this device, the playlists, the artists, the albums. The page used to carry
+ * One bar, and what is under it is one kind of thing at a time: the playlists,
+ * what is on this device, the artists, the albums. The page used to carry
  * all of them at once, each under its own heading, which read as one long
  * list that could not make up its mind — a release you were looking for was
  * three screens down, under a heading for something else.
+ *
+ * The playlists come first: they are what a signed-in listener came to this
+ * page for, and the device's own folders are the fallback for everyone else.
  */
 enum class LibrarySegment {
-    Device,
     Playlists,
+    Device,
     Artists,
     Albums,
 }
@@ -115,6 +120,15 @@ fun LibraryScreen(
     onShelfItemClick: (ShelfItem) -> Unit,
     onShelfItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
+    /**
+     * The listener's own folders — collections kept on this device and filled
+     * from a track's menu. The bar's "+" tile makes one.
+     */
+    onNewFolder: () -> Unit = onNewPlaylist,
+    /**
+     * The folders themselves, as cards on the On Device shelf.
+     */
+    folders: List<ShelfItem> = emptyList(),
     onImportSpotifyPlaylist: (() -> Unit)? = null,
     /**
      * A shelf's "Show all" — every shelf's row here stops at five cards (see
@@ -185,7 +199,7 @@ fun LibraryScreen(
                 LibrarySegmentBar(
                     selected = segment,
                     onSelect = { segment = it },
-                    onCreate = onNewPlaylist,
+                    onCreate = onNewFolder,
                     modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
                 )
             }
@@ -214,6 +228,22 @@ fun LibraryScreen(
                     if (links.isNotEmpty()) {
                         item(key = "links") { LibraryLinkList(links = links, onClick = onShelfItemClick) }
                     }
+                    if (folders.isNotEmpty()) {
+                        item(key = "shelf:folders") {
+                            val folderShelf = HomeShelf(
+                                title = stringResource(Res.string.folders),
+                                items = filtered(
+                                    HomeShelf(title = stringResource(Res.string.folders), items = folders),
+                                ).items,
+                            )
+                            LibraryGridShelf(
+                                shelf = folderShelf,
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onShowAll = { onShowAll(folderShelf) },
+                            )
+                        }
+                    }
                     if (deviceItems.isNotEmpty()) {
                         item(key = "shelf:$onDevice") {
                             val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
@@ -224,7 +254,7 @@ fun LibraryScreen(
                                 onShowAll = { onShowAll(onDeviceShelf) },
                             )
                         }
-                    } else if (links.isEmpty()) {
+                    } else if (links.isEmpty() && folders.isEmpty()) {
                         item(key = "empty:device") { LibraryEmptySegment() }
                     }
                 }
@@ -333,6 +363,12 @@ fun LibraryScreen(
  * A bar rather than a row of headings because the bar says which one of the
  * four is open, and a heading under the last one says nothing about the
  * other three.
+ *
+ * The four labels scroll sideways and the tile that makes a folder does not:
+ * the labels are words of different lengths, and on a narrow phone the last
+ * of them used to be pushed past the edge and could not be reached at all.
+ * The tile is pinned to the end of the bar so it is always in the same
+ * place, whatever the labels are doing.
  */
 @Composable
 private fun LibrarySegmentBar(
@@ -342,45 +378,52 @@ private fun LibrarySegmentBar(
     modifier: Modifier = Modifier,
 ) {
     val labels = listOf(
-        stringResource(Res.string.on_device),
         stringResource(Res.string.playlists),
+        stringResource(Res.string.on_device),
         stringResource(Res.string.artists),
         stringResource(Res.string.albums),
     )
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        labels.forEachIndexed { index, label ->
-            val value = LibrarySegment.entries[index]
-            val chosen = value == selected
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                color = if (chosen) {
-                    MaterialTheme.colorScheme.onBackground
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
-                maxLines = 1,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(
-                        if (chosen) {
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
-                        } else {
-                            Color.Transparent
-                        },
-                    )
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            )
+        Row(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            labels.forEachIndexed { index, label ->
+                val value = LibrarySegment.entries[index]
+                val chosen = value == selected
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (chosen) {
+                        MaterialTheme.colorScheme.onBackground
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(
+                            if (chosen) {
+                                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
+                            } else {
+                                Color.Transparent
+                            },
+                        )
+                        .clickable { onSelect(value) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
         }
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.width(8.dp))
         Icon(
             imageVector = BitChordIcons.Plus,
-            contentDescription = stringResource(Res.string.new_playlist),
+            contentDescription = stringResource(Res.string.new_folder),
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier
                 .size(32.dp)

@@ -1345,4 +1345,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Ajouter au dossier</string>
+    <string name="remove_from_folder">Retirer du dossier</string>
+    <string name="new_folder">Nouveau dossier</string>
+    <string name="folders">Dossiers</string>
+    <string name="folder_name">Nom du dossier</string>
+    <string name="create_folder">Créer le dossier</string>
+    <string name="no_folders_yet">Aucun dossier pour l’instant. Utilisez la ligne ci-dessus pour en créer un.</string>
+    <string name="folder_created">Dossier créé</string>
+    <string name="track_added_to_folder">Ajouté à %1$s</string>
+    <string name="folder_empty">Ce dossier est vide. Ajoutez des titres depuis le menu d’un titre.</string>
+    <string name="track_added_to_folders">Ajouté à %1$d dossiers</string>
+    <string name="track_already_in_folder">Déjà dans ce dossier</string>
+    <string name="rename_folder">Renommer le dossier</string>
+    <string name="delete_folder">Supprimer le dossier</string>
+    <string name="delete_folder_confirmation">Supprimer « %1$s » ? Touchez à nouveau pour confirmer.</string>
 </resources>

@@ -1327,4 +1327,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">เพิ่มลงในโฟลเดอร์</string>
+    <string name="remove_from_folder">นำออกจากโฟลเดอร์</string>
+    <string name="new_folder">โฟลเดอร์ใหม่</string>
+    <string name="folders">โฟลเดอร์</string>
+    <string name="folder_name">ชื่อโฟลเดอร์</string>
+    <string name="create_folder">สร้างโฟลเดอร์</string>
+    <string name="no_folders_yet">ยังไม่มีโฟลเดอร์ ใช้แถวด้านบนเพื่อสร้าง</string>
+    <string name="folder_created">สร้างโฟลเดอร์แล้ว</string>
+    <string name="track_added_to_folder">เพิ่มลงใน %1$s แล้ว</string>
+    <string name="folder_empty">โฟลเดอร์นี้ว่างเปล่า เพิ่มเพลงจากเมนูของเพลงได้</string>
+    <string name="track_added_to_folders">เพิ่มลงใน %1$d โฟลเดอร์แล้ว</string>
+    <string name="track_already_in_folder">อยู่ในโฟลเดอร์นั้นอยู่แล้ว</string>
+    <string name="rename_folder">เปลี่ยนชื่อโฟลเดอร์</string>
+    <string name="delete_folder">ลบโฟลเดอร์</string>
+    <string name="delete_folder_confirmation">ลบ “%1$s”? แตะอีกครั้งเพื่อยืนยัน</string>
 </resources>

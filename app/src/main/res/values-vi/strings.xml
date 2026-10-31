@@ -1261,4 +1261,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Thêm vào thư mục</string>
+    <string name="remove_from_folder">Xóa khỏi thư mục</string>
+    <string name="new_folder">Thư mục mới</string>
+    <string name="folders">Thư mục</string>
+    <string name="folder_name">Tên thư mục</string>
+    <string name="create_folder">Tạo thư mục</string>
+    <string name="no_folders_yet">Chưa có thư mục nào. Dùng hàng phía trên để tạo.</string>
+    <string name="folder_created">Đã tạo thư mục</string>
+    <string name="track_added_to_folder">Đã thêm vào %1$s</string>
+    <string name="folder_empty">Thư mục này trống. Thêm bài hát từ menu của bài hát.</string>
+    <string name="track_added_to_folders">Đã thêm vào %1$d thư mục</string>
+    <string name="track_already_in_folder">Đã có trong thư mục đó</string>
+    <string name="rename_folder">Đổi tên thư mục</string>
+    <string name="delete_folder">Xóa thư mục</string>
+    <string name="delete_folder_confirmation">Xóa “%1$s”? Chạm lần nữa để xác nhận.</string>
 </resources>

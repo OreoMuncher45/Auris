@@ -12,6 +12,13 @@ data class LocalPlaylist(
     val id: String,
     val title: String,
     val songs: List<Song>,
+    /**
+     * Whether this is one of the listener's own folders rather than a playlist
+     * that came from somewhere else. A folder is created from the Library's
+     * "+" tile and filled from a track's own menu; nothing is ever uploaded
+     * with it.
+     */
+    val isFolder: Boolean = false,
 ) {
     val browseId: String get() = "local:playlist:$id"
 }
@@ -57,7 +64,14 @@ object LocalPlaylistStore {
                     )
                     songs.add(song)
                 }
-                list.add(LocalPlaylist(id, title, songs))
+                    list.add(
+                        LocalPlaylist(
+                            id = id,
+                            title = title,
+                            songs = songs,
+                            isFolder = obj.optBoolean("isFolder", false),
+                        ),
+                    )
             }
             _playlists.value = list
         }
@@ -70,6 +84,55 @@ object LocalPlaylistStore {
         _playlists.value = updated
         persist(updated)
         return playlist
+    }
+
+    /**
+     * The listener's own folder, kept on this device and never uploaded.
+     *
+     * Created from the Library's "+" tile. It starts empty and is filled from
+     * a track's own menu, which is what makes it a folder rather than another
+     * playlist: nothing here belongs to a YouTube Music account, so it opens
+     * and plays whether or not anyone is signed in.
+     */
+    fun createFolder(title: String): LocalPlaylist {
+        val clean = title.trim().ifBlank { "Folder" }
+        val id = "sp_folder_" + System.currentTimeMillis()
+        val folder = LocalPlaylist(id = id, title = clean, songs = emptyList(), isFolder = true)
+        val updated = listOf(folder) + _playlists.value.filterNot { it.id == id }
+        _playlists.value = updated
+        persist(updated)
+        return folder
+    }
+
+    /** The listener's own folders, newest first. */
+    fun folders(): List<LocalPlaylist> = _playlists.value.filter { it.isFolder }
+
+    /** Adds [song] to a folder, and says whether it was already in it. */
+    fun addToFolder(folderId: String, song: Song): Boolean {
+        val cleanId = folderId.removePrefix("local:playlist:")
+        val current = _playlists.value
+        val folder = current.firstOrNull { it.id == cleanId || it.browseId == folderId } ?: return false
+        if (folder.songs.any { it.videoId == song.videoId }) return false
+        val updated = current.map {
+            if (it.id == folder.id) it.copy(songs = it.songs + song) else it
+        }
+        _playlists.value = updated
+        persist(updated)
+        return true
+    }
+
+    /** Takes [song] out of a folder. */
+    fun removeFromFolder(folderId: String, song: Song) {
+        val cleanId = folderId.removePrefix("local:playlist:")
+        val updated = _playlists.value.map {
+            if (it.id == cleanId || it.browseId == folderId) {
+                it.copy(songs = it.songs.filterNot { s -> s.videoId == song.videoId })
+            } else {
+                it
+            }
+        }
+        _playlists.value = updated
+        persist(updated)
     }
 
     fun deletePlaylist(id: String) {
@@ -102,6 +165,7 @@ object LocalPlaylistStore {
                 val pObj = JSONObject()
                 pObj.put("id", playlist.id)
                 pObj.put("title", playlist.title)
+                pObj.put("isFolder", playlist.isFolder)
                 val songsArray = JSONArray()
                 for (song in playlist.songs) {
                     val sObj = JSONObject()

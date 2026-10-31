@@ -111,6 +111,22 @@ data class BrowseTarget(
 )
 
 /**
+ * A collection the listener owns on this device rather than on an account: a
+ * folder of their own.
+ *
+ * Renaming and deleting one are the same two rows the account's own playlist
+ * offers, but they act on the local store rather than on YouTube — so they are
+ * a separate pair of callbacks rather than the account's, and the rows say
+ * "folder" where the account's say "playlist".
+ */
+data class LocalCollectionActions(
+    /** The name as it stands now; the rename form opens on it. */
+    val title: String,
+    val onRename: (String) -> Unit,
+    val onDelete: () -> Unit,
+)
+
+/**
  * Long-press menu for an album or playlist — the collection-level counterpart
  * to [SongActionsSheet].
  *
@@ -157,6 +173,13 @@ fun BrowseActionsSheet(
     onTogglePin: (() -> Unit)? = null,
     onRename: ((String) -> Unit)? = null,
     /**
+     * A collection of the listener's own on this device — a folder — which can
+     * be renamed and deleted here. Null for everything else: an album or an
+     * artist is not renamed, and a playlist of the account's goes through
+     * [onRename] and [onDelete] instead.
+     */
+    localCollection: LocalCollectionActions? = null,
+    /**
      * Opens the reorder sheet for one of the account's own playlists — set
      * under the same rule as [onRename], since YouTube refuses to rearrange a
      * playlist the account only saved.
@@ -188,6 +211,7 @@ fun BrowseActionsSheet(
     val menu = presentation == SongActionsPresentation.Menu
     var renaming by remember { mutableStateOf(startRenaming) }
     var confirmingDelete by remember { mutableStateOf(false) }
+    var confirmingLocalDelete by remember { mutableStateOf(false) }
     var confirmingDeleteDownload by remember { mutableStateOf(false) }
 
     val playlist = target.playlist
@@ -196,6 +220,17 @@ fun BrowseActionsSheet(
             playlist = playlist,
             onBack = { renaming = false },
             onRename = onRename,
+            modifier = modifier,
+        )
+        return
+    }
+    // A folder's own name, edited in place — the same form, without the
+    // account's playlist behind it.
+    if (renaming && localCollection != null) {
+        RenameLocalCollectionForm(
+            title = localCollection.title,
+            onBack = { renaming = false },
+            onRename = localCollection.onRename,
             modifier = modifier,
         )
         return
@@ -288,6 +323,31 @@ fun BrowseActionsSheet(
                         onRenameInSheet()
                     } else {
                         renaming = true
+                    }
+                }
+            }
+            // A folder's two rows, in the account's own order: rename, then
+            // delete. The delete asks a second time, in place — a folder is
+            // the one collection here whose loss cannot be undone by tapping
+            // the same row again.
+            localCollection?.let { local ->
+                ActionRow(Icons.Rounded.Edit, stringResource(R.string.rename_folder)) {
+                    if (menu && onRenameInSheet != null) {
+                        onRenameInSheet()
+                    } else {
+                        renaming = true
+                    }
+                }
+                if (confirmingLocalDelete) {
+                    ActionRow(
+                        icon = Icons.Rounded.DeleteForever,
+                        label = stringResource(R.string.delete_folder_confirmation, target.title),
+                        tint = MaterialTheme.colorScheme.error,
+                        onClick = local.onDelete,
+                    )
+                } else {
+                    ActionRow(Icons.Rounded.Delete, stringResource(R.string.delete_folder)) {
+                        confirmingLocalDelete = true
                     }
                 }
             }

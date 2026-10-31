@@ -1333,4 +1333,19 @@
     <string name="audiobook_no_chapters">No chapters found for this book.</string>
     <string name="audiobook_chapter_count">%1$d chapters</string>
     <string name="audiobook_read_by">Read by %1$s</string>
+    <string name="add_to_folder">Add to folder</string>
+    <string name="remove_from_folder">Remove from folder</string>
+    <string name="new_folder">New folder</string>
+    <string name="folders">Folders</string>
+    <string name="folder_name">Folder name</string>
+    <string name="create_folder">Create folder</string>
+    <string name="no_folders_yet">No folders yet. Use the row above to make one.</string>
+    <string name="folder_created">Folder created</string>
+    <string name="track_added_to_folder">Added to %1$s</string>
+    <string name="folder_empty">This folder is empty. Add tracks to it from a track\'s menu.</string>
+    <string name="track_added_to_folders">Added to %1$d folders</string>
+    <string name="track_already_in_folder">Already in that folder</string>
+    <string name="rename_folder">Rename folder</string>
+    <string name="delete_folder">Delete folder</string>
+    <string name="delete_folder_confirmation">Delete “%1$s”? Tap again to confirm.</string>
 </resources>

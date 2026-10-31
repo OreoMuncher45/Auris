@@ -217,7 +217,7 @@ class PrecisionAudioSink(
         // one may keep or close it; the standby configuring early is what
         // used to retune the DAC under the track that was still playing.
         if (!exclusiveActive && isAudible() &&
-            !(exclusiveWanted() && shouldActivatePrecision(format) && format.channelCount in 1..2)
+            !(exclusiveWanted() && shouldActivatePrecision(format) && format.channelCount in 1..MAX_CHANNELS)
         ) {
             runCatching { exclusiveUsb?.reset() }
         }
@@ -371,7 +371,7 @@ class PrecisionAudioSink(
         if (!isAudible()) return false
         val session = exclusiveUsb ?: return false
         if (!exclusiveWanted() || !bitPerfect()) return false
-        if (format.channelCount !in 1..2) {
+        if (format.channelCount !in 1..MAX_CHANNELS) {
             publishExclusiveUnavailable(
                 "This track has ${format.channelCount} channels; the Android mixer stays in the path",
             )
@@ -479,7 +479,7 @@ class PrecisionAudioSink(
         // into one isochronous queue.
         if (session.isStreamAlive()) return
         val format = activeFormat ?: return
-        if (format.channelCount !in 1..2) return
+        if (format.channelCount !in 1..MAX_CHANNELS) return
         // A claim refused for a missing grant must be able to succeed once
         // the user accepts the system dialog, so retry on a slow clock
         // instead of latching the failure for the whole track. Without a
@@ -979,7 +979,7 @@ class PrecisionAudioSink(
         // AudioTrack support cannot make. It needs stereo (or mono) and the
         // session itself validates the encoding before opening.
         if (exclusiveWanted() && bitPerfect() && shouldActivatePrecision(format) &&
-            format.channelCount in 1..2
+            format.channelCount in 1..MAX_CHANNELS
         ) {
             return AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY
         }

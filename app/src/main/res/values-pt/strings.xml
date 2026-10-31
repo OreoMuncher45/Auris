@@ -1349,4 +1349,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Adicionar à pasta</string>
+    <string name="remove_from_folder">Remover da pasta</string>
+    <string name="new_folder">Nova pasta</string>
+    <string name="folders">Pastas</string>
+    <string name="folder_name">Nome da pasta</string>
+    <string name="create_folder">Criar pasta</string>
+    <string name="no_folders_yet">Ainda não há pastas. Use a linha acima para criar uma.</string>
+    <string name="folder_created">Pasta criada</string>
+    <string name="track_added_to_folder">Adicionado a %1$s</string>
+    <string name="folder_empty">Esta pasta está vazia. Adicione músicas pelo menu de uma música.</string>
+    <string name="track_added_to_folders">Adicionado a %1$d pastas</string>
+    <string name="track_already_in_folder">Já está nessa pasta</string>
+    <string name="rename_folder">Renomear pasta</string>
+    <string name="delete_folder">Eliminar pasta</string>
+    <string name="delete_folder_confirmation">Eliminar «%1$s»? Toque novamente para confirmar.</string>
 </resources>

@@ -1321,4 +1321,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">添加到文件夹</string>
+    <string name="remove_from_folder">从文件夹移除</string>
+    <string name="new_folder">新建文件夹</string>
+    <string name="folders">文件夹</string>
+    <string name="folder_name">文件夹名称</string>
+    <string name="create_folder">创建文件夹</string>
+    <string name="no_folders_yet">还没有文件夹。使用上方一行来新建。</string>
+    <string name="folder_created">文件夹已创建</string>
+    <string name="track_added_to_folder">已添加到 %1$s</string>
+    <string name="folder_empty">此文件夹为空。从歌曲菜单中添加歌曲。</string>
+    <string name="track_added_to_folders">已添加到 %1$d 个文件夹</string>
+    <string name="track_already_in_folder">已在该文件夹中</string>
+    <string name="rename_folder">重命名文件夹</string>
+    <string name="delete_folder">删除文件夹</string>
+    <string name="delete_folder_confirmation">删除“%1$s”？再次点按确认。</string>
 </resources>

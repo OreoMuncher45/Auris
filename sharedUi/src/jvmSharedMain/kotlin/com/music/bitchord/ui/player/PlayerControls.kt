@@ -1224,10 +1224,17 @@ internal fun MarqueeText(
     startDelayMillis: Long = 0L,
     leading: (@Composable () -> Unit)? = null,
     onOverflowChange: (Boolean) -> Unit = {},
+    /** Right-to-left text (Urdu, Arabic, …) aligns to the end instead of the start. */
+    rtl: Boolean = false,
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    val textAlign = if (rtl) TextAlign.End else TextAlign.Start
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = if (rtl) Arrangement.End else Arrangement.Start,
+    ) {
         if (leading != null) {
             leading()
             Spacer(Modifier.width(6.dp))
@@ -1239,11 +1246,15 @@ internal fun MarqueeText(
                 color = color,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                textAlign = textAlign,
                 modifier = Modifier.weight(1f, fill = false),
             )
             return@Row
         }
-        BoxWithConstraints(Modifier.weight(1f, fill = false).clipToBounds()) {
+        BoxWithConstraints(
+            modifier = Modifier.weight(1f, fill = false).clipToBounds(),
+            contentAlignment = if (rtl) Alignment.TopEnd else Alignment.TopStart,
+        ) {
             val maxWidthPx = constraints.maxWidth
             val layout = remember(text, style, maxWidthPx) {
                 textMeasurer.measure(text = text, style = style, maxLines = 1, softWrap = false)
@@ -1282,14 +1293,14 @@ internal fun MarqueeText(
                 // the text is truncated during its own measurement and sliding
                 // it sideways just moves an already-cut string.
                 modifier = Modifier
-                    .wrapContentWidth(align = Alignment.Start, unbounded = true)
+                    .wrapContentWidth(align = if (rtl) Alignment.End else Alignment.Start, unbounded = true)
                     .offset { IntOffset(offsetX.value.roundToInt(), 0) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                MarqueeLine(text = text, style = style, color = color)
-                if (overflowing) {
-                    Spacer(Modifier.width(MARQUEE_GAP))
-                    MarqueeLine(text = text, style = style, color = color)
+                MarqueeLine(text = text, style = style, color = color, rtl = rtl)
+            if (overflowing) {
+                Spacer(Modifier.width(MARQUEE_GAP))
+                MarqueeLine(text = text, style = style, color = color, rtl = rtl)
                 }
             }
         }
@@ -1298,7 +1309,7 @@ internal fun MarqueeText(
 
 /** One copy of a marquee's line, laid out at its full width rather than clipped. */
 @Composable
-private fun MarqueeLine(text: String, style: TextStyle, color: Color) {
+private fun MarqueeLine(text: String, style: TextStyle, color: Color, rtl: Boolean = false) {
     Text(
         text = text,
         style = style,
@@ -1306,6 +1317,7 @@ private fun MarqueeLine(text: String, style: TextStyle, color: Color) {
         maxLines = 1,
         softWrap = false,
         overflow = TextOverflow.Clip,
+        textAlign = if (rtl) TextAlign.End else TextAlign.Start,
     )
 }
 
@@ -1347,17 +1359,22 @@ internal fun ArtistCreditsMarquee(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     startDelayMillis: Long = 0L,
+    /** Right-to-left text (Urdu, Arabic, …) aligns to the end instead of the start. */
+    rtl: Boolean = false,
 ) {
     val density = LocalDensity.current
     val textMeasurer = rememberTextMeasurer()
     val segments = remember(text, credits) { creditSegments(text, credits) }
 
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = if (rtl) Arrangement.End else Arrangement.Start) {
         if (!enabled) {
-            CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist)
+            CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist, rtl = rtl)
             return@Row
         }
-        BoxWithConstraints(Modifier.weight(1f, fill = false).clipToBounds()) {
+        BoxWithConstraints(
+            modifier = Modifier.weight(1f, fill = false).clipToBounds(),
+            contentAlignment = if (rtl) Alignment.TopEnd else Alignment.TopStart,
+        ) {
             val maxWidthPx = constraints.maxWidth
             // Measured as one string, exactly as the single-line version measured
             // it, so the line starts crawling at the same moment and travels the
@@ -1390,14 +1407,14 @@ internal fun ArtistCreditsMarquee(
 
             Row(
                 modifier = Modifier
-                    .wrapContentWidth(align = Alignment.Start, unbounded = true)
+                    .wrapContentWidth(align = if (rtl) Alignment.End else Alignment.Start, unbounded = true)
                     .offset { IntOffset(offsetX.value.roundToInt(), 0) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist)
-                if (overflowing) {
-                    Spacer(Modifier.width(MARQUEE_GAP))
-                    CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist)
+                CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist, rtl = rtl)
+            if (overflowing) {
+                Spacer(Modifier.width(MARQUEE_GAP))
+                CreditLine(segments = segments, style = style, color = color, onOpenArtist = onOpenArtist, rtl = rtl)
                 }
             }
         }
@@ -1418,7 +1435,9 @@ private fun CreditLine(
     style: TextStyle,
     color: Color,
     onOpenArtist: (browseId: String?, name: String) -> Unit,
+    rtl: Boolean = false,
 ) {
+    val textAlign = if (rtl) TextAlign.End else TextAlign.Start
     segments.forEach { segment ->
         val credit = segment.credit
         Text(
@@ -1428,19 +1447,12 @@ private fun CreditLine(
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Clip,
+            textAlign = textAlign,
             modifier = if (credit == null) {
                 Modifier
             } else {
                 Modifier
-                    // The same shape a whole linked row presses with, so a name
-                    // answers a finger the way the title above it does.
                     .clip(LinkPressShape)
-                    // Tappable even with no channel behind it. YouTube links the
-                    // credited artists inconsistently — the same album leaves
-                    // one name linked and another not — so a name without an id
-                    // is a name the reader still expects to be able to open, and
-                    // the host resolves it by asking for that exact name and
-                    // opening only what answers to it exactly.
                     .clickable { onOpenArtist(credit.browseId, credit.name) }
             },
         )

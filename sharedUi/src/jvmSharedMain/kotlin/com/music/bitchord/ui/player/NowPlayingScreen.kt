@@ -141,6 +141,7 @@ import com.music.bitchord.ui.theme.StatusBarIcons
 import com.music.bitchord.ui.theme.rememberNowPlayingPalette
 import com.music.bitchord.ui.LyricsProviderState
 import com.music.bitchord.ui.components.optimizedHazeEffect
+import com.music.bitchord.ui.components.isRtlText
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -3442,6 +3443,7 @@ fun NowPlayingScreen(
                                         null
                                     },
                                     onOverflowChange = { titleOverflowing = it },
+                                    rtl = isRtlText(song.title),
                                     // Only the tracks YouTube hands us a browse id for
                                     // lead anywhere; the rest stay plain text.
                                     modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
@@ -3463,6 +3465,7 @@ fun NowPlayingScreen(
                                     // waits a beat before it joins in.
                                     startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
                                     onOpenArtist = onOpenArtist,
+                                    rtl = isRtlText(song.artist),
                                 )
                                 if (isAiTrack ||
                                     song.genAi != com.music.bitchord.data.model.GenAiDisclosure.NONE

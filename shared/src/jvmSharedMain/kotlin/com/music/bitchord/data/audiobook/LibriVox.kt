@@ -7,18 +7,21 @@ import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
+import java.net.URLEncoder
 
 /**
  * A book of public-domain recordings, read aloud.
  *
- * LibriVox is a volunteer library of audiobooks whose texts have fallen into
- * the public domain. What it offers is what a music app otherwise lacks:
- * something twenty hours long, with chapters, that nobody has to host for
- * free.
+ * Backed by the Internet Archive's LibriVox collection
+ * (collection:librivoxaudio). The legacy LibriVox JSON feed only matches
+ * exact, full titles and carries no usable cover art, so discovery and
+ * covers come from Archive.org: advancedsearch for the catalogue,
+ * /metadata/{identifier} for chapters, /services/img/{identifier} for covers.
  */
 data class Audiobook(
     val id: String,
@@ -35,8 +38,8 @@ data class Audiobook(
 /**
  * One chapter of a book.
  *
- * A chapter is a file, not a track: it has its own URL, its own length, and
- * no album behind it. It is played straight off the archive.
+ * A chapter is one original MP3 file on Archive.org, played straight off
+ * the archive.
  */
 data class AudiobookChapter(
     val id: String,
@@ -48,13 +51,15 @@ data class AudiobookChapter(
     val reader: String?,
     /** The recording's cover, carried along so a chapter row can show it. */
     val coverUrl: String?,
+    /** Track number from Archive.org metadata; chapters sort by this first. */
+    val order: Int = 0,
 )
 
 /**
- * The LibriVox feed.
+ * The LibriVox collection on Archive.org.
  *
- * The feed is plain JSON over HTTPS and needs no key, no account and no
- * cookie — which is why it can be read from a phone with no sign-in at all.
+ * Plain JSON over HTTPS, no key, no account, no cookie — readable from a
+ * phone with no sign-in.
  */
 object LibriVox {
     private val jsonFormat = Json { ignoreUnknownKeys = true; isLenient = true }
@@ -63,14 +68,13 @@ object LibriVox {
         HttpClient(OkHttp) { expectSuccess = true }
     }
 
-    private const val FEED = "https://librivox.org/api/feed/audiobooks/"
+    private const val SEARCH = "https://archive.org/advancedsearch.php"
+    private const val METADATA = "https://archive.org/metadata/"
 
     /**
-     * A page of books, newest first unless the feed says otherwise.
-     *
-     * A title search is a regex on LibriVox's side, so it is anchored and
-     * escaped here: a query of "count of" finds every title that contains
-     * those words, and a query of ".*" finds the whole library.
+     * A page of books, sorted by downloads descending. A title search
+     * narrows to titles containing the query words; a genre narrows by
+     * subject.
      */
     suspend fun books(
         limit: Int = 50,
@@ -78,105 +82,125 @@ object LibriVox {
         title: String? = null,
         genre: String? = null,
     ): List<Audiobook> {
-        val body = client.get(FEED) {
-            parameter("format", "json")
-            parameter("limit", limit.coerceIn(1, 100))
-            parameter("offset", offset.coerceAtLeast(0))
-            title?.takeIf { it.isNotBlank() }?.let { parameter("title", ".*${it.trim().escapeRegex()}.*") }
-            genre?.takeIf { it.isNotBlank() }?.let { parameter("genre", it.trim()) }
+        val q = buildString {
+            append("collection:librivoxaudio AND mediatype:(audio)")
+            title?.takeIf { it.isNotBlank() }?.let { append(" AND title:(${escapeQuery(it)})") }
+            genre?.takeIf { it.isNotBlank() }?.let { append(" AND subject:(${escapeQuery(it)})") }
+        }
+        val page = (offset.coerceAtLeast(0) / limit.coerceAtLeast(1)) + 1
+        val body = client.get(SEARCH) {
+            parameter("q", q)
+            parameter("fl[]", "identifier")
+            parameter("fl[]", "title")
+            parameter("fl[]", "creator")
+            parameter("fl[]", "downloads")
+            parameter("fl[]", "language")
+            parameter("fl[]", "subject")
+            parameter("rows", limit.coerceIn(1, 100).toString())
+            parameter("page", page.toString())
+            parameter("output", "json")
         }.bodyAsText()
         val root = jsonFormat.parseToJsonElement(body).jsonObject
-        val books = root["books"]?.jsonArray.orEmpty()
-        return books.mapNotNull { element -> (element as? JsonObject)?.toAudiobook() }
+        val docs = (root["response"] as? JsonObject)?.get("docs") as? JsonArray ?: emptyList()
+        return docs.mapNotNull { element -> (element as? JsonObject)?.toAudiobook() }
     }
 
     /**
      * A book's chapters, in reading order.
      *
-     * The feed answers with the book and its sections in one response, so the
-     * cover and the author come with the chapters rather than needing a
-     * second request.
+     * The metadata response lists every file in the item; original VBR MP3s
+     * are the chapters, derivative 64 kbps MP3s and images are skipped.
      */
     suspend fun chapters(bookId: String): List<AudiobookChapter> {
-        val body = client.get(FEED) {
-            parameter("format", "json")
-            parameter("id", bookId)
-            parameter("extended", 1)
-        }.bodyAsText()
+        val body = client.get("$METADATA$bookId").bodyAsText()
         val root = jsonFormat.parseToJsonElement(body).jsonObject
-        val book = root["books"]?.jsonArray?.firstOrNull()?.jsonObject ?: return emptyList()
-        val bookTitle = book.string("title").orEmpty()
-        val cover = book.coverUrl()
-        val sections = book["sections"]?.jsonArray.orEmpty()
-        return sections.mapNotNull { element ->
-            val section = element as? JsonObject ?: return@mapNotNull null
-            val url = section.string("listen_url")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            AudiobookChapter(
-                id = section.string("id").orEmpty(),
+        val metadata = root["metadata"]?.jsonObject ?: return emptyList()
+        val bookTitle = metadata.string("title").orEmpty()
+        val cover = coverUrlForItem(metadata)
+        val files = root["files"]?.jsonArray.orEmpty()
+        val chapters = mutableListOf<AudiobookChapter>()
+        for (element in files) {
+            val file = element as? JsonObject ?: continue
+            val name = file.string("name") ?: continue
+            if (!name.endsWith(".mp3", ignoreCase = true)) continue
+            if (file["original"] != null) continue // derivative, not the chapter
+            val format = file.string("format") ?: ""
+            if (!format.contains("MP3", ignoreCase = true)) continue
+            val order = file.string("track")?.substringBefore("/")?.toIntOrNull() ?: Int.MAX_VALUE
+            chapters.add(AudiobookChapter(
+                id = name,
                 bookId = bookId,
                 bookTitle = bookTitle,
-                title = section.string("title")?.trim().orEmpty().ifBlank { "Chapter" },
-                audioUrl = url,
-                seconds = section.string("playtime")?.toLongOrNull(),
-                reader = section["readers"]?.jsonArray
-                    ?.firstOrNull()
-                    ?.jsonObject
-                    ?.string("display_name"),
+                title = file.string("title")?.trim().orEmpty().ifBlank { "Chapter" },
+                audioUrl = "https://archive.org/download/${URLEncoder.encode(bookId, "UTF-8")}/${URLEncoder.encode(name, "UTF-8")}",
+                seconds = parseSeconds(file.string("length")),
+                reader = file.string("artist"),
                 coverUrl = cover,
-            )
+                order = order,
+            ))
         }
+        return chapters.sortedWith(compareBy({ it.order }, { it.title.lowercase() }))
     }
 
     private fun JsonObject.toAudiobook(): Audiobook? {
-        val id = string("id") ?: return null
+        val id = string("identifier") ?: return null
         val title = string("title")?.takeIf { it.isNotBlank() } ?: return null
-        val author = this["authors"]?.jsonArray
-            ?.mapNotNull { element ->
-                val person = element as? JsonObject ?: return@mapNotNull null
-                val name = listOfNotNull(person.string("first_name"), person.string("last_name"))
-                    .joinToString(" ")
-                    .trim()
-                name.ifBlank { null }
-            }
-            ?.joinToString(", ")
-            ?.takeIf { it.isNotBlank() }
-            .orEmpty()
+        val author = (this["creator"] as? JsonPrimitive)?.content?.toString() ?: ""
         return Audiobook(
             id = id,
             title = title,
             author = author,
             coverUrl = coverUrl(),
             language = string("language"),
-            totalSeconds = string("totaltimesecs")?.toLongOrNull(),
-            sectionCount = string("num_sections")?.toIntOrNull() ?: 0,
-            genres = this["genres"]?.jsonArray
-                ?.mapNotNull { element -> (element as? JsonObject)?.string("name") }
-                .orEmpty(),
+            totalSeconds = null,
+            sectionCount = 0,
+            genres = subjectNames(this["subject"]),
         )
     }
 
+    private fun subjectNames(subject: JsonElement?): List<String> {
+        val arr = subject as? JsonArray ?: return emptyList()
+        return arr.mapNotNull { element ->
+            when (element) {
+                is JsonObject -> element.string("name")
+                is JsonPrimitive -> element.content.toString()
+                else -> null
+            }
+        }.filter { it.isNotBlank() }
+    }
+
     /**
-     * The recording's own cover.
-     *
-     * Archive.org holds the audio, so Archive.org holds the picture, and its
-     * image service answers for any item id without a second lookup.
+     * The recording's own cover. Archive.org holds the audio, so it holds the
+     * picture; its image service answers for any item id.
      */
     private fun JsonObject.coverUrl(): String? {
-        val id = string("id") ?: return null
-        val archive = string("url_iarchive")
-            ?.substringAfter("archive.org/download/")
-            ?.substringBefore("/")
-            ?.takeIf { it.isNotBlank() }
-            ?: id
-        return "https://archive.org/services/img/$archive"
+        val id = string("identifier") ?: return null
+        return "https://archive.org/services/img/$id"
+    }
+
+    private fun coverUrlForItem(metadata: JsonObject): String? {
+        val id = metadata.string("identifier") ?: return null
+        return "https://archive.org/services/img/$id"
     }
 
     private fun JsonObject.string(key: String): String? =
-        this[key]?.jsonPrimitive?.contentOrNullSafe()
+        (this[key] as? JsonPrimitive)?.content?.toString()
 
-    private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? =
-        if (this is kotlinx.serialization.json.JsonNull) null else content
+    /** Escapes Archive.org query special characters inside a parenthesised term. */
+    private fun escapeQuery(q: String): String =
+        q.replace("\\", "\\\\").replace("\"", "\\\"").replace("(", "\\(").replace(")", "\\)")
 
-    private fun String.escapeRegex(): String =
-        Regex.escape(this)
+    private fun parseSeconds(length: String?): Long? {
+        if (length.isNullOrBlank()) return null
+        return if (length.contains(":")) {
+            val parts = length.split(":").map { it.toDoubleOrNull() ?: 0.0 }
+            when (parts.size) {
+                3 -> (parts[0] * 3600 + parts[1] * 60 + parts[2]).toLong()
+                2 -> (parts[0] * 60 + parts[1]).toLong()
+                else -> parts.last().toLong()
+            }
+        } else {
+            length.toDoubleOrNull()?.toLong()
+        }
+    }
 }

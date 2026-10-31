@@ -118,6 +118,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.playback.PlaybackPosition
 import com.music.bitchord.ui.components.forText
+import com.music.bitchord.ui.components.isRtlText
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.data.lyrics.CharGrowth
 import com.music.bitchord.data.lyrics.isGeniusSectionHeader
@@ -2012,7 +2013,13 @@ internal fun LyricsPanel(
                 )
                 }
             } else {
-                val alignEnd = duet && line.alignment == LyricAlignment.End
+                // A duet's answering voice is laid out on the right because it
+                // is a second voice, not because of its script. Everything else
+                // follows its own writing direction: Arabic, Urdu, Persian and
+                // the other RTL lyrics start at the right margin even when the
+                // source supplies no duet alignment at all.
+                val rtl = remember(line.text) { isRtlText(line.text) }
+                val alignEnd = if (duet) line.alignment == LyricAlignment.End else rtl
                 val style = if (isSynced) {
                     MaterialTheme.typography.headlineLarge.copy(
                         fontSize = 34.sp,

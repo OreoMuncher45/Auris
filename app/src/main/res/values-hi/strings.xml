@@ -1344,4 +1344,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">फ़ोल्डर में जोड़ें</string>
+    <string name="remove_from_folder">फ़ोल्डर से हटाएँ</string>
+    <string name="new_folder">नया फ़ोल्डर</string>
+    <string name="folders">फ़ोल्डर</string>
+    <string name="folder_name">फ़ोल्डर का नाम</string>
+    <string name="create_folder">फ़ोल्डर बनाएँ</string>
+    <string name="no_folders_yet">अभी कोई फ़ोल्डर नहीं। नया बनाने के लिए ऊपर की पंक्ति का उपयोग करें।</string>
+    <string name="folder_created">फ़ोल्डर बन गया</string>
+    <string name="track_added_to_folder">%1$s में जोड़ा गया</string>
+    <string name="folder_empty">यह फ़ोल्डर खाली है। किसी गाने के मेन्यू से गाने जोड़ें।</string>
+    <string name="track_added_to_folders">%1$d फ़ोल्डर में जोड़ा गया</string>
+    <string name="track_already_in_folder">वह फ़ोल्डर में पहले से है</string>
+    <string name="rename_folder">फ़ोल्डर का नाम बदलें</string>
+    <string name="delete_folder">फ़ोल्डर हटाएँ</string>
+    <string name="delete_folder_confirmation">„%1$s“ हटाएँ? पुष्टि के लिए फिर से टैप करें।</string>
 </resources>

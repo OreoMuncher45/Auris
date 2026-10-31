@@ -696,9 +696,16 @@ object Downloads {
     /** The page id for the release recorded under [id]. */
     fun pageIdFor(id: String): String = PLAYLIST_PREFIX + id
 
-    /** The release [pageIdFor] built [browseId] from, or null if it didn't. */
+    /**
+     * The release [pageIdFor] built [browseId] from, or null if it didn't.
+     *
+     * A page under the prefix that is not a download record — one of the
+     * listener's own local playlists or folders, which live in the same
+     * namespace — has no record behind it, and is not one.
+     */
     fun recordIdOf(browseId: String): String? =
-        browseId.removePrefix(PLAYLIST_PREFIX).takeIf { it != browseId && it.isNotEmpty() && !it.startsWith("sp_local_") }
+        browseId.removePrefix(PLAYLIST_PREFIX)
+            .takeIf { it != browseId && it.isNotEmpty() && !it.startsWith("sp_local_") && !it.startsWith("sp_folder_") }
 
     /**
      * The playlists and albums downloaded whole, in name order, without their

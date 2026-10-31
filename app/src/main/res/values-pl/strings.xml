@@ -1384,4 +1384,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Dodaj do folderu</string>
+    <string name="remove_from_folder">Usuń z folderu</string>
+    <string name="new_folder">Nowy folder</string>
+    <string name="folders">Foldery</string>
+    <string name="folder_name">Nazwa folderu</string>
+    <string name="create_folder">Utwórz folder</string>
+    <string name="no_folders_yet">Nie ma jeszcze folderów. Użyj wiersza powyżej, aby utworzyć.</string>
+    <string name="folder_created">Folder utworzony</string>
+    <string name="track_added_to_folder">Dodano do %1$s</string>
+    <string name="folder_empty">Ten folder jest pusty. Dodaj utwory z menu utworu.</string>
+    <string name="track_added_to_folders">Dodano do %1$d folderów</string>
+    <string name="track_already_in_folder">Już jest w tym folderze</string>
+    <string name="rename_folder">Zmień nazwę folderu</string>
+    <string name="delete_folder">Usuń folder</string>
+    <string name="delete_folder_confirmation">Usunąć „%1$s”? Dotknij ponownie, aby potwierdzić.</string>
 </resources>

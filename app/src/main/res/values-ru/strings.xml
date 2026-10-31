@@ -1376,4 +1376,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Добавить в папку</string>
+    <string name="remove_from_folder">Убрать из папки</string>
+    <string name="new_folder">Новая папка</string>
+    <string name="folders">Папки</string>
+    <string name="folder_name">Название папки</string>
+    <string name="create_folder">Создать папку</string>
+    <string name="no_folders_yet">Папок пока нет. Создайте папку строкой выше.</string>
+    <string name="folder_created">Папка создана</string>
+    <string name="track_added_to_folder">Добавлено в %1$s</string>
+    <string name="folder_empty">Эта папка пуста. Добавьте треки из меню трека.</string>
+    <string name="track_added_to_folders">Добавлено в %1$d папок</string>
+    <string name="track_already_in_folder">Уже в этой папке</string>
+    <string name="rename_folder">Переименовать папку</string>
+    <string name="delete_folder">Удалить папку</string>
+    <string name="delete_folder_confirmation">Удалить «%1$s»? Нажмите ещё раз для подтверждения.</string>
 </resources>

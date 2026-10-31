@@ -1301,4 +1301,19 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="add_to_folder">Klasöre ekle</string>
+    <string name="remove_from_folder">Klasörden çıkar</string>
+    <string name="new_folder">Yeni klasör</string>
+    <string name="folders">Klasörler</string>
+    <string name="folder_name">Klasör adı</string>
+    <string name="create_folder">Klasör oluştur</string>
+    <string name="no_folders_yet">Henüz klasör yok. Oluşturmak için yukarıdaki satırı kullanın.</string>
+    <string name="folder_created">Klasör oluşturuldu</string>
+    <string name="track_added_to_folder">%1$s klasörüne eklendi</string>
+    <string name="folder_empty">Bu klasör boş. Şarkıların menüsünden ekleyin.</string>
+    <string name="track_added_to_folders">%1$d klasöre eklendi</string>
+    <string name="track_already_in_folder">Zaten o klasörde</string>
+    <string name="rename_folder">Klasörü yeniden adlandır</string>
+    <string name="delete_folder">Klasörü sil</string>
+    <string name="delete_folder_confirmation">“%1$s” silinsin mi? Onaylamak için tekrar dokun.</string>
 </resources>
