@@ -1364,4 +1364,6 @@
     <string name="rename_folder">Renomear pasta</string>
     <string name="delete_folder">Eliminar pasta</string>
     <string name="delete_folder_confirmation">Eliminar «%1$s»? Toque novamente para confirmar.</string>
+    <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
+    <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
 </resources>

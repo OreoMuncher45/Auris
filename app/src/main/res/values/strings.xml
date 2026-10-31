@@ -1348,4 +1348,6 @@
     <string name="rename_folder">Rename folder</string>
     <string name="delete_folder">Delete folder</string>
     <string name="delete_folder_confirmation">Delete “%1$s”? Tap again to confirm.</string>
+    <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
+    <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
 </resources>

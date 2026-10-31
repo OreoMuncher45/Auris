@@ -155,6 +155,7 @@ fun DonationRow(rail: SupportDonations.Rail) {
             Text(
                 text = "${rail.label} · ${rail.note}",
                 style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
                 text = rail.address,

@@ -315,6 +315,7 @@ import com.music.bitchord.ui.player.PlayerDock
 import com.music.bitchord.ui.screens.DetailScreen
 import com.music.bitchord.ui.screens.AudiobookScreen
 import com.music.bitchord.ui.screens.AudiobooksScreen
+import com.music.bitchord.ui.screens.ItunesPodcastScreen
 import com.music.bitchord.ui.screens.CustomizationPage
 import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.PodcastsScreen
@@ -624,6 +625,10 @@ private fun BitChordApp(
     var showAudiobooks by rememberSaveable { mutableStateOf(false) }
     var openAudiobook by remember { mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null) }
     var audiobookQuery by rememberSaveable { mutableStateOf("") }
+    // An Apple-catalogue podcast opened from the podcasts page (collectionId).
+    var itunesPodcastId by rememberSaveable { mutableStateOf<String?>(null) }
+    // Home's "Sign in to YouTube" banner, once the user has dismissed it.
+    var signInBannerDismissed by rememberSaveable { mutableStateOf(false) }
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
@@ -867,6 +872,8 @@ private fun BitChordApp(
     val results by viewModel.results.collectAsStateWithLifecycle()
     val exploreState by viewModel.explore.collectAsStateWithLifecycle()
     val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
+    val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
+    val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
     val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
     val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
     // The podcast feed is fetched once, the first time its tab is opened.
@@ -2924,6 +2931,9 @@ private fun BitChordApp(
         BackHandler(enabled = showAudiobooks) {
             showAudiobooks = false
         }
+        BackHandler(enabled = itunesPodcastId != null) {
+            itunesPodcastId = null
+        }
         BackHandler(enabled = showGenres) {
             if (selectedMoodGenre != null) viewModel.closeMoodGenre() else showGenres = false
         }
@@ -2941,6 +2951,8 @@ private fun BitChordApp(
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling && !showSpotify &&
                 !showSources && !showListenTogether && !showEqualizer && !showReplay && selectedMoodGenre == null &&
+                !showDiscord && !showHistory && !showFlow && !showGenres && !showCustomization &&
+                !showAudiobooks && openAudiobook == null && itunesPodcastId == null &&
                 selectedTab != TAB_HOME,
         ) {
             selectedTab = TAB_HOME
@@ -3045,6 +3057,7 @@ private fun BitChordApp(
                     showGenres -> "genres"
                     openAudiobook != null -> "audiobook"
                     showAudiobooks -> "audiobooks"
+                    itunesPodcastId != null -> "itunespodcast"
                     showReplay -> "replay"
                     detail != null -> detail.browseId
                     else -> "$TAB_KEY$selectedTab"
@@ -3438,6 +3451,14 @@ private fun BitChordApp(
                             onRetry = { viewModel.loadAudiobooks(audiobookQuery.takeIf { it.isNotBlank() }) },
                             contentPadding = listPadding,
                         )
+                    } else if (key == "itunespodcast") {
+                        ItunesPodcastScreen(
+                            show = itunesPodcastId?.let { viewModel.itunesShow(it) },
+                            episodes = itunesEpisodes,
+                            onPlay = { songs, index -> if (index in songs.indices) play(songs, index) },
+                            onRetry = { viewModel.reloadItunesEpisodes() },
+                            contentPadding = listPadding,
+                        )
                     } else if (key == "customization") {
                         CustomizationPage(
                             homeShelfTitles = (homeState as? UiState.Success)?.data
@@ -3698,6 +3719,8 @@ private fun BitChordApp(
                             title = stringResource(R.string.home),
                             signedIn = signedIn,
                             onSignIn = { webSession = WebSessionMode.SIGN_IN },
+                            signInBannerDismissed = signInBannerDismissed,
+                            onDismissSignInBanner = { signInBannerDismissed = true },
                             onItemClick = { item, shelfTitle ->
                                 val song = shelfSong(item)
                                 // Hoisted because ShelfItem lives in :shared, and
@@ -3744,14 +3767,22 @@ private fun BitChordApp(
                         TAB_PODCASTS -> PodcastsScreen(
                             state = podcastsState,
                             listState = podcastListState,
+                            sections = podcastSections,
                             onShowClick = { item ->
-                                item.browseId?.let { browseId ->
-                                    viewModel.openDetail(
-                                        browseId = browseId,
-                                        title = item.title,
-                                        subtitle = item.subtitle,
-                                        thumbnailUrl = item.thumbnailUrl,
-                                    )
+                                val browseId = item.browseId
+                                if (browseId != null && browseId.startsWith("itunes:")) {
+                                    val collectionId = browseId.removePrefix("itunes:")
+                                    itunesPodcastId = collectionId
+                                    viewModel.openItunesPodcast(collectionId)
+                                } else {
+                                    browseId?.let {
+                                        viewModel.openDetail(
+                                            browseId = it,
+                                            title = item.title,
+                                            subtitle = item.subtitle,
+                                            thumbnailUrl = item.thumbnailUrl,
+                                        )
+                                    }
                                 }
                             },
                             onRetry = viewModel::loadPodcasts,
@@ -4144,6 +4175,12 @@ private fun BitChordApp(
                             showCustomization = false
                             settingsSubScreen = null
                         })
+                        openAudiobook != null -> ({ openAudiobook = null })
+                        showAudiobooks -> ({ showAudiobooks = false })
+                        itunesPodcastId != null -> ({ itunesPodcastId = null })
+                        showGenres -> ({
+                            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else showGenres = false
+                        })
                         settingsSubScreen != null -> ({ settingsSubScreen = null })
                         showSettings -> ({ showSettings = false })
                         showReplay -> ({ showReplay = false })
@@ -4411,6 +4448,13 @@ private fun BitChordApp(
                     showListenTogether = false
                     showEqualizer = false
                     showReplay = false
+                    showCustomization = false
+                    showAudiobooks = false
+                    openAudiobook = null
+                    itunesPodcastId = null
+                    showGenres = false
+                    showDiscord = false
+                    showSpotify = false
                     settingsSubScreen = null
                     showHistory = false
                     showFlow = false

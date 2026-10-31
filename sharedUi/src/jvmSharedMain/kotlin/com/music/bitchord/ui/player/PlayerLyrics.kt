@@ -2427,7 +2427,9 @@ private fun PanelVoice(
         Text(
             text = line.text,
             style = style.forText(line.text),
-            color = Color.White.copy(alpha = lit),
+            // The enlarged line follows the album-derived ink (or the pinned
+            // lyric colour), not a fixed white — see LocalPlayerLyrics.
+            color = (LocalPlayerLyrics.current ?: LocalPlayerInk.current).copy(alpha = lit),
             onTextLayout = { layout = it },
             modifier = modifier.lyricParticles(layout, translationProgress, room).padding(room),
         )

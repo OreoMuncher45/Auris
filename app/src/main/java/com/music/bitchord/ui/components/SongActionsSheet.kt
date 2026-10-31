@@ -77,6 +77,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -949,7 +950,11 @@ internal fun ActionRow(
         }
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyLarge,
+            // Context menus sit on glass; semi-bold keeps the label legible
+            // over a busy blurred backdrop.
+            style = MaterialTheme.typography.bodyLarge.copy(
+                fontWeight = if (menu) FontWeight.SemiBold else FontWeight.Normal,
+            ),
             color = foreground.copy(alpha = alpha),
             maxLines = if (menu) 2 else Int.MAX_VALUE,
             overflow = TextOverflow.Ellipsis,

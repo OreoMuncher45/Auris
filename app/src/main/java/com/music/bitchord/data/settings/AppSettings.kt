@@ -415,6 +415,15 @@ object AppSettings {
     val spatialAudio = MutableStateFlow(false)
 
     /**
+     * "Simulated Dolby Atmos": a widening DSP effect applied to ordinary
+     * stereo (mid/side widening with the side channel high-passed so bass
+     * stays centered). It is a *sound* effect, not a stream — the Atmos
+     * quality rung already handles real object-based mixes — so it lives
+     * beside [spatialAudio] and runs in the same DSP chain.
+     */
+    val simulatedAtmos = MutableStateFlow(false)
+
+    /**
      * Apple Music Sing equivalent: how much of the center-mixed lead vocal to
      * remove, 0..1. 0 is off (bit-exact passthrough); 1 is a full
      * band-limited vocal cut. Applied inside ExoPlayer's pipeline by
@@ -1275,6 +1284,7 @@ object AppSettings {
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
+        simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, false)
         singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
         singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
@@ -1748,6 +1758,11 @@ object AppSettings {
     fun setSpatialAudio(value: Boolean) {
         spatialAudio.value = value
         prefs.edit().putBoolean(KEY_SPATIAL_AUDIO, value).apply()
+    }
+
+    fun setSimulatedAtmos(value: Boolean) {
+        simulatedAtmos.value = value
+        prefs.edit().putBoolean(KEY_SIMULATED_ATMOS, value).apply()
     }
 
     fun setSingLevel(value: Float) {
@@ -2766,6 +2781,7 @@ object AppSettings {
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
+    private const val KEY_SIMULATED_ATMOS = "simulated_atmos"
     /** Sticky: read back at every launch, written only by [setOfflineMode]. */
     private const val KEY_OFFLINE_MODE = "offline_mode"
     /** Stored by name so an unknown value falls back rather than crashing. */

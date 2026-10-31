@@ -184,3 +184,26 @@ Current `PodcastsScreen.kt` shows only saved shows (`YtMusicRepository.podcastSh
 - `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui/icons/BitChordIcons.kt` — hand-written ImageVectors to replace.
 - `app/src/main/res/drawable/*.xml` (40), `sharedUi/src/commonMain/composeResources/drawable/*.xml` (~26) — icon XML targets.
 - `app/src/test/java/com/music/bitchord/LocaleStringsTest.kt` — app string parity test (baseline fails).
+
+---
+
+## 6. Optimization phase — sanity checklist (2026-10-31 session)
+
+DONE (compiled `:app:compileDevDebugKotlin` clean):
+- [x] Back nav on overlay sub-pages (customization/settings/audiobooks/audiobook/itunes-podcast/genres/discord): the tab-to-Home BackHandler (MainActivity ~2941) now excludes all overlay flags; top-bar back arrow gained branches for audiobook/audiobooks/itunespodcast/genres; onTabSelected clears all overlay flags.
+- [x] Customization page bottom gap: removed trailing 36.dp Spacer + dead ModalBottomSheet imports; page now provides LocalContentColor so default Texts aren't black in dark mode.
+- [x] Podcasts page: new `data/podcast/ItunesPodcasts.kt` (iTunes Search API: search + CATEGORIES + RSS episodes), MainViewModel `podcastSections` (Recommended + one shelf per category) + `openItunesPodcast`/episodes, PodcastsScreen renders shelves (Shelf) + "Your shows" grid, MainActivity "itunespodcast" page (`ItunesPodcastScreen`) with episode playback via enclosure URL.
+- [x] Dark-mode black text: DonationRow label + community_reddit Text got explicit onBackground color; CustomizationPage root provides LocalContentColor.
+- [x] Liquid glass darker tint: `glassBaseColor(dark)` → near-black 0xFF0A0A0C; `BaseSurfaceOpacityDark` 0.15 → 0.60 (smoked dark glass). Context-menu fallback plate alpha raised (dark 0.78).
+- [x] Navbar selected item → Apple systemRed via `GlassTintTokens.selectedRedColor` (GlassFoldingNavBar).
+- [x] Long-press context menu: menu ActionRow labels SemiBold; menu plate darker.
+- [x] Enlarged lyric line now follows album ink / pinned lyric color (was hardcoded Color.White) at PlayerLyrics.kt:2430; lyric color option already exists in Customization > Now Playing (LYRICS target).
+- [x] Simulated Dolby Atmos: new `SimulatedAtmosProcessor` (M/S widening + 130 Hz side high-pass = mono bass, reimplemented from LastWave's published technique — GPL so not copied verbatim) wired into DspChain + A/B in PlaybackService + `AppSettings.simulatedAtmos` + settings row "Simulated Dolby Atmos"; forced off during real Atmos (E-AC-3 JOC) like spatial.
+- [x] Quality badge popup: `QualityDetailsCard` no longer uses album-ink text (fixed white/grey on dark card), springs in from the badge (Animatable 0.6→1), adds Channels row; shows Source/Bitrate/Codec/Resolution/Channels.
+- [x] Sign-in banner X: `SignInBanner` gained onDismiss → X button → beautiful AlertDialog warning (no likes, no FLOW video in Radio); dismissed state threaded HomeScreen↔MainActivity (rememberSaveable).
+
+REMAINING:
+- [ ] Settings: group rows into categories (less clutter) — SettingsSheet is one long list with SearchableSettingsGroup; needs section headers (Playback, Audio, Appearance, Account, Sources, Support…).
+- [ ] Ergonomics pass over all new features (folders, audiobooks, podcasts, sim-atmos).
+- [ ] Rebuild + push branch + refresh private draft release artifact (CI Flow Debug APK, fork-signed).
+- [ ] Device validation by owner (no emulator here).

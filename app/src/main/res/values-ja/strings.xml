@@ -1337,4 +1337,6 @@
     <string name="rename_folder">フォルダー名を変更</string>
     <string name="delete_folder">フォルダーを削除</string>
     <string name="delete_folder_confirmation">「%1$s」を削除しますか？もう一度タップして確定してください。</string>
+    <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
+    <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
 </resources>

@@ -17,13 +17,17 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.SwipeToDismissBoxState
@@ -778,9 +782,15 @@ fun PullToRefresh(
     }
 }
 
-/** Slim dismissible-looking prompt shown atop Home while signed out. */
+/** Slim dismissible prompt shown atop Home while signed out. */
 @Composable
-fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
+fun SignInBanner(
+    onSignIn: () -> Unit,
+    modifier: Modifier = Modifier,
+    /** When set, an X is shown; tapping it asks first (see the warning dialog). */
+    onDismiss: (() -> Unit)? = null,
+) {
+    var showWarning by remember { mutableStateOf(false) }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -807,6 +817,33 @@ fun SignInBanner(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
         }
         Spacer(Modifier.width(12.dp))
         Button(onClick = onSignIn) { Text(stringResource(Res.string.sign_in)) }
+        if (onDismiss != null) {
+            Spacer(Modifier.width(4.dp))
+            IconButton(onClick = { showWarning = true }) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(Res.string.dismiss),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+    if (showWarning && onDismiss != null) {
+        AlertDialog(
+            onDismissRequest = { showWarning = false },
+            title = { Text(stringResource(Res.string.sign_in_dismiss_title)) },
+            text = { Text(stringResource(Res.string.sign_in_dismiss_message)) },
+            confirmButton = {
+                TextButton(onClick = { showWarning = false; onDismiss() }) {
+                    Text(stringResource(Res.string.dismiss))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showWarning = false }) {
+                    Text(stringResource(Res.string.cancel))
+                }
+            },
+        )
     }
 }
 

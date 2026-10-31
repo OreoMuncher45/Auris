@@ -216,6 +216,7 @@ fun SettingsScreen(
     // which caches the codec-list walk for the life of the process.
     val dolbyAtmosSupported = DeviceCodecs.playsDolbyAtmos
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
+    val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -881,6 +882,25 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
+                )
+            }
+            val simAtmosTitle = stringResource(R.string.simulated_dolby_atmos)
+            row(simAtmosTitle, "atmos", "simulated", "spatial", "widen") {
+                SettingsRow(
+                    icon = Icons.Rounded.SurroundSound,
+                    title = simAtmosTitle,
+                    subtitle = stringResource(R.string.simulated_dolby_atmos_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = simulatedAtmos,
+                            onCheckedChange = AppSettings::setSimulatedAtmos,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSimulatedAtmos(!simulatedAtmos) },
                 )
             }
             // The system panel is not listed here as well. A device with a
@@ -2529,6 +2549,7 @@ private fun CommunityCard() {
             Spacer(Modifier.width(6.dp))
             Text(
                 text = stringResource(R.string.community_reddit),
+                color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

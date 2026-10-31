@@ -202,7 +202,8 @@ private fun GlassFoldingNavBarChrome(
     BackHandler(enabled = search.visualActive, onBack = search.onExit)
 
     val contentColor = glassContentColor()
-    val selectedColor = contentColor
+    // Selected tab is Apple's systemRed, not the glass ink — see GlassTintTokens.
+    val selectedColor = com.music.bitchord.ui.theme.GlassTintTokens.selectedRedColor(glassUsesDarkAppearance())
     val unselectedColor = contentColor.copy(alpha = 0.65f)
     val glassSurface: @Composable () -> Modifier = { Modifier.liquidGlass(shape = NavBarShape) }
     val searchIndex = tabs.lastIndex

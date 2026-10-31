@@ -51,6 +51,8 @@ import com.music.bitchord.data.model.SearchResult
 import com.music.bitchord.data.audiobook.Audiobook
 import com.music.bitchord.data.audiobook.AudiobookChapter
 import com.music.bitchord.data.audiobook.LibriVox
+import com.music.bitchord.data.podcast.ItunesPodcasts
+import com.music.bitchord.data.podcast.ItunesShow
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
@@ -161,6 +163,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val _podcasts = MutableStateFlow<UiState<List<ShelfItem>>>(UiState.Loading)
     val podcasts: StateFlow<UiState<List<ShelfItem>>> = _podcasts.asStateFlow()
+
+    /**
+     * Discoverable podcast shelves for the podcasts page: a "Recommended"
+     * shelf plus one per browse category, sourced from the Apple Podcasts
+     * catalogue (iTunes Search API). Empty until the first fetch lands.
+     */
+    private val _podcastSections = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
+    val podcastSections: StateFlow<UiState<List<HomeShelf>>> = _podcastSections.asStateFlow()
+
+    /** collectionId -> show, so a tapped recommendation can open its feed. */
+    private val itunesShows = mutableMapOf<String, ItunesShow>()
+    fun itunesShow(collectionId: String): ItunesShow? = itunesShows[collectionId]
+
+    /** Episodes of the currently open Apple-catalogue podcast. */
+    private val _itunesEpisodes = MutableStateFlow<UiState<List<Song>>>(UiState.Loading)
+    val itunesEpisodes: StateFlow<UiState<List<Song>>> = _itunesEpisodes.asStateFlow()
+    private var openItunesCollectionId: String? = null
+
+    /** Opens an Apple-catalogue podcast and loads its episodes from the RSS feed. */
+    fun openItunesPodcast(collectionId: String) {
+        openItunesCollectionId = collectionId
+        _itunesEpisodes.value = UiState.Loading
+        viewModelScope.launch {
+            val show = itunesShows[collectionId] ?: run {
+                _itunesEpisodes.value = UiState.Error("Show not found")
+                return@launch
+            }
+            val state = runCatching { ItunesPodcasts.episodes(show) }.fold(
+                onSuccess = { UiState.Success(it) },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+            _itunesEpisodes.value = state
+        }
+    }
+
+    fun reloadItunesEpisodes() {
+        openItunesCollectionId?.let { openItunesPodcast(it) }
+    }
 
     /**
      * The books, from LibriVox.
@@ -1637,7 +1677,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 Feed.HOME -> refreshHome(identity)
                 Feed.EXPLORE -> fetchExplore()
                 Feed.LIBRARY -> fetchLibrary(identity)
-                Feed.PODCASTS -> fetchPodcasts()
+                Feed.PODCASTS -> { fetchPodcasts(); fetchPodcastSections() }
             }
             _refreshing.value = _refreshing.value - feed
         }
@@ -1659,7 +1699,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun loadPodcasts() {
         podcastsRequested = true
         _podcasts.value = UiState.Loading
-        viewModelScope.launch { fetchPodcasts() }
+        viewModelScope.launch {
+            fetchPodcasts()
+            fetchPodcastSections()
+        }
     }
 
     private var podcastsRequested = false
@@ -1704,6 +1747,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
         _podcasts.value = state
     }
+
+    /**
+     * Builds the discoverable shelves for the podcasts page: a "Recommended"
+     * shelf plus one shelf per browse category, each filled with the top
+     * shows the Apple Podcasts catalogue returns for that category.
+     */
+    private suspend fun fetchPodcastSections() {
+        _podcastSections.value = UiState.Loading
+        val shelves = mutableListOf<HomeShelf>()
+        // Recommended: a broad, high-signal query across all podcasts.
+        runCatching { ItunesPodcasts.search("podcast", limit = 20) }
+            .onSuccess { shows ->
+                if (shows.isNotEmpty()) {
+                    shows.forEach { itunesShows[it.collectionId] = it }
+                    shelves += HomeShelf(
+                        title = "Recommended podcasts",
+                        items = shows.map { it.toShelfItem() },
+                    )
+                }
+            }
+        // One shelf per category.
+        for ((label, term) in ItunesPodcasts.CATEGORIES) {
+            runCatching { ItunesPodcasts.search("$term podcast", limit = 12) }
+                .onSuccess { shows ->
+                    if (shows.isNotEmpty()) {
+                        shows.forEach { itunesShows[it.collectionId] = it }
+                        shelves += HomeShelf(
+                            title = label,
+                            items = shows.map { it.toShelfItem() },
+                        )
+                    }
+                }
+        }
+        _podcastSections.value = UiState.Success(shelves)
+    }
+
+    private fun ItunesShow.toShelfItem() = ShelfItem(
+        title = name,
+        subtitle = artist,
+        thumbnailUrl = artworkUrl,
+        videoId = null,
+        browseId = "itunes:$collectionId",
+    )
 
     /**
      * Fetches Explore once, the first time a tab that shows it becomes

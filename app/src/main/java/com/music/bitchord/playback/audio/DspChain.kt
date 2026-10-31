@@ -43,6 +43,7 @@ import com.music.bitchord.playback.VocalCutProcessor
 class DspChain(
     val sing: VocalCutProcessor = VocalCutProcessor(),
     val spatial: SpatialAudioProcessor = SpatialAudioProcessor(),
+    val simAtmos: SimulatedAtmosProcessor = SimulatedAtmosProcessor(),
     val equalizer: EqualizerProcessor = EqualizerProcessor(),
     val jamesDsp: JamesDspProcessor = JamesDspProcessor(),
     val transition: TransitionFilterProcessor = TransitionFilterProcessor(),
@@ -56,6 +57,7 @@ class DspChain(
         this.currentSampleRate = sampleRate
         sing.configure(sampleRate, channelCount)
         spatial.configure(sampleRate, channelCount)
+        simAtmos.configure(sampleRate, channelCount)
         equalizer.configure(sampleRate, channelCount)
         jamesDsp.configure(sampleRate, channelCount)
         transition.configure(sampleRate, channelCount)
@@ -78,6 +80,7 @@ class DspChain(
         currentSampleRate > 0 &&
             sing.level <= 0.001f &&
             !spatial.enabled &&
+            !simAtmos.enabled &&
             !equalizer.isEnabled &&
             !jamesDsp.isEnabled &&
             !transition.isEngaged &&
@@ -108,6 +111,7 @@ class DspChain(
 
         sing.process(block)
         spatial.process(block)
+        simAtmos.process(block)
         equalizer.process(block)
         jamesDsp.process(block)
         transition.process(block)
@@ -117,6 +121,7 @@ class DspChain(
     @Suppress("DEPRECATION")
     override fun flush() {
         sing.flush()
+        simAtmos.flush()
         spatial.flush()
         equalizer.flush()
         jamesDsp.flush()
@@ -128,6 +133,7 @@ class DspChain(
         processCounter = 0L
         sing.reset()
         spatial.reset()
+        simAtmos.reset()
         equalizer.reset()
         jamesDsp.reset()
         transition.reset()

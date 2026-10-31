@@ -124,6 +124,9 @@ fun HomeScreen(
     title: String?,
     signedIn: Boolean = true,
     onSignIn: (() -> Unit)? = null,
+    /** When true, the sign-in banner is hidden (the user dismissed it). */
+    signInBannerDismissed: Boolean = false,
+    onDismissSignInBanner: (() -> Unit)? = null,
     /**
      * Holding a card rather than tapping it. Every card on the feed answers,
      * whichever kind it is: the caller reads the item the same way it does for
@@ -179,9 +182,13 @@ fun HomeScreen(
             if (title != null) {
                 item { HomeTitle(title) }
             }
-            if (!signedIn && onSignIn != null) {
+            if (!signedIn && onSignIn != null && !signInBannerDismissed) {
                 item {
-                    SignInBanner(onSignIn = onSignIn, modifier = Modifier.padding(bottom = 8.dp))
+                    SignInBanner(
+                        onSignIn = onSignIn,
+                        onDismiss = onDismissSignInBanner,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
                 }
             }
             when (state) {

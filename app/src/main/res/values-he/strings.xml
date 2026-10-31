@@ -1364,4 +1364,6 @@
     <string name="rename_folder">שניית שם התיקייה</string>
     <string name="delete_folder">מחיקת תיקייה</string>
     <string name="delete_folder_confirmation">למחוק את „%1$s”? הקש שוב כדי לאשר.</string>
+    <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
+    <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
 </resources>

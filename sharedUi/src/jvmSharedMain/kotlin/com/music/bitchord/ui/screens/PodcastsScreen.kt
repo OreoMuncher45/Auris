@@ -20,12 +20,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.podcasts
 import com.music.bitchord.sharedui.resources.podcasts_empty
 import com.music.bitchord.sharedui.resources.retry
+import com.music.bitchord.sharedui.resources.your_shows
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
@@ -55,6 +57,8 @@ fun PodcastsScreen(
     modifier: Modifier = Modifier,
     /** The big "Podcasts" heading; the desktop's pages carry none. */
     showTitle: Boolean = true,
+    /** Discoverable shelves (recommended + categories), rendered like the home feed. */
+    sections: UiState<List<HomeShelf>> = UiState.Success(emptyList()),
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -84,6 +88,13 @@ fun PodcastsScreen(
                         )
                     }
                 }
+                // Discoverable shelves first — recommended podcasts and one
+                // shelf per category — laid out exactly like the home feed.
+                if (sections is UiState.Success && sections.data.isNotEmpty()) {
+                    items(sections.data, key = { "section:${it.title}" }) { shelf ->
+                        Shelf(shelf = shelf, onItemClick = onShowClick)
+                    }
+                }
                 when (state) {
                     UiState.Loading -> item { PodcastSkeletonRows(columns) }
                     is UiState.Error -> item {
@@ -96,10 +107,15 @@ fun PodcastsScreen(
                     is UiState.Success -> {
                         val shows = state.data.distinctBy { it.browseId ?: it.title }
                         if (shows.isEmpty()) {
-                            item {
-                                MessageState(stringResource(Res.string.podcasts_empty))
+                            if (sections !is UiState.Success || sections.data.isEmpty()) {
+                                item {
+                                    MessageState(stringResource(Res.string.podcasts_empty))
+                                }
                             }
                         } else {
+                            item {
+                                SectionHeader(stringResource(Res.string.your_shows))
+                            }
                             val rows = shows.chunked(columns)
                             items(
                                 rows,

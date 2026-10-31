@@ -48,13 +48,13 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -106,6 +106,9 @@ fun CustomizationPage(
         stringResource(R.string.custom_motion),
     )
 
+    // Default text colour for the page: without this, any Text that omits
+    // `color` falls back to black and disappears on the dark theme.
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -178,8 +181,8 @@ fun CustomizationPage(
                 4 -> FontsCustomization()
                 else -> MotionCustomization()
             }
-            Spacer(Modifier.height(36.dp))
         }
+    }
     }
 }
 

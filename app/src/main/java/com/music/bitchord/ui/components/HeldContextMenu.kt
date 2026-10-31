@@ -153,7 +153,9 @@ fun <T : Any> HeldContextMenu(
     // than the surface greys reading as a flat slab over it. With no blur
     // behind there is nothing for that to frost, so the plate firms up to stay
     // legible over the bare scrim.
-    val plate = (if (dark) Color.Black else Color.White).copy(alpha = if (reduceDynamicBlur) 0.85f else 0.5f)
+    val plate = (if (dark) Color.Black else Color.White).copy(
+        alpha = if (reduceDynamicBlur) 0.85f else if (dark) 0.78f else 0.85f,
+    )
     val hairline = if (dark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.06f)
     // The scrim does less work when the blur is there to push the page back,
     // and more when it is the only thing doing it.

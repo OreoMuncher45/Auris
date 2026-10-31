@@ -92,6 +92,7 @@ import com.music.bitchord.playback.audio.DspChain
 import com.music.bitchord.playback.audio.JamesDspConfig
 import com.music.bitchord.playback.audio.JamesDspNative
 import com.music.bitchord.playback.audio.JamesDspProcessor
+import com.music.bitchord.playback.audio.SimulatedAtmosProcessor
 import com.music.bitchord.playback.audio.LocalBitrateReading
 import com.music.bitchord.playback.audio.MeasuredBitrateMeter
 import com.music.bitchord.playback.usb.ExclusiveUsbOutput
@@ -619,6 +620,8 @@ class PlaybackService : MediaLibraryService() {
      */
     private val spatialAudioProcessorA = SpatialAudioProcessor()
     private val spatialAudioProcessorB = SpatialAudioProcessor()
+    private val simAtmosProcessorA = SimulatedAtmosProcessor()
+    private val simAtmosProcessorB = SimulatedAtmosProcessor()
     private val equalizerProcessorA = EqualizerProcessor()
     private val equalizerProcessorB = EqualizerProcessor()
     private val jamesDspProcessorA = JamesDspProcessor()
@@ -1220,6 +1223,7 @@ class PlaybackService : MediaLibraryService() {
                 )
             }
             applySpatialAudioEnabled()
+            applySimulatedAtmosEnabled()
             publishNerdStats()
             currentAudioInputFormat = format
             applyOutputRoute()
@@ -1796,6 +1800,7 @@ class PlaybackService : MediaLibraryService() {
         val exoPlayer = buildPlayer(
             singProcessorA,
             spatialAudioProcessorA,
+            simAtmosProcessorA,
             equalizerProcessorA,
             jamesDspProcessorA,
             transitionFilterA,
@@ -1805,6 +1810,7 @@ class PlaybackService : MediaLibraryService() {
         val sparePlayer = buildPlayer(
             singProcessorB,
             spatialAudioProcessorB,
+            simAtmosProcessorB,
             equalizerProcessorB,
             jamesDspProcessorB,
             transitionFilterB,
@@ -3328,6 +3334,7 @@ class PlaybackService : MediaLibraryService() {
         currentAudioInputFormat = incoming.audioFormat ?: currentAudioInputFormat
         activeTrackIsDolbyAtmos = NerdStats.isDolbyAtmosMime(incoming.audioFormat?.sampleMimeType)
         applySpatialAudioEnabled()
+        applySimulatedAtmosEnabled()
         publishNerdStats()
 
         // Before the outgoing player is stopped: the controller's listener now
@@ -3722,13 +3729,14 @@ class PlaybackService : MediaLibraryService() {
     private fun buildPlayer(
         sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
+        simAtmos: SimulatedAtmosProcessor,
         equalizer: EqualizerProcessor,
         jamesDsp: JamesDspProcessor,
         filter: TransitionFilterProcessor,
         loudness: LoudnessProcessor,
         ownsSession: Boolean,
     ): ExoPlayer = ExoPlayer.Builder(this)
-        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, equalizer, jamesDsp, filter, loudness))
+        .setRenderersFactory(silenceSkippingRenderers(sing, spatial, simAtmos, equalizer, jamesDsp, filter, loudness))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
         .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
@@ -3920,6 +3928,7 @@ class PlaybackService : MediaLibraryService() {
         // corrects it — see [formatListener]'s onAudioInputFormatChanged.
         activeTrackIsDolbyAtmos = NerdStats.declaredFormat(mediaItem?.mediaId)?.isDolbyAtmos == true
         applySpatialAudioEnabled()
+        applySimulatedAtmosEnabled()
 
         // A genuinely different track, so the gain is re-read for it. A
         // quality upgrade never reaches here — it returns early in
@@ -6885,6 +6894,7 @@ class PlaybackService : MediaLibraryService() {
     private fun silenceSkippingRenderers(
         sing: VocalCutProcessor,
         spatial: SpatialAudioProcessor,
+        simAtmos: SimulatedAtmosProcessor,
         equalizer: EqualizerProcessor,
         jamesDsp: JamesDspProcessor,
         transition: TransitionFilterProcessor,
@@ -7069,7 +7079,7 @@ class PlaybackService : MediaLibraryService() {
             // them for the same reason: it belongs to the listener and
             // the whole session, while the transition filter belongs to
             // one handoff and has to have the last word on it.
-            val dspChain = DspChain(sing, spatial, equalizer, jamesDsp, transition, loudness)
+            val dspChain = DspChain(sing, spatial, simAtmos, equalizer, jamesDsp, transition, loudness)
             return PrecisionAudioSink(
                 delegate = defaultSink,
                 dspChain = dspChain,
@@ -7362,6 +7372,7 @@ class PlaybackService : MediaLibraryService() {
         val newActive = buildPlayer(
             singProcessorA,
             spatialAudioProcessorA,
+            simAtmosProcessorA,
             equalizerProcessorA,
             jamesDspProcessorA,
             transitionFilterA,
@@ -7371,6 +7382,7 @@ class PlaybackService : MediaLibraryService() {
         val newSpare = buildPlayer(
             singProcessorB,
             spatialAudioProcessorB,
+            simAtmosProcessorB,
             equalizerProcessorB,
             jamesDspProcessorB,
             transitionFilterB,
@@ -7387,6 +7399,7 @@ class PlaybackService : MediaLibraryService() {
         newActive.shuffleModeEnabled = shuffleMode
         applyEqualizer()
         applySpatialAudioEnabled()
+        applySimulatedAtmosEnabled()
         if (items.isNotEmpty()) {
             newActive.setMediaItems(items, index.coerceIn(items.indices), position)
             // By hand, because the listener is attached below this: the
@@ -7584,6 +7597,7 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
+            AppSettings.simulatedAtmos.collect { applySimulatedAtmosEnabled() }
         }
         scope.launch {
             AppSettings.singLevel.collect { applySingLevel() }
@@ -7724,6 +7738,16 @@ class PlaybackService : MediaLibraryService() {
         val enabled = AppSettings.spatialAudio.value && !activeTrackIsDolbyAtmos
         spatialAudioProcessorA.enabled = enabled
         spatialAudioProcessorB.enabled = enabled
+    }
+
+    /**
+     * Simulated Atmos is a pure widening effect on stereo; it is forced off
+     * while a real Dolby Atmos (E-AC-3 JOC) stream plays, same as spatial.
+     */
+    private fun applySimulatedAtmosEnabled() {
+        val enabled = AppSettings.simulatedAtmos.value && !activeTrackIsDolbyAtmos
+        simAtmosProcessorA.enabled = enabled
+        simAtmosProcessorB.enabled = enabled
     }
 
     private fun applySingLevel() {
