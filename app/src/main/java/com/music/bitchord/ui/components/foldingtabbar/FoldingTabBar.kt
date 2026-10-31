@@ -38,6 +38,7 @@ import androidx.compose.ui.util.lerp
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
+import com.music.bitchord.ui.components.GlassMotion
 import com.music.bitchord.ui.components.backdrop.catalog.utils.InteractiveHighlight
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
 import kotlin.math.roundToInt
@@ -98,6 +99,12 @@ fun FoldingTabBar(
 
     val fold = remember { Animatable(if (folded) 1f else 0f) }
     LaunchedEffect(folded) {
+        // The fold moves the very content the bar's glass samples, so every
+        // frame of it would pay a full backdrop re-record for a bar that is
+        // moving anyway. The clock tells the glass to hold its capture for
+        // the length of the fold; the lens stops tracking what passes
+        // underneath it, and the fold gets its frames.
+        GlassMotion.nav.moved()
         fold.animateTo(
             if (folded) 1f else 0f,
             if (folded) {
@@ -105,14 +112,21 @@ fun FoldingTabBar(
             } else {
                 tween(ExpandMorphMs, easing = BarSurfaceExpandSpring)
             },
-        )
+        ) {
+            GlassMotion.nav.moved()
+        }
+        GlassMotion.nav.settled()
     }
     val search = remember { Animatable(if (inSearch) 1f else 0f) }
     LaunchedEffect(inSearch) {
+        GlassMotion.nav.moved()
         search.animateTo(
             if (inSearch) 1f else 0f,
             spring(dampingRatio = 0.86f, stiffness = Spring.StiffnessMediumLow),
-        )
+        ) {
+            GlassMotion.nav.moved()
+        }
+        GlassMotion.nav.settled()
     }
 
     val selected = scope.getInlineTab(selectedTabKey)

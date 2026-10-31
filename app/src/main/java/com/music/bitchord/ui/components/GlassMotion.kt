@@ -66,6 +66,18 @@ object GlassMotion {
      * its settle margin — never merely because the player is open.
      */
     val sheet: GlassMotionClock = GlassMotionClock()
+
+    /**
+     * The navigation's motion: the folding bottom bar collapsing onto the
+     * mini player, the search morph, and the slide between two pages.
+     *
+     * The same argument as the sheet's, on a smaller stage: a fold moves the
+     * very content the bar's glass samples, so every frame of it was paying
+     * a full backdrop re-record for a bar that is, for the length of the
+     * fold, moving anyway. Holding the capture costs the lens its live
+     * refraction for the length of the fold and buys the fold its frames.
+     */
+    val nav: GlassMotionClock = GlassMotionClock()
 }
 
 /**

@@ -245,7 +245,9 @@ import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConne
 import com.music.bitchord.ui.components.floatingtabbar.rememberFloatingTabBarScrollConnection
 import com.music.bitchord.ui.components.FrostedTopBar
 import com.music.bitchord.ui.components.LastfmLoginAlert
+import com.music.bitchord.ui.components.GlassMotion
 import com.music.bitchord.ui.components.LocalAppBackdrop
+import com.music.bitchord.ui.components.LocalAppBackdropFrozen
 import com.music.bitchord.ui.components.LocalLiquidGlassEnabled
 import com.music.bitchord.ui.components.GlassEffectConfig
 import com.music.bitchord.ui.components.LocalGlassEffectConfig
@@ -423,6 +425,11 @@ class MainActivity : AppCompatActivity() {
                         vibrancy = 2f * liquidGlassIntensity,
                     ),
                     LocalAppBackdrop provides appBackdrop,
+                    // The nav clock is read in the draw phase, so this can be
+                    // a plain lambda: it answers "is anything moving behind
+                    // the glass right now", and the glass asks that on every
+                    // frame it draws.
+                    LocalAppBackdropFrozen provides { GlassMotion.nav.frozen() },
                 ) {
                 // The window's width, measured rather than asked for.
                 //
@@ -2985,40 +2992,50 @@ private fun BitChordApp(
                         if (!coveredByPlayer) drawContent()
                     },
             ) {
+                // Which page is on screen, as one name. The transition runs
+                // on the difference between two of these.
+                val pageKey = when {
+                    showSpotify && detail == null -> "spotify"
+                    showDiscord -> "discord"
+                    showHistory -> "history"
+                    showFlow -> "flow"
+                    // `&& detail == null`: a card opened from the grid
+                    // stacks a detail page over it exactly as one opened
+                    // from the Library tab does — see
+                    // [onLibraryItemClick] — so with both set this must
+                    // give way to the `detail != null` branch below it
+                    // rather than keep showing the grid underneath.
+                    libraryShowAll != null && detail == null -> "library_show_all"
+                    // When a sub-screen overlay is active, keep SettingsSheet
+                    // mounted so its scroll position survives.  The overlay is
+                    // rendered below the AnimatedContent block.
+                    settingsSubScreen != null -> "settings"
+                    showAccountScrobbling -> "account_scrobbling"
+                    showSources -> "sources"
+                    showListenTogether -> "listen_together"
+                    showEqualizer -> "equalizer"
+                    // Above Replay, not below it. The top bar's account
+                    // button sets `showSettings` from every page including
+                    // this one, so with Replay winning the tie the button
+                    // was live, hit, and changed nothing on screen.
+                    showSettings -> "settings"
+                    showCustomization -> "customization"
+                    showGenres -> "genres"
+                    openAudiobook != null -> "audiobook"
+                    showAudiobooks -> "audiobooks"
+                    showReplay -> "replay"
+                    detail != null -> detail.browseId
+                    else -> "$TAB_KEY$selectedTab"
+                }
+                // A page change moves the content the glass samples. The
+                // clock tells every glass surface to hold its capture for the
+                // length of the slide rather than re-record it per frame —
+                // the same trade the player sheet makes, and the same one it
+                // makes well: a slide that keeps its frames beats a lens
+                // that tracks what passes underneath it.
+                LaunchedEffect(pageKey) { GlassMotion.nav.moved() }
                 AnimatedContent(
-                    targetState = when {
-                        showSpotify && detail == null -> "spotify"
-                        showDiscord -> "discord"
-                        showHistory -> "history"
-                        showFlow -> "flow"
-                        // `&& detail == null`: a card opened from the grid
-                        // stacks a detail page over it exactly as one opened
-                        // from the Library tab does — see
-                        // [onLibraryItemClick] — so with both set this must
-                        // give way to the `detail != null` branch below it
-                        // rather than keep showing the grid underneath.
-                        libraryShowAll != null && detail == null -> "library_show_all"
-                        // When a sub-screen overlay is active, keep SettingsSheet
-                        // mounted so its scroll position survives.  The overlay is
-                        // rendered below the AnimatedContent block.
-                        settingsSubScreen != null -> "settings"
-                        showAccountScrobbling -> "account_scrobbling"
-                        showSources -> "sources"
-                        showListenTogether -> "listen_together"
-                        showEqualizer -> "equalizer"
-                        // Above Replay, not below it. The top bar's account
-                        // button sets `showSettings` from every page including
-                        // this one, so with Replay winning the tie the button
-                        // was live, hit, and changed nothing on screen.
-                        showSettings -> "settings"
-                        showCustomization -> "customization"
-                        showGenres -> "genres"
-                        openAudiobook != null -> "audiobook"
-                        showAudiobooks -> "audiobooks"
-                        showReplay -> "replay"
-                        detail != null -> detail.browseId
-                        else -> "$TAB_KEY$selectedTab"
-                    },
+                    targetState = pageKey,
                     // Tabs swap outright; everything else crossfades.
                     //
                     // A tab is not a place you travel to — the bar is the whole
