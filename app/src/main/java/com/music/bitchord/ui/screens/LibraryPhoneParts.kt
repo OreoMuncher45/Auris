@@ -7,6 +7,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Lan
+import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -27,6 +28,9 @@ import com.music.bitchord.ui.components.ReplayCardRowSkeleton
 import com.music.bitchord.ui.replay.ReplayCardRow
 import com.music.bitchord.ui.replay.ReplayHeroCard
 import com.music.bitchord.ui.replay.ReplayStoryPage
+
+/** The Library's way in to LibriVox's public-domain books. */
+const val AUDIOBOOKS_BROWSE_ID = "librivox:books"
 
 // The phone's halves of the shared Library page: its list of folders, what
 // sits on its "On device" shelf, and the way in to Replay at its head.
@@ -65,6 +69,14 @@ fun libraryLinks(): List<LibraryLink> {
             stringResource(R.string.local_music),
             stringResource(R.string.audio_files_on_device),
             "local:all",
+        ),
+        // Public-domain books, read aloud. A library of long things that are
+        // not songs — the one shelf a music library is otherwise missing.
+        link(
+            Icons.Rounded.MenuBook,
+            stringResource(R.string.audiobooks),
+            stringResource(R.string.audiobooks_subtitle),
+            AUDIOBOOKS_BROWSE_ID,
         ),
         // Opt-in from Settings → Storage: what the song cache is holding from
         // YouTube and JioSaavn. See [com.music.bitchord.playback.AudioCache.cachedSongs].

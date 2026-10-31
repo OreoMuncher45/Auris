@@ -711,6 +711,10 @@ fun Song.toMediaItem(parentBrowseId: String? = null): MediaItem {
     val playUri = offlineUri?.takeIf { playFile }
     val uriString = playUri ?: when {
         videoId.startsWith("content://") || videoId.startsWith("file://") -> videoId
+        // A chapter of a public-domain book is a file on an archive, not a
+        // YouTube track: its URL is the whole of its identity, and there is
+        // nothing to resolve — it plays where it lies.
+        videoId.startsWith("http://") || videoId.startsWith("https://") -> videoId
         // Title, artist and runtime ride along in the URI because they are what
         // a cross-source match is made on, and the resolver runs on ExoPlayer's
         // loader thread with nothing but a DataSpec in hand — see
