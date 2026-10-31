@@ -117,6 +117,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.playback.PlaybackPosition
+import com.music.bitchord.ui.components.forText
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.data.lyrics.CharGrowth
 import com.music.bitchord.data.lyrics.isGeniusSectionHeader
@@ -816,7 +817,7 @@ private fun SweptLyricLine(
     ) {
         Text(
             text = line.text,
-            style = style,
+            style = style.forText(line.text),
             color = ink.copy(alpha = dimAlpha),
             maxLines = maxLines,
             overflow = overflow,
@@ -826,7 +827,7 @@ private fun SweptLyricLine(
         if (glowAlpha > 0.01f) {
             Text(
                 text = line.text,
-                style = style,
+                style = style.forText(line.text),
                 color = ink,
                 maxLines = maxLines,
                 overflow = overflow,
@@ -858,7 +859,7 @@ private fun SweptLyricLine(
         }
         Text(
             text = line.text,
-            style = style,
+            style = style.forText(line.text),
             color = ink,
             maxLines = maxLines,
             overflow = overflow,
@@ -2418,7 +2419,7 @@ private fun PanelVoice(
         var layout by remember(line.text) { mutableStateOf<TextLayoutResult?>(null) }
         Text(
             text = line.text,
-            style = style,
+            style = style.forText(line.text),
             color = Color.White.copy(alpha = lit),
             onTextLayout = { layout = it },
             modifier = modifier.lyricParticles(layout, translationProgress, room).padding(room),
@@ -2686,7 +2687,7 @@ private fun CurrentLyricLine(
             } else {
                 Text(
                     text = lineText,
-                    style = lineStyle,
+                    style = lineStyle.forText(lineText),
                     color = if (itemInstrumental) {
                         ink.copy(alpha = alphas.tertiary)
                     } else {

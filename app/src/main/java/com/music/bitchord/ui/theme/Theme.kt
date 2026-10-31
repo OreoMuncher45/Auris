@@ -7,16 +7,23 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.R
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.components.LocalScriptFontFamilies
+import com.music.bitchord.ui.components.ScriptFontFamilies
 
 // Apple Music's signature red. No longer the primary accent, but kept for the
 // spots (Replay's rank badge) that want that specific red regardless of theme.
@@ -91,16 +98,40 @@ private fun Typography.withFamily(family: FontFamily) = Typography(
     labelSmall = labelSmall.copy(fontFamily = family),
 )
 
+/**
+ * The app's own theme.
+ *
+ * The face is the listener's to choose: the default is the one Apple Music
+ * sets its text in, and the others — the platform's, a serif, the Classipod
+ * face, one of their own — are all here. The faces for Arabic and Urdu are
+ * provided alongside, so a song in those scripts is set in a face that can
+ * actually set it.
+ */
 @Composable
 fun BitChordTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = BitChordTypography,
-        content = content,
-    )
+    val fontChoice by AppSettings.appFont.collectAsStateWithLifecycle()
+    val customPath by AppSettings.customFontPath.collectAsStateWithLifecycle()
+    val scriptFonts by AppSettings.scriptFonts.collectAsStateWithLifecycle()
+    val family = remember(fontChoice, customPath) {
+        AppFonts.family(fontChoice, customPath)
+    }
+    val scriptFamilies = remember(scriptFonts) {
+        if (scriptFonts) {
+            ScriptFontFamilies(arabic = AppFonts.Arabic, urdu = AppFonts.Urdu)
+        } else {
+            ScriptFontFamilies()
+        }
+    }
+    CompositionLocalProvider(LocalScriptFontFamilies provides scriptFamilies) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = BitChordTypography.withFamily(family),
+            content = content,
+        )
+    }
 }
 
 /**

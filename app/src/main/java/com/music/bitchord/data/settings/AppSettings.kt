@@ -293,8 +293,53 @@ object AppSettings {
      */
     val bitPerfect = MutableStateFlow(false)
 
+    /**
+     * The listener's own volume, 0..1, as the app sees it.
+     *
+     * Written by the volume bar and by the system's own volume keys, and read
+     * by the audio path. With the mixer bypassed — bit-perfect — the system
+     * volume attenuates nothing: the gain the mixer would have applied is
+     * exactly what a bit-perfect route gives up, so the bar would move and the
+     * sound would not. The app cuts the sound itself instead, on the samples
+     * on their way out; see [com.music.bitchord.playback.audio.PrecisionAudioSink].
+     *
+     * Not persisted: the system volume is the truth, and it is already stored
+     * there. This is how the audio path learns what the bar is showing.
+     */
+    val playerVolume = MutableStateFlow(1f)
+
     /** Prefer an attached USB audio output over the system's normal route. */
     val preferUsbDac = MutableStateFlow(false)
+
+    /**
+     * The face the whole app is set in.
+     *
+     * The default is the one Apple Music itself is set in. The rest are the
+     * listener's to pick — see [com.music.bitchord.ui.theme.AppFonts].
+     */
+    val appFont = MutableStateFlow(KEY_APP_FONT_DEFAULT)
+
+    /** The face the listener brought, as a path in the app's own storage. */
+    val customFontPath = MutableStateFlow<String?>(null)
+
+    /**
+     * Whether Arabic and Urdu text is set in faces of its own.
+     *
+     * On by default: an Arabic song read in a Latin face is not readable, and
+     * the listener did not ask for that.
+     */
+    val scriptFonts = MutableStateFlow(true)
+
+    /**
+     * How many downloads run at once, 1 to 6.
+     *
+     * Four is the default and was the only value there was: the width of the
+     * queue was a constant in the service. It is a setting now because the
+     * right width depends on the connection and on the phone — one on a
+     * metered link, six on a fast one, and fewer on a device that cannot keep
+     * six lookups in memory at once.
+     */
+    val concurrentDownloads = MutableStateFlow(DEFAULT_CONCURRENT_DOWNLOADS)
 
     /**
      * Level every track to the same loudness, using YouTube's own
@@ -1335,6 +1380,11 @@ object AppSettings {
         paxSenixApiKey.value = prefs.getString(KEY_PAXSENIX_API_KEY, "").orEmpty()
         com.music.bitchord.data.lyrics.PaxSenix.setApiKey(paxSenixApiKey.value)
         audioCacheLimitBytes.value = clampCacheLimit(prefs.getLong(KEY_CACHE_LIMIT, DEFAULT_CACHE_LIMIT_BYTES))
+        concurrentDownloads.value = prefs.getInt(KEY_CONCURRENT_DOWNLOADS, DEFAULT_CONCURRENT_DOWNLOADS)
+            .coerceIn(MIN_CONCURRENT_DOWNLOADS, MAX_CONCURRENT_DOWNLOADS)
+        appFont.value = prefs.getString(KEY_APP_FONT, KEY_APP_FONT_DEFAULT) ?: KEY_APP_FONT_DEFAULT
+        customFontPath.value = prefs.getString(KEY_CUSTOM_FONT_PATH, null)
+        scriptFonts.value = prefs.getBoolean(KEY_SCRIPT_FONTS, true)
         showCacheFolder.value = prefs.getBoolean(KEY_SHOW_CACHE_FOLDER, false)
         lastfmEnabled.value = prefs.getBoolean(KEY_LASTFM_ENABLED, false)
         lastfmUsername.value = prefs.getString(KEY_LASTFM_USERNAME, "").orEmpty()
@@ -2210,6 +2260,31 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
     }
 
+    /** Sets the face the whole app is set in. */
+    fun setAppFont(value: String) {
+        appFont.value = value
+        prefs.edit().putString(KEY_APP_FONT, value).apply()
+    }
+
+    /** Sets the face the listener brought, as a path in the app's own storage. */
+    fun setCustomFontPath(value: String?) {
+        customFontPath.value = value
+        prefs.edit().putString(KEY_CUSTOM_FONT_PATH, value).apply()
+    }
+
+    /** Sets whether Arabic and Urdu text gets faces of its own. */
+    fun setScriptFonts(value: Boolean) {
+        scriptFonts.value = value
+        prefs.edit().putBoolean(KEY_SCRIPT_FONTS, value).apply()
+    }
+
+    /** Sets how many downloads run at once. Clamped to 1..6. */
+    fun setConcurrentDownloads(value: Int) {
+        val clamped = value.coerceIn(MIN_CONCURRENT_DOWNLOADS, MAX_CONCURRENT_DOWNLOADS)
+        concurrentDownloads.value = clamped
+        prefs.edit().putInt(KEY_CONCURRENT_DOWNLOADS, clamped).apply()
+    }
+
     fun setPreferUsbDac(value: Boolean) {
         preferUsbDac.value = value
         prefs.edit().putBoolean(KEY_PREFER_USB_DAC, value).apply()
@@ -2733,6 +2808,22 @@ object AppSettings {
     private const val KEY_REPEAT_MODE = "repeat_mode"
     private const val KEY_NERD_STATS = "show_nerd_stats"
     private const val KEY_CACHE_LIMIT = "audio_cache_limit_bytes"
+
+    private const val KEY_CONCURRENT_DOWNLOADS = "concurrent_downloads"
+
+    private const val KEY_APP_FONT = "app_font"
+    private const val KEY_APP_FONT_DEFAULT = "default"
+    private const val KEY_CUSTOM_FONT_PATH = "custom_font_path"
+    private const val KEY_SCRIPT_FONTS = "script_fonts"
+
+    /** Downloads in flight at once, when the listener has not said otherwise. */
+    const val DEFAULT_CONCURRENT_DOWNLOADS = 4
+
+    /** The narrowest queue worth having. */
+    const val MIN_CONCURRENT_DOWNLOADS = 1
+
+    /** The widest queue: past this the phone is the limit, not the setting. */
+    const val MAX_CONCURRENT_DOWNLOADS = 6
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
     private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"

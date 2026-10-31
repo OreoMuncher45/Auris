@@ -36,6 +36,7 @@ import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.BlurOff
 import androidx.compose.material.icons.rounded.BlurOn
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.Brightness4
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Check
@@ -186,6 +187,8 @@ fun SettingsScreen(
     onAccountScrobbling: () -> Unit,
     onEqualizer: () -> Unit,
     onOpenReplay: () -> Unit,
+    /** The Customisation page, which has its own back and its own history. */
+    onOpenCustomization: () -> Unit,
     onLyricsSources: () -> Unit,
     onTranslationLanguage: () -> Unit,
     onSources: () -> Unit,
@@ -245,6 +248,7 @@ fun SettingsScreen(
     val cacheLimitBytes by AppSettings.audioCacheLimitBytes.collectAsStateWithLifecycle()
     val showCacheFolder by AppSettings.showCacheFolder.collectAsStateWithLifecycle()
     val downloadQuality by AppSettings.downloadQuality.collectAsStateWithLifecycle()
+    val concurrentDownloads by AppSettings.concurrentDownloads.collectAsStateWithLifecycle()
     val wifiOnlyDownloads by AppSettings.wifiOnlyDownloads.collectAsStateWithLifecycle()
     val exportDownloads by AppSettings.exportDownloads.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
@@ -305,7 +309,6 @@ fun SettingsScreen(
     var confirmImport by remember { mutableStateOf(false) }
     var confirmClearSongCache by remember { mutableStateOf(false) }
     var showBlockedArtists by remember { mutableStateOf(false) }
-    var showCustomization by remember { mutableStateOf(false) }
     var showJamesDsp by remember { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
@@ -592,12 +595,28 @@ fun SettingsScreen(
                 )
             }
             val exportDownloadsTitle = stringResource(R.string.export_compatible_downloads)
-            row(exportDownloadsTitle, "music folder", divided = false) {
+            row(exportDownloadsTitle, "music folder") {
                 SettingsSubRow(
                     title = exportDownloadsTitle,
                     checked = exportDownloads,
                     onCheckedChange = AppSettings::setExportDownloads,
                     subtitle = "Music/Auris".takeIf { exportDownloads },
+                )
+            }
+            // How many of them run at once. The width used to be a constant,
+            // which made it a thing the app decided rather than the listener.
+            val concurrentDownloadsTitle = stringResource(R.string.concurrent_downloads)
+            row(concurrentDownloadsTitle, "one", "six", divided = false) {
+                SliderRow(
+                    icon = Icons.Rounded.Layers,
+                    title = concurrentDownloadsTitle,
+                    subtitle = stringResource(R.string.concurrent_downloads_subtitle),
+                    value = concurrentDownloads.toString(),
+                    sliderValue = concurrentDownloads.toFloat(),
+                    onSliderValue = { AppSettings.setConcurrentDownloads(it.toInt()) },
+                    valueRange = AppSettings.MIN_CONCURRENT_DOWNLOADS.toFloat()..
+                        AppSettings.MAX_CONCURRENT_DOWNLOADS.toFloat(),
+                    steps = AppSettings.MAX_CONCURRENT_DOWNLOADS - AppSettings.MIN_CONCURRENT_DOWNLOADS - 1,
                 )
             }
         }
@@ -895,7 +914,7 @@ fun SettingsScreen(
                     icon = Icons.Rounded.Palette,
                     title = customizationTitle,
                     subtitle = stringResource(R.string.customization_subtitle),
-                    onClick = { showCustomization = true },
+                    onClick = onOpenCustomization,
                 )
             }
             val themeTitle = stringResource(R.string.theme)
@@ -1697,13 +1716,6 @@ fun SettingsScreen(
 
     if (showBlockedArtists) {
         BlockedArtistsSheet(onDismiss = { showBlockedArtists = false })
-    }
-
-    if (showCustomization) {
-        CustomizationSheet(
-            homeShelfTitles = homeShelfTitles,
-            onDismiss = { showCustomization = false },
-        )
     }
 
     if (showJamesDsp) {

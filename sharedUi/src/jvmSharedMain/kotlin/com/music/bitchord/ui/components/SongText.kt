@@ -57,7 +57,7 @@ fun ExplicitSongTitle(
         }
         Text(
             text = song.title,
-            style = style,
+            style = style.forText(song.title),
             color = color,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,

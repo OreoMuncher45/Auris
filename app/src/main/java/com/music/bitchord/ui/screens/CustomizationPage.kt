@@ -1,5 +1,23 @@
 package com.music.bitchord.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Brush
+import com.music.bitchord.ui.theme.AppFonts
+import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -10,6 +28,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -61,62 +80,105 @@ import kotlin.math.roundToInt
  * Kept in its own file because the sheet is already the largest composable in
  * the app and every row here would otherwise be compiled into its parent.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The Customisation page.
+ *
+ * It was a sheet, and it outgrew one: four surfaces of colour and order
+ * choices, each with its own controls, fitted into a panel that had to be
+ * scrolled to be usable and that covered the app it was customising. It is a
+ * page now, with its own back, its own history entry and room for the two
+ * sections that were missing — the app's face, and its motion.
+ */
 @Composable
-fun CustomizationSheet(
+fun CustomizationPage(
     homeShelfTitles: List<String>,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
+    contentPadding: PaddingValues,
+    modifier: Modifier = Modifier,
 ) {
-    var tab by remember { mutableStateOf(0) }
-    val tabs = listOf(
+    var section by rememberSaveable { mutableIntStateOf(0) }
+    val sections = listOf(
         stringResource(R.string.custom_now_playing),
         stringResource(R.string.custom_home),
         stringResource(R.string.custom_library),
         stringResource(R.string.custom_theme),
+        stringResource(R.string.custom_fonts),
+        stringResource(R.string.custom_motion),
     )
 
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        // The Now Playing tab is now taller than half a phone screen (four
-        // colour rows, two switches, four indicator switches, the smoothness
-        // slider and the recent swatches). At the partially expanded stop the
-        // lower rows were laid out past the sheet's bottom edge and never
-        // seen, or drawn over the rows above them. Open at full height and
-        // scroll the body; the title and tabs stay pinned so the tab you are
-        // on is always readable.
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = MaterialTheme.colorScheme.background,
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(contentPadding),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 20.dp, top = 8.dp, bottom = 6.dp),
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = stringResource(R.string.back))
+            }
+            Spacer(Modifier.width(4.dp))
             Text(
                 text = stringResource(R.string.customization),
                 style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 14.dp),
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f),
             )
-            SegmentedControl(
-                options = tabs,
-                selectedIndex = tab,
-                onSelect = { tab = it },
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            Spacer(Modifier.size(18.dp))
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // fill = false keeps short tabs (Home, Library, Theme)
-                    // as small as their content; a tall tab takes the
-                    // remaining height and scrolls inside it instead.
-                    .weight(1f, fill = false)
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                when (tab) {
-                    0 -> NowPlayingCustomization()
-                    1 -> HomeCustomization(homeShelfTitles)
-                    2 -> LibraryCustomization()
-                    else -> ThemeCustomization()
+        }
+        // Six sections do not fit a phone's width, so the bar scrolls rather
+        // than shrinking: a segment label that has been squeezed to two
+        // letters is no longer a label.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            sections.forEachIndexed { index, label ->
+                if (index == section) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(9.dp))
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                } else {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(9.dp))
+                            .clickable { section = index }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
                 }
-                Spacer(Modifier.size(28.dp))
             }
+        }
+        Spacer(Modifier.height(10.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
+            when (section) {
+                0 -> NowPlayingCustomization()
+                1 -> HomeCustomization(homeShelfTitles)
+                2 -> LibraryCustomization()
+                3 -> ThemeCustomization()
+                4 -> FontsCustomization()
+                else -> MotionCustomization()
+            }
+            Spacer(Modifier.height(36.dp))
         }
     }
 }
@@ -144,6 +206,17 @@ private fun NowPlayingCustomization() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp),
         )
+        NowPlayingPreview(
+            accent = accent,
+            seekbar = seekbar,
+            text = text,
+            lyrics = lyricsColor,
+            onPickAccent = { picking = AppSettings.PlayerColorTarget.ACCENT },
+            onPickSeekbar = { picking = AppSettings.PlayerColorTarget.SEEKBAR },
+            onPickText = { picking = AppSettings.PlayerColorTarget.TEXT },
+            onPickLyrics = { picking = AppSettings.PlayerColorTarget.LYRICS },
+        )
+        Spacer(Modifier.height(14.dp))
         ColorSettingRow(
             label = stringResource(R.string.custom_buttons),
             value = accent,
@@ -290,6 +363,108 @@ private fun NowPlayingCustomization() {
                 picking = null
             },
             onDismiss = { picking = null },
+        )
+    }
+}
+
+/**
+ * The Now Playing page, small, with every part of it live.
+ *
+ * The colours used to be four rows of swatches, which is a list of names for
+ * four decisions and shows none of them: what "Buttons" means is only
+ * obvious when you can see the button. Here the page is there, in the colours
+ * it is set in, and each part of it is the thing to tap.
+ */
+@Composable
+private fun NowPlayingPreview(
+    accent: Int?,
+    seekbar: Int?,
+    text: Int?,
+    lyrics: Int?,
+    onPickAccent: () -> Unit,
+    onPickSeekbar: () -> Unit,
+    onPickText: () -> Unit,
+    onPickLyrics: () -> Unit,
+) {
+    val accentColor = accent?.let { Color(it) } ?: Color(0xFFF2F2F7)
+    val seekbarColor = seekbar?.let { Color(it) } ?: Color(0xFFF2F2F7)
+    val textColor = text?.let { Color(it) } ?: Color(0xFFF2F2F7)
+    val lyricsColor = lyrics?.let { Color(it) } ?: Color(0xFFB9B9C0)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.verticalGradient(
+                    listOf(Color(0xFF232327), Color(0xFF0B0B0D)),
+                ),
+            )
+            .padding(18.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .clip(RoundedCornerShape(16.dp))
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF3A3A42), Color(0xFF17171B)),
+                    ),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Rounded.PlayArrow,
+                contentDescription = null,
+                tint = accentColor,
+                modifier = Modifier
+                    .size(58.dp)
+                    .clip(CircleShape)
+                    .background(accentColor.copy(alpha = 0.16f))
+                    .clickable(onClick = onPickAccent)
+                    .padding(12.dp),
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = stringResource(R.string.custom_preview_title),
+            style = MaterialTheme.typography.titleLarge,
+            color = textColor,
+            maxLines = 1,
+            modifier = Modifier.clickable(onClick = onPickText),
+        )
+        Text(
+            text = stringResource(R.string.custom_preview_artist),
+            style = MaterialTheme.typography.bodyMedium,
+            color = textColor.copy(alpha = 0.65f),
+            maxLines = 1,
+            modifier = Modifier.clickable(onClick = onPickText),
+        )
+        Spacer(Modifier.height(14.dp))
+        // The bar, in the seekbar's colour: the part of the page that is most
+        // obviously a colour and most obviously a choice.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(seekbarColor.copy(alpha = 0.28f))
+                .clickable(onClick = onPickSeekbar),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.42f)
+                    .fillMaxHeight()
+                    .background(seekbarColor),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = stringResource(R.string.custom_preview_lyric),
+            style = MaterialTheme.typography.bodyLarge,
+            color = lyricsColor,
+            maxLines = 2,
+            modifier = Modifier.clickable(onClick = onPickLyrics),
         )
     }
 }
@@ -667,6 +842,198 @@ private fun ThemeCustomization() {
             onSelect = { AppSettings.setThemeMode(ThemeMode.entries[it]) },
             modifier = Modifier.padding(horizontal = 4.dp),
         )
+    }
+}
+
+/**
+ * The app's face.
+ *
+ * The default is the one Apple Music sets its text in. The others are the
+ * listener's to pick, and a face of their own from anywhere on the device is
+ * the one worth having: a face that exists nowhere else is the one they will
+ * recognise.
+ */
+@Composable
+private fun FontsCustomization() {
+    val context = LocalContext.current
+    val choice by AppSettings.appFont.collectAsStateWithLifecycle()
+    val customPath by AppSettings.customFontPath.collectAsStateWithLifecycle()
+    val scriptFonts by AppSettings.scriptFonts.collectAsStateWithLifecycle()
+
+    // A copy in the app's own storage: the document the listener picked can be
+    // moved, deleted, or live on storage that is not mounted tomorrow, and a
+    // face that vanishes takes every label with it.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            val target = File(context.filesDir, "fonts/auris_custom_font.ttf")
+            target.parentFile?.mkdirs()
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            } ?: return@runCatching
+            AppFonts.forgetCustom()
+            AppSettings.setCustomFontPath(target.absolutePath)
+            AppSettings.setAppFont(AppFonts.CHOICE_CUSTOM)
+        }
+    }
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.custom_fonts_help),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp),
+        )
+        val labels = listOf(
+            stringResource(R.string.font_default),
+            stringResource(R.string.font_system),
+            stringResource(R.string.font_serif),
+            stringResource(R.string.font_rounded),
+            stringResource(R.string.font_custom),
+        )
+        val values = AppFonts.CHOICES
+        values.forEachIndexed { index, value ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable {
+                        if (value == AppFonts.CHOICE_CUSTOM) {
+                            picker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf"))
+                        } else {
+                            AppSettings.setAppFont(value)
+                        }
+                    }
+                    .padding(horizontal = 6.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = labels[index],
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier.weight(1f),
+                )
+                if (choice == value) {
+                    Icon(Icons.Rounded.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+        val chosenPath = customPath
+        if (choice == AppFonts.CHOICE_CUSTOM && !chosenPath.isNullOrBlank()) {
+            Text(
+                text = chosenPath.substringAfterLast('/'),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 6.dp, top = 4.dp),
+            )
+        }
+        HorizontalDivider(
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+            modifier = Modifier.padding(vertical = 14.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.custom_script_fonts),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text = stringResource(R.string.custom_script_fonts_help),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = scriptFonts,
+                onCheckedChange = AppSettings::setScriptFonts,
+            )
+        }
+    }
+}
+
+/**
+ * Motion.
+ *
+ * One switch that stops everything moving, and the two that soften the
+ * heaviest of it: the blur behind the glass, which is the app's most
+ * expensive frame, and the fold of the navigation bar.
+ */
+@Composable
+private fun MotionCustomization() {
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
+    val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
+    val highPerformance by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = stringResource(R.string.custom_motion_help),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp),
+        )
+        MotionRow(
+            title = stringResource(R.string.reduce_animation),
+            subtitle = stringResource(R.string.reduce_animation_subtitle),
+            checked = reduceAnimation,
+            onCheckedChange = AppSettings::setReduceAnimation,
+        )
+        MotionRow(
+            title = stringResource(R.string.reduce_dynamic_blur),
+            subtitle = stringResource(R.string.reduce_dynamic_blur_subtitle),
+            checked = reduceDynamicBlur,
+            onCheckedChange = AppSettings::setReduceDynamicBlur,
+        )
+        MotionRow(
+            title = stringResource(R.string.liquid_glass),
+            subtitle = stringResource(R.string.liquid_glass_subtitle),
+            checked = liquidGlass,
+            onCheckedChange = AppSettings::setLiquidGlass,
+        )
+        MotionRow(
+            title = stringResource(R.string.folding_nav_bar),
+            subtitle = stringResource(R.string.folding_nav_bar_subtitle),
+            checked = foldingNavBar,
+            onCheckedChange = AppSettings::setFoldingNavBar,
+        )
+        MotionRow(
+            title = stringResource(R.string.high_performance_mode),
+            subtitle = stringResource(R.string.high_performance_mode_subtitle),
+            checked = highPerformance,
+            onCheckedChange = AppSettings::setHighPerformanceMode,
+        )
+    }
+}
+
+@Composable
+private fun MotionRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

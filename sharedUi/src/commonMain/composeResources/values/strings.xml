@@ -139,6 +139,9 @@
     <string name="clear_search">Clear search</string>
     <string name="downloaded">Downloaded</string>
     <string name="explore">Explore</string>
+    <string name="podcasts">Podcasts</string>
+    <string name="explore_hint">Moods and genres</string>
+    <string name="podcasts_empty">No podcasts yet. Follow a show on YouTube Music and it shows up here.</string>
     <string name="library">Library</string>
     <string name="library_sign_in_description">Sign in to your Google account to see your liked songs, playlists, and YouTube Music history.</string>
     <string name="new_playlist">New playlist</string>
@@ -212,4 +215,6 @@
     <string name="spatial_audio_title">Spatial audio</string>
     <string name="spatial_audio_on_subtitle">Stereo widening is on</string>
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
+    <string name="library_search_hint">Search this</string>
+    <string name="library_empty_segment">Nothing here yet</string>
 </resources>
