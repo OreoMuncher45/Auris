@@ -1,6 +1,7 @@
 package com.music.bitchord.download
 
 import android.content.Context
+import android.os.SystemClock
 import android.content.Intent
 import android.content.SharedPreferences
 import android.media.MediaMetadataRetriever
@@ -348,6 +349,59 @@ object Downloads {
             Log.w(TAG, "could not start the download service: ${it.message}")
             synchronized(lock) { pending.remove(id) }
             fail(id, "Downloads can't start right now")
+        }
+    }
+
+    /**
+     * A batch of tracks, queued in one go.
+     *
+     * The loop this replaces did three expensive things per track: it started
+     * the foreground service again for every one of them, it copied the whole
+     * progress map and the whole session list once per track, and it did all
+     * of that on the thread that asked — the thread drawing the screen.
+     * Three hundred tracks is three hundred binder calls and thirty thousand
+     * map entries copied on the main thread, which is what the system's
+     * "app has stopped responding" dialog was about.
+     *
+     * The service is started once, the maps are copied once, and the work
+     * happens where it should: off the screen.
+     */
+    fun enqueueAll(context: Context, songs: List<Song>, from: String? = null) {
+        if (songs.isEmpty()) return
+        val app = context.applicationContext
+        val accepted = mutableListOf<Song>()
+        val refused = mutableListOf<Song>()
+        synchronized(lock) {
+            for (song in songs) {
+                val id = song.videoId
+                if (id in pending || id in running) continue
+                if (!AppSettings.downloadsAllowedNow) {
+                    refused += song
+                    continue
+                }
+                pending[id] = song
+                accepted += song
+            }
+        }
+        if (accepted.isNotEmpty()) {
+            _active.update { current ->
+                var next = current
+                for (song in accepted) next = next + (song.videoId to DownloadState.Queued)
+                next
+            }
+            DownloadSession.queuedAll(accepted, from)
+        }
+        for (song in refused) {
+            DownloadSession.queued(song, from)
+            fail(song.videoId, WIFI_ONLY_REFUSAL)
+        }
+        if (accepted.isEmpty()) return
+        runCatching {
+            ContextCompat.startForegroundService(app, Intent(app, DownloadService::class.java))
+        }.onFailure {
+            Log.w(TAG, "could not start the download service: ${it.message}")
+            synchronized(lock) { accepted.forEach { pending.remove(it.videoId) } }
+            accepted.forEach { fail(it.videoId, "Downloads can't start right now") }
         }
     }
 
@@ -1218,6 +1272,30 @@ object Downloads {
      * shared between them but the two state flows, and both are written through
      * atomic updates for exactly that reason.
      */
+    /**
+     * Progress, at a rate a screen can take.
+     *
+     * Every callback below fires per chunk written, and each one copies the
+     * whole progress map and the whole session list: with several downloads in
+     * flight that is thousands of copies a second, each of which the screen
+     * then redraws for. A bar that moves in steps of a quarter of a percent is
+     * the same bar, and the app keeps answering the system.
+     */
+    private fun publishProgress(id: String, fraction: Float) {
+        val now = SystemClock.elapsedRealtime()
+        val last = lastProgressAt.getOrPut(id) { 0L }
+        if (now - last < PROGRESS_INTERVAL_MS) return
+        lastProgressAt[id] = now
+        _active.update { it + (id to DownloadState.Running(fraction)) }
+        DownloadSession.running(id, fraction)
+    }
+
+    /** When each track's progress was last published; see [publishProgress]. */
+    private val lastProgressAt = ConcurrentHashMap<String, Long>()
+
+    /** How often a download's progress reaches the screen. */
+    private const val PROGRESS_INTERVAL_MS = 250L
+
     internal suspend fun run(context: Context, song: Song) = withContext(Dispatchers.IO) {
         val id = song.videoId
         // Set before the lookup, not after it. Resolving where a lossless track
@@ -1377,8 +1455,7 @@ object Downloads {
                 if (manifest != null) {
                     val onSegment: (Long, Long) -> Unit = { written, total ->
                         val fraction = written.toFloat() / total
-                        _active.update { it + (id to DownloadState.Running(fraction)) }
-                        DownloadSession.running(id, fraction)
+                        publishProgress(id, fraction)
                     }
                     val savedUri = if (manifest.dash) {
                         OfflineDash.save(
@@ -1413,8 +1490,7 @@ object Downloads {
                 destination.openStream().use { sink ->
                     route.write(sink) { written, total ->
                         val fraction = written.toFloat() / total
-                        _active.update { it + (id to DownloadState.Running(fraction)) }
-                        DownloadSession.running(id, fraction)
+                        publishProgress(id, fraction)
                     }
                 }
                 val words = lyrics?.await()

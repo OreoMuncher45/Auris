@@ -36,6 +36,9 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 
 ## Features
 
+### Audio engine
+- **JamesDSP** — reverb, bass boost, stereo width, tube warmth and a safety limiter, by **James Fung**, running inside the app's own playback stream. Used with permission; GPL-licensed, with its source and notices shipped in the app.
+
 ### Interface
 - **Apple Music–style layout** — full-bleed Now Playing, large artwork, and a seeded palette that follows the current cover.
 - **Folding glass navigation** — one bar that folds as you scroll, with a search pill that now docks directly on top of the keyboard.
@@ -47,7 +50,6 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 - **Classipod** — a full iPod Classic theme with click-wheel navigation and Cover Flow.
 - **Automix V2** — DJ-style transitions with beat locking, entrance rescoring and vocal gating.
 - **Sing** — karaoke mode that turns the lead vocal down so you can sing over the track.
-- **DSP** — reverb, bass boost, stereo width and tube warmth, running inside the app's own playback stream.
 - **Honest lossless numbers** — stats and Discord presence report the decoded PCM rate (1411 / 4608 kbps), never a container guess.
 - **AI badge with strict mode** — flags AI-generated uploads and can skip them.
 
@@ -56,6 +58,10 @@ Android only. No ads, no telemetry, no account required, no "Pro" tier.
 - **Instant downloads screen** — snapshot first paint, batched verification, single-song cache updates.
 - **Save cover art** from any song menu.
 - **Replay** appears in Library through a Customisation toggle instead of taking over Home.
+
+## Credits
+
+- **JamesDSP** — the native audio engine (reverb, bass boost, stereo width, tube warmth, limiter), by **James Fung**, used with permission. GPL-licensed; its source and notices ship with the app.
 
 ## Sources
 

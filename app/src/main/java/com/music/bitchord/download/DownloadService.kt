@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.music.bitchord.R
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -82,7 +83,8 @@ class DownloadService : Service() {
     }
 
     /**
-     * [WORKERS] tracks at a time, each pulling from the same queue.
+     * The listener's own number of tracks at a time, each pulling from the
+     * same queue — see [AppSettings.concurrentDownloads].
      *
      * This used to be one, on the reasoning that these are ranged fetches
      * already served at line rate and two at once would finish neither sooner.
@@ -110,7 +112,14 @@ class DownloadService : Service() {
      * race.
      */
     private suspend fun drainQueue() = coroutineScope {
-        repeat(WORKERS) { launch { work() } }
+        // The listener's own width, 1 to 6. Four is the default and the value
+        // this was built for; the rest is theirs to choose, and the module
+        // engines are pooled per module rather than per worker, so a wider
+        // queue spreads over the modules in the index instead of piling onto
+        // one.
+        val workers = AppSettings.concurrentDownloads.value
+            .coerceIn(AppSettings.MIN_CONCURRENT_DOWNLOADS, AppSettings.MAX_CONCURRENT_DOWNLOADS)
+        repeat(workers) { launch { work() } }
     }
 
     private suspend fun work() {
@@ -271,6 +280,15 @@ class DownloadService : Service() {
          * moving at once is a wall of text, not a download.
          */
         const val WORKERS = 4
+
+        /**
+         * The widest queue the setting allows.
+         *
+         * Past this the phone is the limit rather than the setting: six
+         * lookups in flight is already more than a mid-range device keeps
+         * comfortably in memory, and the rows on screen stop being readable.
+         */
+        const val MAX_WORKERS = 6
 
         /**
          * How long a worker keeps looking at an empty queue before it accepts

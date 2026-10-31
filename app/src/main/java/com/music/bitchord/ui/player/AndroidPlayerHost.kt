@@ -281,10 +281,17 @@ private class MusicStreamVolume(private val context: Context) : SystemVolume {
         (manager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0).toFloat() / max()
 
     override fun set(level: Float) {
-        manager?.setStreamVolume(AudioManager.STREAM_MUSIC, (level * max()).roundToInt(), 0)
+        val target = level.coerceIn(0f, 1f)
+        // The audio path reads this: with the mixer bypassed the system
+        // volume cuts nothing, and the app has to cut the sound itself.
+        AppSettings.playerVolume.value = target
+        manager?.setStreamVolume(AudioManager.STREAM_MUSIC, (target * max()).roundToInt(), 0)
     }
 
     override fun refresh() {
+        // A hardware key or the system panel moved the level: the audio path
+        // has to hear about it too.
+        AppSettings.playerVolume.value = read()
         _level.value = read()
     }
 }

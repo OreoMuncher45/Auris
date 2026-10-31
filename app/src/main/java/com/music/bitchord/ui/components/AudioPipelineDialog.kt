@@ -130,7 +130,7 @@ private fun bitExactVerdict(
     // running. What is left to report is whether the source encoding survived
     // the sink and whether the system's own mixer was taken out of the path.
     dspBypassed && outputExact && mixerBitPerfect ->
-        "Yes (bit-perfect: DSP and system mixer bypassed)"
+        "Yes (bit-perfect: JamesDSP and system mixer bypassed)"
     dspBypassed && outputExact ->
         "Yes (DSP bypassed; the system mixer may resample)"
     dspBypassed -> "No — bit-perfect requested, ${outputExactDetail ?: "the route cannot carry the source"}"

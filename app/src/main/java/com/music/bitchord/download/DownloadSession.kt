@@ -162,6 +162,36 @@ object DownloadSession {
         }
     }
 
+    /**
+     * A batch of tracks, accepted at once.
+     *
+     * The list this lives in is copied on every change, so accepting three
+     * hundred tracks one at a time copies it three hundred times over — on
+     * the thread that asked, which is the one drawing the screen.
+     */
+    fun queuedAll(songs: List<Song>, from: String? = null) {
+        if (songs.isEmpty()) return
+        update { state ->
+            var items = state.items
+            for (song in songs) {
+                val existing = items.indexOfFirst { it.videoId == song.videoId }
+                val item = Item(
+                    videoId = song.videoId,
+                    song = song,
+                    progress = DownloadProgress.Queued,
+                    from = from ?: items.getOrNull(existing)?.from,
+                    sequence = if (existing >= 0) items[existing].sequence else tick(),
+                )
+                items = if (existing >= 0) {
+                    items.toMutableList().also { it[existing] = item }
+                } else {
+                    items + item
+                }
+            }
+            state.copy(items = items)
+        }
+    }
+
     fun running(videoId: String, fraction: Float) =
         set(videoId, DownloadProgress.Running(fraction))
 

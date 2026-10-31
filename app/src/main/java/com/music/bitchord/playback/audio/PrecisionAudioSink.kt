@@ -11,6 +11,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import com.music.bitchord.BuildConfig
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.audio.usb.DirectAudioOutput
 import com.music.bitchord.playback.usb.ExclusiveUsbOutput
@@ -97,6 +98,8 @@ class PrecisionAudioSink(
      * Android 14 mixer to do.
      */
     private val exclusiveUsb: ExclusiveUsbOutput? = null,
+    /** The level last handed to the DAC, so it is only sent when it changes. */
+    @Volatile private var exclusiveGainApplied: Float = 1f,
     /**
      * Whether exclusive USB output should be attempted for the next configure.
      * Same switch as [bitPerfect]; separate so the caller decides the route.
@@ -516,6 +519,16 @@ class PrecisionAudioSink(
             return ExclusiveOutcome.FALL_THROUGH
         }
         if (session.isPaused()) return ExclusiveOutcome.BACKPRESSURE
+        // On the exclusive route the PCM goes to the DAC untouched, and the
+        // DAC's own volume control is what the bar drives: the samples stay
+        // bit-exact and the sound still gets quieter.
+        if (AppSettings.bitPerfect.value) {
+            val level = AppSettings.playerVolume.value.coerceIn(0f, 1f)
+            if (level != exclusiveGainApplied) {
+                exclusiveGainApplied = level
+                runCatching { session.setVolume(level) }
+            }
+        }
         val encoding = inputPcmEncoding ?: return ExclusiveOutcome.FALL_THROUGH
         if (session.write(buffer, presentationTimeUs, isFloatBuffer = encoding == PcmEncoding.PCM_FLOAT)) {
             exclusiveEnded = false
@@ -593,6 +606,21 @@ class PrecisionAudioSink(
         // switching it on must stop the very next buffer being altered, and
         // switching it off must not resume a limiter from where it left off.
         val skipDsp = bitPerfect()
+        // The listener's own volume, cut here rather than by the system.
+        //
+        // A bit-perfect route bypasses the mixer, and the mixer's gain is
+        // exactly what that gives up: the system volume stops attenuating
+        // anything, so the bar moves and the sound does not. The level is
+        // applied to the samples here instead, on their way to the DAC.
+        //
+        // Only where the mixer really is bypassed. Where it is not — an
+        // older Android, or a route the mixer will not let go of — the system
+        // still cuts, and cutting here as well would be twice.
+        val userGain = if (skipDsp && mixerBypassed()) {
+            AppSettings.playerVolume.value.coerceIn(0f, 1f)
+        } else {
+            1f
+        }
         if (skipDsp != dspBypassLatched) {
             if (!skipDsp) dspChain.reset()
             publishTelemetry(inEncoding, outEncoding)
@@ -622,7 +650,7 @@ class PrecisionAudioSink(
         // instead of decoding to float and encoding it back to identical bytes.
         // On the 16-bit speaker path this is the whole per-buffer cost of the
         // app's audio processing.
-        if (inEncoding == outEncoding && (skipDsp || dspChain.isBypassed())) {
+        if (inEncoding == outEncoding && (skipDsp || dspChain.isBypassed()) && userGain >= 0.999f) {
             timestampedInputTimeUs = C.TIME_UNSET
             framesEmittedForInput = 0L
             if (!inputBuffer.hasRemaining()) return true
@@ -674,7 +702,11 @@ class PrecisionAudioSink(
             }
 
             // Process normalized Float32 samples through custom DSP chain
-            if (!skipDsp) dspChain.process(audioBlock)
+            if (!skipDsp) {
+                dspChain.process(audioBlock)
+            } else if (userGain < 0.999f) {
+                scaleBlock(audioBlock, userGain)
+            }
 
             // Encode processed samples to target PCM output buffer (Float32 or PCM16)
             outputByteBuffer.clear()
@@ -899,6 +931,15 @@ class PrecisionAudioSink(
     }
 
     override fun setVolume(volume: Float) {
+        // While bit-perfect is on, the listener's own level is the only gain
+        // in the path: this one is the crossfade's, and the two must not
+        // stack. The platform track stays at unity and the DAC's own control
+        // takes the listener's level; see [tryExclusiveBuffer] and the
+        // software gain in [handleBuffer].
+        if (AppSettings.bitPerfect.value) {
+            super.setVolume(1f)
+            return
+        }
         // usbdevfs never uses AudioTrack volume. A Feature Unit that changes
         // GET_CUR keeps PCM untouched; otherwise the session scales it in
         // software. The platform track must stay at unity so the two gains
@@ -1060,6 +1101,29 @@ class PrecisionAudioSink(
      * eight bits go regardless of route, and no setting in this app can change
      * that while [DefaultAudioSink] is doing the writing.
      */
+    /**
+     * The listener's volume, applied to the samples in place.
+     *
+     * A multiply on the decoded floats, before they are encoded for the
+     * route: the same place the app's own levelling sits, so the bar and the
+     * pipeline agree on what was done to the sound.
+     */
+    private fun scaleBlock(block: AudioBlock, gain: Float) {
+        val samples = block.samples
+        val count = block.sampleCount
+        for (index in 0 until count) samples[index] *= gain
+    }
+
+    /**
+     * Whether the system mixer is genuinely out of the path.
+     *
+     * The bit-perfect request asks for it; the route decides. Until the
+     * platform says the mixer took the request, the system volume still
+     * attenuates and the app must not attenuate as well.
+     */
+    private fun mixerBypassed(): Boolean =
+        AudioOutputStatus.current.value.bitPerfectMixer?.active == true
+
     private fun publishOutputExactness(source: PcmEncoding, target: PcmEncoding) {
         val exact = when (source) {
             PcmEncoding.PCM_16BIT -> target == PcmEncoding.PCM_16BIT
