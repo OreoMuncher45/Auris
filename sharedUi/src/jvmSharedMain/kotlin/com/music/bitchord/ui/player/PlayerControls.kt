@@ -62,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -92,6 +93,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.sp
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
@@ -212,9 +214,9 @@ internal fun PlayerScrubber(
             mixing = mixing,
             mixPulse = mixPulse,
             transitionWindow = transitionWindow,
-            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
+            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
             inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
-            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
+            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
         )
         Box(
             modifier = Modifier
@@ -288,6 +290,14 @@ private fun MixingLabel(pulse: MixPulse, modifier: Modifier = Modifier) {
 private const val MIXING_LABEL_REST = 0.5f
 
 /**
+ * The bars are drawn at ninety per cent.
+ *
+ * Fully opaque, a filled track reads as a printed line rather than as a
+ * level; Apple's own bars are not quite solid, and neither are these.
+ */
+private const val BAR_OPACITY = 0.9f
+
+/**
  * The quality badge between the timestamps — "Lossless", "Hi-Res", a loading
  * shimmer while a lossless source is still being looked for.
  */
@@ -312,15 +322,36 @@ internal fun PlaybackQualityLabel(
     // should keep saying "loading" through that stretch rather than going
     // blank only to possibly say "loading" again a moment later.
     val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
-    LosslessOrStats(
-        isLoading = isLoading,
-        stillRacing = song.videoId in racingLossless,
-        losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
-        effectiveQuality = effectiveQuality,
-        nerdStats = nerdStats,
-        modifier = modifier,
-    )
+    // The badge's own answer: tap it and it says what it means — where the
+    // bytes came from, how many, and in what. A badge is a claim, and this is
+    // the measurement behind it, one tap away rather than in a dialog
+    // somewhere else.
+    var details by remember { mutableStateOf(false) }
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        LosslessOrStats(
+            isLoading = isLoading,
+            stillRacing = song.videoId in racingLossless,
+            losslessRequested = effectiveQuality == AudioQuality.LOSSLESS,
+            effectiveQuality = effectiveQuality,
+            nerdStats = nerdStats,
+            modifier = Modifier
+                .clickable(enabled = nerdStats != null) { details = true },
+        )
+        val measured = nerdStats
+        if (details && measured != null) {
+            Popup(
+                onDismissRequest = { details = false },
+                alignment = Alignment.BottomCenter,
+                offset = IntOffset(0, -QUALITY_CARD_OFFSET_PX),
+            ) {
+                QualityDetailsCard(stats = measured)
+            }
+        }
+    }
 }
+
+/** How far above the bottom of the screen the quality card sits. */
+private const val QUALITY_CARD_OFFSET_PX = 260
 
 /**
  * Stats for nerds, on the foot of the sleeve: the measured stream, and under
@@ -529,9 +560,9 @@ internal fun VolumeRow(
             onValueChangeFinished = onValueChangeFinished,
             idleHeight = 6.dp,
             activeHeight = 10.dp,
-            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
+            activeColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
             inactiveColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.track),
-            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary),
+            markerColor = (LocalPlayerSeekbar.current ?: ink).copy(alpha = alphas.primary * BAR_OPACITY),
             modifier = Modifier.weight(1f),
         )
         Spacer(Modifier.width(10.dp))

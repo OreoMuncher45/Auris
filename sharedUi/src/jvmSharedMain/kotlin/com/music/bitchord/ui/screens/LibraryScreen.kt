@@ -6,6 +6,13 @@ import org.jetbrains.compose.resources.painterResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.sp
+import com.music.bitchord.ui.components.SearchField
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import org.jetbrains.compose.resources.stringResource
@@ -38,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -74,6 +82,29 @@ import com.music.bitchord.ui.components.librarySkeleton
  * The liked list is still fetched — it is what the rest of the app reads a
  * track's rating off (see MainViewModel's `likeStatuses`); it just isn't a
  * second place to browse it.
+ */
+/**
+ * The Library's segments.
+ *
+ * One bar, and what is under it is one kind of thing at a time: what is on
+ * this device, the playlists, the artists, the albums. The page used to carry
+ * all of them at once, each under its own heading, which read as one long
+ * list that could not make up its mind — a release you were looking for was
+ * three screens down, under a heading for something else.
+ */
+enum class LibrarySegment {
+    Device,
+    Playlists,
+    Artists,
+    Albums,
+}
+
+/**
+ * The signed-in library, one segment at a time.
+ *
+ * The Replay cards stay above the bar: they are the way into a feature
+ * rather than a shelf of the account's own, and they are the one thing on
+ * this page that is about the listener rather than about their library.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -119,6 +150,15 @@ fun LibraryScreen(
 ) {
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
     val onDevice = stringResource(Res.string.on_device)
+    var segment by rememberSaveable { mutableStateOf(LibrarySegment.Device) }
+    // One query per segment: what was typed into Playlists is not what was
+    // typed into Albums, and switching back to it should find the query still
+    // there.
+    // Not saved across a restart: a half-typed search is not worth restoring.
+    val queries = remember { mutableStateMapOf<String, String>() }
+    val query = queries[segment.name].orEmpty()
+    val setQuery: (String) -> Unit = { value -> queries[segment.name] = value }
+
     PullToRefresh(
         refreshing = refreshing,
         onRefresh = onRefresh,
@@ -141,32 +181,133 @@ fun LibraryScreen(
                 }
             }
             item(key = "replay") { replay() }
-            if (links.isNotEmpty()) {
-                item(key = "links") { LibraryLinkList(links = links, onClick = onShelfItemClick) }
+            item(key = "segments") {
+                LibrarySegmentBar(
+                    selected = segment,
+                    onSelect = { segment = it },
+                    onCreate = onNewPlaylist,
+                    modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+                )
             }
-            if (deviceItems.isNotEmpty()) {
-                item(key = "shelf:$onDevice") {
-                    val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
-                    LibraryGridShelf(
-                        shelf = onDeviceShelf,
-                        onItemClick = onShelfItemClick,
-                        onItemLongPress = onShelfItemLongPress,
-                        onShowAll = { onShowAll(onDeviceShelf) },
-                    )
+            item(key = "search") {
+                SearchField(
+                    query = query,
+                    onQueryChange = setQuery,
+                    onSubmit = {},
+                    placeholder = stringResource(Res.string.library_search_hint),
+                    modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+                )
+            }
+
+            val shelves = (state as? UiState.Success)?.data?.shelves.orEmpty()
+            fun shelfNamed(title: String): HomeShelf? =
+                shelves.firstOrNull { it.title.equals(title, ignoreCase = true) }
+            // The filter is the segment's own search: a card whose title does
+            // not carry what was typed is not in this segment any more.
+            fun filtered(shelf: HomeShelf): HomeShelf =
+                if (query.isBlank()) shelf else shelf.copy(
+                    items = shelf.items.filter { it.title.contains(query.trim(), ignoreCase = true) },
+                )
+
+            when (segment) {
+                LibrarySegment.Device -> {
+                    if (links.isNotEmpty()) {
+                        item(key = "links") { LibraryLinkList(links = links, onClick = onShelfItemClick) }
+                    }
+                    if (deviceItems.isNotEmpty()) {
+                        item(key = "shelf:$onDevice") {
+                            val onDeviceShelf = HomeShelf(title = onDevice, items = deviceItems)
+                            LibraryGridShelf(
+                                shelf = filtered(onDeviceShelf),
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onShowAll = { onShowAll(onDeviceShelf) },
+                            )
+                        }
+                    } else if (links.isEmpty()) {
+                        item(key = "empty:device") { LibraryEmptySegment() }
+                    }
+                }
+
+                LibrarySegment.Playlists -> {
+                    val playlists = shelfNamed(PLAYLISTS)
+                    if (playlists != null || !signedIn) {
+                        item(key = "shelf:$PLAYLISTS") {
+                            val shelf = filtered(playlists ?: HomeShelf(PLAYLISTS, emptyList()))
+                            PlaylistShelf(
+                                shelf = shelf,
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onNewPlaylist = onNewPlaylist,
+                                onImportSpotifyPlaylist = onImportSpotifyPlaylist,
+                                onShowAll = { onShowAll(shelf) },
+                                pinnedPlaylists = pinnedPlaylists,
+                            )
+                        }
+                    }
+                    // The account's saved podcasts are saved things, and they
+                    // are shelves of the same kind as the playlists.
+                    shelfNamed(PODCASTS)?.let { podcasts ->
+                        item(key = "shelf:$PODCASTS") {
+                            LibraryGridShelf(
+                                shelf = filtered(podcasts),
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onShowAll = { onShowAll(podcasts) },
+                            )
+                        }
+                    }
+                    if (playlists == null && signedIn && shelfNamed(PODCASTS) == null) {
+                        item(key = "empty:playlists") { LibraryEmptySegment() }
+                    }
+                }
+
+                LibrarySegment.Artists -> {
+                    val artists = shelfNamed(ARTISTS)
+                    val subscriptions = shelfNamed(SUBSCRIPTIONS)
+                    if (artists != null) {
+                        item(key = "shelf:$ARTISTS") {
+                            LibraryGridShelf(
+                                shelf = filtered(artists),
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onShowAll = { onShowAll(artists) },
+                            )
+                        }
+                    }
+                    if (subscriptions != null) {
+                        item(key = "shelf:$SUBSCRIPTIONS") {
+                            LibraryGridShelf(
+                                shelf = filtered(subscriptions),
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onShowAll = { onShowAll(subscriptions) },
+                            )
+                        }
+                    }
+                    if (artists == null && subscriptions == null) {
+                        item(key = "empty:artists") { LibraryEmptySegment() }
+                    }
+                }
+
+                LibrarySegment.Albums -> {
+                    val albums = shelfNamed(ALBUMS)
+                    if (albums != null) {
+                        item(key = "shelf:$ALBUMS") {
+                            LibraryGridShelf(
+                                shelf = filtered(albums),
+                                onItemClick = onShelfItemClick,
+                                onItemLongPress = onShelfItemLongPress,
+                                onShowAll = { onShowAll(albums) },
+                            )
+                        }
+                    } else {
+                        item(key = "empty:albums") { LibraryEmptySegment() }
+                    }
                 }
             }
+
             if (!signedIn) {
-                item(key = "shelf:$PLAYLISTS") {
-                    val emptyPlaylists = HomeShelf(PLAYLISTS, emptyList())
-                    PlaylistShelf(
-                        shelf = emptyPlaylists,
-                        onItemClick = onShelfItemClick,
-                        onItemLongPress = onShelfItemLongPress,
-                        onNewPlaylist = onNewPlaylist,
-                        onImportSpotifyPlaylist = onImportSpotifyPlaylist,
-                        onShowAll = { onShowAll(emptyPlaylists) },
-                    )
-                }
                 item {
                     MessageState(
                         message = stringResource(Res.string.library_sign_in_description),
@@ -174,59 +315,92 @@ fun LibraryScreen(
                         onAction = onSignIn,
                     )
                 }
-                return@LazyColumn
             }
             when (state) {
                 is UiState.Loading -> librarySkeleton()
                 is UiState.Error -> item {
                     MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
-                is UiState.Success -> {
-                    // A fresh account has no Playlists shelf at all, and that
-                    // is exactly the account most in need of the button that
-                    // makes one — so the row is drawn either way, empty but
-                    // for the tile that creates the first playlist.
-                    val shelves = state.data.shelves
-                    if (shelves.none { it.title == PLAYLISTS }) {
-                        item(key = "shelf:$PLAYLISTS") {
-                            val emptyPlaylists = HomeShelf(PLAYLISTS, emptyList())
-                            PlaylistShelf(
-                                shelf = emptyPlaylists,
-                                onItemClick = onShelfItemClick,
-                                onItemLongPress = onShelfItemLongPress,
-                                onNewPlaylist = onNewPlaylist,
-                                onImportSpotifyPlaylist = onImportSpotifyPlaylist,
-                                onShowAll = { onShowAll(emptyPlaylists) },
-                            )
-                        }
-                    }
-                    shelves.forEach { shelf ->
-                        item(key = "shelf:${shelf.title}") {
-                            if (shelf.title == PLAYLISTS) {
-                                val pinnedFirst = shelf.pinnedFirst(pinnedPlaylists)
-                                PlaylistShelf(
-                                    shelf = pinnedFirst,
-                                    onItemClick = onShelfItemClick,
-                                    onItemLongPress = onShelfItemLongPress,
-                                    onNewPlaylist = onNewPlaylist,
-                                    onImportSpotifyPlaylist = onImportSpotifyPlaylist,
-                                    onShowAll = { onShowAll(pinnedFirst) },
-                                    pinnedPlaylists = pinnedPlaylists,
-                                )
-                            } else {
-                                LibraryGridShelf(
-                                    shelf = shelf,
-                                    onItemClick = onShelfItemClick,
-                                    onItemLongPress = onShelfItemLongPress,
-                                    onShowAll = { onShowAll(shelf) },
-                                )
-                            }
-                        }
-                    }
-                }
+                else -> Unit
             }
         }
     }
+}
+
+/**
+ * The bar: the four segments, and the tile that makes a new folder.
+ *
+ * A bar rather than a row of headings because the bar says which one of the
+ * four is open, and a heading under the last one says nothing about the
+ * other three.
+ */
+@Composable
+private fun LibrarySegmentBar(
+    selected: LibrarySegment,
+    onSelect: (LibrarySegment) -> Unit,
+    onCreate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val labels = listOf(
+        stringResource(Res.string.on_device),
+        stringResource(Res.string.playlists),
+        stringResource(Res.string.artists),
+        stringResource(Res.string.albums),
+    )
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        labels.forEachIndexed { index, label ->
+            val value = LibrarySegment.entries[index]
+            val chosen = value == selected
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (chosen) {
+                    MaterialTheme.colorScheme.onBackground
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(
+                        if (chosen) {
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f)
+                        } else {
+                            Color.Transparent
+                        },
+                    )
+                    .clickable { onSelect(value) }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        Icon(
+            imageVector = BitChordIcons.Plus,
+            contentDescription = stringResource(Res.string.new_playlist),
+            tint = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.onBackground.copy(alpha = 0.10f))
+                .clickable(onClick = onCreate)
+                .padding(7.dp),
+        )
+    }
+}
+
+/** What a segment with nothing in it says. */
+@Composable
+private fun LibraryEmptySegment() {
+    Text(
+        text = stringResource(Res.string.library_empty_segment),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 26.dp),
+    )
 }
 
 /** One of the Library's folder rows: the page [item] opens, behind [icon]. */
@@ -476,3 +650,15 @@ private fun HomeShelf.sortedForLibrary(sort: LibrarySort): HomeShelf = when (sor
 
 /** The library feed whose cards are the account's own — see [PlaylistShelf]. */
 private const val PLAYLISTS = YtMusicRepository.PLAYLISTS_SHELF
+
+/** The album shelf of the library feed. */
+private const val ALBUMS = "Albums"
+
+/** The artist shelf of the library feed. */
+private const val ARTISTS = "Artists"
+
+/** The subscriptions shelf of the library feed: artists the listener follows. */
+private const val SUBSCRIPTIONS = "Subscriptions"
+
+/** The saved podcasts shelf of the library feed. */
+private const val PODCASTS = "Podcasts"

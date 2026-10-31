@@ -78,6 +78,8 @@ fun RadioScreen(
     onSeedClick: (ShelfItem) -> Unit,
     onStationClick: (MoodGenre) -> Unit,
     onStartStation: () -> Unit,
+    /** Opens the moods-and-genres grid, which used to sit on its own tab. */
+    onGenresClick: () -> Unit,
     onRetry: () -> Unit,
     refreshing: Boolean,
     onRefresh: () -> Unit,
@@ -117,6 +119,9 @@ fun RadioScreen(
             }
             item(key = "start_station") {
                 StartStationRow(onClick = onStartStation)
+            }
+            item(key = "genres") {
+                GenresRow(onClick = onGenresClick)
             }
             if (seeds.isNotEmpty()) {
                 item(key = "seeds_header") {
@@ -264,6 +269,58 @@ private fun RadioFeatureCard(item: ShelfItem?, onClick: () -> Unit) {
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The way into moods and genres.
+ *
+ * They used to have a tab of their own, and when the podcasts took that
+ * slot they lost their front door — so they get one here, next to the radio
+ * stations they share a feed with.
+ */
+@Composable
+private fun GenresRow(onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER)
+            .padding(top = 8.dp, bottom = 4.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = BitChordIcons.TabExplore,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(Res.string.explore),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = stringResource(Res.string.explore_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
