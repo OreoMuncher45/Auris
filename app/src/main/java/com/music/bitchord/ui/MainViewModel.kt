@@ -48,6 +48,9 @@ import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.audiobook.Audiobook
+import com.music.bitchord.data.audiobook.AudiobookChapter
+import com.music.bitchord.data.audiobook.LibriVox
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
@@ -148,6 +151,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _explore = MutableStateFlow<UiState<List<MoodGenreSection>>>(UiState.Loading)
     val explore: StateFlow<UiState<List<MoodGenreSection>>> = _explore.asStateFlow()
+
+    /**
+     * The podcast shows the account follows.
+     *
+     * A show is its own kind of thing — something you subscribe to, with
+     * episodes under it — so it lives in a feed of its own rather than in
+     * the playlist or album shelves.
+     */
+    private val _podcasts = MutableStateFlow<UiState<List<ShelfItem>>>(UiState.Loading)
+    val podcasts: StateFlow<UiState<List<ShelfItem>>> = _podcasts.asStateFlow()
+
+    /**
+     * The books, from LibriVox.
+     *
+     * A public-domain library of recordings: no key, no account, no cookie —
+     * which is why it can be read on a phone that has never signed in to
+     * anything.
+     */
+    private val _audiobooks = MutableStateFlow<UiState<List<Audiobook>>>(UiState.Loading)
+    val audiobooks: StateFlow<UiState<List<Audiobook>>> = _audiobooks.asStateFlow()
+
+    /** The chapters of the book that is open. */
+    private val _audiobookChapters = MutableStateFlow<UiState<List<AudiobookChapter>>>(UiState.Loading)
+    val audiobookChapters: StateFlow<UiState<List<AudiobookChapter>>> = _audiobookChapters.asStateFlow()
 
     private val _selectedMoodGenre = MutableStateFlow<MoodGenre?>(null)
     val selectedMoodGenre: StateFlow<MoodGenre?> = _selectedMoodGenre.asStateFlow()
@@ -1565,7 +1592,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * as one flag: a pull on Library while Home is still refreshing in the
      * background shouldn't leave the wrong tab showing a loader.
      */
-    enum class Feed { HOME, EXPLORE, LIBRARY }
+    enum class Feed { HOME, EXPLORE, LIBRARY, PODCASTS }
 
     private val _refreshing = MutableStateFlow(emptySet<Feed>())
     val refreshing: StateFlow<Set<Feed>> = _refreshing.asStateFlow()
@@ -1587,6 +1614,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 Feed.HOME -> refreshHome(identity)
                 Feed.EXPLORE -> fetchExplore()
                 Feed.LIBRARY -> fetchLibrary(identity)
+                Feed.PODCASTS -> fetchPodcasts()
             }
             _refreshing.value = _refreshing.value - feed
         }
@@ -1596,6 +1624,62 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         exploreRequested = true
         _explore.value = UiState.Loading
         viewModelScope.launch { fetchExplore() }
+    }
+
+    /** Loads the podcast feed, once; later failures wait for the page's Retry. */
+    fun ensurePodcastsLoaded() {
+        if (podcastsRequested) return
+        loadPodcasts()
+    }
+
+    /** Re-reads the podcast feed from scratch, dropping the old shows. */
+    fun loadPodcasts() {
+        podcastsRequested = true
+        _podcasts.value = UiState.Loading
+        viewModelScope.launch { fetchPodcasts() }
+    }
+
+    private var podcastsRequested = false
+
+    /** The title being looked for, or null for the whole catalogue. */
+    private var audiobookQuery: String? = null
+
+    /** Loads the catalogue, or narrows it to a title search. */
+    fun loadAudiobooks(query: String? = null) {
+        audiobookQuery = query?.takeIf { it.isNotBlank() }
+        _audiobooks.value = UiState.Loading
+        viewModelScope.launch {
+            val state = runCatching { LibriVox.books(title = audiobookQuery) }.fold(
+                onSuccess = { UiState.Success(it) },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+            _audiobooks.value = state
+        }
+    }
+
+    /** Opens a book: its chapters, fetched from the same feed. */
+    fun openAudiobook(book: Audiobook) {
+        _audiobookChapters.value = UiState.Loading
+        viewModelScope.launch {
+            val state = runCatching { LibriVox.chapters(book.id) }.fold(
+                onSuccess = { UiState.Success(it) },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+            _audiobookChapters.value = state
+        }
+    }
+
+    /** Re-reads the chapters of the open book. */
+    fun reloadAudiobookChapters(bookId: String) {
+        openAudiobook(Audiobook(id = bookId, title = "", author = "", coverUrl = null, language = null, totalSeconds = null, sectionCount = 0, genres = emptyList()))
+    }
+
+    private suspend fun fetchPodcasts() {
+        val state = YtMusicRepository.podcastShows().fold(
+            onSuccess = { UiState.Success(it) },
+            onFailure = { UiState.Error(it.friendly()) },
+        )
+        _podcasts.value = state
     }
 
     /**

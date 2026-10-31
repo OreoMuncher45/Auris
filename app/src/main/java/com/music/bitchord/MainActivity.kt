@@ -24,6 +24,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -68,6 +70,7 @@ import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Person
@@ -262,6 +265,7 @@ import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.screens.SegmentedControl
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.sharedui.resources.Res as SharedRes
+import com.music.bitchord.sharedui.resources.podcasts
 import com.music.bitchord.sharedui.resources.search_hint
 import com.music.bitchord.sharedui.resources.search_library_hint
 import com.music.bitchord.ui.components.TopBarDownloadButton
@@ -305,7 +309,11 @@ import androidx.compose.ui.layout.onSizeChanged
 import com.music.bitchord.ui.player.LocalPlayerDock
 import com.music.bitchord.ui.player.PlayerDock
 import com.music.bitchord.ui.screens.DetailScreen
+import com.music.bitchord.ui.screens.AudiobookScreen
+import com.music.bitchord.ui.screens.AudiobooksScreen
+import com.music.bitchord.ui.screens.CustomizationPage
 import com.music.bitchord.ui.screens.ExploreScreen
+import com.music.bitchord.ui.screens.PodcastsScreen
 import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryGridPage
@@ -568,6 +576,10 @@ private fun BitChordApp(
     // takes part in the docking asks for [activeDock] / this, never for the
     // dock or the motion directly.
     val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    // The same switch, read for the page transitions: with every animation
+    // off there is no motion between pages either — the page is simply the
+    // next page.
+    val animationsOff by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val activeDock = playerDock.takeIf { !reducePlayerMotion }
     playerSheetMotion.flingVelocity = with(LocalDensity.current) { PLAYER_PULL_FLING_VELOCITY.toPx() }
     // How the app takes the player down, whatever for: a back press, or a page
@@ -595,6 +607,14 @@ private fun BitChordApp(
      */
     var webSession by remember { mutableStateOf<WebSessionMode?>(null) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showCustomization by rememberSaveable { mutableStateOf(false) }
+    // Moods and genres used to have a tab of their own. The podcasts took
+    // that slot, so they live on a page now, opened from the radio tab.
+    var showGenres by rememberSaveable { mutableStateOf(false) }
+    // LibriVox's books: the list, and whichever one is open.
+    var showAudiobooks by rememberSaveable { mutableStateOf(false) }
+    var openAudiobook by remember { mutableStateOf<com.music.bitchord.data.audiobook.Audiobook?>(null) }
+    var audiobookQuery by rememberSaveable { mutableStateOf("") }
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
@@ -830,6 +850,13 @@ private fun BitChordApp(
     val query by viewModel.query.collectAsStateWithLifecycle()
     val results by viewModel.results.collectAsStateWithLifecycle()
     val exploreState by viewModel.explore.collectAsStateWithLifecycle()
+    val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
+    val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
+    val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
+    // The podcast feed is fetched once, the first time its tab is opened.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
+    }
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
     val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
     val libraryState by viewModel.library.collectAsStateWithLifecycle()
@@ -837,7 +864,7 @@ private fun BitChordApp(
     val searchSource by viewModel.searchSource.collectAsStateWithLifecycle()
     val libraryResults by viewModel.libraryResults.collectAsStateWithLifecycle()
     LaunchedEffect(selectedTab) {
-        if (selectedTab == TAB_EXPLORE || selectedTab == TAB_RADIO) viewModel.ensureExploreLoaded()
+        if (selectedTab == TAB_RADIO || showGenres) viewModel.ensureExploreLoaded()
         if (selectedTab == TAB_SEARCH) {
             searchVisualActive = true
         } else {
@@ -1216,13 +1243,14 @@ private fun BitChordApp(
     val exploreListState = rememberLazyListState()
     val moodGenreListState = rememberLazyListState()
     val radioListState = rememberLazyListState()
+    val podcastListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
     val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
-        TAB_EXPLORE -> if (selectedMoodGenre == null) exploreListState else moodGenreListState
+        TAB_PODCASTS -> podcastListState
         TAB_RADIO -> if (selectedMoodGenre == null) radioListState else moodGenreListState
         TAB_LIBRARY -> libraryListState
         else -> searchListState
@@ -1232,12 +1260,13 @@ private fun BitChordApp(
     // line under the top bar, so the state has to be visible to both.
     val homePull = rememberPullToRefreshState()
     val explorePull = rememberPullToRefreshState()
+    val podcastPull = rememberPullToRefreshState()
     val libraryPull = rememberPullToRefreshState()
     val refreshing by viewModel.refreshing.collectAsStateWithLifecycle()
     val currentFeed = when {
         showSettings || showAccountScrobbling || detail != null -> null
         selectedTab == TAB_HOME -> MainViewModel.Feed.HOME
-        selectedTab == TAB_EXPLORE -> MainViewModel.Feed.EXPLORE
+        selectedTab == TAB_PODCASTS -> MainViewModel.Feed.PODCASTS
         selectedTab == TAB_LIBRARY -> MainViewModel.Feed.LIBRARY
         else -> null
     }
@@ -1254,6 +1283,7 @@ private fun BitChordApp(
         MainViewModel.Feed.HOME -> homePull
         MainViewModel.Feed.EXPLORE -> explorePull
         MainViewModel.Feed.LIBRARY -> libraryPull
+        MainViewModel.Feed.PODCASTS -> podcastPull
         null -> null
     }
     val scrolled by remember(currentListState) {
@@ -1311,7 +1341,7 @@ private fun BitChordApp(
     // a fold. Keyed on the labels so a locale change still rebuilds it.
     val homeLabel = stringResource(R.string.home)
     val playLabel = stringResource(R.string.play)
-    val exploreLabel = stringResource(R.string.explore)
+    val podcastsLabel = org.jetbrains.compose.resources.stringResource(SharedRes.string.podcasts)
     val radioLabel = stringResource(R.string.radio)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
@@ -1319,10 +1349,10 @@ private fun BitChordApp(
     val replayLabel = stringResource(R.string.replay)
     val queueLabel = stringResource(R.string.queue)
     val sharedLinkLabel = stringResource(R.string.shared_link)
-    val tabs = remember(homeLabel, exploreLabel, radioLabel, libraryLabel, searchLabel) {
+    val tabs = remember(homeLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(homeLabel, BitChordIcons.Home),
-            BottomTab(exploreLabel, BitChordIcons.TabExplore),
+            BottomTab(podcastsLabel, Icons.Rounded.GraphicEq),
             BottomTab(radioLabel, Icons.Rounded.Radio),
             BottomTab(libraryLabel, BitChordIcons.TabLibrary),
             BottomTab(searchLabel, BitChordIcons.TabSearch),
@@ -2185,7 +2215,7 @@ private fun BitChordApp(
         when {
             songs.isEmpty() -> Unit
             granted -> {
-                songs.forEach { Downloads.enqueue(context, it, from?.title) }
+                Downloads.enqueueAll(context, songs, from?.title)
                 if (from != null) Downloads.markRequested(from.id, songs.map { it.videoId })
             }
             // The one case where refusing is fatal: below API 29 there is no
@@ -2267,6 +2297,13 @@ private fun BitChordApp(
         item.browseId?.let { id ->
             if (id == SPOTIFY_BROWSE_ID) {
                 showSpotify = true
+                return@let
+            }
+            // The books are not a YouTube release: their pages are our own,
+            // because a chapter is a file rather than a track.
+            if (id == com.music.bitchord.ui.screens.AUDIOBOOKS_BROWSE_ID) {
+                showAudiobooks = true
+                viewModel.loadAudiobooks(audiobookQuery.takeIf { it.isNotBlank() })
                 return@let
             }
             if ((id == "local:all" || id == "local:downloads") && !LocalMediaRepository.hasStoragePermission(context)) {
@@ -2356,7 +2393,7 @@ private fun BitChordApp(
                 downloadPendingFrom = from
                 storagePermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
             } else {
-                songs.forEach { Downloads.enqueue(context, it, from?.title) }
+                Downloads.enqueueAll(context, songs, from?.title)
                 if (from != null) Downloads.markRequested(from.id, songs.map { it.videoId })
             }
         }
@@ -2758,7 +2795,7 @@ private fun BitChordApp(
                     PlaybackSourceType.EXPLORE -> if (sourceId == com.music.bitchord.data.flow.FlowRules.FLOW_BROWSE_ID) {
                         showFlow = true
                     } else {
-                        selectedTab = TAB_EXPLORE
+                        showGenres = true
                     }
                     PlaybackSourceType.SHARED_LINK -> {
                         val id = sourceId ?: return@openSource
@@ -2853,7 +2890,19 @@ private fun BitChordApp(
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
-        BackHandler(enabled = showSettings && !showSpotify && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay) {
+        BackHandler(enabled = openAudiobook != null) {
+            openAudiobook = null
+        }
+        BackHandler(enabled = showAudiobooks) {
+            showAudiobooks = false
+        }
+        BackHandler(enabled = showGenres) {
+            if (selectedMoodGenre != null) viewModel.closeMoodGenre() else showGenres = false
+        }
+        BackHandler(enabled = showCustomization) {
+            showCustomization = false
+        }
+        BackHandler(enabled = showSettings && !showSpotify && !showAccountScrobbling && !showSources && !showListenTogether && !showEqualizer && !showReplay && !showCustomization) {
             showSettings = false
             // Only when Settings was the whole of what was on screen. Opened
             // over Replay or over a release page, closing it reveals that again
@@ -2962,6 +3011,10 @@ private fun BitChordApp(
                         // this one, so with Replay winning the tie the button
                         // was live, hit, and changed nothing on screen.
                         showSettings -> "settings"
+                        showCustomization -> "customization"
+                        showGenres -> "genres"
+                        openAudiobook != null -> "audiobook"
+                        showAudiobooks -> "audiobooks"
                         showReplay -> "replay"
                         detail != null -> detail.browseId
                         else -> "$TAB_KEY$selectedTab"
@@ -2990,10 +3043,42 @@ private fun BitChordApp(
                         val libraryTabKey = "$TAB_KEY$TAB_LIBRARY"
                         val libraryShowAllSwap = (initialState == "library_show_all" && targetState == libraryTabKey) ||
                             (targetState == "library_show_all" && initialState == libraryTabKey)
-                        if (tabSwap || libraryShowAllSwap) {
-                            EnterTransition.None togetherWith ExitTransition.None
-                        } else {
-                            fadeIn(tween(180)) togetherWith fadeOut(tween(180))
+                        when {
+                            // No motion at all: the listener asked for none.
+                            animationsOff -> EnterTransition.None togetherWith ExitTransition.None
+                            // A tab swap slides a little, the way a phone's
+                            // own tabs do. It used to cut: the page vanished
+                            // and the next one was simply there, which reads
+                            // as a glitch rather than as a move — the screen
+                            // under the finger never looked like it went
+                            // anywhere. A fraction of the width, in the
+                            // direction of the tab, is enough to carry the
+                            // eye without pretending to be a different app.
+                            tabSwap -> {
+                                val from = initialState.removePrefix(TAB_KEY).toIntOrNull() ?: 0
+                                val to = targetState.removePrefix(TAB_KEY).toIntOrNull() ?: 0
+                                val forward = to >= from
+                                val sign = if (forward) 1 else -1
+                                (
+                                    slideInHorizontally(tween(TAB_SWAP_MS)) { it / 8 * sign } +
+                                        fadeIn(tween(TAB_SWAP_FADE_MS))
+                                    ) togetherWith (
+                                    slideOutHorizontally(tween(TAB_SWAP_MS)) { -it / 10 * sign } +
+                                        fadeOut(tween(TAB_SWAP_FADE_MS))
+                                    )
+                            }
+                            // The grid and the row are the same tab laid out
+                            // two ways, and they share a background: a slide
+                            // between them would say they are different
+                            // places, which they are not.
+                            libraryShowAllSwap -> EnterTransition.None togetherWith ExitTransition.None
+                            // A page opened over another slides in from the
+                            // edge, the way a pushed page does on a phone.
+                            // A fade alone leaves the direction unsaid, and the
+                            // page appears to have been there all along.
+                            else -> (
+                                slideInHorizontally(tween(PAGE_PUSH_MS)) { it / 6 } + fadeIn(tween(PAGE_FADE_MS))
+                                ) togetherWith fadeOut(tween(PAGE_FADE_MS))
                         }
                     },
                     modifier = Modifier
@@ -3237,6 +3322,92 @@ private fun BitChordApp(
                         )
                     } else if (key == "equalizer") {
                         EqualizerScreen(contentPadding = listPadding)
+                    } else if (key == "genres") {
+                        selectedMoodGenre?.let { category ->
+                            MoodGenrePlaylistsScreen(
+                                title = category.title,
+                                state = moodGenreShelves,
+                                listState = moodGenreListState,
+                                onItemClick = { item ->
+                                    item.videoId?.let { videoId ->
+                                        playRadio(
+                                            Song(
+                                                videoId = videoId,
+                                                title = item.title,
+                                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                                                thumbnailUrl = item.thumbnailUrl,
+                                            ),
+                                            QueueSource(
+                                                category.title,
+                                                PlaybackSourceType.EXPLORE,
+                                                category.browseId,
+                                            ),
+                                        )
+                                    } ?: item.browseId?.let { browseId ->
+                                        viewModel.openDetail(
+                                            browseId = browseId,
+                                            title = item.title,
+                                            subtitle = item.subtitle,
+                                            thumbnailUrl = item.thumbnailUrl,
+                                        )
+                                    }
+                                },
+                                onRetry = { viewModel.openMoodGenre(category) },
+                                contentPadding = listPadding,
+                            )
+                        } ?: ExploreScreen(
+                            state = exploreState,
+                            listState = exploreListState,
+                            onCategoryClick = viewModel::openMoodGenre,
+                            onRetry = viewModel::loadExplore,
+                            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
+                            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
+                            pullState = explorePull,
+                            contentPadding = listPadding,
+                        )
+                    } else if (key == "audiobook") {
+                        openAudiobook?.let { book ->
+                            AudiobookScreen(
+                                book = book,
+                                chapters = audiobookChapters,
+                                onPlayChapter = { index ->
+                                    val chapters = (audiobookChapters as? UiState.Success)?.data.orEmpty()
+                                    val songs = chapters.map { chapter ->
+                                        Song(
+                                            videoId = chapter.audioUrl,
+                                            title = chapter.title,
+                                            artist = book.title,
+                                            thumbnailUrl = chapter.coverUrl ?: book.coverUrl,
+                                            durationText = chapter.seconds?.let { com.music.bitchord.ui.screens.formatRuntime(it) },
+                                        )
+                                    }
+                                    if (index in songs.indices) play(songs, index)
+                                },
+                                onRetry = { viewModel.reloadAudiobookChapters(book.id) },
+                                contentPadding = listPadding,
+                            )
+                        }
+                    } else if (key == "audiobooks") {
+                        AudiobooksScreen(
+                            state = audiobooks,
+                            query = audiobookQuery,
+                            onQueryChange = { audiobookQuery = it },
+                            onOpenBook = { book ->
+                                openAudiobook = book
+                                viewModel.openAudiobook(book)
+                            },
+                            onRetry = { viewModel.loadAudiobooks(audiobookQuery.takeIf { it.isNotBlank() }) },
+                            contentPadding = listPadding,
+                        )
+                    } else if (key == "customization") {
+                        CustomizationPage(
+                            homeShelfTitles = (homeState as? UiState.Success)?.data
+                                ?.map { it.title }
+                                ?.filterNot { com.music.bitchord.ui.screens.isQuickPicksShelf(it) }
+                                .orEmpty(),
+                            onBack = { showCustomization = false },
+                            contentPadding = listPadding,
+                        )
                     } else if (key == "settings") {
                         SettingsScreen(
                             windowWidth = windowWidth,
@@ -3259,6 +3430,10 @@ private fun BitChordApp(
                                 settingsSubScreen = "replay"
                                 replayLandingPage = ReplayStoryPage.INTRO
                                 showReplay = true
+                            },
+                            onOpenCustomization = {
+                                settingsSubScreen = "customization"
+                                showCustomization = true
                             },
                             onLyricsSources = { showLyricsSources = true },
                             onTranslationLanguage = { showTranslationLanguage = true },
@@ -3527,46 +3702,23 @@ private fun BitChordApp(
                             loadingMore = homeLoadingMore,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
                         )
-                        TAB_EXPLORE -> selectedMoodGenre?.let { category ->
-                            MoodGenrePlaylistsScreen(
-                                title = category.title,
-                                state = moodGenreShelves,
-                                listState = moodGenreListState,
-                                onItemClick = { item ->
-                                    item.videoId?.let { videoId ->
-                                        playRadio(
-                                            Song(
-                                                videoId = videoId,
-                                                title = item.title,
-                                                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
-                                                thumbnailUrl = item.thumbnailUrl,
-                                            ),
-                                            QueueSource(
-                                                category.title,
-                                                PlaybackSourceType.EXPLORE,
-                                                category.browseId,
-                                            ),
-                                        )
-                                    } ?: item.browseId?.let { browseId ->
-                                        viewModel.openDetail(
-                                            browseId = browseId,
-                                            title = item.title,
-                                            subtitle = item.subtitle,
-                                            thumbnailUrl = item.thumbnailUrl,
-                                        )
-                                    }
-                                },
-                                onRetry = { viewModel.openMoodGenre(category) },
-                                contentPadding = listPadding,
-                            )
-                        } ?: ExploreScreen(
-                            state = exploreState,
-                            listState = exploreListState,
-                            onCategoryClick = viewModel::openMoodGenre,
-                            onRetry = viewModel::loadExplore,
-                            refreshing = MainViewModel.Feed.EXPLORE in refreshing,
-                            onRefresh = { viewModel.refresh(MainViewModel.Feed.EXPLORE) },
-                            pullState = explorePull,
+                        TAB_PODCASTS -> PodcastsScreen(
+                            state = podcastsState,
+                            listState = podcastListState,
+                            onShowClick = { item ->
+                                item.browseId?.let { browseId ->
+                                    viewModel.openDetail(
+                                        browseId = browseId,
+                                        title = item.title,
+                                        subtitle = item.subtitle,
+                                        thumbnailUrl = item.thumbnailUrl,
+                                    )
+                                }
+                            },
+                            onRetry = viewModel::loadPodcasts,
+                            refreshing = MainViewModel.Feed.PODCASTS in refreshing,
+                            onRefresh = { viewModel.refresh(MainViewModel.Feed.PODCASTS) },
+                            pullState = podcastPull,
                             contentPadding = listPadding,
                         )
                         TAB_RADIO -> selectedMoodGenre?.let { category ->
@@ -3621,6 +3773,7 @@ private fun BitChordApp(
                                 }
                             },
                             onStationClick = viewModel::openMoodGenre,
+                            onGenresClick = { showGenres = true },
                             onStartStation = { selectedTab = TAB_SEARCH },
                             onRetry = viewModel::loadExplore,
                             refreshing = MainViewModel.Feed.EXPLORE in refreshing,
@@ -4010,6 +4163,10 @@ private fun BitChordApp(
                         showListenTogether -> stringResource(R.string.listen_together)
                         showEqualizer -> stringResource(R.string.equalizer)
                         showSettings -> stringResource(R.string.settings)
+                        showCustomization -> stringResource(R.string.customization)
+                        showGenres -> stringResource(R.string.explore)
+                        openAudiobook != null -> openAudiobook?.title.orEmpty()
+                        showAudiobooks -> stringResource(R.string.audiobooks)
                         showReplay -> stringResource(R.string.replay)
                         detail != null && detailActiveShelf != null -> detailActiveShelf?.title.orEmpty()
                         detail != null -> detail.title
@@ -6219,8 +6376,20 @@ private fun AppGlassNav(
     }
 }
 
+/** How long a tab swap takes: long enough to read as a move, short enough not to wait. */
+private const val TAB_SWAP_MS = 240
+
+/** The fade that rides with a tab swap. */
+private const val TAB_SWAP_FADE_MS = 180
+
+/** How long a pushed page takes to come in. */
+private const val PAGE_PUSH_MS = 260
+
+/** The fade that rides with a pushed page. */
+private const val PAGE_FADE_MS = 200
+
 private const val TAB_HOME = 0
-private const val TAB_EXPLORE = 1
+private const val TAB_PODCASTS = 1
 private const val TAB_RADIO = 2
 private const val TAB_LIBRARY = 3
 private const val TAB_SEARCH = 4

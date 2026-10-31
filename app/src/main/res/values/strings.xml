@@ -293,10 +293,10 @@
     <string name="smart_version_alignment_subtitle">Analyze audio waveforms to match the exact corresponding playback moment</string>
     <string name="equalizer">Equalizer</string>
     <string name="equalizer_subtitle">Tone, seven bands and balance</string>
-    <string name="jamesdsp">DSP</string>
-    <string name="jamesdsp_subtitle">Native DSP engine, running inside Auris</string>
+    <string name="jamesdsp">JamesDSP</string>
+    <string name="jamesdsp_subtitle">Native audio engine by James Fung, running inside Auris</string>
     <string name="jamesdsp_description">Runs on Auris\'s own playback stream. No root, no session capture, and no effect on other apps.</string>
-    <string name="jamesdsp_unavailable">DSP is not available in this build.</string>
+    <string name="jamesdsp_unavailable">JamesDSP is not available in this build.</string>
     <string name="jamesdsp_bass">Bass boost</string>
     <string name="jamesdsp_stereo">Stereo width</string>
     <string name="jamesdsp_tube">Tube warmth</string>
@@ -311,7 +311,7 @@
     <string name="jamesdsp_large_hall">Large hall</string>
     <string name="jamesdsp_plate">Plate</string>
     <string name="jamesdsp_long">Long</string>
-    <string name="jamesdsp_license">DSP is GPL-licensed. Source and notices ship with Auris.</string>
+    <string name="jamesdsp_license">JamesDSP is by James Fung and GPL-licensed. Used with permission. Source and notices ship with Auris.</string>
     <string name="equalizer_footer">Shapes the sound inside Auris, before it reaches the system.</string>
     <string name="equalizer_dynamic">Dynamic</string>
     <string name="equalizer_manual">Manual</string>
@@ -356,8 +356,8 @@
     <string name="show_nerd_stats">Show stats for nerds</string>
     <string name="show_nerd_stats_subtitle">Codec, bitrate and sample rate on the player</string>
     <string name="theme">Theme</string>
-    <string name="reduce_animation">Reduce animation</string>
-    <string name="reduce_animation_subtitle">Freezes the main player\'s gradient instead of drifting</string>
+    <string name="reduce_animation">Disable animations</string>
+    <string name="reduce_animation_subtitle">Stops every animation in the app: pages, the player, the bars and the artwork</string>
     <string name="reduce_dynamic_blur">Reduce dynamic blur</string>
     <string name="reduce_dynamic_blur_subtitle">Swaps frosted glass for solid fills across the app</string>
     <string name="liquid_glass">Liquid Glass</string>
@@ -406,6 +406,7 @@
     <string name="filter_non_music_audio_subtitle">Hides clips under 30 seconds, WAV files, voice notes, recordings and system sounds</string>
     <string name="performance">Performance</string>
     <string name="high_performance_mode">High performance mode</string>
+    <string name="high_performance_mode_subtitle">Asks for the screen\'s own refresh rate and keeps the glass cheap</string>
     <string name="high_performance_subtitle">Uses full animations and blur, and requests a higher display refresh rate</string>
     <string name="high_performance_active">%1$d Hz requested. Android may lower it when needed.</string>
     <string name="beta">Beta</string>
@@ -492,7 +493,7 @@
     <string name="pipeline_track_info">Track Info</string>
     <string name="pipeline_decoder">Decoder</string>
     <string name="pipeline_resampler">Resampler</string>
-    <string name="pipeline_dsp">DSP</string>
+    <string name="pipeline_dsp">JamesDSP</string>
     <string name="pipeline_output_device">Output Device</string>
     <string name="pipeline_source">Source</string>
     <string name="pipeline_format">Format</string>
@@ -1020,6 +1021,8 @@
     <string name="miscellaneous_footer">When enabled, closing the app from the recent apps screen will also stop music playback.</string>
 
     <string name="export_compatible_downloads">Export compatible downloads</string>
+    <string name="concurrent_downloads">Simultaneous downloads</string>
+    <string name="concurrent_downloads_subtitle">How many tracks are fetched at the same time</string>
 
     <string name="output_precision">Output precision</string>
     <string name="bit_perfect">Bit-perfect output</string>
@@ -1254,6 +1257,21 @@
 
     <!-- Customisation -->
     <string name="customization">Customization</string>
+    <string name="custom_preview_title">Song title</string>
+    <string name="custom_preview_artist">Artist</string>
+    <string name="custom_preview_lyric">The line being sung right now</string>
+    <string name="custom_fonts">Fonts</string>
+    <string name="custom_fonts_help">The face the whole app is set in. A face of your own can be any font file on this device.</string>
+    <string name="font_default">Default (SF Pro)</string>
+    <string name="font_system">System</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_rounded">Rounded</string>
+    <string name="font_custom">Your own font…</string>
+    <string name="custom_script_fonts">Arabic and Urdu faces</string>
+    <string name="custom_script_fonts_help">Arabic is set in a naskh face and Urdu in a nastaliq one, so both read as the scripts they are written in</string>
+    <string name="custom_motion">Motion</string>
+    <string name="custom_motion_help">What moves, what does not, and what the glass costs.</string>
+
     <string name="customization_subtitle">Colours, Home order and the interface shell</string>
     <string name="custom_now_playing">Now Playing</string>
     <string name="custom_home">Home</string>
@@ -1306,4 +1324,13 @@
     <string name="community_subtitle">Report bugs, suggest features, get beta access — join our Discord server!</string>
     <string name="community_join_discord">Join our Discord</string>
     <string name="community_reddit">Reddit</string>
+    <string name="audiobooks">Audiobooks</string>
+    <string name="audiobooks_subtitle">Public-domain books, read aloud</string>
+    <string name="audiobooks_search_hint">Search books</string>
+    <string name="audiobooks_empty">No books found.</string>
+    <string name="audiobooks_loading">Loading books…</string>
+    <string name="audiobook_chapters">Chapters</string>
+    <string name="audiobook_no_chapters">No chapters found for this book.</string>
+    <string name="audiobook_chapter_count">%1$d chapters</string>
+    <string name="audiobook_read_by">Read by %1$s</string>
 </resources>
