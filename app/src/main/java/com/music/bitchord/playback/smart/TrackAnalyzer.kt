@@ -26,6 +26,8 @@ package com.music.bitchord.playback.smart
 import android.content.Context
 import android.media.MediaDataSource
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 import android.util.Log
 import androidx.media3.common.util.UnstableApi
@@ -116,6 +118,37 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
     private val results = ConcurrentHashMap<String, TrackAnalysis>()
     private val running = ConcurrentHashMap.newKeySet<String>()
+
+    /** The last thermal status the system reported; see [overheated]. */
+    @Volatile private var thermalStatus = 0
+
+    /**
+     * Registered on first use rather than at construction, for the reason
+     * [resolver] gives: there is no base context to ask for a service yet.
+     */
+    private val thermalWatch by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            context.getSystemService(PowerManager::class.java)?.let { power ->
+                thermalStatus = power.currentThermalStatus
+                power.addThermalStatusListener(Runnable::run) { thermalStatus = it }
+            }
+        }
+    }
+
+    /**
+     * Whether the phone has asked apps to shed load. No new pass is started
+     * while it has: a pass is tens of seconds of decoding and inference, and
+     * started on a phone already throttled to half its clocks it is the load
+     * that keeps it there — measured, a session of back-to-back analyses held
+     * a phone at SEVERE with every frame of the UI missing its vsync. A track
+     * left unmeasured gets a plain crossfade, and is measured on a later tick
+     * once the phone has cooled. A pass already running finishes.
+     */
+    private val overheated: Boolean
+        get() {
+            thermalWatch
+            return thermalStatus >= PowerManager.THERMAL_STATUS_SEVERE
+        }
     private val sourceAnalysisUris = ConcurrentHashMap<String, Uri>()
     private val sourceResolutions = ConcurrentHashMap.newKeySet<String>()
     private val sourceResolutionAttempted = ConcurrentHashMap.newKeySet<String>()
@@ -278,6 +311,12 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
         // mix. See [stopped].
         if (stopped) return
         if (trackId in running) return
+        // A track measured in an earlier session costs nothing to restore, so
+        // only the work below waits for the phone to cool.
+        if (overheated) {
+            restoreOnce(trackId)
+            return
+        }
         val analysisUri = analysisUriFor(trackId, uri) ?: return
 
         // Any complete copy of this recording will do, not only the YouTube
@@ -753,14 +792,25 @@ class TrackAnalyzer(private val context: Context, private val cache: AudioCache)
 
         for (candidate in complete) {
             val length = cache.renditionDataSource(uri, candidate)
-                .use(AudioDecoder::containerDurationSeconds) ?: continue
-            if (length <= 0) continue
+                .use(AudioDecoder::containerDurationSeconds)
+            if (length == null || length <= 0) {
+                // Every candidate here is complete, so no more bytes are coming
+                // to make the header readable: remembered for the reason below.
+                badRenditions.add(candidate.key)
+                continue
+            }
             if (abs(length - expected) > RENDITION_DURATION_TOLERANCE) {
                 Log.d(
                     TAG,
                     "Rendition ${candidate.key} rejected for $trackId: " +
                         "${"%.1f".format(Locale.ROOT, length)}s against ${"%.1f".format(Locale.ROOT, expected)}s expected",
                 )
+                // Remembered, as the head pass remembers its own rejections. A
+                // cut that is the wrong length now is the wrong length on the
+                // next tick too, and while it counted as complete [request]
+                // queued a pass on every one of them — reopening and parsing the
+                // same file four times a second for as long as the track played.
+                badRenditions.add(candidate.key)
                 continue
             }
             if (candidate.key != cache.cacheKeyOf(uri)) {

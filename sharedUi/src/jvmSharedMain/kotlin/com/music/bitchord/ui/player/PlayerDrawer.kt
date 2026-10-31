@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.ui.components.liveMenuFrost
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.utils.containSheetGestures
 import dev.chrisbanes.haze.HazeState
@@ -213,7 +214,7 @@ fun PlayerDrawer(
                         Modifier.background(Color(0xFF121212))
                     } else {
                         Modifier
-                            .optimizedHazeEffect(
+                            .liveMenuFrost(
                                 state = hazeState,
                                 style = HazeMaterials.regular(Color(0xFF141414)),
                             )

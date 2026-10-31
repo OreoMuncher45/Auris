@@ -174,6 +174,7 @@ import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
+import com.music.bitchord.auth.SpotifyLoginScreen
 import com.music.bitchord.ui.screens.SpotifyCanvasAuthScreen
 import com.music.bitchord.ui.screens.SpotifyLibraryScreen
 import com.music.bitchord.data.spotify.SPOTIFY_PAGE_PREFIX
@@ -282,6 +283,7 @@ import com.music.bitchord.ui.player.NowPlayingScreen
 import com.music.bitchord.ui.player.PlayerSheetMotion
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
@@ -617,6 +619,7 @@ private fun BitChordApp(
     var showListenTogetherMembers by rememberSaveable { mutableStateOf(false) }
     var showEqualizer by rememberSaveable { mutableStateOf(false) }
     var showSpotifyCanvasAuth by remember { mutableStateOf(false) }
+    var showSpotifyLogin by remember { mutableStateOf(false) }
 
     // Hosted here rather than inside SourcesScreen so its frosted card has
     // something to blur: that screen is drawn inside the `hazeSource` subtree,
@@ -2914,7 +2917,25 @@ private fun BitChordApp(
         // a row, and the player is the right. Off a tablet the row has the
         // one child it always had and changes nothing.
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    // Nothing of the page under a portrait player that is fully
+                    // up: that player is its own window, opaque from edge to
+                    // edge, and this one drawing on behind it — the page, the
+                    // glass bar and the blurs that sample it, a now-playing
+                    // row's bars — is GPU time taken from the player on every
+                    // frame for nothing anyone can see. The same test the
+                    // player's own dim skips itself on. Composition and layout
+                    // carry on, so the page is current the moment the player
+                    // starts to come down and this draws again.
+                    .drawWithContent {
+                        val coveredByPlayer =
+                            showNowPlaying && playerDock.attached && playerDock.openFraction() >= 1f
+                        if (!coveredByPlayer) drawContent()
+                    },
+            ) {
                 AnimatedContent(
                     targetState = when {
                         showSpotify && detail == null -> "spotify"
@@ -3146,6 +3167,8 @@ private fun BitChordApp(
                         )
                     } else if (key == "spotify") {
                         SpotifyLibraryScreen(
+                            onOpenLogin = { showSpotifyLogin = true },
+                            onOpenTokenSetup = { showSpotifyCanvasAuth = true },
                             onOpenPlaylist = { playlist ->
                                 viewModel.openDetail(
                                     browseId = SPOTIFY_PAGE_PREFIX + playlist.id,
@@ -5707,6 +5730,23 @@ private fun BitChordApp(
             visible = showDiscordLogin,
             onDismiss = { showDiscordLogin = false },
         )
+
+        // The Spotify sign-in page is a WebView, and it is hosted as a root
+        // overlay rather than inside the page: the page's subtree is the
+        // haze source and the glass backdrop, both of which record what is
+        // drawn there into a layer and draw it a second time — a WebView drawn
+        // twice flickers, drops parts of the page, and on some devices takes
+        // the app down in Chromium's draw functor.
+        if (showSpotifyLogin) {
+            BackHandler { showSpotifyLogin = false }
+            SpotifyLoginScreen(
+                onConnected = { token ->
+                    AppSettings.setSpotifySpdcToken(token)
+                    showSpotifyLogin = false
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
 
         if (showSpotifyCanvasAuth) {
             BackHandler { showSpotifyCanvasAuth = false }

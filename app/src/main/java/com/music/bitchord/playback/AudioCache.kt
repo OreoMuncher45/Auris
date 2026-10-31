@@ -202,19 +202,30 @@ object AudioCache {
     private var appContext: Context? = null
 
     /**
-     * Kept in the app's cache directory: this is disposable by definition, and
-     * that is where the system and the "clear cache" button expect to reclaim
-     * it from. [SimpleCache] copes with files disappearing underneath it by
+     * Kept in the app's no-backup files directory, not its cache directory.
+     *
+     * It used to live in `cacheDir`, on the reasoning that it is disposable.
+     * It is not disposable to the listener any more: the Cached songs folder
+     * lists it, offline playback reads from it, and Settings lets it grow
+     * without a ceiling. Android treats `cacheDir` as its own to reclaim — it
+     * empties whole cache directories, largest-over-quota first, during idle
+     * maintenance whenever storage runs low — and a multi-gigabyte song cache
+     * is exactly the app it picks first. That is the "everything vanished
+     * overnight, all at once" report: the evictor never touched it, the system
+     * did. Here only [DynamicLruCacheEvictor], [clear] and the folder's own
+     * remove actions take anything out. No-backup rather than plain
+     * `filesDir` so gigabytes of audio are never offered to Auto Backup.
+     *
+     * [SimpleCache] still copes with files disappearing underneath it by
      * dropping the spans that named them.
      */
     fun init(context: Context) {
         appContext = context.applicationContext
         evictor.maxBytes = AppSettings.audioCacheLimitBytes.value
-        cache = SimpleCache(
-            File(context.cacheDir, "audio"),
-            evictor,
-            StandaloneDatabaseProvider(context),
-        )
+        val dir = File(context.noBackupFilesDir, CACHE_DIR_NAME)
+        val databaseProvider = StandaloneDatabaseProvider(context)
+        migrateFromCacheDir(File(context.cacheDir, LEGACY_CACHE_DIR_NAME), dir, databaseProvider)
+        cache = SimpleCache(dir, evictor, databaseProvider)
         // Builds before album/explicit/video-aware and credit-aware matching
         // may have cached a completely different recording under a YouTube
         // track's `#alt` key.
@@ -223,6 +234,17 @@ object AudioCache {
         // no quality gain. Drop only the substitution-capable entries once;
         // ordinary YouTube cache entries remain warm.
         val state = context.getSharedPreferences(CACHE_STATE_PREFS, Context.MODE_PRIVATE)
+        // Replaces wiping the whole cache on every app update, which emptied
+        // the Cached songs folder each time a new build was installed. Only a
+        // build that actually changes what a key means, or how its bytes are
+        // laid out, bumps [CACHE_FORMAT]. An install that has never recorded a
+        // format is taken to be current rather than wiped.
+        val format = state.getInt(KEY_CACHE_FORMAT, -1)
+        if (format in 0 until CACHE_FORMAT) {
+            cache.keys.toList().forEach { runCatching { cache.removeResource(it) } }
+            TrackLog.d(TAG, "cleared the song cache for cache format $CACHE_FORMAT")
+        }
+        if (format != CACHE_FORMAT) state.edit().putInt(KEY_CACHE_FORMAT, CACHE_FORMAT).apply()
         if (state.getInt(KEY_MATCHING_SCHEMA, 0) < MATCHING_SCHEMA) {
             val stale = cache.keys.filter { it.endsWith(ALT_SUFFIX) }
             stale.forEach { runCatching { cache.removeResource(it) } }
@@ -241,6 +263,26 @@ object AudioCache {
                 evictor.applyNow(cache)
             }
         }
+    }
+
+    /**
+     * Moves a cache left in `cacheDir` by an older build to [dir], keeping
+     * every track in it. A rename within app storage, so instant and free; the
+     * index survives with it, because [SimpleCache] keys its database tables on
+     * the uid file inside the directory. Should the rename fail, the old copy
+     * is deleted rather than left for the system to find.
+     */
+    private fun migrateFromCacheDir(legacy: File, dir: File, databaseProvider: StandaloneDatabaseProvider) {
+        if (!legacy.isDirectory) return
+        if (!dir.exists()) {
+            dir.parentFile?.mkdirs()
+            if (legacy.renameTo(dir)) {
+                TrackLog.d(TAG, "moved the song cache out of the system-clearable cache directory")
+                return
+            }
+        }
+        runCatching { SimpleCache.delete(legacy, databaseProvider) }
+            .onFailure { legacy.deleteRecursively() }
     }
 
     /** Drops everything on disk. The listener asked; no grace period. */
@@ -782,6 +824,14 @@ object AudioCache {
     private const val MAX_NOTED_SONGS = 256
 
     private const val CACHE_STATE_PREFS = "audio_cache_state"
+    private const val CACHE_DIR_NAME = "audio_cache"
+    private const val LEGACY_CACHE_DIR_NAME = "audio"
+
+    private const val KEY_CACHE_FORMAT = "cache_format"
+
+    /** Bumped when a key means something different, or its bytes are laid out differently. */
+    private const val CACHE_FORMAT = 1
+
     private const val KEY_MATCHING_SCHEMA = "matching_schema"
     private const val MATCHING_SCHEMA = 2
     private const val ALT_SUFFIX = "#alt"

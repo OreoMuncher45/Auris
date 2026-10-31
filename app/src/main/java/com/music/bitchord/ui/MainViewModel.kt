@@ -1506,7 +1506,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!homeStale) return
         homeStale = false
         // A first load already in flight will pick the new play up by itself.
-        if (_home.value is UiState.Success) refresh(Feed.HOME)
+        if (_home.value is UiState.Success) refreshHomeRecents()
+    }
+
+    /**
+     * Re-fetches only the Recents shelf, swapping it in place.
+     *
+     * The rest of Home stays exactly as it was, so a shelf someone was eyeing
+     * doesn't vanish because a track started playing — and the whole feed
+     * isn't fetched and parsed again to move one shelf.
+     */
+    private fun refreshHomeRecents() {
+        if (!_signedIn.value) return
+        val identity = listenerKey()
+        val generation = homeLoadGeneration.get()
+        viewModelScope.launch {
+            YtMusicRepository.homeRecentlyPlayed().onSuccess { shelf ->
+                // A full load that started meanwhile fetches Recents itself.
+                if (!isCurrentHomeLoad(identity, generation)) return@onSuccess
+                shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
+            }
+        }
     }
 
     private fun loadAccount() {

@@ -16,6 +16,8 @@ import com.music.bitchord.data.flow.FlowStore
 import com.music.bitchord.data.liked.LikedCache
 import com.music.bitchord.data.lyrics.LyricsTranslation
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.ui.ComposeUiFlags
+import androidx.compose.ui.ExperimentalComposeUiApi
 import com.music.bitchord.ui.components.backdrop.GlassShaderWarmup
 import com.music.bitchord.ui.components.isLowRamDevice
 import com.music.bitchord.ui.player.AndroidPlayerHost
@@ -46,6 +48,7 @@ import kotlin.concurrent.thread
 class BitChordApplication : Application(), SingletonImageLoader.Factory {
 
     @OptIn(UnstableApi::class)
+    @kotlin.OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate() {
         super.onCreate()
         // One system-service probe needs a context; answered once, cached for
@@ -71,7 +74,23 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
                     else -> android.util.Log.e(tag, message, error)
                 }
             }
+        } else {
+            // R8 strips android.util.Log from a release build (proguard-rules.pro);
+            // this stops Media3 composing the lines it would have handed it.
+            androidx.media3.common.util.Log.setLogLevel(androidx.media3.common.util.Log.LOG_LEVEL_OFF)
+            // java.util.logging reaches logcat without android.util.Log, through
+            // the handler Android installs on its root logger — the Discord
+            // gateway's connection chatter went out that way.
+            java.util.logging.LogManager.getLogManager().reset()
+            java.util.logging.Logger.getLogger("").level = java.util.logging.Level.OFF
         }
+        // Compose re-votes the window's frame rate from dispatchDraw on every
+        // frame (API 35+), and Samsung's View logs each vote together with a
+        // stack walk of its caller: measured on an S22, 8,000 lines in two
+        // minutes, two stack traces built on the main thread per frame. The app
+        // asks for its refresh rate itself (MainActivity.applyPerformanceMode),
+        // so those votes buy nothing — and they kept resetting that request.
+        ComposeUiFlags.isAdaptiveRefreshRateEnabled = false
         // The glass engine compiles its AGSL shaders lazily, on the UI thread,
         // the first time a surface draws with one — on a low-end device that
         // first time can land inside the player sheet's swipe. Compiling all
@@ -193,7 +212,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // format or key change between builds can't serve stale or mismatched
         // bytes from a cache the new code didn't write.
         if (AppSettings.consumeVersionUpdate(BuildConfig.VERSION_CODE)) {
-            AudioCache.clear()
+            // The song cache is deliberately *not* wiped here: a build that
+            // really does change its keys or its bytes says so through
+            // AudioCache's own cache format instead, and every update
+            // otherwise empties the Cached songs folder and makes the next
+            // play of every track a fresh download.
             // Walking and deleting up to 100 MB of image files is real disk
             // I/O; on the main thread it ran ahead of the first frame on the
             // first launch of every update. Off the main thread, the UI is

@@ -30,3 +30,22 @@ fun Modifier.optimizedHazeEffect(
     inputScale = HazeInputScale.Fixed(0.33f)
     block?.invoke(this)
 }
+
+/**
+ * The frost of a menu over something that keeps moving under it: the player's
+ * full-screen Spotify Canvas, or a live menu that opens over it. Sampled at a
+ * tenth: it is re-blurred on every frame of the video, and under a blur this
+ * wide and a slab this opaque, more pixels than that are not there to be seen.
+ *
+ * The style is the caller's, so this changes what is sampled and not what the
+ * menu looks like.
+ */
+@OptIn(ExperimentalHazeApi::class)
+fun Modifier.liveMenuFrost(
+    state: HazeState,
+    style: HazeStyle = HazeStyle.Unspecified,
+): Modifier = optimizedHazeEffect(state = state, style = style) {
+    inputScale = HazeInputScale.Fixed(LIVE_FROST_INPUT_SCALE)
+}
+
+private const val LIVE_FROST_INPUT_SCALE = 0.10f

@@ -120,6 +120,7 @@
     <string name="spotify">Spotify</string>
     <string name="spotify_connect_subtitle">Sign in to load your playlists. Playback uses YouTube Music.</string>
     <string name="spotify_sign_in">Sign in with Spotify</string>
+    <string name="spotify_use_spdc_token">Use an sp_dc token instead</string>
     <string name="spotify_disconnect">Disconnect</string>
     <string name="spotify_empty_playlists">No playlists on this account</string>
     <string name="spotify_empty_tracks">This playlist has no tracks</string>
