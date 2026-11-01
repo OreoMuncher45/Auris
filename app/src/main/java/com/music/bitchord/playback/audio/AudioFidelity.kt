@@ -49,6 +49,7 @@ object AudioFidelity {
         val spatialActive: Boolean = false,
         val vocalCutActive: Boolean = false,
         val jamesDspActive: Boolean = false,
+        val simAtmosActive: Boolean = false,
         /** DSD has no native output path here, so it is always converted to PCM. */
         val dsd: Boolean = false,
         val sourceRateHz: Int? = null,
@@ -138,6 +139,9 @@ object AudioFidelity {
                 }
                 if (inputs.jamesDspActive) {
                     add("JamesDSP" to JAMES_DSP_POINTS)
+                }
+                if (inputs.simAtmosActive) {
+                    add("Simulated Dolby Atmos" to SPATIAL_POINTS)
                 }
             }
         }

@@ -118,6 +118,7 @@ private fun bitExactVerdict(
     loudnessActive: Boolean,
     eqActive: Boolean,
     spatialActive: Boolean,
+    simAtmosActive: Boolean,
     dspBypassed: Boolean,
     mixerBitPerfect: Boolean,
 ): String = when {
@@ -137,6 +138,7 @@ private fun bitExactVerdict(
     loudnessActive -> "No — loudness normalization"
     eqActive -> "No — equalizer"
     spatialActive -> "No — spatial audio"
+    simAtmosActive -> "No — simulated Dolby Atmos"
     outputExact -> "Yes${outputExactDetail?.let { " ($it)" }.orEmpty()}"
     else -> "No — ${outputExactDetail ?: "converted downstream"}"
 }
@@ -167,6 +169,7 @@ fun AudioPipelineDialog(
     val eqEnabled by AppSettings.equalizerEnabled.collectAsStateWithLifecycle()
     val eqPreset by AppSettings.equalizerPreset.collectAsStateWithLifecycle()
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
+    val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
     val singLevel by AppSettings.singLevel.collectAsStateWithLifecycle()
     val jamesDspEnabled by AppSettings.jamesDspEnabled.collectAsStateWithLifecycle()
@@ -300,6 +303,7 @@ fun AudioPipelineDialog(
                     loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                     equalizerActive = eqEnabled,
                     spatialActive = spatialAudio,
+                    simAtmosActive = simulatedAtmos,
                     vocalCutActive = singLevel > 0.001f,
                     jamesDspActive = jamesDspEnabled,
                     dsd = dsdRateHz != null,
@@ -472,6 +476,7 @@ fun AudioPipelineDialog(
                         loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
                         eqActive = eqEnabled,
                         spatialActive = spatialAudio,
+                        simAtmosActive = simulatedAtmos,
                         dspBypassed = outputStatus.dspBypassed,
                         mixerBitPerfect = outputStatus.bitPerfectMixer?.active == true ||
                             outputStatus.directPlaybackActual ||

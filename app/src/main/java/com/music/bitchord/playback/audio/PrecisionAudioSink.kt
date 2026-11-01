@@ -650,7 +650,13 @@ class PrecisionAudioSink(
         // instead of decoding to float and encoding it back to identical bytes.
         // On the 16-bit speaker path this is the whole per-buffer cost of the
         // app's audio processing.
-        if (inEncoding == outEncoding && (skipDsp || dspChain.isBypassed()) && userGain >= 0.999f) {
+        //
+        // The gate is isBypassed() alone — NOT skipDsp — so that a DSP effect
+        // the listener switched on (simulated Atmos, EQ, spatial…) is never
+        // silently skipped under bit-perfect: if any stage is engaged,
+        // isBypassed() is false and the block is decoded and processed. Bit-
+        // perfect still passes through untouched when every stage is idle.
+        if (inEncoding == outEncoding && dspChain.isBypassed() && userGain >= 0.999f) {
             timestampedInputTimeUs = C.TIME_UNSET
             framesEmittedForInput = 0L
             if (!inputBuffer.hasRemaining()) return true
