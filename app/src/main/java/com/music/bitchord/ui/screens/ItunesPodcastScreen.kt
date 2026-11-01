@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,9 +19,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,6 +69,9 @@ fun ItunesPodcastScreen(
             .fillMaxSize()
             .padding(contentPadding),
     ) {
+        // Explicit ink so no row inherits a dark content colour on a dark
+        // glass backdrop (the black-on-black bug).
+        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
         if (show != null) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -142,12 +148,17 @@ fun ItunesPodcastScreen(
                             }
                         }
                         itemsIndexed(sorted, key = { _, song -> song.videoId }) { index, song ->
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                            Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .padding(horizontal = PAGE_GUTTER, vertical = 4.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
                                     .clickable { onPlay(sorted, index) }
-                                    .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                            ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
                                     text = "${index + 1}.",
@@ -159,12 +170,14 @@ fun ItunesPodcastScreen(
                                     Text(
                                         text = song.title,
                                         style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onBackground,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
-                                    if (song.artist.isNotBlank()) {
+                                    val meta = listOfNotNull(song.publishedDate, song.durationText).joinToString(" · ")
+                                    if (meta.isNotBlank()) {
                                         Text(
-                                            text = song.artist,
+                                            text = meta,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
@@ -199,6 +212,7 @@ fun ItunesPodcastScreen(
                                     )
                                 }
                             }
+                            }
                         }
                         if (hasMore) {
                             item {
@@ -218,6 +232,7 @@ fun ItunesPodcastScreen(
                     }
                 }
             }
+        }
         }
     }
 }

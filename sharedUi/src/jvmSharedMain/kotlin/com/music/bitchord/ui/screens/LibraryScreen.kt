@@ -200,11 +200,6 @@ fun LibraryScreen(
                 }
             }
             item(key = "replay") { replay() }
-            podcastShelves.forEach { shelf ->
-                item(key = "podcast:${shelf.title}") {
-                    Shelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
-                }
-            }
             item(key = "segments") {
                 LibrarySegmentBar(
                     selected = segment,
@@ -362,6 +357,13 @@ fun LibraryScreen(
                     MessageState(state.message, actionLabel = stringResource(Res.string.retry), onAction = onRetry)
                 }
                 else -> Unit
+            }
+            // Podcast shelves sit at the very bottom of the Library, below all
+            // segments (On device / Playlists / Artists / Albums).
+            podcastShelves.forEach { shelf ->
+                item(key = "podcast:${shelf.title}") {
+                    Shelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
+                }
             }
         }
     }

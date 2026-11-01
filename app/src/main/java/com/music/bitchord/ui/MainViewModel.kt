@@ -195,10 +195,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         openItunesCollectionId = collectionId
         _itunesEpisodes.value = UiState.Loading
         viewModelScope.launch {
-            val show = itunesShows[collectionId] ?: run {
-                _itunesEpisodes.value = UiState.Error("Show not found")
-                return@launch
-            }
+            // Saved shows (Continue/Liked) must open even when the search
+            // cache is cold: rebuild from what we persisted, else look the
+            // show up on Apple's directory by id.
+            val show = itunesShows[collectionId]
+                ?: com.music.bitchord.data.settings.PodcastLibrary.showInfo(collectionId)
+                ?: runCatching { ItunesPodcasts.lookup(collectionId) }.getOrNull()
+                ?: run {
+                    _itunesEpisodes.value = UiState.Error("Show not found")
+                    return@launch
+                }
+            itunesShows[collectionId] = show
             val result = runCatching { ItunesPodcasts.episodes(show, limit = 500) }
             if (result.isFailure) {
                 _itunesEpisodes.value = UiState.Error(result.exceptionOrNull()!!.friendly())
@@ -227,8 +234,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _podcastShelfVersion = MutableStateFlow(0)
     private fun refreshPodcastShelves() { _podcastShelfVersion.value++ }
 
-    fun toggleLikedShow(collectionId: String, name: String, artist: String, artwork: String?) {
-        com.music.bitchord.data.settings.PodcastLibrary.toggleLikedShow(collectionId, name, artist, artwork)
+    fun toggleLikedShow(collectionId: String, name: String, artist: String, artwork: String?, feedUrl: String? = null) {
+        com.music.bitchord.data.settings.PodcastLibrary.toggleLikedShow(collectionId, name, artist, artwork, feedUrl)
         refreshPodcastShelves()
     }
     fun isLikedShow(collectionId: String): Boolean =
@@ -239,8 +246,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun isEpisodeLater(url: String): Boolean =
         com.music.bitchord.data.settings.PodcastLibrary.isEpisodeLater(url)
-    fun recordRecentShow(collectionId: String, name: String, artwork: String?) {
-        com.music.bitchord.data.settings.PodcastLibrary.recordRecentShow(collectionId, name, artwork)
+    fun recordRecentShow(collectionId: String, name: String, artwork: String?, feedUrl: String? = null) {
+        com.music.bitchord.data.settings.PodcastLibrary.recordRecentShow(collectionId, name, artwork, feedUrl)
+        refreshPodcastShelves()
+    }
+    fun recordRecentEpisode(collectionId: String, showName: String, artwork: String?, feedUrl: String?, song: Song) {
+        com.music.bitchord.data.settings.PodcastLibrary.recordRecentEpisode(collectionId, showName, artwork, feedUrl, song)
         refreshPodcastShelves()
     }
 
@@ -253,8 +264,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     val podcastContinueShelf: StateFlow<HomeShelf?> = _podcastShelfVersion.map {
-        val shows = com.music.bitchord.data.settings.PodcastLibrary.recentShows()
-        if (shows.isEmpty()) null else HomeShelf("Continue", shows.map { showItem(it) })
+        // "Continue listening": the exact last-played episodes, each resuming
+        // at its saved second (MediaProgress) when tapped.
+        val eps = com.music.bitchord.data.settings.PodcastLibrary.recentEpisodes()
+        if (eps.isEmpty()) null else HomeShelf("Continue listening", eps.map { o ->
+            ShelfItem(
+                title = o.optString("title"),
+                subtitle = o.optString("show"),
+                thumbnailUrl = o.optString("artwork").takeIf { it.isNotBlank() },
+                videoId = o.optString("url"),
+                browseId = null,
+            )
+        })
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val podcastLikedShelf: StateFlow<HomeShelf?> = _podcastShelfVersion.map {

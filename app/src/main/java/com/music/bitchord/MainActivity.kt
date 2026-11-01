@@ -2359,12 +2359,12 @@ private fun BitChordApp(
             podcastId != null -> {
                 itunesPodcastId = podcastId
                 viewModel.itunesShow(podcastId)?.let {
-                    viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl)
+                    viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl, it.feedUrl)
                 }
                 viewModel.openItunesPodcast(podcastId)
             }
             item.videoId?.startsWith("http") == true -> {
-                play(listOf(Song(
+                playWithResume(listOf(Song(
                     videoId = item.videoId!!,
                     title = item.title,
                     artist = item.subtitle,
@@ -3503,14 +3503,24 @@ private fun BitChordApp(
                         ItunesPodcastScreen(
                             show = itunesPodcastId?.let { viewModel.itunesShow(it) },
                             episodes = itunesEpisodes,
-                            onPlay = { songs, index -> if (index in songs.indices) playWithResume(songs, index) },
+                            onPlay = { songs, index ->
+                                if (index in songs.indices) {
+                                    playWithResume(songs, index)
+                                    val id = itunesPodcastId
+                                    val sh = id?.let { viewModel.itunesShow(it) }
+                                    if (id != null && sh != null) {
+                                        viewModel.recordRecentShow(id, sh.name, sh.artworkUrl, sh.feedUrl)
+                                        viewModel.recordRecentEpisode(id, sh.name, sh.artworkUrl, sh.feedUrl, songs[index])
+                                    }
+                                }
+                            },
                             onRetry = { viewModel.reloadItunesEpisodes() },
                             contentPadding = listPadding,
                             isLikedShow = itunesPodcastId?.let { viewModel.isLikedShow(it) } == true,
                             onToggleLikeShow = {
                                 val id = itunesPodcastId ?: return@ItunesPodcastScreen
                                 viewModel.itunesShow(id)?.let {
-                                    viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl)
+                                    viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl, it.feedUrl)
                                 }
                             },
                             onToggleLater = { song -> viewModel.toggleEpisodeLater(song) },
@@ -3841,12 +3851,12 @@ private fun BitChordApp(
                                     val collectionId = browseId.removePrefix("itunes:")
                                     itunesPodcastId = collectionId
                                     viewModel.itunesShow(collectionId)?.let {
-                                        viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl)
+                                        viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl, it.feedUrl)
                                     }
                                     viewModel.openItunesPodcast(collectionId)
                                 } else if (item.videoId?.startsWith("http") == true) {
-                                    // An "Episodes for later" row: play it directly.
-                                    play(listOf(Song(
+                                    // An "Episodes for later" / "Continue listening" row: play + resume.
+                                    playWithResume(listOf(Song(
                                         videoId = item.videoId!!,
                                         title = item.title,
                                         artist = item.subtitle,
@@ -4132,7 +4142,7 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             links = libraryLinks(),
                             deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
-                            podcastShelves = listOfNotNull(podcastContinueShelf, podcastLikedShelf, podcastLaterShelf),
+                            podcastShelves = listOfNotNull(podcastLikedShelf, podcastLaterShelf),
                         )
                     }
                 }

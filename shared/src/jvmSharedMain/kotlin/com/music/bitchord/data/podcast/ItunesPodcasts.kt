@@ -63,8 +63,7 @@ object ItunesPodcasts {
     )
 
     /** A page of shows matching [term] ("podcast" broadly, or a genre word). */
-    suspend fun search(term: String, limit: Int = 50, country: String = "US"): List<ItunesShow> {
-        val body = client.get(SEARCH) {
+    suspend fun search(term: String, limit: Int = 50, country: String = "US"): List<ItunesShow> {        val body = client.get(SEARCH) {
             parameter("term", term)
             parameter("media", "podcast")
             parameter("entity", "podcast")
@@ -74,6 +73,17 @@ object ItunesPodcasts {
         val root = jsonFormat.parseToJsonElement(body).jsonObject
         val results = root["results"]?.jsonArray.orEmpty()
         return results.mapNotNull { element -> (element as? JsonObject)?.toShow() }
+    }
+
+    /** Fetch one show by collectionId — used when a saved show is opened but the search cache is cold. */
+    suspend fun lookup(collectionId: String, country: String = "US"): ItunesShow? {
+        val body = client.get("https://itunes.apple.com/lookup") {
+            parameter("id", collectionId)
+            parameter("entity", "podcast")
+            parameter("country", country)
+        }.bodyAsText()
+        val root = jsonFormat.parseToJsonElement(body).jsonObject
+        return root["results"]?.jsonArray?.firstOrNull()?.let { (it as? JsonObject)?.toShow() }
     }
 
     /**
@@ -97,11 +107,17 @@ object ItunesPodcasts {
             if (!isAudio) continue
             val title = Regex("<title[^>]*>(.*?)</title>", RegexOption.DOT_MATCHES_ALL)
                 .find(item)?.groupValues?.get(1)?.let(::decodeEntities)?.trim()
+            val pubDate = Regex("<pubDate[^>]*>(.*?)</pubDate>", RegexOption.DOT_MATCHES_ALL)
+                .find(item)?.groupValues?.get(1)?.trim()?.let(::decodeEntities)
+            val duration = Regex("<(?:itunes:)?duration[^>]*>(.*?)</(?:itunes:)?duration>", RegexOption.DOT_MATCHES_ALL)
+                .find(item)?.groupValues?.get(1)?.trim()?.let(::decodeEntities)?.let(::formatDuration)
             songs.add(Song(
                 videoId = url,
                 title = title?.takeIf { it.isNotBlank() } ?: "Episode",
                 artist = show.name,
                 thumbnailUrl = show.artworkUrl,
+                durationText = duration,
+                publishedDate = pubDate,
             ))
         }
         return songs
@@ -127,4 +143,23 @@ object ItunesPodcasts {
     private fun decodeEntities(s: String): String =
         s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
             .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'")
+
+    /** RSS <itunes:duration> is "H:MM:SS", "MM:SS" or seconds — normalise to M:SS / H:MM:SS. */
+    private fun formatDuration(raw: String): String? {
+        val parts = raw.split(":")
+        return when (parts.size) {
+            1 -> raw.toLongOrNull()?.let { formatMs(it * 1000) }
+            2 -> "${parts[0].toIntOrNull() ?: 0}:${parts[1].padStart(2, '0')}"
+            3 -> "${parts[0]}:${parts[1].padStart(2, '0')}:${parts[2].padStart(2, '0')}"
+            else -> null
+        }
+    }
+
+    private fun formatMs(ms: Long): String {
+        val totalSec = (ms / 1000).toInt()
+        val h = totalSec / 3600
+        val m = (totalSec % 3600) / 60
+        val s = totalSec % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+    }
 }

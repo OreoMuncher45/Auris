@@ -37,6 +37,8 @@ data class Song(    val videoId: String,
     val artist: String,
     val thumbnailUrl: String?,
     val durationText: String? = null,
+    /** Publish date as the feed stated it (podcast episodes / audiobook chapters). */
+    val publishedDate: String? = null,
     /** Browse ids lifted from the row, used by the long-press actions. */
     val artistId: String? = null,
     /**
