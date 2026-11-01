@@ -29,6 +29,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.podcast.ItunesShow
+import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import androidx.compose.ui.res.stringResource
@@ -91,7 +92,7 @@ fun ItunesPodcastScreen(
             }
         }
         when (episodes) {
-            UiState.Loading -> MessageState(stringResource(R.string.audiobooks_loading))
+            UiState.Loading -> MessageState(stringResource(R.string.podcast_episodes_loading))
             is UiState.Error -> MessageState(
                 episodes.message,
                 actionLabel = stringResource(R.string.retry),
@@ -99,7 +100,7 @@ fun ItunesPodcastScreen(
             )
             is UiState.Success -> {
                 if (episodes.data.isEmpty()) {
-                    MessageState(stringResource(R.string.audiobook_no_chapters))
+                    MessageState(stringResource(R.string.podcast_episodes_empty))
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         itemsIndexed(episodes.data, key = { _, song -> song.videoId }) { index, song ->
@@ -133,6 +134,24 @@ fun ItunesPodcastScreen(
                                         )
                                     }
                                 }
+                                val listened = MediaProgress.isListened(song.videoId)
+                                val frac = MediaProgress.fraction(song.videoId)
+                                val posMs = MediaProgress.positionMs(song.videoId)
+                                if (listened) {
+                                    Text(
+                                        text = stringResource(R.string.media_listened),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(start = 8.dp),
+                                    )
+                                } else if (frac != null && frac > 0f && posMs > 0L) {
+                                    Text(
+                                        text = stringResource(R.string.media_resume, formatMs(posMs)),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(start = 8.dp),
+                                    )
+                                }
                             }
                         }
                     }
@@ -140,4 +159,12 @@ fun ItunesPodcastScreen(
             }
         }
     }
+}
+
+private fun formatMs(ms: Long): String {
+    val totalSec = (ms / 1000).toInt()
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

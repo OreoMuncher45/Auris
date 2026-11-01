@@ -8441,12 +8441,48 @@ class PlaybackService : MediaLibraryService() {
                 delay(1_000L)
             }
         }
+        startProgressTicker()
     }
 
     private fun stopLyricsTicker() {
         lyricsTickerJob?.cancel()
         lyricsTickerJob = null
         updateLyricSubtitle()
+        stopProgressTicker()
+    }
+
+    // Records resume position + listened flag for the current track every few
+    // seconds while playing, so podcast episodes and audiobook chapters can be
+    // resumed or shown as finished.
+    private var progressTickerJob: Job? = null
+    private fun startProgressTicker() {
+        if (progressTickerJob?.isActive == true) return
+        progressTickerJob = scope.launch(Dispatchers.Main) {
+            while (isActive) {
+                delay(5_000L)
+                val p = player ?: continue
+                if (!p.isPlaying) continue
+                val id = p.currentMediaItem?.mediaId ?: continue
+                val dur = p.duration.takeIf { it > 0L } ?: 0L
+                com.music.bitchord.data.settings.MediaProgress.record(
+                    id, p.currentPosition.coerceAtLeast(0L), dur,
+                )
+            }
+        }
+    }
+
+    private fun stopProgressTicker() {
+        progressTickerJob?.cancel()
+        progressTickerJob = null
+        // One last write so a paused/ended track keeps its latest position.
+        val p = player
+        val id = p?.currentMediaItem?.mediaId
+        if (p != null && id != null) {
+            val dur = p.duration.takeIf { it > 0L } ?: 0L
+            com.music.bitchord.data.settings.MediaProgress.record(
+                id, p.currentPosition.coerceAtLeast(0L), dur,
+            )
+        }
     }
 
     private fun updateLyricSubtitle() {

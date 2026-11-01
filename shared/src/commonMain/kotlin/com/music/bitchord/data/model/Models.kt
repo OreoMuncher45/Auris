@@ -300,7 +300,7 @@ const val NOTIFICATION_ART_PX = 544
  */
 const val PLAYER_ART_PX = 1200
 
-enum class BrowseType { ALBUM, ARTIST, PLAYLIST, OTHER }
+enum class BrowseType { ALBUM, ARTIST, PLAYLIST, PODCAST, OTHER }
 
 /** A queue-level origin shown above Now Playing, in the style of Spotify. */
 enum class PlaybackSourceType {
@@ -339,6 +339,8 @@ enum class SearchFilter(val label: String, val params: String?) {
     ALBUMS("Albums", "EgWKAQIYAWoKEAkQChAFEAMQBA=="),
     ARTISTS("Artists", "EgWKAQIgAWoKEAkQChAFEAMQBA=="),
     PLAYLISTS("Playlists", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
+    /** Not a YouTube filter — searched against the Apple podcast catalogue instead. */
+    PODCASTS("Podcasts", null),
 }
 
 /** A card in a home-feed carousel: either a track (videoId) or an album/playlist (browseId). */

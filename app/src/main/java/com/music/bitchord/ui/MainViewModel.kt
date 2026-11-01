@@ -37,6 +37,7 @@ import com.music.bitchord.auth.WebSessionMode
 import com.music.bitchord.data.model.Account
 import com.music.bitchord.data.model.AccountChannel
 import com.music.bitchord.data.model.BrowseType
+import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
 import com.music.bitchord.data.model.withoutRepeatsOf
@@ -200,6 +201,34 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reloadItunesEpisodes() {
         openItunesCollectionId?.let { openItunesPodcast(it) }
+    }
+
+    /** Live iTunes podcast search for the podcasts page's own search bar. */
+    private val _itunesSearchQuery = MutableStateFlow("")
+    val itunesSearchQuery: StateFlow<String> = _itunesSearchQuery.asStateFlow()
+    private val _itunesSearchResults = MutableStateFlow<UiState<List<ShelfItem>>>(UiState.Success(emptyList()))
+    val itunesSearchResults: StateFlow<UiState<List<ShelfItem>>> = _itunesSearchResults.asStateFlow()
+    private var itunesSearchJob: Job? = null
+
+    fun setItunesSearchQuery(query: String) {
+        _itunesSearchQuery.value = query
+        itunesSearchJob?.cancel()
+        if (query.isBlank()) {
+            _itunesSearchResults.value = UiState.Success(emptyList())
+            return
+        }
+        itunesSearchJob = viewModelScope.launch {
+            delay(350)
+            _itunesSearchResults.value = UiState.Loading
+            val state = runCatching { ItunesPodcasts.search(query, limit = 50) }.fold(
+                onSuccess = { shows ->
+                    shows.forEach { itunesShows[it.collectionId] = it }
+                    UiState.Success(shows.map { it.toShelfItem() })
+                },
+                onFailure = { UiState.Error(it.friendly()) },
+            )
+            _itunesSearchResults.value = state
+        }
     }
 
     /**
@@ -1757,7 +1786,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _podcastSections.value = UiState.Loading
         val shelves = mutableListOf<HomeShelf>()
         // Recommended: a broad, high-signal query across all podcasts.
-        runCatching { ItunesPodcasts.search("podcast", limit = 20) }
+        runCatching { ItunesPodcasts.search("podcast", limit = 30) }
             .onSuccess { shows ->
                 if (shows.isNotEmpty()) {
                     shows.forEach { itunesShows[it.collectionId] = it }
@@ -1769,7 +1798,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         // One shelf per category.
         for ((label, term) in ItunesPodcasts.CATEGORIES) {
-            runCatching { ItunesPodcasts.search("$term podcast", limit = 12) }
+            runCatching { ItunesPodcasts.search("$term podcast", limit = 20) }
                 .onSuccess { shows ->
                     if (shows.isNotEmpty()) {
                         shows.forEach { itunesShows[it.collectionId] = it }
@@ -1789,6 +1818,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         thumbnailUrl = artworkUrl,
         videoId = null,
         browseId = "itunes:$collectionId",
+    )
+
+    private fun ItunesShow.toPodcastBrowse() = SearchResult.Browse(
+        BrowseItem(
+            browseId = "itunes:$collectionId",
+            title = name,
+            subtitle = artist.ifBlank { genre.orEmpty() },
+            thumbnailUrl = artworkUrl,
+            type = BrowseType.PODCAST,
+        )
     )
 
     /**
@@ -2366,7 +2405,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // see [SourceResolver.substituteForYouTube] — which upgrades
                 // the ones it holds without any of them having to be a
                 // separate row to pick between.
-                val result = YtMusicRepository.searchPage(request.query, request.filter)
+                val result: Result<YtMusicRepository.SearchPage> =
+                    if (request.filter == SearchFilter.PODCASTS) {
+                        // Podcasts are not in YouTube's catalogue — answer from the
+                        // Apple podcast directory and surface each show as a browse row.
+                        runCatching {
+                            val shows = ItunesPodcasts.search(request.query, limit = 30)
+                            shows.forEach { itunesShows[it.collectionId] = it }
+                            YtMusicRepository.SearchPage(
+                                rows = shows.map { it.toPodcastBrowse() },
+                                continuation = null,
+                            )
+                        }
+                    } else {
+                        YtMusicRepository.searchPage(request.query, request.filter)
+                    }
                 // A search that has been superseded shouldn't land on screen,
                 // whether it succeeded or failed.
                 if (request.requestId != newestRequestId.get()) return@collectLatest

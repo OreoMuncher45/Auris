@@ -1300,4 +1300,9 @@
     <string name="delete_folder_confirmation">Eliminare «%1$s»? Tocca di nuovo per confermare.</string>
     <string name="simulated_dolby_atmos">Simulated Dolby Atmos</string>
     <string name="simulated_dolby_atmos_subtitle">Widens stereo into a simulated surround field (bass stays centered).</string>
+    <string name="podcast_episodes_loading">Loading episodes…</string>
+    <string name="podcast_episodes_empty">No episodes in this feed.</string>
+    <string name="media_listened">Listened</string>
+    <string name="media_resume">Resume %1$s</string>
+    <string name="podcasts">Podcasts</string>
 </resources>

@@ -63,7 +63,7 @@ object ItunesPodcasts {
     )
 
     /** A page of shows matching [term] ("podcast" broadly, or a genre word). */
-    suspend fun search(term: String, limit: Int = 20, country: String = "US"): List<ItunesShow> {
+    suspend fun search(term: String, limit: Int = 50, country: String = "US"): List<ItunesShow> {
         val body = client.get(SEARCH) {
             parameter("term", term)
             parameter("media", "podcast")
@@ -83,10 +83,10 @@ object ItunesPodcasts {
      * each row's playback id is the enclosure URL itself, which the player
      * treats as a direct stream.
      */
-    suspend fun episodes(show: ItunesShow, limit: Int = 50): List<Song> {
+    suspend fun episodes(show: ItunesShow, limit: Int = 200): List<Song> {
         val rss = runCatching { client.get(show.feedUrl).bodyAsText() }.getOrNull() ?: return emptyList()
         val items = Regex("<item[\\s>].*?</item>", RegexOption.DOT_MATCHES_ALL)
-            .findAll(rss).map { it.value }.take(limit)
+            .findAll(rss).map { it.value }.take(limit.coerceIn(1, 500))
         val songs = mutableListOf<Song>()
         for (item in items) {
             val enclosureTag = Regex("<enclosure[^>]*>").find(item)?.value ?: continue

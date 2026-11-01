@@ -2193,6 +2193,7 @@ private fun BrowseType.localizedLabel(): String? = when (this) {
         BrowseType.ALBUM -> stringResource(R.string.album)
         BrowseType.PLAYLIST -> stringResource(R.string.playlist)
         BrowseType.ARTIST -> stringResource(R.string.artist)
+        BrowseType.PODCAST -> stringResource(R.string.podcasts)
         BrowseType.OTHER -> null
     }
 

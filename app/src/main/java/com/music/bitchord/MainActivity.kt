@@ -873,6 +873,8 @@ private fun BitChordApp(
     val exploreState by viewModel.explore.collectAsStateWithLifecycle()
     val podcastsState by viewModel.podcasts.collectAsStateWithLifecycle()
     val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
+    val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
+    val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
     val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
     val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
     val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
@@ -1630,8 +1632,22 @@ private fun BitChordApp(
             type = first?.playbackSourceType ?: PlaybackSourceType.QUEUE,
             id = first?.playbackSourceId,
         )
-        playFrom(songs, index, source)
-    }
+         playFrom(songs, index, source)
+     }
+     // Plays a long-form item (podcast episode / audiobook chapter) and, if it
+     // was left part-way through, seeks back to that spot once the stream is up.
+     val playWithResume: (List<Song>, Int) -> Unit = { songs, index ->
+         val song = songs.getOrNull(index)
+         play(songs, index)
+         val pos = song?.let { com.music.bitchord.data.settings.MediaProgress.positionMs(it.videoId) } ?: 0L
+         if (song != null && pos > 0L && !com.music.bitchord.data.settings.MediaProgress.isListened(song.videoId)) {
+             val target = index
+             scope.launch {
+                 delay(1200)
+                 controller?.seekTo(target, pos)
+             }
+         }
+     }
     LaunchedEffect(player.song?.videoId) {
         if (optimisticVersionSong?.videoId == player.song?.videoId ||
             (optimisticVersionSong != null && player.song?.videoId != convertedAudioId && player.song?.videoId != convertedVideoId && player.song?.videoId != keepVideoId)
@@ -3433,9 +3449,9 @@ private fun BitChordApp(
                                             durationText = chapter.seconds?.let { com.music.bitchord.ui.screens.formatRuntime(it) },
                                         )
                                     }
-                                    if (index in songs.indices) play(songs, index)
-                                },
-                                onRetry = { viewModel.reloadAudiobookChapters(book.id) },
+                                    if (index in songs.indices) playWithResume(songs, index)
+                                 },
+                                 onRetry = { viewModel.reloadAudiobookChapters(book.id) },
                                 contentPadding = listPadding,
                             )
                         }
@@ -3455,7 +3471,7 @@ private fun BitChordApp(
                         ItunesPodcastScreen(
                             show = itunesPodcastId?.let { viewModel.itunesShow(it) },
                             episodes = itunesEpisodes,
-                            onPlay = { songs, index -> if (index in songs.indices) play(songs, index) },
+                            onPlay = { songs, index -> if (index in songs.indices) playWithResume(songs, index) },
                             onRetry = { viewModel.reloadItunesEpisodes() },
                             contentPadding = listPadding,
                         )
@@ -3768,6 +3784,9 @@ private fun BitChordApp(
                             state = podcastsState,
                             listState = podcastListState,
                             sections = podcastSections,
+                            searchQuery = itunesSearchQuery,
+                            onSearchQueryChange = viewModel::setItunesSearchQuery,
+                            searchResults = itunesSearchResults,
                             onShowClick = { item ->
                                 val browseId = item.browseId
                                 if (browseId != null && browseId.startsWith("itunes:")) {
@@ -3903,6 +3922,12 @@ private fun BitChordApp(
                                 playlistTarget = song
                             },
                             onBrowseClick = { item ->
+                                if (item.browseId.startsWith("itunes:")) {
+                                    val collectionId = item.browseId.removePrefix("itunes:")
+                                    itunesPodcastId = collectionId
+                                    viewModel.openItunesPodcast(collectionId)
+                                    return@SearchScreen
+                                }
                                 viewModel.recordEntity(SearchHistoryEntity(
                                     id = item.browseId ?: "",
                                     title = item.title,

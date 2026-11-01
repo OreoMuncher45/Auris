@@ -30,6 +30,7 @@ import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.audiobook.Audiobook
 import com.music.bitchord.data.audiobook.AudiobookChapter
+import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -168,5 +169,32 @@ private fun ChapterRow(index: Int, chapter: AudiobookChapter, onClick: () -> Uni
                 )
             }
         }
+        val key = chapter.audioUrl
+        val listened = MediaProgress.isListened(key)
+        val frac = MediaProgress.fraction(key)
+        val posMs = MediaProgress.positionMs(key)
+        if (listened) {
+            Text(
+                text = stringResource(R.string.media_listened),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        } else if (frac != null && frac > 0f && posMs > 0L) {
+            Text(
+                text = stringResource(R.string.media_resume, formatMs(posMs)),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
     }
+}
+
+private fun formatMs(ms: Long): String {
+    val totalSec = (ms / 1000).toInt()
+    val h = totalSec / 3600
+    val m = (totalSec % 3600) / 60
+    val s = totalSec % 60
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

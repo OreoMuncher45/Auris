@@ -27,9 +27,12 @@ import com.music.bitchord.sharedui.resources.Res
 import com.music.bitchord.sharedui.resources.podcasts
 import com.music.bitchord.sharedui.resources.podcasts_empty
 import com.music.bitchord.sharedui.resources.retry
+import com.music.bitchord.sharedui.resources.search_podcasts
+import com.music.bitchord.sharedui.resources.search_results
 import com.music.bitchord.sharedui.resources.your_shows
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.components.PillTextField
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.ShimmerBox
 import org.jetbrains.compose.resources.stringResource
@@ -59,6 +62,10 @@ fun PodcastsScreen(
     showTitle: Boolean = true,
     /** Discoverable shelves (recommended + categories), rendered like the home feed. */
     sections: UiState<List<HomeShelf>> = UiState.Success(emptyList()),
+    /** Podcasts-page search bar (the main search covers songs; this one covers podcasts). */
+    searchQuery: String = "",
+    onSearchQueryChange: (String) -> Unit = {},
+    searchResults: UiState<List<ShelfItem>> = UiState.Success(emptyList()),
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -88,6 +95,50 @@ fun PodcastsScreen(
                         )
                     }
                 }
+                // A second search bar, scoped to podcasts — the global search
+                // has no podcast category, so this is where podcast search lives.
+                item {
+                    PillTextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        placeholder = stringResource(Res.string.search_podcasts),
+                        modifier = Modifier
+                            .padding(horizontal = PAGE_GUTTER)
+                            .padding(bottom = 10.dp),
+                    )
+                }
+                if (searchQuery.isNotBlank()) {
+                    // Search results replace the shelves while a query is active.
+                    when (val r = searchResults) {
+                        UiState.Loading -> item { PodcastSkeletonRows(columns) }
+                        is UiState.Error -> item {
+                            MessageState(
+                                r.message,
+                                actionLabel = stringResource(Res.string.retry),
+                                onAction = { onSearchQueryChange(searchQuery) },
+                            )
+                        }
+                        is UiState.Success -> {
+                            val hits = r.data.distinctBy { it.browseId ?: it.title }
+                            if (hits.isEmpty()) {
+                                item { MessageState(stringResource(Res.string.podcasts_empty)) }
+                            } else {
+                                item { SectionHeader(stringResource(Res.string.search_results)) }
+                                val rows = hits.chunked(columns)
+                                items(
+                                    rows,
+                                    key = { row -> row.first().browseId ?: row.first().title },
+                                ) { row ->
+                                    PodcastShowRow(
+                                        row = row,
+                                        columns = columns,
+                                        onShowClick = onShowClick,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
                 // Discoverable shelves first — recommended podcasts and one
                 // shelf per category — laid out exactly like the home feed.
                 if (sections is UiState.Success && sections.data.isNotEmpty()) {
@@ -130,6 +181,7 @@ fun PodcastsScreen(
                         }
                     }
                 }
+                } // end else (no active search query)
             }
         }
     }
