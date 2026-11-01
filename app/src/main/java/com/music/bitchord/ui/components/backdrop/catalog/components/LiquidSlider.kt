@@ -14,6 +14,7 @@ package com.music.bitchord.ui.components.backdrop.catalog.components
 import com.music.bitchord.ui.components.glassUsesDarkAppearance
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import com.music.bitchord.ui.components.rememberLiquidGlassHaptics
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -66,6 +67,7 @@ fun LiquidSlider(
     backdrop: Backdrop,
     modifier: Modifier = Modifier
 ) {
+    val glassHaptic = rememberLiquidGlassHaptics()
     val isLightTheme = !glassUsesDarkAppearance()
     val accentColor =
         if (isLightTheme) Color(0xFF0088FF)
@@ -127,6 +129,7 @@ fun LiquidSlider(
                     .background(trackColor)
                     .pointerInput(animationScope) {
                         detectTapGestures { position ->
+                            glassHaptic()
                             val delta = (valueRange.endInclusive - valueRange.start) * (position.x / trackWidth)
                             val targetValue =
                                 (if (isLtr) valueRange.start + delta

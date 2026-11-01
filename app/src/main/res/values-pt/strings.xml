@@ -1371,4 +1371,6 @@
     <string name="media_listened">Listened</string>
     <string name="media_resume">Resume %1$s</string>
     <string name="podcasts">Podcasts</string>
+    <string name="liquid_glass_haptics">Liquid glass haptics</string>
+    <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
 </resources>

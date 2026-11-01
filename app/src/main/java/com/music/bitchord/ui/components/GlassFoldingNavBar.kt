@@ -206,6 +206,7 @@ private fun GlassFoldingNavBarChrome(
     val selectedColor = com.music.bitchord.ui.theme.GlassTintTokens.selectedRedColor(glassUsesDarkAppearance())
     val unselectedColor = contentColor.copy(alpha = 0.65f)
     val glassSurface: @Composable () -> Modifier = { Modifier.liquidGlass(shape = NavBarShape) }
+    val glassHaptic = rememberLiquidGlassHaptics()
     val searchIndex = tabs.lastIndex
 
     val playerAccessory: (@Composable (Modifier, Boolean) -> Unit)? =
@@ -276,6 +277,7 @@ private fun GlassFoldingNavBarChrome(
             FoldingTabGroup(
                 selectedTabIndex = { selected },
                 onTabSelected = { index ->
+                    glassHaptic()
                     foldingTabs.getOrNull(index)?.onClick?.invoke()
                 },
                 backdrop = LocalAppBackdrop.current,
@@ -323,6 +325,7 @@ private fun GlassFoldingNavBarChrome(
                     )
                 },
                 onClick = {
+                    glassHaptic()
                     when {
                         index == searchIndex ->
                             if (search.visualActive) search.onTapBar() else search.onTapSearchIcon()

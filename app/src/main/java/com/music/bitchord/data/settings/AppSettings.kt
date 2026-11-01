@@ -414,6 +414,9 @@ object AppSettings {
      */
     val spatialAudio = MutableStateFlow(false)
 
+    /** Haptic buzz on every liquid-glass interaction (nav, toggles, sliders, menus). */
+    val liquidGlassHaptics = MutableStateFlow(true)
+
     /**
      * "Simulated Dolby Atmos": a widening DSP effect applied to ordinary
      * stereo (mid/side widening with the side channel high-passed so bass
@@ -1284,6 +1287,7 @@ object AppSettings {
         loudnessOffOnSpeaker.value = prefs.getBoolean(KEY_LOUDNESS_OFF_ON_SPEAKER, true)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
+        liquidGlassHaptics.value = prefs.getBoolean(KEY_LIQUID_GLASS_HAPTICS, true)
         simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, false)
         singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
         singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
@@ -1753,6 +1757,11 @@ object AppSettings {
     fun setDolbyAtmos(value: Boolean) {
         dolbyAtmos.value = value
         prefs.edit().putBoolean(KEY_DOLBY_ATMOS, value).apply()
+    }
+
+    fun setLiquidGlassHaptics(value: Boolean) {
+        liquidGlassHaptics.value = value
+        prefs.edit().putBoolean(KEY_LIQUID_GLASS_HAPTICS, value).apply()
     }
 
     fun setSpatialAudio(value: Boolean) {
@@ -2781,6 +2790,7 @@ object AppSettings {
     private const val KEY_LOUDNESS_OFF_ON_SPEAKER = "loudness_off_on_speaker"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
+    private const val KEY_LIQUID_GLASS_HAPTICS = "liquid_glass_haptics"
     private const val KEY_SIMULATED_ATMOS = "simulated_atmos"
     /** Sticky: read back at every launch, written only by [setOfflineMode]. */
     private const val KEY_OFFLINE_MODE = "offline_mode"

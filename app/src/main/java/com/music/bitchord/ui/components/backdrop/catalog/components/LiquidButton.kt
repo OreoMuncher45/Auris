@@ -15,6 +15,7 @@ package com.music.bitchord.ui.components.backdrop.catalog.components
 
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import com.music.bitchord.ui.components.rememberLiquidGlassHaptics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -55,6 +56,7 @@ fun LiquidButton(
     surfaceColor: Color = Color.Unspecified,
     content: @Composable RowScope.() -> Unit
 ) {
+    val glassHaptic = rememberLiquidGlassHaptics()
     val animationScope = rememberCoroutineScope()
 
     val interactiveHighlight = remember(animationScope) {
@@ -115,7 +117,7 @@ fun LiquidButton(
                 interactionSource = null,
                 indication = if (isInteractive) null else LocalIndication.current,
                 role = Role.Button,
-                onClick = onClick
+                onClick = { glassHaptic(); onClick() }
             )
             .then(
                 if (isInteractive) {

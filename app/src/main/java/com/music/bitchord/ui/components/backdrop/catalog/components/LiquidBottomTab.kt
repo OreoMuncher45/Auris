@@ -14,6 +14,7 @@
 package com.music.bitchord.ui.components.backdrop.catalog.components
 
 import androidx.compose.foundation.clickable
+import com.music.bitchord.ui.components.rememberLiquidGlassHaptics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -38,6 +39,7 @@ fun RowScope.LiquidBottomTab(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val glassHaptic = rememberLiquidGlassHaptics()
     val scale = LocalLiquidBottomTabScale.current
     Column(
         modifier
@@ -46,7 +48,7 @@ fun RowScope.LiquidBottomTab(
                 interactionSource = null,
                 indication = null,
                 role = Role.Tab,
-                onClick = onClick
+                onClick = { glassHaptic(); onClick() }
             )
             .fillMaxHeight()
             .weight(1f)

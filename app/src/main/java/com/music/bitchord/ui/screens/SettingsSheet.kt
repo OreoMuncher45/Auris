@@ -78,6 +78,7 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewWeek
 import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.material.icons.rounded.Wifi
@@ -217,6 +218,7 @@ fun SettingsScreen(
     val dolbyAtmosSupported = DeviceCodecs.playsDolbyAtmos
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
+    val liquidGlassHaptics by AppSettings.liquidGlassHaptics.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -901,6 +903,25 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setSimulatedAtmos(!simulatedAtmos) },
+                )
+            }
+            val hapticsTitle = stringResource(R.string.liquid_glass_haptics)
+            row(hapticsTitle, "haptics", "glass", "vibrate") {
+                SettingsRow(
+                    icon = Icons.Rounded.Vibration,
+                    title = hapticsTitle,
+                    subtitle = stringResource(R.string.liquid_glass_haptics_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = liquidGlassHaptics,
+                            onCheckedChange = AppSettings::setLiquidGlassHaptics,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setLiquidGlassHaptics(!liquidGlassHaptics) },
                 )
             }
             // The system panel is not listed here as well. A device with a
