@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
@@ -183,6 +184,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var openItunesCollectionId: String? = null
 
     /** Opens an Apple-catalogue podcast and loads its episodes from the RSS feed. */
+    private var itunesAllEpisodes: List<Song> = emptyList()
+    private val _itunesVisibleCount = MutableStateFlow(0)
+    val itunesVisibleCount: StateFlow<Int> = _itunesVisibleCount.asStateFlow()
+    val itunesHasMore: StateFlow<Boolean> =
+        _itunesVisibleCount.map { it < itunesAllEpisodes.size }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    private val EPISODE_PAGE = 100
+
     fun openItunesPodcast(collectionId: String) {
         openItunesCollectionId = collectionId
         _itunesEpisodes.value = UiState.Loading
@@ -191,17 +199,76 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _itunesEpisodes.value = UiState.Error("Show not found")
                 return@launch
             }
-            val state = runCatching { ItunesPodcasts.episodes(show) }.fold(
-                onSuccess = { UiState.Success(it) },
-                onFailure = { UiState.Error(it.friendly()) },
-            )
-            _itunesEpisodes.value = state
+            val result = runCatching { ItunesPodcasts.episodes(show, limit = 500) }
+            if (result.isFailure) {
+                _itunesEpisodes.value = UiState.Error(result.exceptionOrNull()!!.friendly())
+                return@launch
+            }
+            val all = result.getOrThrow()
+            itunesAllEpisodes = all
+            _itunesVisibleCount.value = minOf(EPISODE_PAGE, all.size)
+            _itunesEpisodes.value = UiState.Success(all.take(_itunesVisibleCount.value))
         }
+    }
+
+    /** Loads the next batch of 100 episodes, the same paging playlists use. */
+    fun loadMoreItunesEpisodes() {
+        val next = minOf(_itunesVisibleCount.value + EPISODE_PAGE, itunesAllEpisodes.size)
+        if (next == _itunesVisibleCount.value) return
+        _itunesVisibleCount.value = next
+        _itunesEpisodes.value = UiState.Success(itunesAllEpisodes.take(next))
     }
 
     fun reloadItunesEpisodes() {
         openItunesCollectionId?.let { openItunesPodcast(it) }
     }
+
+    // --- the user's own podcast shelves (Continue / Liked / Episodes for later) ---
+    private val _podcastShelfVersion = MutableStateFlow(0)
+    private fun refreshPodcastShelves() { _podcastShelfVersion.value++ }
+
+    fun toggleLikedShow(collectionId: String, name: String, artist: String, artwork: String?) {
+        com.music.bitchord.data.settings.PodcastLibrary.toggleLikedShow(collectionId, name, artist, artwork)
+        refreshPodcastShelves()
+    }
+    fun isLikedShow(collectionId: String): Boolean =
+        com.music.bitchord.data.settings.PodcastLibrary.isLikedShow(collectionId)
+    fun toggleEpisodeLater(song: Song) {
+        com.music.bitchord.data.settings.PodcastLibrary.toggleEpisodeLater(song)
+        refreshPodcastShelves()
+    }
+    fun isEpisodeLater(url: String): Boolean =
+        com.music.bitchord.data.settings.PodcastLibrary.isEpisodeLater(url)
+    fun recordRecentShow(collectionId: String, name: String, artwork: String?) {
+        com.music.bitchord.data.settings.PodcastLibrary.recordRecentShow(collectionId, name, artwork)
+        refreshPodcastShelves()
+    }
+
+    private fun showItem(o: org.json.JSONObject) = ShelfItem(
+        title = o.optString("name"),
+        subtitle = "",
+        thumbnailUrl = o.optString("artwork").takeIf { it.isNotBlank() },
+        videoId = null,
+        browseId = "itunes:" + o.optString("collectionId"),
+    )
+
+    val podcastContinueShelf: StateFlow<HomeShelf?> = _podcastShelfVersion.map {
+        val shows = com.music.bitchord.data.settings.PodcastLibrary.recentShows()
+        if (shows.isEmpty()) null else HomeShelf("Continue", shows.map { showItem(it) })
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val podcastLikedShelf: StateFlow<HomeShelf?> = _podcastShelfVersion.map {
+        val shows = com.music.bitchord.data.settings.PodcastLibrary.likedShows()
+        if (shows.isEmpty()) null else HomeShelf("Liked podcasts", shows.map { showItem(it) })
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val podcastLaterShelf: StateFlow<HomeShelf?> = _podcastShelfVersion.map {
+        val eps = com.music.bitchord.data.settings.PodcastLibrary.laterEpisodes()
+        if (eps.isEmpty()) null else HomeShelf("Episodes for later", eps.map {
+            ShelfItem(title = it.title, subtitle = it.artist, thumbnailUrl = it.thumbnailUrl,
+                videoId = it.videoId, browseId = null)
+        })
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     /** Live iTunes podcast search for the podcasts page's own search bar. */
     private val _itunesSearchQuery = MutableStateFlow("")

@@ -629,6 +629,8 @@ private fun BitChordApp(
     var itunesPodcastId by rememberSaveable { mutableStateOf<String?>(null) }
     // Home's "Sign in to YouTube" banner, once the user has dismissed it.
     var signInBannerDismissed by rememberSaveable { mutableStateOf(false) }
+    // Podcast show page: newest-first vs oldest-first episode sort.
+    var podcastSortNewest by rememberSaveable { mutableStateOf(true) }
     // Replay: the page, the stories over it, and the share sheet over those.
     // Three states rather than one enum because they stack — the stories are
     // opened from the page and the share sheet from either, and closing one
@@ -875,7 +877,12 @@ private fun BitChordApp(
     val podcastSections by viewModel.podcastSections.collectAsStateWithLifecycle()
     val itunesSearchQuery by viewModel.itunesSearchQuery.collectAsStateWithLifecycle()
     val itunesSearchResults by viewModel.itunesSearchResults.collectAsStateWithLifecycle()
+    val podcastContinueShelf by viewModel.podcastContinueShelf.collectAsStateWithLifecycle()
+    val podcastLikedShelf by viewModel.podcastLikedShelf.collectAsStateWithLifecycle()
+    val podcastLaterShelf by viewModel.podcastLaterShelf.collectAsStateWithLifecycle()
     val itunesEpisodes by viewModel.itunesEpisodes.collectAsStateWithLifecycle()
+    val itunesVisibleCount by viewModel.itunesVisibleCount.collectAsStateWithLifecycle()
+    val itunesHasMore by viewModel.itunesHasMore.collectAsStateWithLifecycle()
     val audiobooks by viewModel.audiobooks.collectAsStateWithLifecycle()
     val audiobookChapters by viewModel.audiobookChapters.collectAsStateWithLifecycle()
     // The podcast feed is fetched once, the first time its tab is opened.
@@ -2345,7 +2352,26 @@ private fun BitChordApp(
     // Shared by the Library tab itself and by a shelf's "Show all" page, so a
     // card opens the same way from either.
     val onLibraryItemClick: (ShelfItem) -> Unit = { item ->
-        item.browseId?.let { id ->
+        // Podcast shelves in the Library: open an Apple-catalogue show, or play
+        // a hearted "Episodes for later" episode straight from its URL.
+        val podcastId = item.browseId?.takeIf { it.startsWith("itunes:") }?.removePrefix("itunes:")
+        when {
+            podcastId != null -> {
+                itunesPodcastId = podcastId
+                viewModel.itunesShow(podcastId)?.let {
+                    viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl)
+                }
+                viewModel.openItunesPodcast(podcastId)
+            }
+            item.videoId?.startsWith("http") == true -> {
+                play(listOf(Song(
+                    videoId = item.videoId!!,
+                    title = item.title,
+                    artist = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                )), 0)
+            }
+            else -> item.browseId?.let { id ->
             if (id == SPOTIFY_BROWSE_ID) {
                 showSpotify = true
                 return@let
@@ -2372,6 +2398,7 @@ private fun BitChordApp(
                 subtitle = item.subtitle,
                 thumbnailUrl = item.thumbnailUrl,
             )
+            }
         }
     }
     // Takes a list so a single tap on an album/playlist header can queue the
@@ -2518,9 +2545,14 @@ private fun BitChordApp(
     // under the status bar inset, and that inset varies by device and by window,
     // so a fixed number only ever lines up on the one device it was picked on.
     // See [topBarContentPadding].
+    // The floating bars (top bar, mini player, nav bar) report their measured
+    // pixel height here; the content's bottom padding is driven by it so a
+    // short page doesn't sit above a large fixed empty band — the reservation
+    // is exactly the bars, no more.
+    val floatingBarsHeight = remember { mutableIntStateOf(0) }
     val listPadding = PaddingValues(
         top = topBarContentPadding(),
-        bottom = if (player.song != null) 210.dp else 140.dp,
+        bottom = with(LocalDensity.current) { (floatingBarsHeight.intValue / density).dp } + 16.dp,
     )
 
     // What colour the page currently under the bars is. The fades either end
@@ -3474,6 +3506,19 @@ private fun BitChordApp(
                             onPlay = { songs, index -> if (index in songs.indices) playWithResume(songs, index) },
                             onRetry = { viewModel.reloadItunesEpisodes() },
                             contentPadding = listPadding,
+                            isLikedShow = itunesPodcastId?.let { viewModel.isLikedShow(it) } == true,
+                            onToggleLikeShow = {
+                                val id = itunesPodcastId ?: return@ItunesPodcastScreen
+                                viewModel.itunesShow(id)?.let {
+                                    viewModel.toggleLikedShow(it.collectionId, it.name, it.artist, it.artworkUrl)
+                                }
+                            },
+                            onToggleLater = { song -> viewModel.toggleEpisodeLater(song) },
+                            isLater = { url -> viewModel.isEpisodeLater(url) },
+                            sortNewestFirst = podcastSortNewest,
+                            onToggleSort = { podcastSortNewest = !podcastSortNewest },
+                            hasMore = itunesHasMore,
+                            onLoadMore = { viewModel.loadMoreItunesEpisodes() },
                         )
                     } else if (key == "customization") {
                         CustomizationPage(
@@ -3787,12 +3832,26 @@ private fun BitChordApp(
                             searchQuery = itunesSearchQuery,
                             onSearchQueryChange = viewModel::setItunesSearchQuery,
                             searchResults = itunesSearchResults,
+                            continueShelf = podcastContinueShelf,
+                            likedShelf = podcastLikedShelf,
+                            laterShelf = podcastLaterShelf,
                             onShowClick = { item ->
                                 val browseId = item.browseId
                                 if (browseId != null && browseId.startsWith("itunes:")) {
                                     val collectionId = browseId.removePrefix("itunes:")
                                     itunesPodcastId = collectionId
+                                    viewModel.itunesShow(collectionId)?.let {
+                                        viewModel.recordRecentShow(it.collectionId, it.name, it.artworkUrl)
+                                    }
                                     viewModel.openItunesPodcast(collectionId)
+                                } else if (item.videoId?.startsWith("http") == true) {
+                                    // An "Episodes for later" row: play it directly.
+                                    play(listOf(Song(
+                                        videoId = item.videoId!!,
+                                        title = item.title,
+                                        artist = item.subtitle,
+                                        thumbnailUrl = item.thumbnailUrl,
+                                    )), 0)
                                 } else {
                                     browseId?.let {
                                         viewModel.openDetail(
@@ -4073,6 +4132,7 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             links = libraryLinks(),
                             deviceItems = libraryDeviceItems(downloadedReleases) + localPlaylistItems,
+                            podcastShelves = listOfNotNull(podcastContinueShelf, podcastLikedShelf, podcastLaterShelf),
                         )
                     }
                 }
@@ -4455,9 +4515,9 @@ private fun BitChordApp(
                     modifier = Modifier.align(Alignment.BottomCenter),
                 )
 
-                // Whichever bar is drawing reports its height here, for the
-                // guard to read at layout — never in composition, see the guard.
-                val floatingBarsHeight = remember { mutableIntStateOf(0) }
+                 // Whichever bar is drawing reports its height here, for the
+                 // guard to read at layout — never in composition, see the guard.
+                 // (declared up with listPadding so the content inset can use it)
                 FloatingBarsTapGuard(
                     barsHeight = { floatingBarsHeight.intValue },
                     modifier = Modifier.align(Alignment.BottomCenter),

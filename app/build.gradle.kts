@@ -85,6 +85,12 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
+        // Strip symbol tables from our own CMake-built .so (ffmpeg/jamesdsp/
+        // analysis/dsd/usb). The big prebuilt libs arrive already stripped.
+        ndk {
+            debugSymbolLevel = "none"
+        }
+
         // Last.fm credentials are supplied locally and never committed.
         buildConfigField("String", "LASTFM_API_KEY", "\"${lastfmApiKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "LASTFM_SECRET", "\"${lastfmSecret.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
@@ -168,6 +174,9 @@ android {
              * `benchmark` build type below before it ships.
              */
             isMinifyEnabled = true
+            // Drop resources no code references (dead drawables, unused locale
+            // variants of drawables, etc.) — pairs with R8 above.
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -200,6 +209,18 @@ android {
             // SMBJ's BouncyCastle and jspecify both ship this descriptor.
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
         }
+        jniLibs {
+            // Compress .so inside the APK (extractNativeLibs=true) so the
+            // download is far smaller; they are extracted once at install.
+            // The big win is libonnxruntime.so (~27 MB stored -> ~10 MB).
+            useLegacyPackaging = true
+        }
+    }
+    androidResources {
+        // Compress everything aapt would otherwise store raw (fonts, flow
+        // videos, ONNX models). resources.arsc stays aligned/uncompressed
+        // automatically; jniLibs are governed by packaging.jniLibs above.
+        noCompress.clear()
     }
     buildFeatures {
         compose = true

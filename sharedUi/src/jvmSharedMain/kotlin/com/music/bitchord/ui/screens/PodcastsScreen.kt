@@ -66,6 +66,12 @@ fun PodcastsScreen(
     searchQuery: String = "",
     onSearchQueryChange: (String) -> Unit = {},
     searchResults: UiState<List<ShelfItem>> = UiState.Success(emptyList()),
+    /** "Continue where you left off" — recently played shows. */
+    continueShelf: HomeShelf? = null,
+    /** Starred shows. */
+    likedShelf: HomeShelf? = null,
+    /** Hearted episodes ("Episodes for later"). */
+    laterShelf: HomeShelf? = null,
 ) {
     PullToRefresh(
         refreshing = refreshing,
@@ -139,6 +145,11 @@ fun PodcastsScreen(
                         }
                     }
                 } else {
+                // The user's own shelves first: Continue, Liked podcasts,
+                // Episodes for later — then the discoverable categories.
+                listOfNotNull(continueShelf, likedShelf, laterShelf).forEach { shelf ->
+                    item(key = "own:${shelf.title}") { Shelf(shelf = shelf, onItemClick = onShowClick) }
+                }
                 // Discoverable shelves first — recommended podcasts and one
                 // shelf per category — laid out exactly like the home feed.
                 if (sections is UiState.Success && sections.data.isNotEmpty()) {

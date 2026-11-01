@@ -159,6 +159,11 @@ fun LibraryScreen(
      * whole. Left off the page entirely while there are none.
      */
     deviceItems: List<ShelfItem>,
+    /**
+     * Podcast shelves (Continue / Liked podcasts / Episodes for later) shown at
+     * the top of the Library so podcasts live here too, not only on their tab.
+     */
+    podcastShelves: List<HomeShelf> = emptyList(),
     /** The big "Library" heading; the desktop's pages carry none. */
     showTitle: Boolean = true,
 ) {
@@ -195,6 +200,11 @@ fun LibraryScreen(
                 }
             }
             item(key = "replay") { replay() }
+            podcastShelves.forEach { shelf ->
+                item(key = "podcast:${shelf.title}") {
+                    Shelf(shelf = shelf, onItemClick = onShelfItemClick, onItemLongPress = onShelfItemLongPress)
+                }
+            }
             item(key = "segments") {
                 LibrarySegmentBar(
                     selected = segment,

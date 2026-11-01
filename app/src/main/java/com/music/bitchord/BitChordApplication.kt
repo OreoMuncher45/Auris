@@ -169,6 +169,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         }
         AppSettings.init(this, authStore)
         com.music.bitchord.data.settings.MediaProgress.init(this)
+        com.music.bitchord.data.settings.PodcastLibrary.init(this)
         // Before anything resolves a track: an addon with `checkValidLossless`
         // is gated on this, and the gate reads "no" until it has looked.
         com.music.bitchord.playback.audio.LosslessOutput.init(this)

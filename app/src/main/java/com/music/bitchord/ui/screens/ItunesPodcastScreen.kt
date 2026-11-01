@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.screens
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,8 +15,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,6 +36,7 @@ import com.music.bitchord.data.podcast.ItunesShow
 import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
+import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.compose.ui.res.stringResource
 
 /**
@@ -47,6 +52,14 @@ fun ItunesPodcastScreen(
     onRetry: () -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    isLikedShow: Boolean = false,
+    onToggleLikeShow: () -> Unit = {},
+    onToggleLater: (Song) -> Unit = {},
+    isLater: (String) -> Boolean = { false },
+    sortNewestFirst: Boolean = true,
+    onToggleSort: () -> Unit = {},
+    hasMore: Boolean = false,
+    onLoadMore: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -76,6 +89,7 @@ fun ItunesPodcastScreen(
                         text = show.name,
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -88,6 +102,14 @@ fun ItunesPodcastScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                }
+                IconButton(onClick = onToggleLikeShow) {
+                    Icon(
+                        imageVector = if (isLikedShow) BitChordIcons.HeartFilled else BitChordIcons.Heart,
+                        contentDescription = null,
+                        tint = if (isLikedShow) MaterialTheme.colorScheme.primary
+                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -102,13 +124,29 @@ fun ItunesPodcastScreen(
                 if (episodes.data.isEmpty()) {
                     MessageState(stringResource(R.string.podcast_episodes_empty))
                 } else {
+                    val sorted = if (sortNewestFirst) episodes.data else episodes.data.reversed()
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        itemsIndexed(episodes.data, key = { _, song -> song.videoId }) { index, song ->
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                TextButton(onClick = onToggleSort) {
+                                    Text(
+                                        text = if (sortNewestFirst) "Newest first" else "Oldest first",
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                        }
+                        itemsIndexed(sorted, key = { _, song -> song.videoId }) { index, song ->
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clickable { onPlay(episodes.data, index) }
+                                    .clickable { onPlay(sorted, index) }
                                     .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
                             ) {
                                 Text(
@@ -150,6 +188,29 @@ fun ItunesPodcastScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.padding(start = 8.dp),
+                                    )
+                                }
+                                IconButton(onClick = { onToggleLater(song) }) {
+                                    Icon(
+                                        imageVector = if (isLater(song.videoId)) BitChordIcons.HeartFilled else BitChordIcons.Heart,
+                                        contentDescription = null,
+                                        tint = if (isLater(song.videoId)) MaterialTheme.colorScheme.primary
+                                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        if (hasMore) {
+                            item {
+                                TextButton(
+                                    onClick = onLoadMore,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        text = "Load more episodes",
+                                        color = MaterialTheme.colorScheme.primary,
                                     )
                                 }
                             }
