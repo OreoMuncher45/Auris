@@ -246,7 +246,7 @@ object AudioCache {
         }
         if (format != CACHE_FORMAT) state.edit().putInt(KEY_CACHE_FORMAT, CACHE_FORMAT).apply()
         if (state.getInt(KEY_MATCHING_SCHEMA, 0) < MATCHING_SCHEMA) {
-            val stale = cache.keys.filter { it.endsWith(ALT_SUFFIX) }
+            val stale = cache.keys.filter { isAltKey(it) }
             stale.forEach { runCatching { cache.removeResource(it) } }
             state.edit().putInt(KEY_MATCHING_SCHEMA, MATCHING_SCHEMA).apply()
             TrackLog.d(TAG, "invalidated ${stale.size} source cache entries after matcher upgrade")
@@ -439,7 +439,8 @@ object AudioCache {
                 val rendition = QualityUpgrade.cacheTag(spec.uri)
                 when {
                     rendition != null -> "$videoId#$rendition"
-                    SourceResolver.canSubstituteForYouTube() -> "$videoId#alt${atmosKeySuffix()}"
+                    SourceResolver.canSubstituteForYouTube() ->
+                        "$videoId$ALT_SUFFIX${atmosKeySuffix()}"
                     else -> videoId
                 }
             }
@@ -833,8 +834,26 @@ object AudioCache {
     private const val CACHE_FORMAT = 1
 
     private const val KEY_MATCHING_SCHEMA = "matching_schema"
-    private const val MATCHING_SCHEMA = 2
-    private const val ALT_SUFFIX = "#alt"
+    private const val MATCHING_SCHEMA = 3
+
+    /**
+     * Versioned substitute bucket.
+     *
+     * The old `#alt` bucket survived a server-side replacement of the file it
+     * named, so `CacheDataSource` could open a transparent MP4 at a byte
+     * position from a previous progressive rendition and fail with
+     * `READ_POSITION_OUT_OF_RANGE` before the resolver ever ran. A new bucket
+     * name is deliberate: a cache-wipe migration cannot help an install whose
+     * old entry was recreated after the migration, or one whose app data was
+     * restored from backup.
+     */
+    private const val ALT_SUFFIX = "#alt2"
+    private val LEGACY_ALT_SUFFIXES = listOf("#alt", "#alt-noatmos")
+
+    internal fun isAltKey(key: String): Boolean =
+        key.endsWith(ALT_SUFFIX) ||
+            key.endsWith("$ALT_SUFFIX-noatmos") ||
+            LEGACY_ALT_SUFFIXES.any(key::endsWith)
 
     /**
      * Wraps [upstream] so everything played is written to disk on the way
@@ -1450,7 +1469,7 @@ object AudioCache {
         val opus = Uri.parse(AutomixAnalysisSource.opusUri(videoId))
         val renditions = renditionsOf(watch)
         val sameSource = renditions
-            .filter { !it.key.endsWith("#alt") }
+            .filterNot { isAltKey(it.key) }
             .maxOfOrNull { it.cachedPrefix } ?: 0L
         if (sameSource >= MIN_ALIGNMENT_PREFIX_BYTES) return sameSource
         return maxOf(
