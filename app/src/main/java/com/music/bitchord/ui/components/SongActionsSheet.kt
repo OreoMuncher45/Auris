@@ -585,18 +585,16 @@ private fun neutralMenuPalette(): ArtworkPalette {
 @Composable
 private fun GroupSeparator(palette: ArtworkPalette) {
     when (LocalActionRowStyle.current) {
-        ActionRowStyle.Menu -> Box(
-            Modifier
-                .fillMaxWidth()
-                .height(6.dp)
-                .background(palette.divider),
+        // Thin hairline between items in every context menu — the popup used a
+        // thicker band, but a 0.5dp divider separates rows cleanly in all three
+        // surfaces (sheet, popup, glass) without crowding them.
+        ActionRowStyle.Menu -> HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            thickness = 0.5.dp,
+            color = palette.divider,
         )
-        // A filled band over glass reads as a bar laid across the artwork
-        // rather than as a break between two groups of rows, so the glass menu
-        // gets a hairline instead — the same one the sheet uses, without the
-        // sheet's generous padding.
         ActionRowStyle.Glass -> HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
             thickness = 0.5.dp,
             color = palette.divider,
         )
@@ -996,7 +994,9 @@ internal fun ActionRow(
             imageVector = icon,
             contentDescription = null,
             tint = (tint ?: foreground).copy(alpha = alpha),
-            modifier = Modifier.size(if (menu) 20.dp else 22.dp),
+            // The glass menu treats the glyph as a small horizontal hint beside
+            // the label so more rows fit in the panel hanging off the button.
+            modifier = Modifier.size(if (menu) 20.dp else if (glass) 18.dp else 22.dp),
         )
     }
     Row(
@@ -1006,11 +1006,9 @@ internal fun ActionRow(
             .then(
                 when {
                     menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                    // The glass menu keeps the sheet's own shape — the glyph
-                    // leading, the label after it — because it is the same
-                    // menu, and only its frame has changed. Compact, though:
-                    // it is a panel hanging off a button, not a sheet.
-                    glass -> Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp, vertical = 10.dp)
+                    // Compact hint rows: small glyph leading, tight padding so
+                    // the panel hanging off the button fits more options.
+                    glass -> Modifier.heightIn(min = 40.dp).padding(horizontal = 14.dp, vertical = 8.dp)
                     else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
                 },
             ),

@@ -3341,15 +3341,16 @@ private fun BitChordApp(
                 // takes a broken track off the automatic path for the rest
                 // of the session, and `askByHand` is what clears that.
                 onUpgradeQuality = if (fromPlayer &&
+                    controller?.currentMediaItem?.mediaId == song.videoId &&
                     (
                         song.videoId in pinnedToOriginal ||
-                            playingYouTubesOwn(song.videoId, controller)
-                        ) &&
-                    // A track playing off a file the listener saved is not
-                    // playing a stream anything could upgrade — the pin on
-                    // it is only waiting for the day it is streamed again.
-                    song.localUri == null &&
-                    controller?.currentMediaItem?.mediaId == song.videoId
+                            playingYouTubesOwn(song.videoId, controller) ||
+                            // A finished download sits on the disk; offer the
+                            // same manual bump to a better copy that a stream
+                            // gets, even though Wi-Fi auto-upgrades run in the
+                            // background.
+                            song.localUri != null
+                        )
                 ) {
                     {
                         controller.upgradeQuality()
