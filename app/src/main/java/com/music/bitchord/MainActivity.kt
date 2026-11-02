@@ -231,6 +231,7 @@ import com.music.bitchord.ui.components.LongPressOrigin
 import com.music.bitchord.ui.components.SongActionsPresentation
 import com.music.bitchord.ui.components.SongActionsSheet
 import com.music.bitchord.ui.components.GlassActionMenu
+import com.music.bitchord.ui.components.heldMenuUsesGlass
 import com.music.bitchord.ui.components.HeldContextMenu
 import com.music.bitchord.ui.components.HeldItem
 import androidx.media3.session.MediaController
@@ -5225,6 +5226,23 @@ private fun BitChordApp(
                 // Where the sheet's content starts in the window, so the
                 // button's window coordinates can be turned into the menu's.
                 var sheetContentOrigin by remember { mutableStateOf(Offset.Zero) }
+                // The sheet's own backdrop, for the glass menu below.
+                //
+                // A sheet is a window of its own, and a window cannot read
+                // another window's pixels. The glass in the menu samples the
+                // app's backdrop layer — which is recorded in the *activity's*
+                // window and holds the page behind the sheet — so the menu
+                // drew the home screen through the player: a hole punched in
+                // the middle of it, with the player visible around the edges.
+                // The player is recorded into a layer of its own, in this
+                // window, and the menu samples that instead.
+                //
+                // Recorded only while the menu is up. The layer costs a draw
+                // pass of the whole player every frame, and the player is not
+                // cheap to record — its artwork is animated — while nothing
+                // samples the layer at all while the menu is closed.
+                val sheetBackdrop = rememberLayerBackdrop()
+                val playerMenuSong = songActions?.takeIf { menuFromPlayer }
                 Box(
                     Modifier
                         // Where the app is holding the player, if it is — see
@@ -5257,8 +5275,22 @@ private fun BitChordApp(
                             playerSheetMotion.laidOut = true
                         },
                 ) {
-                    val playerMenuSong = songActions?.takeIf { menuFromPlayer }
-                    Box(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            // What the menu's glass samples — see
+                            // [sheetBackdrop]. The same gate the menu's own
+                            // material uses: a menu that is not glass has
+                            // nothing to sample, and a layer recorded for
+                            // nothing is a draw pass paid for free.
+                            .then(
+                                if (playerMenuSong != null && heldMenuUsesGlass(reduceDynamicBlur)) {
+                                    Modifier.layerBackdrop(sheetBackdrop)
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    ) {
                         CompositionLocalProvider(LocalPlayerDock provides activeDock) {
                             nowPlaying(playerSong)
                         }
@@ -5277,11 +5309,17 @@ private fun BitChordApp(
                                 right = anchor.right - sheetContentOrigin.x.toInt(),
                                 bottom = anchor.bottom - sheetContentOrigin.y.toInt(),
                             )
-                            GlassActionMenu(
-                                anchor = local,
-                                onDismiss = { songActions = null },
-                            ) {
-                                songMenuBody(playerMenuSong, SongActionsPresentation.Glass)
+                            // The glass in the panel samples the player
+                            // recorded above, not the app's page backdrop:
+                            // the sheet is another window, and the page layer
+                            // holds the home screen — see [sheetBackdrop].
+                            CompositionLocalProvider(LocalAppBackdrop provides sheetBackdrop) {
+                                GlassActionMenu(
+                                    anchor = local,
+                                    onDismiss = { songActions = null },
+                                ) {
+                                    songMenuBody(playerMenuSong, SongActionsPresentation.Glass)
+                                }
                             }
                         }
                     }
