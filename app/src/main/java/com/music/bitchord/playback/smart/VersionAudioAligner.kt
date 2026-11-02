@@ -470,7 +470,7 @@ object VersionAudioAligner {
         }
         if (live != null) return AudioCache.dataSourceForKey(watch, live.key)
         val sameSource = onDisk
-            .filter { !it.key.endsWith("#alt") }
+            .filterNot { AudioCache.isAltKey(it.key) }
             .maxByOrNull { it.cachedPrefix }
         val pick = if (sameSource != null &&
             sameSource.cachedPrefix >= AudioCache.MIN_ALIGNMENT_PREFIX_BYTES
