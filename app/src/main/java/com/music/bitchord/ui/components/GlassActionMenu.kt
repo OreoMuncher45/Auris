@@ -17,9 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -34,6 +32,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -67,7 +66,7 @@ fun GlassActionMenu(
     modifier: Modifier = Modifier,
     /** How wide the menu wants to be. Never wider than the host's own width. */
     menuWidth: Dp = 300.dp,
-    /** The rows. Drawn in a column that scrolls when they do not all fit. */
+    /** The rows. The panel is bounded to the room beside the button; the rows bring their own scroll. */
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val context = LocalContext.current
@@ -120,7 +119,15 @@ fun GlassActionMenu(
             .containSheetGestures(),
     ) {
         val widthPx = constraints.maxWidth
-        val heightPx = constraints.maxHeight
+        // A parent that is itself unbounded (a sheet measured before its window
+        // settles, say) passes Int.MAX_VALUE as maxHeight. A vertically
+        // scrollable Column measures against that and dies with
+        // "measured with an infinity maximum height constraints", so clamp it
+        // to the screen height before the menu ever sees it.
+        val heightPx = constraints.maxHeight.takeIf { it < Int.MAX_VALUE }
+            ?: with(density) {
+                LocalConfiguration.current.screenHeightDp.dp.toPx().toInt()
+            }
         val marginPx = with(density) { 12.dp.roundToPx() }
         val gapPx = with(density) { 6.dp.roundToPx() }
         val minRoomPx = with(density) { 220.dp.roundToPx() }
@@ -177,7 +184,11 @@ fun GlassActionMenu(
                 // long-press menu sample.
                 .heldMenuSurface(shape, plate, hairline, reduceDynamicBlur)
                 .onSizeChanged { menuHeightPx = it.height }
-                .verticalScroll(rememberScrollState())
+                // No verticalScroll here: the rows bring their own (see
+                // SongActionsPresentation.Glass), and a scrollable inside a
+                // scrollable is measured with infinite height and crashes.
+                // The panel is bounded by heightIn above, which is what lets
+                // the rows' own scroll work.
                 .padding(vertical = 6.dp),
             content = content,
         )

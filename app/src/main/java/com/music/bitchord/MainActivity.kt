@@ -3349,7 +3349,16 @@ private fun BitChordApp(
                             // same manual bump to a better copy that a stream
                             // gets, even though Wi-Fi auto-upgrades run in the
                             // background.
-                            song.localUri != null
+                            //
+                            // Asked of the download record rather than of
+                            // `song.localUri`: the player carries the uri only
+                            // when the item was built from a row that knew
+                            // about the file, and a track opened from the
+                            // player — or one that was queued before the
+                            // download finished — arrives without it. The
+                            // record is what says the file is on the device,
+                            // and it is pruned when the file goes away.
+                            song.localUri != null || song.videoId in savedDownloads
                         )
                 ) {
                     {
