@@ -238,12 +238,15 @@ fun SongActionsSheet(
      * bottom sheet with its own track header; [SongActionsPresentation.Menu]
      * is only the rows, compact and in the theme's own colours, for the
      * popup a held row lifts into — see [HeldContextMenu], which draws the
-     * held row itself above them.
+     * held row itself above them; [SongActionsPresentation.Glass] is the same
+     * rows over the app's liquid glass, for the menu that hangs off the
+     * player's three-dot button — see [GlassActionMenu].
      */
     presentation: SongActionsPresentation = SongActionsPresentation.Sheet,
 ) {
     var pickingSleepTimer by remember { mutableStateOf(false) }
     val menu = presentation == SongActionsPresentation.Menu
+    val glass = presentation == SongActionsPresentation.Glass
     // Read from the thumbnail the row that opened this sheet was already
     // showing, not a larger copy of it: the tint is a blur and a handful of
     // swatches, neither of which a bigger image improves, and going back for
@@ -252,6 +255,11 @@ fun SongActionsSheet(
     // The popup stays neutral instead: it floats over a blurred page rather
     // than sitting on the sleeve's own ground, and an accent pitched against
     // that tint is not guaranteed to read against the theme's surface.
+    //
+    // The glass menu does the opposite: it floats over the artwork itself, so
+    // its ink has to be the artwork's ink — the same white-or-near-black the
+    // player draws its own chrome in, or a label would vanish into a bright
+    // sleeve.
     val palette = if (menu) {
         neutralMenuPalette()
     } else {
@@ -489,6 +497,35 @@ fun SongActionsSheet(
         return
     }
 
+    if (glass) {
+        // The glass menu carries the same rows as the sheet, in the same order
+        // and with the same glyphs — it is the same menu, hung off a button
+        // instead of rising from the floor. The ink is the artwork's, because
+        // the glass shows the artwork.
+        CompositionLocalProvider(
+            LocalActionRowStyle provides ActionRowStyle.Glass,
+            LocalGlassMenuInk provides palette.onBackground,
+        ) {
+            Column(
+                modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                if (pickingSleepTimer) {
+                    SleepTimerPicker(
+                        palette = palette,
+                        onBack = { pickingSleepTimer = false },
+                        ink = palette.onBackground,
+                        mutedInk = palette.onBackgroundVariant,
+                    )
+                } else {
+                    rows()
+                }
+            }
+        }
+        return
+    }
+
     TintedSheet(palette = palette, imageUrl = song.thumbnailUrl, modifier = modifier) {
         if (pickingSleepTimer) {
             SleepTimerPicker(palette = palette, onBack = { pickingSleepTimer = false })
@@ -503,12 +540,21 @@ fun SongActionsSheet(
 }
 
 /** How [SongActionsSheet] is being presented. */
-enum class SongActionsPresentation { Sheet, Menu }
+enum class SongActionsPresentation { Sheet, Menu, Glass }
 
 /** Row density and layout, set by whichever surface the rows are drawn on. */
-internal enum class ActionRowStyle { Sheet, Menu }
+internal enum class ActionRowStyle { Sheet, Menu, Glass }
 
 internal val LocalActionRowStyle = staticCompositionLocalOf { ActionRowStyle.Sheet }
+
+/**
+ * The ink for rows drawn on glass.
+ *
+ * A glass surface shows whatever is behind it, so the theme's own greys have
+ * nothing dependable to sit against: the artwork decides whether a label has
+ * to be white or near-black. Null falls back to the theme's foreground.
+ */
+internal val LocalGlassMenuInk = staticCompositionLocalOf<Color?> { null }
 
 /**
  * The popup's colours: the theme's own, so the menu reads the same in light and
@@ -538,15 +584,23 @@ private fun neutralMenuPalette(): ArtworkPalette {
  */
 @Composable
 private fun GroupSeparator(palette: ArtworkPalette) {
-    if (LocalActionRowStyle.current == ActionRowStyle.Menu) {
-        Box(
+    when (LocalActionRowStyle.current) {
+        ActionRowStyle.Menu -> Box(
             Modifier
                 .fillMaxWidth()
                 .height(6.dp)
                 .background(palette.divider),
         )
-    } else {
-        HorizontalDivider(
+        // A filled band over glass reads as a bar laid across the artwork
+        // rather than as a break between two groups of rows, so the glass menu
+        // gets a hairline instead — the same one the sheet uses, without the
+        // sheet's generous padding.
+        ActionRowStyle.Glass -> HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+            thickness = 0.5.dp,
+            color = palette.divider,
+        )
+        ActionRowStyle.Sheet -> HorizontalDivider(
             modifier = Modifier.padding(vertical = 6.dp),
             thickness = 0.5.dp,
             color = palette.divider,
@@ -760,7 +814,13 @@ private fun WebDavUploadRow(
 
 /** End of track or a duration, plus a way out once one is running. */
 @Composable
-private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
+private fun SleepTimerPicker(
+    palette: ArtworkPalette,
+    onBack: () -> Unit,
+    /** The ink for the labels — the theme's own, or the artwork's over glass. */
+    ink: Color = MaterialTheme.colorScheme.onBackground,
+    mutedInk: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
     val chosen by SleepTimer.minutes.collectAsStateWithLifecycle()
     val afterTrack by SleepTimer.afterTrack.collectAsStateWithLifecycle()
     val countdown = sleepTimerCountdown()
@@ -776,14 +836,14 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
                 Icon(
                     Icons.AutoMirrored.Rounded.ArrowBack,
                     contentDescription = stringResource(R.string.back),
-                    tint = MaterialTheme.colorScheme.onBackground,
+                    tint = ink,
                 )
             }
             Column(Modifier.weight(1f)) {
                 Text(
                     text = stringResource(R.string.sleep_timer),
                     style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
+                    color = ink,
                 )
                 Text(
                     text = when {
@@ -792,7 +852,7 @@ private fun SleepTimerPicker(palette: ArtworkPalette, onBack: () -> Unit) {
                         else -> stringResource(R.string.pause_after_a_while)
                     },
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = mutedInk,
                 )
             }
         }
@@ -839,6 +899,9 @@ private fun SleepOption(
     accent: Color,
     onClick: () -> Unit,
 ) {
+    val glass = LocalActionRowStyle.current == ActionRowStyle.Glass
+    val ink = if (glass) LocalGlassMenuInk.current ?: MaterialTheme.colorScheme.onBackground
+    else MaterialTheme.colorScheme.onBackground
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -849,7 +912,7 @@ private fun SleepOption(
         Text(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = ink,
             modifier = Modifier.weight(1f),
         )
         if (selected) {
@@ -917,9 +980,16 @@ internal fun ActionRow(
     onClick: () -> Unit,
 ) {
     val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
+    val glass = LocalActionRowStyle.current == ActionRowStyle.Glass
     // The popup sits on a surface rather than the page background, so its
-    // text follows the surface's colour — the two differ in light mode.
-    val foreground = if (menu) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onBackground
+    // text follows the surface's colour — the two differ in light mode. The
+    // glass menu follows the artwork instead, because the glass shows the
+    // artwork.
+    val foreground = when {
+        glass -> LocalGlassMenuInk.current ?: MaterialTheme.colorScheme.onSurface
+        menu -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.onBackground
+    }
     val alpha = if (enabled) 1f else 0.4f
     val iconView: @Composable () -> Unit = {
         Icon(
@@ -934,16 +1004,21 @@ internal fun ActionRow(
             .fillMaxWidth()
             .clickable(enabled = enabled, onClick = onClick)
             .then(
-                if (menu) {
-                    Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                } else {
-                    Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
+                when {
+                    menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
+                    // The glass menu keeps the sheet's own shape — the glyph
+                    // leading, the label after it — because it is the same
+                    // menu, and only its frame has changed. Compact, though:
+                    // it is a panel hanging off a button, not a sheet.
+                    glass -> Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp, vertical = 10.dp)
+                    else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
                 },
             ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // A context menu reads label-first with the glyph at the far edge;
-        // the sheet keeps the glyph leading, like every other list in the app.
+        // the sheet and the glass menu keep the glyph leading, like every
+        // other list in the app.
         if (!menu) {
             iconView()
             Spacer(Modifier.width(18.dp))
@@ -953,7 +1028,7 @@ internal fun ActionRow(
             // Context menus sit on glass; semi-bold keeps the label legible
             // over a busy blurred backdrop.
             style = MaterialTheme.typography.bodyLarge.copy(
-                fontWeight = if (menu) FontWeight.SemiBold else FontWeight.Normal,
+                fontWeight = if (menu || glass) FontWeight.SemiBold else FontWeight.Normal,
             ),
             color = foreground.copy(alpha = alpha),
             maxLines = if (menu) 2 else Int.MAX_VALUE,
@@ -985,14 +1060,15 @@ internal fun ActionRow(
 @Composable
 private fun LoadingActionRow(icon: ImageVector, label: String, palette: ArtworkPalette) {
     val menu = LocalActionRowStyle.current == ActionRowStyle.Menu
+    val glass = LocalActionRowStyle.current == ActionRowStyle.Glass
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(
-                if (menu) {
-                    Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
-                } else {
-                    Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
+                when {
+                    menu -> Modifier.heightIn(min = 46.dp).padding(horizontal = 18.dp, vertical = 11.dp)
+                    glass -> Modifier.heightIn(min = 44.dp).padding(horizontal = 16.dp, vertical = 10.dp)
+                    else -> Modifier.padding(horizontal = 22.dp, vertical = 15.dp)
                 },
             ),
         verticalAlignment = Alignment.CenterVertically,

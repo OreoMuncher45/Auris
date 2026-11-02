@@ -103,6 +103,16 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
         private set
 
     /**
+     * The decoded cover's width over its height, once Coil has one.
+     *
+     * The player's banner is a shape the cover is not, so whether "the whole
+     * image" fits inside it is a question only the image's own aspect can
+     * answer — see the artwork's uncrop transform in `NowPlayingScreen`.
+     */
+    var aspect by mutableStateOf<Float?>(null)
+        private set
+
+    /**
      * Which go at this cover we are on, and the reason there is more than one.
      *
      * Coil does not retry: a request that fails is over, and the state it leaves
@@ -154,6 +164,12 @@ internal class PlayerArtwork(val url: String?, private val context: PlatformCont
     /** Fed from each painter drawing [request]. */
     fun onState(state: AsyncImagePainter.State) {
         loaded = state is AsyncImagePainter.State.Success
+        if (state is AsyncImagePainter.State.Success) {
+            val image = state.result.image
+            if (image.height > 0 && image.width > 0) {
+                aspect = image.width.toFloat() / image.height.toFloat()
+            }
+        }
         // Only the failure is latched, and only upwards: the retry that clears
         // it is [failed]'s own effect, and clearing it from a Loading state here
         // would cancel that effect's wait every time the painter passed back

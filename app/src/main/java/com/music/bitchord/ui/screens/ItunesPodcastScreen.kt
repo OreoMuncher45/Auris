@@ -61,8 +61,6 @@ fun ItunesPodcastScreen(
     isLater: (String) -> Boolean = { false },
     sortNewestFirst: Boolean = true,
     onToggleSort: () -> Unit = {},
-    hasMore: Boolean = false,
-    onLoadMore: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -212,21 +210,6 @@ fun ItunesPodcastScreen(
                                     )
                                 }
                             }
-                            }
-                        }
-                        if (hasMore) {
-                            item {
-                                TextButton(
-                                    onClick = onLoadMore,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
-                                ) {
-                                    Text(
-                                        text = "Load more episodes",
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
                             }
                         }
                     }

@@ -80,7 +80,9 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import org.jetbrains.compose.resources.painterResource
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -92,6 +94,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.unit.sp
@@ -710,6 +713,7 @@ internal fun CircleGlyph(
     haptic: Haptic = Haptic.Tap,
     /** Optical size override for glyphs that sit small or large in their box. */
     glyphSize: Dp = 19.dp,
+    modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
     val ink = LocalPlayerAccent.current ?: LocalPlayerInk.current
@@ -718,7 +722,7 @@ internal fun CircleGlyph(
     // 20% rather than brightening and changing the icon's contrast with it.
     val discAlpha = alphas.buttonFill
     Box(
-        modifier = Modifier
+        modifier = modifier
             .size(34.dp)
             .clip(CircleShape)
             .background(ink.copy(alpha = discAlpha))
@@ -746,6 +750,36 @@ internal fun CircleGlyph(
         }
     }
 }
+
+/**
+ * Reports where the button it is on sits, in window coordinates.
+ *
+ * The player's menu hangs off the button that opened it rather than rising
+ * from the bottom of the screen, and the host that draws the menu lives in a
+ * different module — the glass engine is the app's, not the player's — so the
+ * player cannot draw the menu itself. It can say where the button is, and the
+ * host does the rest.
+ *
+ * Window coordinates, not root coordinates: the player is drawn in the sheet's
+ * own window, and the menu has to be drawn in that same window for the glass
+ * to sample the artwork behind it.
+ */
+internal fun Modifier.reportMenuAnchor(onAnchor: ((IntRect) -> Unit)?): Modifier =
+    if (onAnchor == null) {
+        this
+    } else {
+        onGloballyPositioned {
+            val bounds = it.boundsInWindow()
+            onAnchor(
+                IntRect(
+                    left = bounds.left.roundToInt(),
+                    top = bounds.top.roundToInt(),
+                    right = bounds.right.roundToInt(),
+                    bottom = bounds.bottom.roundToInt(),
+                ),
+            )
+        }
+    }
 
 /**
  * Transport / bottom glyphs. The circular clip belongs on the touch target,

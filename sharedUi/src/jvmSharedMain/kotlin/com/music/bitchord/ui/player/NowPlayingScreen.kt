@@ -132,6 +132,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -552,6 +553,23 @@ fun fullBleedArtworkAvailable(windowWidth: Dp): Boolean =
     playerFillsWindow(windowWidth) || tabletSizedPlayer(windowWidth)
 
 /**
+ * The layer scale at which a `ContentScale.Crop` draw of a cover with [aspect]
+ * shows the whole picture inside a [width] × [height] box.
+ *
+ * At 1 the crop is showing everything it can — a cover already shaped like the
+ * box. Below 1 the draw has to shrink for the edges to come back, and the stage
+ * shows around it; that is what "uncropped" means for an image the banner is
+ * not shaped like. Unknown (the cover has not decoded) leaves the crop alone
+ * rather than guessing a wrong shape.
+ */
+private fun artworkFitScale(width: Float, height: Float, aspect: Float?): Float {
+    if (width <= 0f || height <= 0f || aspect == null || aspect <= 0f) return 1f
+    val drawnWidth = maxOf(width, height * aspect)
+    val drawnHeight = drawnWidth / aspect
+    return minOf(width / drawnWidth, height / drawnHeight).coerceIn(0f, 1f)
+}
+
+/**
  * Whether a player given the whole of a window this wide is still narrow enough
  * to run its artwork edge to edge.
  */
@@ -791,6 +809,18 @@ fun NowPlayingScreen(
     onQueueDragActiveChange: (Boolean) -> Unit = {},
     onClearQueue: () -> Unit,
     onOpenMenu: () -> Unit,
+    /**
+     * Reports where the three-dot button sits, in window coordinates.
+     *
+     * The menu that answers the button hangs off the button rather than
+     * rising from the bottom of the screen, so the host has to know where the
+     * button is. The player draws in its own window — the sheet is a dialog —
+     * so these are that window's coordinates, and the host draws its menu in
+     * the same window.
+     *
+     * Null keeps the host from being asked at all.
+     */
+    onMenuAnchor: ((IntRect) -> Unit)? = null,
     onOpenAlbum: (String) -> Unit,
     /**
      * Opens an artist's page. [browseId] is null for anyone but the lead credit:
@@ -1480,6 +1510,17 @@ fun NowPlayingScreen(
         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
         label = "spotifyCanvasChrome",
     )
+    // How far the cover has travelled from the banner's crop (0) to the whole
+    // image (1). The lyrics view asks for the whole picture — the lines are the
+    // page there, and a cropped cover above them reads as a mistake rather
+    // than as framing — and the same value is blended into as the player docks
+    // onto the mini player, so the cover uncrops into that thumbnail instead of
+    // cutting to it. One image, two zoom levels, and a movement between them.
+    val lyricsUncrop by animateFloatAsState(
+        targetValue = if (lyricsOpen) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "lyricsUncrop",
+    )
     // How tall that banner is, worked out down in the layout where the sleeve's
     // own geometry is known. Zero until the first measure, which is fine: there
     // is nothing to show that early either.
@@ -2006,6 +2047,7 @@ fun NowPlayingScreen(
                                 showRevertCue = showRevertCue,
                                 onToggleLike = onToggleLike,
                                 onOpenMenu = onOpenMenu,
+                                onMenuAnchor = onMenuAnchor,
                                 onOpenAlbum = onOpenAlbum,
                                 onOpenArtist = onOpenArtist,
                             )
@@ -3203,13 +3245,32 @@ fun NowPlayingScreen(
                                     val oldBottom = size.height / HERO_ART_ZOOM
                                     val zoom = maxOf(size.width, oldBottom) * HERO_ART_ZOOM /
                                         maxOf(size.width, size.height)
-                                    scaleX = zoom
-                                    scaleY = zoom
-                                    // Top-centre, then drift: the crop grows at
-                                    // the bottom rather than lifting the art off
-                                    // the status bar.
-                                    transformOrigin = TransformOrigin(0.5f, 0f)
-                                    translationY = size.width * HERO_ART_DRIFT
+                                    // Uncrop: lyrics ask for the whole image,
+                                    // and docking onto the mini player blends
+                                    // into it as the sheet closes. Shrinking
+                                    // the cropped draw to the fit ratio within
+                                    // the same box is exactly "the same
+                                    // picture, zoomed out": the stage shows
+                                    // around it and nothing is re-laid out.
+                                    val dockUncrop = dock?.let { d ->
+                                        if (d.attached && d.offset() != null) {
+                                            (1f - d.openFraction()).coerceIn(0f, 1f)
+                                        } else {
+                                            0f
+                                        }
+                                    } ?: 0f
+                                    val uncrop = maxOf(lyricsUncrop, dockUncrop)
+                                    val fit = artworkFitScale(size.width, size.height, art.aspect)
+                                    val scale = zoom + (fit - zoom) * uncrop
+                                    scaleX = scale
+                                    scaleY = scale
+                                    // Cropped, the crop grows at the bottom rather
+                                    // than lifting the art off the status bar; once
+                                    // uncropped the whole picture should sit in the
+                                    // middle of the stage, so the anchor slides from
+                                    // the top edge to the centre with it.
+                                    transformOrigin = TransformOrigin(0.5f, 0.5f * uncrop)
+                                    translationY = size.width * HERO_ART_DRIFT * (1f - uncrop)
                                 } else Modifier,
                             )
                             .drawWithContent { if (art.loaded || !canvasRendered) drawContent() },
@@ -3522,6 +3583,7 @@ fun NowPlayingScreen(
                         icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
                         contentDescription = stringResource(Res.string.more),
                         onClick = onOpenMenu,
+                        modifier = Modifier.reportMenuAnchor(onMenuAnchor),
                     )
                 }
 

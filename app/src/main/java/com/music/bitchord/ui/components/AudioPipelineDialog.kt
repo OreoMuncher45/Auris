@@ -411,7 +411,11 @@ fun AudioPipelineDialog(
             } else {
                 "Flat"
             }
-            val stereoExpandText = if (spatialAudio) "250%" else "100%"
+            val stereoExpandText = when {
+                spatialAudio -> "250%"
+                simulatedAtmos -> "190%"
+                else -> "100%"
+            }
             val buffersText = outputStatus.bufferSize?.let { size ->
                 val rate = outputStatus.actualSampleRateHz
                 val bytesPerSample = when (outputStatus.actualEncoding) {

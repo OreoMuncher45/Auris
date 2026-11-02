@@ -1345,4 +1345,20 @@
     <string name="podcasts">Podcasts</string>
     <string name="liquid_glass_haptics">Liquid glass haptics</string>
     <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
+    <string name="settings_categories">Categories</string>
+    <string name="settings_home_order">Home shelves</string>
+    <string name="settings_category_account">Account &amp; social</string>
+    <string name="settings_category_audio">Audio quality</string>
+    <string name="settings_category_playback">Playback</string>
+    <string name="settings_category_downloads">Downloads</string>
+    <string name="settings_category_now_playing">Now Playing</string>
+    <string name="settings_category_home_library">Home &amp; library</string>
+    <string name="settings_category_appearance">Appearance</string>
+    <string name="settings_category_performance">Performance</string>
+    <string name="settings_category_storage">Storage</string>
+    <string name="settings_category_data">Your data</string>
+    <string name="settings_category_language">Language</string>
+    <string name="settings_category_advanced">Advanced</string>
+    <string name="settings_category_support">Support</string>
+    <string name="settings_category_subtitle">Everything to do with this part of the app</string>
 </resources>

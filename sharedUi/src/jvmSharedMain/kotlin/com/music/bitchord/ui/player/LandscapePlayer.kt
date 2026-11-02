@@ -52,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
@@ -409,6 +410,8 @@ internal fun LandscapeCredits(
     showRevertCue: Boolean,
     onToggleLike: () -> Unit,
     onOpenMenu: () -> Unit,
+    /** Where the three-dot button sits, so the menu can hang off it. */
+    onMenuAnchor: ((IntRect) -> Unit)? = null,
     onOpenAlbum: (String) -> Unit,
     /** Null browse id for anyone but the lead credit — see [NowPlayingScreen]. */
     onOpenArtist: (browseId: String?, name: String) -> Unit,
@@ -471,6 +474,7 @@ internal fun LandscapeCredits(
             icon = if (showRevertCue) PlayerIcons.Revert else PlayerIcons.More,
             contentDescription = stringResource(Res.string.more),
             onClick = onOpenMenu,
+            modifier = Modifier.reportMenuAnchor(onMenuAnchor),
         )
     }
 }

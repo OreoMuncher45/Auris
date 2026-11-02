@@ -184,13 +184,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var openItunesCollectionId: String? = null
 
     /** Opens an Apple-catalogue podcast and loads its episodes from the RSS feed. */
-    private var itunesAllEpisodes: List<Song> = emptyList()
-    private val _itunesVisibleCount = MutableStateFlow(0)
-    val itunesVisibleCount: StateFlow<Int> = _itunesVisibleCount.asStateFlow()
-    val itunesHasMore: StateFlow<Boolean> =
-        _itunesVisibleCount.map { it < itunesAllEpisodes.size }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
-    private val EPISODE_PAGE = 100
-
     fun openItunesPodcast(collectionId: String) {
         openItunesCollectionId = collectionId
         _itunesEpisodes.value = UiState.Loading
@@ -206,24 +199,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
             itunesShows[collectionId] = show
-            val result = runCatching { ItunesPodcasts.episodes(show, limit = 500) }
+            val result = runCatching { ItunesPodcasts.episodes(show) }
             if (result.isFailure) {
                 _itunesEpisodes.value = UiState.Error(result.exceptionOrNull()!!.friendly())
                 return@launch
             }
-            val all = result.getOrThrow()
-            itunesAllEpisodes = all
-            _itunesVisibleCount.value = minOf(EPISODE_PAGE, all.size)
-            _itunesEpisodes.value = UiState.Success(all.take(_itunesVisibleCount.value))
+            // The whole feed, newest-first. A podcast's back catalogue is the
+            // reason somebody opens it, so nothing is held back behind a
+            // "load more" — see ItunesPodcasts.episodes.
+            _itunesEpisodes.value = UiState.Success(result.getOrThrow())
         }
-    }
-
-    /** Loads the next batch of 100 episodes, the same paging playlists use. */
-    fun loadMoreItunesEpisodes() {
-        val next = minOf(_itunesVisibleCount.value + EPISODE_PAGE, itunesAllEpisodes.size)
-        if (next == _itunesVisibleCount.value) return
-        _itunesVisibleCount.value = next
-        _itunesEpisodes.value = UiState.Success(itunesAllEpisodes.take(next))
     }
 
     fun reloadItunesEpisodes() {

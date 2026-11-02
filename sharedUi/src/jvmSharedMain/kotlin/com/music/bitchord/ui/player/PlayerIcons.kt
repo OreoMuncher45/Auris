@@ -4,6 +4,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Undo
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -110,8 +111,14 @@ object PlayerIcons {
     /** Lyrics, in the player's bottom row. */
     val Lyrics = PlayerIcon.Vector(BitChordIcons.PlayerLyrics)
 
-    /** The three-dot menu, in the credits row. */
-    val More = PlayerIcon.Vector(BitChordIcons.PlayerEllipsis)
+    /**
+     * The three-dot menu, in the credits row.
+     *
+     * Material's horizontal ellipsis — the same mark BitChord draws. Three
+     * dots on one line at one weight, rather than a hand-built set that reads
+     * a fraction heavier against the artwork than the mark it replaced.
+     */
+    val More = PlayerIcon.Vector(Icons.Rounded.MoreHoriz)
 
     // ---- Like ------------------------------------------------------------
 

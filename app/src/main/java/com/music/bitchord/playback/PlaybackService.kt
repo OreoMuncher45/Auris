@@ -7597,6 +7597,12 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
+        }
+        scope.launch {
+            // A coroutine of its own, not a second line in the one above:
+            // `collect` on a StateFlow never returns, so a second collector
+            // stacked behind the first would never run and the switch would
+            // only take effect on the next track transition.
             AppSettings.simulatedAtmos.collect { applySimulatedAtmosEnabled() }
         }
         scope.launch {
