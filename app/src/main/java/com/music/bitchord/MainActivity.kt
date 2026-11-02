@@ -5212,9 +5212,8 @@ private fun BitChordApp(
                         }
                     }
                 }
-                // Where the sheet's own content starts in the window, so the
-                // button's window coordinates can be turned into the menu's
-                // own.
+                // Where the sheet's content starts in the window, so the
+                // button's window coordinates can be turned into the menu's.
                 var sheetContentOrigin by remember { mutableStateOf(Offset.Zero) }
                 Box(
                     Modifier
@@ -5254,14 +5253,11 @@ private fun BitChordApp(
                             nowPlaying(playerSong)
                         }
                     }
-                    // The menu, hung off the three-dot button.
-                    //
-                    // Drawn here, in the sheet's own window, because the menu
-                    // belongs to the player it hangs off: in the app's window it
-                    // would sit under the sheet. Its surface is the lightweight
-                    // glass match, not the live backdrop engine — see
-                    // [GlassActionMenu] for why that engine is not used on a
-                    // sibling of the player inside the sheet's dialog.
+                    // The track menu, hung off the three-dot button. Same
+                    // surface and same rows as the long-press menu; it is
+                    // drawn in the sheet's own window so it sits over the
+                    // player, and anchored to the button rather than lifted
+                    // out of a held row.
                     if (playerMenuSong != null) {
                         val anchor = playerMenuAnchor
                         if (anchor != null) {

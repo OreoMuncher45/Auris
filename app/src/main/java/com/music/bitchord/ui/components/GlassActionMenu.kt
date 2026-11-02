@@ -2,7 +2,6 @@ package com.music.bitchord.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -10,10 +9,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -21,15 +24,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,47 +44,24 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.utils.containSheetGestures
 
 /**
- * A menu that hangs off the button that opened it, in the app's liquid glass.
+ * The track menu that hangs off the player's three-dot button.
  *
- * The sheet is the wrong shape for a button like the player's three-dot menu:
- * a sheet rises from the bottom of the screen, so a menu opened from a button
- * in the top right answers a tap in the top right with a panel that fills the
- * bottom of the display. The distance between the question and its answer is
- * the whole of the screen, and the thing that was asked about — *this* track,
- * *now* — is behind a slab while it is being answered.
+ * It is the same menu the long-press on a track lifts into — same surface
+ * ([heldMenuSurface]: liquid glass when the app's glass is on, the flat plate
+ * when it is not), same rows, same ink — only it is anchored to a button
+ * rather than grown out of a held row, and drawn inside the player sheet's own
+ * window so it sits over the player.
  *
- * So the menu hangs off the button instead. It opens under the button it came
- * from, aligned to it, and it is made of the same material the rest of the
- * floating chrome is: the app's liquid glass engine, sampling the artwork
- * behind it and refracting it through a lens, with a hairline edge and the
- * engine's own specular rim.
+ * Placement is a plain offset inside a full-screen box, not a custom [Layout]:
+ * a menu is a panel and a scrim, and the only thing that needs measuring is
+ * whether there is room under the button or the panel has to open upwards.
  *
- * ## Where it is drawn
- *
- * The host draws it in the same window as the content it floats over, because
- * the glass samples what is behind it: a menu in a separate window would
- * refract a different picture from the one it is sitting on. The host is
- * responsible for the [anchor] being in *its own* coordinate space, and for
- * providing a backdrop that records what is behind the menu.
- *
- * ## What it honours
- *
- * "Reduce animation" (or a system animator scale of zero) turns the opening
- * into a short fade with nothing moving. "Reduce dynamic blur" swaps the
- * glass for the flat plate — which is also the cost that setting exists to
- * remove.
- *
- * The Liquid Glass switch in Settings governs the app's *floating chrome* —
- * the nav bar and the top controls. This menu belongs to the player, which is
- * glass by definition in this shell, so it is not gated on that switch; see
- * [Modifier.liquidGlass] for the same reasoning.
+ * The content is the caller's; see `SongActionsSheet` with
+ * [SongActionsPresentation.Glass] for the rows.
  */
 @Composable
 fun GlassActionMenu(
-    /**
-     * The bounds of the button that opened the menu, in the coordinate space of
-     * the host's own root. The menu is placed under it and aligned to its end.
-     */
+    /** The button's bounds, in the coordinate space of this composable's root. */
     anchor: IntRect,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
@@ -86,7 +70,7 @@ fun GlassActionMenu(
     /** The rows. Drawn in a column that scrolls when they do not all fit. */
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val systemAnimationsOff = remember(context) {
@@ -100,9 +84,6 @@ fun GlassActionMenu(
     }
     val reduceMotion = reduceAnimation || systemAnimationsOff
 
-    // The menu is on screen for as long as the caller keeps it there, so it
-    // opens once and stays. The progress is read in the draw phase, so the
-    // animation never recomposes the rows underneath it.
     val progress = remember { Animatable(0f) }
     LaunchedEffect(Unit) {
         progress.animateTo(
@@ -110,10 +91,9 @@ fun GlassActionMenu(
             if (reduceMotion) {
                 tween(durationMillis = 140, easing = LinearEasing)
             } else {
-                // A spring, but a gentle one: the menu grows out of the button
-                // it belongs to, so the arrival has to read as that and not as
-                // a panel dropping onto the screen.
-                spring(dampingRatio = 0.86f, stiffness = 380f)
+                // A gentler cousin of the held menu's spring: the panel grows
+                // out of the button and settles, without the bounce a lift has.
+                spring(dampingRatio = 0.84f, stiffness = 340f)
             },
         )
     }
@@ -121,132 +101,88 @@ fun GlassActionMenu(
     BackHandler(onBack = onDismiss)
 
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    // What the menu stands on: plain white or black at enough strength to read
-    // as a surface over the artwork, and a little more solid when the blur is
-    // switched off.
+    // The same plate and hairline as the held menu, so the two read as one
+    // material in the two places it appears.
     val plate = (if (dark) Color.Black else Color.White).copy(
-        alpha = if (reduceDynamicBlur) 0.92f else 0.82f,
+        alpha = if (reduceDynamicBlur) 0.85f else if (dark) 0.78f else 0.85f,
     )
-
+    val hairline = if (dark) Color.White.copy(alpha = 0.10f) else Color.Black.copy(alpha = 0.06f)
     val shape = RoundedCornerShape(MENU_RADIUS)
+    val density = LocalDensity.current
 
-    Layout(
+    var menuHeightPx by remember { mutableIntStateOf(0) }
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            // The menu is drawn over the player, and the player lives in a
-            // sheet. A scroll inside the menu that runs out of rows hands the
-            // rest of the gesture up, and the sheet would take it as a drag of
-            // the player itself.
+            // Keeps a scroll that runs out of rows from being taken as a drag
+            // of the player sheet underneath.
             .containSheetGestures(),
-        content = {
-            // The scrim. Barely there — enough to say "the rest of the screen
-            // is not the menu any more" without dimming the artwork the menu
-            // is made of.
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.16f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onDismiss,
-                    ),
-            )
-            Column(
-                Modifier
-                    // The lightweight glass match: the same translucent tint,
-                    // directional highlight and hairline as the nav bar, but no
-                    // backdrop capture, blur or lens. It is deliberate here.
-                    //
-                    // The full engine samples whatever is *behind* the surface,
-                    // and this menu is drawn in the player sheet's own dialog
-                    // window on top of a live GraphicsLayer recording of the
-                    // player. Sampling that layer from a sibling inside the same
-                    // dialog was what crashed the player when the menu opened on
-                    // some devices; the lens is not worth a crash for a panel
-                    // this small. This still reads as glass, and it cannot
-                    // sample anything.
-                    .then(Modifier.lightweightLiquidGlass(shape, plate))
-                    .verticalScroll(rememberScrollState())
-                    .padding(vertical = 6.dp),
-                content = content,
-            )
-        },
-    ) { measurables, constraints ->
-        val width = constraints.maxWidth
-        val height = constraints.maxHeight
-        val margin = 12.dp.roundToPx()
-        val gap = 6.dp.roundToPx()
+    ) {
+        val widthPx = constraints.maxWidth
+        val heightPx = constraints.maxHeight
+        val marginPx = with(density) { 12.dp.roundToPx() }
+        val gapPx = with(density) { 6.dp.roundToPx() }
+        val minRoomPx = with(density) { 220.dp.roundToPx() }
+        val menuWidthPx = with(density) { menuWidth.roundToPx() }
+            .coerceAtMost((widthPx - marginPx * 2).coerceAtLeast(0))
 
-        val scrim = measurables[0].measure(Constraints.fixed(width, height))
+        val roomBelow = heightPx - anchor.bottom - gapPx
+        val roomAbove = anchor.top - gapPx
+        val placeBelow = roomBelow >= minRoomPx || roomBelow >= roomAbove
 
-        // The button's own edges, in this layout's coordinates.
-        val anchorLeft = anchor.left
-        val anchorRight = anchor.right
-        val anchorTop = anchor.top
-        val anchorBottom = anchor.bottom
+        val x = (anchor.right - menuWidthPx)
+            .coerceIn(marginPx, (widthPx - marginPx - menuWidthPx).coerceAtLeast(marginPx))
+        val y = if (placeBelow) {
+            anchor.bottom + gapPx
+        } else {
+            (anchor.top - gapPx - menuHeightPx).coerceAtLeast(marginPx)
+        }
+        val maxMenuHeight = (heightPx - y - marginPx).coerceAtLeast(0)
 
-        // The room under the button and the room over it. The menu goes under
-        // wherever it can: a menu that opens upward from a button near the
-        // top of the screen reads as a panel that fell in from above.
-        val roomBelow = height - anchorBottom - gap
-        val roomAbove = anchorTop - gap
-        val placeBelow = roomBelow >= MIN_ROOM.roundToPx() || roomBelow >= roomAbove
-        val room = if (placeBelow) roomBelow else roomAbove
-
-        val menuWidthPx = menuWidth.roundToPx().coerceAtMost((width - margin * 2).coerceAtLeast(0))
-        val menu = measurables[1].measure(
-            Constraints(
-                minWidth = menuWidthPx,
-                maxWidth = menuWidthPx,
-                minHeight = 0,
-                maxHeight = room.coerceAtLeast(0),
-            ),
+        // The page, pushed back just enough to say the rest is not the menu.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = if (dark) 0.30f else 0.10f))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
         )
 
-        // Aligned to the button's own edge. The button is on the right of the
-        // screen in every place this menu is opened from, so the menu's right
-        // edge is the button's right edge — the menu hangs under the thing
-        // that opened it rather than drifting off to one side of it.
-        val x = (anchorRight - menuWidthPx)
-            .coerceIn(margin, (width - margin - menuWidthPx).coerceAtLeast(margin))
-        val y = if (placeBelow) {
-            anchorBottom + gap
-        } else {
-            anchorTop - gap - menu.height
-        }
-
-        layout(width, height) {
-            scrim.place(0, 0)
-            menu.placeWithLayer(x, y) {
-                val p = progress.value.coerceIn(0f, 1f)
-                alpha = p
-                if (!reduceMotion) {
-                    // Out of the button: the corner nearest it stays put and
-                    // the far edges travel, so the menu reads as growing from
-                    // the tap rather than appearing beside it.
-                    transformOrigin = if (placeBelow) {
-                        TransformOrigin(1f, 0f)
-                    } else {
-                        TransformOrigin(1f, 1f)
+        Column(
+            Modifier
+                .offset { IntOffset(x, y) }
+                .width(with(density) { menuWidthPx.toDp() })
+                .heightIn(max = with(density) { maxMenuHeight.toDp() })
+                .graphicsLayer {
+                    val p = progress.value.coerceIn(0f, 1f)
+                    alpha = p
+                    if (!reduceMotion) {
+                        transformOrigin = if (placeBelow) {
+                            TransformOrigin(1f, 0f)
+                        } else {
+                            TransformOrigin(1f, 1f)
+                        }
+                        val scale = 0.90f + 0.10f * p
+                        scaleX = scale
+                        scaleY = scale
+                        translationY = (1f - p) * if (placeBelow) -10f else 10f
                     }
-                    val scale = 0.88f + 0.12f * p
-                    scaleX = scale
-                    scaleY = scale
-                    // A few pixels of travel toward the button, so the motion
-                    // has a direction as well as a scale.
-                    translationY = (1f - p) * if (placeBelow) -12f else 12f
                 }
-            }
-        }
+                // The exact surface the held menu uses; glass comes from the
+                // app's pooled backdrop, the same one the nav bar and the
+                // long-press menu sample.
+                .heldMenuSurface(shape, plate, hairline, reduceDynamicBlur)
+                .onSizeChanged { menuHeightPx = it.height }
+                .verticalScroll(rememberScrollState())
+                .padding(vertical = 6.dp),
+            content = content,
+        )
     }
 }
 
-/** The menu's corner radius — the same curve the app's other glass uses. */
+/** The menu's corner radius — the same curve the held menu uses. */
 private val MENU_RADIUS = 22.dp
-
-/**
- * The least room under the button for the menu to open downward. Below this
- * it opens upward instead, whatever the space over the button says.
- */
-private val MIN_ROOM = 220.dp
