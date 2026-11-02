@@ -255,7 +255,6 @@ import com.music.bitchord.ui.components.LastfmLoginAlert
 import com.music.bitchord.ui.components.GlassMotion
 import com.music.bitchord.ui.components.LocalAppBackdrop
 import com.music.bitchord.ui.components.LocalAppBackdropFrozen
-import com.music.bitchord.ui.components.LocalPooledGlass
 import com.music.bitchord.ui.components.LocalLiquidGlassEnabled
 import com.music.bitchord.ui.components.GlassEffectConfig
 import com.music.bitchord.ui.components.LocalGlassEffectConfig
@@ -509,6 +508,31 @@ class MainActivity : AppCompatActivity() {
  * and crossed the JVM's 64 KB limit. The wrapper does the same layout, but a
  * non-inline lambda is compiled separately, which keeps the caller small.
  */
+
+/**
+ * The window of the dialog a Compose view is drawn in, if it is in one.
+ *
+ * Compose hosts a dialog's content in a view whose parent is not always the
+ * [DialogWindowProvider] directly, so walking the parent chain is the reliable
+ * route; the context chain is the fallback for the arrangements where it is
+ * not. This matters for the player sheet: its status-bar and edge-to-edge
+ * setup has to be applied to *that* window, and looking in only one place
+ * found nothing, which is why the bar stayed up and the sheet stayed inset.
+ */
+private fun dialogWindowOf(view: View): android.view.Window? {
+    var parent = view.parent
+    while (parent != null) {
+        if (parent is DialogWindowProvider) return parent.window
+        parent = parent.parent
+    }
+    var context = view.context
+    while (context is android.content.ContextWrapper) {
+        if (context is android.app.Dialog) return context.window
+        context = context.baseContext
+    }
+    return null
+}
+
 @Composable
 private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
     Box(
@@ -5073,13 +5097,6 @@ private fun BitChordApp(
 
         val playerRaised = showNowPlaying && playerSong != null
 
-        // Immersive fullscreen while the player is up: the system bars step
-        // aside so the artwork owns the whole display, and come back when it
-        // docks. Composed here, in the activity's own content, rather than
-        // inside the sheet — the bars belong to the activity's window, and
-        // the sheet is a dialog window on top of it.
-        ImmersiveSystemBars(enabled = playerRaised)
-
         if (playerRaised) {
             // What rememberModalBottomSheetState builds, but able to start open,
             // and with every hide routed through [playerSheetMotion] — a drag
@@ -5161,7 +5178,7 @@ private fun BitChordApp(
                 // Keeps a sheet still "settling" after a lyrics or queue
                 // scroll from taking the next touch meant for that list.
                 // See [PlayerSheetMotion.attachWindow].
-                val sheetWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+                val sheetWindow = dialogWindowOf(LocalView.current)
                 DisposableEffect(sheetWindow, reducePlayerMotion) {
                     if (!reducePlayerMotion) playerSheetMotion.attachWindow(sheetWindow)
                     // The sheet is a dialog window of its own, and it does not
@@ -5176,21 +5193,22 @@ private fun BitChordApp(
                             layoutInDisplayCutoutMode =
                                 WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
                         }
-                        // The sheet's dialog is the focused window while it is
-                        // up, so it is the one that decides whether the bars are
-                        // showing. The activity's own controller is set too —
-                        // see [ImmersiveSystemBars] — but the topmost window
-                        // wins, and that is this one.
+                        // Only the status bar, and only on the sheet's own
+                        // window. Hiding it on the activity's window too was
+                        // what made the whole page re-lay out behind the sheet
+                        // as the bars came and went — the resize jitter. The
+                        // navigation bar stays: the player is full-screen
+                        // without needing to take the back/home gesture away.
                         WindowCompat.getInsetsController(window, window.decorView).apply {
                             systemBarsBehavior =
                                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                            hide(WindowInsetsCompat.Type.systemBars())
+                            hide(WindowInsetsCompat.Type.statusBars())
                         }
                     }
                     onDispose {
                         sheetWindow?.let { window ->
                             WindowCompat.getInsetsController(window, window.decorView)
-                                .show(WindowInsetsCompat.Type.systemBars())
+                                .show(WindowInsetsCompat.Type.statusBars())
                         }
                     }
                 }
@@ -5230,37 +5248,20 @@ private fun BitChordApp(
                             playerSheetMotion.laidOut = true
                         },
                 ) {
-                    // The player's own backdrop, recorded only while the menu
-                    // is up: the glass menu samples it so the panel is made
-                    // of the artwork it is floating over. Recorded the whole
-                    // time it would be a full-screen capture paid for every
-                    // frame of the player for the sake of a menu that is
-                    // closed.
-                    val playerBackdrop = rememberLayerBackdrop()
                     val playerMenuSong = songActions?.takeIf { menuFromPlayer }
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .then(
-                                if (playerMenuSong != null) {
-                                    Modifier.layerBackdrop(playerBackdrop)
-                                } else {
-                                    Modifier
-                                },
-                            ),
-                    ) {
+                    Box(Modifier.fillMaxSize()) {
                         CompositionLocalProvider(LocalPlayerDock provides activeDock) {
                             nowPlaying(playerSong)
                         }
                     }
                     // The menu, hung off the three-dot button.
                     //
-                    // Drawn here, in the sheet's own window, because the glass
-                    // samples what is behind it — a menu in the app's window
-                    // would refract the page under the sheet rather than the
-                    // artwork the menu is sitting on. The pooled glass is
-                    // dropped for the same reason: it is the app window's
-                    // capture, and this surface needs the player's.
+                    // Drawn here, in the sheet's own window, because the menu
+                    // belongs to the player it hangs off: in the app's window it
+                    // would sit under the sheet. Its surface is the lightweight
+                    // glass match, not the live backdrop engine — see
+                    // [GlassActionMenu] for why that engine is not used on a
+                    // sibling of the player inside the sheet's dialog.
                     if (playerMenuSong != null) {
                         val anchor = playerMenuAnchor
                         if (anchor != null) {
@@ -5270,16 +5271,11 @@ private fun BitChordApp(
                                 right = anchor.right - sheetContentOrigin.x.toInt(),
                                 bottom = anchor.bottom - sheetContentOrigin.y.toInt(),
                             )
-                            CompositionLocalProvider(
-                                LocalAppBackdrop provides playerBackdrop,
-                                LocalPooledGlass provides null,
+                            GlassActionMenu(
+                                anchor = local,
+                                onDismiss = { songActions = null },
                             ) {
-                                GlassActionMenu(
-                                    anchor = local,
-                                    onDismiss = { songActions = null },
-                                ) {
-                                    songMenuBody(playerMenuSong, SongActionsPresentation.Glass)
-                                }
+                                songMenuBody(playerMenuSong, SongActionsPresentation.Glass)
                             }
                         }
                     }
@@ -6391,46 +6387,6 @@ private fun DiscordLoginHost(
 
 private fun tween(durationMillis: Int) =
     androidx.compose.animation.core.tween<Float>(durationMillis)
-
-/**
- * Puts the system bars away while the player is up, and brings them back when
- * it docks.
- *
- * The player is a full-screen sheet of its own; leaving the status and
- * navigation bars on top of it reads as a window with a magazine page behind
- * it rather than as the player taking over the display. The bars step aside
- * while it is raised — swipe from an edge still reveals them transiently — and
- * return the moment the player is dismissed.
- */
-@Composable
-private fun ImmersiveSystemBars(enabled: Boolean) {
-    val view = LocalView.current
-    if (view.isInEditMode) return
-    // The activity's window, not whatever dialog the caller happens to be in:
-    // the system bars are the activity's to hide, and the composer of this
-    // sits in the activity's content so its view resolves to that window.
-    var context = view.context
-    var activity: android.app.Activity? = null
-    while (context is android.content.ContextWrapper) {
-        if (context is android.app.Activity) {
-            activity = context
-            break
-        }
-        context = context.baseContext
-    }
-    val window = activity?.window ?: return
-    DisposableEffect(enabled) {
-        val controller = WindowCompat.getInsetsController(window, view)
-        if (enabled) {
-            controller.systemBarsBehavior =
-                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        }
-        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
-    }
-}
 
 @Composable
 private fun LibrarySort.localizedLabel(): String = when (this) {

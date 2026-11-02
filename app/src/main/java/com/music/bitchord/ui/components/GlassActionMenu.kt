@@ -7,7 +7,6 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -24,7 +23,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -123,12 +121,12 @@ fun GlassActionMenu(
     BackHandler(onBack = onDismiss)
 
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    // What the menu stands on where the engine cannot run: plain white or
-    // black at a high enough strength to read as a surface over the artwork.
+    // What the menu stands on: plain white or black at enough strength to read
+    // as a surface over the artwork, and a little more solid when the blur is
+    // switched off.
     val plate = (if (dark) Color.Black else Color.White).copy(
         alpha = if (reduceDynamicBlur) 0.92f else 0.82f,
     )
-    val hairline = if (dark) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.08f)
 
     val shape = RoundedCornerShape(MENU_RADIUS)
 
@@ -156,18 +154,19 @@ fun GlassActionMenu(
             )
             Column(
                 Modifier
-                    .clip(shape)
-                    .then(
-                        if (reduceDynamicBlur || !isGlassSupported()) {
-                            Modifier.background(plate, shape)
-                        } else {
-                            Modifier.liquidGlass(shape)
-                        },
-                    )
-                    // The edge every floating surface in this app ends in. The
-                    // glass draws its own refractive rim as well; this is the
-                    // line that keeps them all the same line.
-                    .border(0.5.dp, hairline, shape)
+                    // The lightweight glass match: the same translucent tint,
+                    // directional highlight and hairline as the nav bar, but no
+                    // backdrop capture, blur or lens. It is deliberate here.
+                    //
+                    // The full engine samples whatever is *behind* the surface,
+                    // and this menu is drawn in the player sheet's own dialog
+                    // window on top of a live GraphicsLayer recording of the
+                    // player. Sampling that layer from a sibling inside the same
+                    // dialog was what crashed the player when the menu opened on
+                    // some devices; the lens is not worth a crash for a panel
+                    // this small. This still reads as glass, and it cannot
+                    // sample anything.
+                    .then(Modifier.lightweightLiquidGlass(shape, plate))
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = 6.dp),
                 content = content,

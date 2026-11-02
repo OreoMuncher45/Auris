@@ -44,3 +44,6 @@ keystore.properties
 # AI agent configuration
 AGENTS.md
 /output/
+
+# Locally downloaded CI artifacts
+dist/
