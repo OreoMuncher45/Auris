@@ -1374,6 +1374,6 @@
     <string name="podcasts">Podcasts</string>
     <string name="liquid_glass_haptics">Liquid glass haptics</string>
     <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
-    <string name="hide_status_bar">Hide status bar</string>
-    <string name="hide_status_bar_subtitle">Hides the clock and status icons everywhere in the app</string>
+    <string name="hide_status_bar_in_player">Hide status bar in player</string>
+    <string name="hide_status_bar_in_player_subtitle">Hides the clock, battery and notification icons while the main player is open</string>
 </resources>

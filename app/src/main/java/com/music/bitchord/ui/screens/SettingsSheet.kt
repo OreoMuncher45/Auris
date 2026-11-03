@@ -233,7 +233,7 @@ fun SettingsScreen(
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
     val liquidGlassHaptics by AppSettings.liquidGlassHaptics.collectAsStateWithLifecycle()
-    val hideStatusBar by AppSettings.hideStatusBar.collectAsStateWithLifecycle()
+    val hideStatusBarInPlayer by AppSettings.hideStatusBarInPlayer.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -1657,23 +1657,23 @@ fun SettingsScreen(
                     onClick = { AppSettings.setLiquidGlassHaptics(!liquidGlassHaptics) },
                 )
             }
-            val hideStatusBarTitle = stringResource(R.string.hide_status_bar)
-            row(hideStatusBarTitle, "status", "bar", "clock", "immersive", "fullscreen") {
+            val hideStatusBarTitle = stringResource(R.string.hide_status_bar_in_player)
+            row(hideStatusBarTitle, "status", "bar", "clock", "immersive", "fullscreen", "player") {
                 SettingsRow(
                     icon = Icons.Rounded.Fullscreen,
                     title = hideStatusBarTitle,
-                    subtitle = stringResource(R.string.hide_status_bar_subtitle),
+                    subtitle = stringResource(R.string.hide_status_bar_in_player_subtitle),
                     trailing = {
                         Switch(
-                            checked = hideStatusBar,
-                            onCheckedChange = AppSettings::setHideStatusBar,
+                            checked = hideStatusBarInPlayer,
+                            onCheckedChange = AppSettings::setHideStatusBarInPlayer,
                             colors = SwitchDefaults.colors(
                                 checkedTrackColor = MaterialTheme.colorScheme.primary,
                                 checkedBorderColor = MaterialTheme.colorScheme.primary,
                             ),
                         )
                     },
-                    onClick = { AppSettings.setHideStatusBar(!hideStatusBar) },
+                    onClick = { AppSettings.setHideStatusBarInPlayer(!hideStatusBarInPlayer) },
                 )
             }
             val fontsTitle = stringResource(R.string.custom_fonts)

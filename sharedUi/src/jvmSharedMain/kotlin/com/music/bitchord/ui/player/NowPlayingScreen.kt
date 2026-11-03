@@ -53,13 +53,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -140,8 +139,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import com.music.bitchord.ui.theme.HideStatusBar
 import com.music.bitchord.ui.theme.StatusBarIcons
 import com.music.bitchord.ui.theme.rememberNowPlayingPalette
+import com.music.bitchord.ui.theme.stableStatusBarInsets
 import com.music.bitchord.ui.LyricsProviderState
 import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.components.isRtlText
@@ -360,17 +361,22 @@ private const val TOP_SCRIM_FRACTION = 0.14f
  * How often a playing clip is read for its own colours.
  *
  * The backdrop and the ink both follow the clip, so this is the rate at which
- * the screen changes colour. It used to be three seconds, which is a
- * slideshow: a Canvas that pans from black to white kept its buttons the
- * colour of the sleeve it had replaced for three whole seconds at a time.
+ * the screen changes colour. It was three seconds once, which is a slideshow:
+ * a Canvas that pans from black to white kept its buttons the colour of the
+ * sleeve it had replaced for three whole seconds at a time. It was 400ms
+ * after that, which is still a slideshow at thirty frames a second — the
+ * backdrop was always a third of a second behind the picture, and the blur
+ * behind an animated cover visibly stepped rather than moved.
  *
- * The read is the expensive half — a copy of the clip's texture off the GPU —
- * so this is the number that decides how much of the phone it takes. The read
- * itself adapts: on a device where a read is slow, the gap grows on its own
- * rather than the phone getting hot. See `CanvasArtworkPlayer`'s adaptive
- * capture.
+ * A third of a second: thirty times a second, which is as often as the
+ * screen itself is drawn. The read is a copy of the clip's texture off the
+ * GPU, and it used to be taken on the thread that draws the screen, which
+ * is what made it expensive — the stall it caused was what the caller used
+ * to back its own cadence off, so the picture arrived every 400ms and then
+ * every 800ms. It is copied off the render thread now, so it costs the
+ * screen nothing; see `CanvasArtworkPlayer`'s capture.
  */
-private const val LIVE_REFRESH_MS = 400L
+private const val LIVE_REFRESH_MS = 33L
 
 /**
  * The same read, for a device that has asked for less motion.
@@ -905,6 +911,10 @@ fun NowPlayingScreen(
     // top treatment below, rather than a window-flag flip per cover, provides
     // their contrast and stays visually stable through artwork transitions.
     StatusBarIcons(dark = false)
+    // Composed only while the player is, so closing it brings the bar back.
+    // The layout below reads [stableStatusBarInsets] and keeps its place.
+    val hideStatusBar by PlayerSettings.hideStatusBar.collectAsStateWithLifecycle()
+    HideStatusBar(hideStatusBar)
 
     // Kept local to the player: a modal player is not in the page's Haze
     // source tree, so it needs its own source for the same frosted material as
@@ -1609,21 +1619,16 @@ fun NowPlayingScreen(
     val clipFadeFraction = if (clipBottom > 0.dp) {
         (heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)
     } else 0f
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    // The camera cutout is its own inset, and it is the one that decides where
-    // the top of the player may sit.
+    // The status bar's own height, whether it is showing or not.
     //
-    // The player is a sheet with a window of its own, drawn under the cutout
-    // and with the status bar hidden — see the window setup in MainActivity.
-    // A hidden status bar reports no inset at all, so `statusBarsPadding()`
-    // adds nothing there and the top of the sheet lands *in* the cutout: the
-    // drag handle and the "Playing from …" caption under it both end up
-    // behind the camera. The cutout's own inset is what keeps them clear, so
-    // it is read here and the deeper of the two wins.
-    val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
-    val topInset = maxOf(statusBarTop, cutoutTop)
-    // What the status bar did not already account for, added on top of it.
-    val topInsetExtra = (topInset - statusBarTop).coerceAtLeast(0.dp)
+    // The player is a sheet with a window of its own, and the bar can be taken
+    // off that window while the player is up — see
+    // [com.music.bitchord.ui.theme.HideStatusBar]. `WindowInsets.statusBars`
+    // drops to zero the moment it is hidden, so everything laid out under it
+    // would jump up into the camera cutout at the same moment the icons went
+    // away. [stableStatusBarInsets] reports the same space either way, so the
+    // bar's clock and battery come and go and the artwork does not move.
+    val statusBarTop = stableStatusBarInsets().asPaddingValues().calculateTopPadding()
     // What sits between the status bar and the artwork: the drag strip. Read
     // in three places — the strip itself,
     // the scrim drawn over it and the banner's own height — which all have to
@@ -1853,10 +1858,15 @@ fun NowPlayingScreen(
     // between the portrait and landscape players; only the cached bitmap
     // changes when the artwork preparation above completes for another song.
     val currentFullArtworkBlurImage = rememberUpdatedState(fullArtworkBlurImage)
+    // The frame off a playing cover, when there is one — so the blur behind
+    // an animated cover is that cover, moving, rather than the still sleeve
+    // it replaced. See [rememberLiveBlurImage].
+    val currentLiveBlurFrame = rememberUpdatedState(canvasFrame)
     val fullArtworkBlurContent = remember {
         movableContentOf<Modifier> { backdropModifier ->
             FullArtworkBlurBackdrop(
                 image = currentFullArtworkBlurImage.value,
+                liveFrame = currentLiveBlurFrame.value,
                 modifier = backdropModifier,
             )
         }
@@ -2582,12 +2592,7 @@ fun NowPlayingScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                // The rest of the cutout, where the status bar does not reach.
-                // Everything under it — the handle, the caption, the artwork —
-                // moves down by the same amount, so nothing lands in the
-                // camera's way.
-                .padding(top = topInsetExtra)
+                .windowInsetsPadding(stableStatusBarInsets())
                 .navigationBarsPadding()
                 // Observe unclaimed taps across the whole Canvas. Buttons and
                 // the compact metadata row consume their own taps first; empty
@@ -2624,7 +2629,7 @@ fun NowPlayingScreen(
                         // bar alone: the strip now starts below the cutout as
                         // well, and the scrim still has to reach the screen's
                         // own top edge to darken the camera's corner.
-                        val above = topInset.toPx()
+                        val above = statusBarTop.toPx()
                         val scrimHeight = playerBounds.height
                             .takeIf { it > 0 }
                             ?.let { it * TOP_SCRIM_FRACTION }
@@ -2953,7 +2958,7 @@ fun NowPlayingScreen(
                 // the dissolve gets a stage that reaches through the credits
                 // instead of stopping short of them. Nothing above the title
                 // changes size or place.
-                val bannerBottom = (topInset + topStrip + ART_BOX_TOP_PAD +
+                val bannerBottom = (statusBarTop + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt + ART_TITLE_GAP / 2) * HERO_ART_ZOOM
                 // Frozen while lyrics are up. The controls now retain their full
                 // footprint across the transition, so this answer is identical
@@ -2991,7 +2996,7 @@ fun NowPlayingScreen(
                 // fixed padding (see [bannerBottom]), and either side the
                 // gutter, which the two widths give back between them.
                 val bannerTopPx = with(density) {
-                    -(topInset.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
+                    -(statusBarTop.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
                 }
                 val boxWidthPx = constraints.maxWidth
                 // How far the expanded sleeve is the banner rather than the

@@ -22,15 +22,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import com.music.bitchord.ui.theme.stableStatusBarInsets
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
 import androidx.compose.material.icons.Icons
@@ -131,22 +129,17 @@ fun topBarHeight(): Dp =
 /**
  * The inset the top of the window has to clear.
  *
- * The status bar's own inset when there is one, and the display cutout's when
- * there isn't.
+ * The status bar's own inset, whether it is showing or not.
  *
- * A hidden status bar reports no inset at all — see
- * [AppSettings.hideStatusBar] — so a bar pinned to the top of the window
- * would sit under the punch-hole camera on exactly the devices that hide the
- * status bar, which is the wrong way round. The cutout is still reported
- * while the bar is hidden, which is what makes it the right fallback: the
- * deeper of the two is what the top of the window actually has to clear.
+ * `WindowInsets.statusBars` drops to zero the moment the bar is hidden — see
+ * [com.music.bitchord.ui.theme.HideStatusBar] — and a bar pinned to the top of
+ * the window would then jump up into the punch-hole camera, and jump back down
+ * when the bar came back. [stableStatusBarInsets] reports the same space
+ * either way, so the page under it keeps its place.
  */
 @Composable
-fun topWindowInset(): Dp {
-    val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val cutout = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
-    return maxOf(statusBar, cutout)
-}
+fun topWindowInset(): Dp =
+    stableStatusBarInsets().asPaddingValues().calculateTopPadding()
 
 /**
  * Where page content should start: clear of the bar, plus [TopBarContentGap].

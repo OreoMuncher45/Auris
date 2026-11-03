@@ -497,8 +497,8 @@ private fun NavBarSearchInputBar(
                 )
             }
             BasicTextField(
-                value = state.query,
-                onValueChange = state.onQueryChange,
+                value = state.textValue,
+                onValueChange = state.onTextValueChange,
                 singleLine = true,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = contentColor,

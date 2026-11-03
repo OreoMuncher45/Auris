@@ -93,6 +93,29 @@ class ArtworkMesh internal constructor(
 )
 
 /**
+ * A blurred copy of a frame off a playing cover, re-blurred as the frame
+ * changes.
+ *
+ * The same small box blur the still covers get — see [boxBlurred] — over the
+ * same small copy, so the backdrop behind an animated cover is the cover
+ * itself, blurred, and it moves with it.
+ *
+ * Keyed on the frame, so a new one cancels the blur still in flight: at
+ * thirty frames a second the queue never builds up, and what is on screen is
+ * always the last frame that finished rather than the last frame that
+ * started.
+ */
+@Composable
+fun rememberLiveBlurImage(frame: ImageBitmap?): ImageBitmap? {
+    var blurred by remember { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(frame) {
+        val source = frame ?: return@LaunchedEffect
+        blurred = withContext(Dispatchers.Default) { source.boxBlurred(FULL_BLUR_PASSES) }
+    }
+    return blurred
+}
+
+/**
  * One pre-blurred bitmap for the full-cover player backdrop.
  *
  * This deliberately does not use Compose's full-screen `Modifier.blur`: that is
@@ -152,14 +175,27 @@ fun rememberFullArtworkBlurImage(
 fun FullArtworkBlurBackdrop(
     image: ImageBitmap?,
     modifier: Modifier = Modifier,
+    /**
+     * A frame off a playing cover, when there is one.
+     *
+     * The backdrop behind an animated cover used to be the still sleeve's
+     * blur — blurred once per song and then left alone — so a picture moved
+     * over a backdrop that did not. With a frame of the clip in hand the
+     * backdrop can be the clip too; see [rememberLiveBlurImage].
+     */
+    liveFrame: ImageBitmap? = null,
 ) {
+    // The blur of the frame, re-blurred as the frame changes. While there is
+    // one it *is* the backdrop.
+    val liveBlur = rememberLiveBlurImage(liveFrame)
+    val shown = liveBlur ?: image
     val imageAlpha by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = if (image != null) 1f else 0f,
+        targetValue = if (shown != null) 1f else 0f,
         animationSpec = tween(320, easing = FastOutSlowInEasing),
         label = "preparedBackdropImage",
     )
     Box(modifier = modifier.fillMaxSize().background(FallbackBackdrop)) {
-        image?.let { bitmap ->
+        shown?.let { bitmap ->
             val painter = remember(bitmap) { BitmapPainter(bitmap) }
             Image(
                 painter = painter,

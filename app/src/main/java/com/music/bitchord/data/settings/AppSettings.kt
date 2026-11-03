@@ -418,21 +418,17 @@ object AppSettings {
     val liquidGlassHaptics = MutableStateFlow(true)
 
     /**
-     * Whether the status bar is hidden, app-wide.
+     * Hides the device status bar (clock, battery, notifications) while the
+     * main player is open.
      *
-     * On by default, and app-wide in the literal sense: every window this app
-     * owns — the activity's and the player's own — answers to it, so the
-     * clock is either there everywhere or nowhere. There used to be one
-     * place that hid it (the player's sheet window) and the rest of the app
-     * showing it, which is a mixed answer to a question the listener only
-     * gets to ask once.
-     *
-     * A hidden status bar reports no inset at all, so anything pinned to the
-     * top of the window has to fall back to the display cutout's own inset —
-     * otherwise the top bar ends up under the punch-hole camera. See
-     * [com.music.bitchord.ui.components.topBarHeight].
+     * Player-scoped, and off by default: the rest of the app is left alone,
+     * so the bar is there everywhere but inside the player and nowhere in
+     * both at once. The bar is taken off the player's own window rather than
+     * the activity's — see
+     * [com.music.bitchord.ui.theme.HideStatusBar] — so nothing outside the
+     * player re-lays out when it comes and goes.
      */
-    val hideStatusBar = MutableStateFlow(true)
+    val hideStatusBarInPlayer = MutableStateFlow(false)
 
     /**
      * "Simulated Dolby Atmos": a widening DSP effect applied to ordinary
@@ -1361,7 +1357,7 @@ object AppSettings {
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         liquidGlassHaptics.value = prefs.getBoolean(KEY_LIQUID_GLASS_HAPTICS, true)
-        hideStatusBar.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR, true)
+        hideStatusBarInPlayer.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, false)
         // On by default: see [simulatedAtmos]. A listener who has turned it
         // off keeps it off — the stored preference wins over the default.
         simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, true)
@@ -1846,9 +1842,9 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LIQUID_GLASS_HAPTICS, value).apply()
     }
 
-    fun setHideStatusBar(value: Boolean) {
-        hideStatusBar.value = value
-        prefs.edit().putBoolean(KEY_HIDE_STATUS_BAR, value).apply()
+    fun setHideStatusBarInPlayer(value: Boolean) {
+        hideStatusBarInPlayer.value = value
+        prefs.edit().putBoolean(KEY_HIDE_STATUS_BAR_IN_PLAYER, value).apply()
     }
 
     fun setSpatialAudio(value: Boolean) {
@@ -2883,7 +2879,7 @@ object AppSettings {
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_LIQUID_GLASS_HAPTICS = "liquid_glass_haptics"
-    private const val KEY_HIDE_STATUS_BAR = "hide_status_bar"
+    private const val KEY_HIDE_STATUS_BAR_IN_PLAYER = "hide_status_bar_in_player"
     private const val KEY_SIMULATED_ATMOS = "simulated_atmos"
     /** Sticky: read back at every launch, written only by [setOfflineMode]. */
     private const val KEY_OFFLINE_MODE = "offline_mode"

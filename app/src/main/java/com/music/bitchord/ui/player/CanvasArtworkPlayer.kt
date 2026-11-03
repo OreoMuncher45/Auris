@@ -13,8 +13,12 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.SurfaceTexture
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.PixelCopy
+import android.view.Surface
 import android.view.TextureView
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -57,6 +61,8 @@ import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasCache
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import java.util.Locale
@@ -70,6 +76,9 @@ private const val TAG = "CanvasArtworkPlayer"
  * coming back does not sit there as a hole for the length of a glance.
  */
 private const val REPAINT_TIMEOUT_MS = 700L
+
+/** Where a pixel copy's result comes back on — see [captureLiveFrame]. */
+private val mainHandler = Handler(Looper.getMainLooper())
 
 /**
  * The looping video that plays over a track's cover art, sized to fill and
@@ -171,6 +180,9 @@ internal fun AndroidCanvasArtworkPlayer(
     // Aspect of the clip itself. Zero until the decoder reports it, which is
     // also the signal that there is nothing sensible to crop to yet.
     var clipAspect by remember(canvas) { mutableFloatStateOf(0f) }
+    // The clip's own size, as the decoder reports it. The live frame copy
+    // is sized from this — see [captureLiveFrame].
+    var currentVideoSize by remember(canvas) { mutableStateOf<VideoSize?>(null) }
     var bounds by remember { mutableStateOf(IntSize.Zero) }
     var textureView by remember(canvas) { mutableStateOf<TextureView?>(null) }
     // Frames are counted rather than flagged, because [rendered] cannot answer
@@ -224,6 +236,7 @@ internal fun AndroidCanvasArtworkPlayer(
                 } else 0f
                 if (aspect != clipAspect) rendered = false
                 clipAspect = aspect
+                currentVideoSize = videoSize
                 reportAspect(aspect)
                 textureView?.applyContentTransform(clipAspect, currentContentMode, currentAlignPortraitTop)
             }
@@ -250,6 +263,7 @@ internal fun AndroidCanvasArtworkPlayer(
     LaunchedEffect(url) {
         rendered = false
         clipAspect = 0f
+        currentVideoSize = null
         reportAspect(0f)
         val item = MediaItem.Builder().setUri(url)
         mimeTypeOf(url)?.let { item.setMimeType(it) }
@@ -322,44 +336,51 @@ internal fun AndroidCanvasArtworkPlayer(
     // folded into the one above: that one is keyed on [rendered] so it fires
     // again on every fade-in, and this one only needs to start once a fade-in
     // has actually happened and then keep going for as long as it holds.
-    LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx, clipAspect, contentMode, alignPortraitTop, foreground, isPlaying) {
+    LaunchedEffect(
+        rendered,
+        refreshFrameEveryMs,
+        frameCapturePx,
+        clipAspect,
+        contentMode,
+        alignPortraitTop,
+        foreground,
+        isPlaying,
+        currentVideoSize,
+    ) {
         val requested = refreshFrameEveryMs ?: return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$requested")
         // A paused clip has no new colours to follow; re-reading the same
         // frame off the GPU would only stall it.
         if (!rendered || !foreground || !isPlaying) return@LaunchedEffect
-        // The gap between reads, and the thing that moves it.
-        //
-        // The read is a copy of the clip's texture off the GPU: by far the
-        // most expensive thing this component does, and the thing that
-        // decides whether a phone stays cool while a clip plays. So the gap
-        // is not a constant — it is what the last read actually cost. A read
-        // that came back in a couple of milliseconds is asked for more
-        // often; a read that took the better part of a frame backs off, on
-        // its own, until the picture is still followed but the device is not
-        // paying for it.
-        //
-        // The caller's interval is the floor, never crossed: a caller that
-        // asked for a slower read than the phone can afford gets its slower
-        // read, not a faster one.
-        var gap = requested
         while (isActive) {
-            delay(gap)
             val view = textureView ?: continue
             val started = SystemClock.elapsedRealtime()
-            val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+            val bitmap = view.captureLiveFrame(
+                frameCapturePx,
+                currentVideoSize,
+                clipAspect,
+                contentMode,
+                alignPortraitTop,
+            )
             val cost = SystemClock.elapsedRealtime() - started
-            gap = when {
-                cost > SLOW_READ_MS -> (gap * 2).coerceAtMost(MAX_READ_GAP_MS)
-                cost < FAST_READ_MS -> (gap - READ_GAP_STEP_MS).coerceAtLeast(requested)
-                else -> gap
-            }
             if (bitmap != null) {
-                Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}, cost=${cost}ms, gap=${gap}ms")
+                Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}, cost=${cost}ms")
                 onFrameCaptured(bitmap.asImageBitmap())
             } else {
                 Log.w(TAG, "periodic frame capture returned null")
             }
+            // The period is the caller's interval, and the read is taken out
+            // of it rather than added on top of it: a read that took 12ms of
+            // a 33ms interval still leaves a frame every 33ms.
+            //
+            // The old policy doubled the gap every time a read came back
+            // slower than 12ms and never halved it back — so on a phone
+            // where the read costs 15ms the picture arrived every 400ms and
+            // then every 800ms and then every 1.6s, and the backdrop behind
+            // an animated cover lagged it by seconds and looked frozen. What
+            // is left here is the read's own cost: a phone that cannot read
+            // faster than that has said so, and is not asked to read faster.
+            delay((requested - cost).coerceAtLeast(0L))
         }
     }
 
@@ -578,33 +599,79 @@ private fun TextureView.captureAt(
 }
 
 /**
+ * A frame off the clip, copied off the GPU without stalling the main thread.
+ *
+ * [TextureView.getBitmap] is a synchronous copy: it takes the texture layer's
+ * pixels back off the GPU and blocks until they are here. Done on the thread
+ * that draws the screen, that is a stall on every frame of a moving clip — and
+ * the stall was what made the caller back its own cadence off, so the picture
+ * arrived every 400ms and then every 800ms, and the backdrop behind an
+ * animated cover lagged it by seconds.
+ *
+ * [PixelCopy] asks the render thread for the copy instead and hands the
+ * picture back when it is done, so the main thread keeps running and the
+ * cadence stays where the caller asked for it.
+ *
+ * The copy is of the clip's own frame — no view transform, no letterbox
+ * margins — which is what the colour averages want anyway: they used to have
+ * to crop the transparent margins out of a contained portrait clip first, and
+ * a frame with no margins in it needs none of that.
+ *
+ * Where the copy cannot be made, the view is read the old way instead.
+ */
+private suspend fun TextureView.captureLiveFrame(
+    maxPx: Int,
+    video: VideoSize?,
+    clipAspect: Float,
+    contentMode: CanvasContentMode,
+    alignPortraitTop: Boolean,
+): Bitmap? {
+    val texture = surfaceTexture
+    val size = video
+    if (texture == null || size == null || size.width <= 0 || size.height <= 0) {
+        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+    }
+    val videoWidth = (size.width * size.pixelWidthHeightRatio).roundToInt()
+    val videoHeight = size.height
+    if (videoWidth <= 0 || videoHeight <= 0) {
+        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+    }
+    // The clip's own shape, no bigger than [maxPx] on its longest edge.
+    val scale = minOf(1f, maxPx.toFloat() / maxOf(videoWidth, videoHeight))
+    val bitmap = Bitmap.createBitmap(
+        (videoWidth * scale).roundToInt().coerceAtLeast(1),
+        (videoHeight * scale).roundToInt().coerceAtLeast(1),
+        Bitmap.Config.ARGB_8888,
+    )
+    val surface = Surface(texture)
+    val result = runCatching {
+        suspendCancellableCoroutine { continuation ->
+            PixelCopy.request(
+                surface,
+                bitmap,
+                { copied ->
+                    // Let go of the surface here rather than on cancellation:
+                    // the copy may still be reading from it.
+                    if (continuation.isActive) continuation.resume(copied)
+                },
+                mainHandler,
+            )
+        }
+    }.getOrDefault(PixelCopy.ERROR_UNKNOWN)
+    surface.release()
+    if (result != PixelCopy.SUCCESS) {
+        Log.w(TAG, "live frame copy failed ($result), reading the view instead")
+        bitmap.recycle()
+        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+    }
+    return bitmap
+}
+
+/**
  * Big enough that averaging it is stable, small enough that reading it back off
  * the GPU is not an event. Every consumer reduces this to a handful of colours.
  */
 private const val FRAME_CAPTURE_PX = 128
-
-/**
- * A read that took longer than this is a frame the screen did not get.
- *
- * The gap between reads grows when one of these lands, so a device that
- * cannot afford the read backs off instead of paying for it on every tick.
- */
-private const val SLOW_READ_MS = 12L
-
-/** A read this quick is free enough to be asked for more often. */
-private const val FAST_READ_MS = 4L
-
-/** How much a cheap read shortens the gap by. */
-private const val READ_GAP_STEP_MS = 50L
-
-/**
- * The longest the gap may grow.
- *
- * A second and a half is still a *live* picture — the backdrop and the ink
- * keep up with the clip — and it is the difference between a device that is
- * warm and one that is not.
- */
-private const val MAX_READ_GAP_MS = 1_500L
 
 /**
  * A TextureView stretches its content to its own bounds. Compensate with a
