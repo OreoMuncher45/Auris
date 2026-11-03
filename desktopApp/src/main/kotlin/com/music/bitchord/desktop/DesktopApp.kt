@@ -6359,6 +6359,7 @@ private fun DesktopCollectionPage(
         BrowseType.ALBUM -> "Album"
         BrowseType.PLAYLIST -> "Playlist"
         BrowseType.ARTIST -> "Artist"
+        BrowseType.PODCAST -> "Podcast"
         BrowseType.OTHER -> "Collection"
     }
     val metadata = buildList {
