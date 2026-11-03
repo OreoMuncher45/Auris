@@ -108,8 +108,12 @@ jobs:
           # to the system code page and every UTF-8 string comes back mangled. The image has no
           # java executable — the app launcher loads it directly — so the module list is read
           # from the release file jlink writes.
-          runtime=$(ls desktopApp/build/compose/binaries/main/app/BitChord/runtime/release \
-            desktopApp/build/compose/binaries/main/app/BitChord/lib/runtime/release 2>/dev/null | head -1)
+          runtime=""
+          for candidate in \
+            desktopApp/build/compose/binaries/main/app/BitChord/runtime/release \
+            desktopApp/build/compose/binaries/main/app/BitChord/lib/runtime/release; do
+            if [ -f "$candidate" ]; then runtime="$candidate"; break; fi
+          done
           test -n "$runtime"
           grep -q 'jdk.charsets' "$runtime"
 

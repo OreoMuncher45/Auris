@@ -13,7 +13,9 @@ import com.music.bitchord.data.model.MoodGenreSection
 import com.music.bitchord.data.model.PlaylistPrivacy
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.podcast.ItunesPodcasts
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -81,6 +83,14 @@ object DesktopSearchClient {
     suspend fun history(): Result<List<Song>> = YtMusicRepository.history()
 
     suspend fun radio(videoId: String): Result<List<Song>> = YtMusicRepository.radio(videoId)
+
+    /** YouTube Music's own podcast shows — the rows the phone's podcasts page opens with. */
+    suspend fun podcastShows(): Result<List<ShelfItem>> = YtMusicRepository.podcastShows()
+
+    /** Apple's catalogue, searched by name; the shows are cards on the podcasts page. */
+    suspend fun podcastSearch(term: String): Result<List<ShelfItem>> = runCatching {
+        ItunesPodcasts.search(term).map { show -> show.toShelfItem() }
+    }
 
     suspend fun trackLinks(videoId: String): Result<Song> = YtMusicRepository.trackLinks(videoId)
 

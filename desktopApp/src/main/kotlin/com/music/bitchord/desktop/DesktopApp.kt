@@ -23,6 +23,7 @@ import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.ui.screens.ExploreScreen
 import com.music.bitchord.ui.screens.RadioScreen
+import com.music.bitchord.ui.screens.PodcastsScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.CompactTrackRow
 import com.music.bitchord.ui.screens.LibraryGridPage
@@ -120,6 +121,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Podcasts
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
@@ -464,6 +466,7 @@ internal enum class DesktopDestination(val id: String, val label: String) {
     LISTEN_NOW("listen-now", "Home"),
     EXPLORE("explore", "Explore"),
     RADIO("radio", "Radio"),
+    PODCASTS("podcasts", "Podcasts"),
     LIBRARY("library", "Library"),
     SEARCH("search", "Search"),
     HISTORY("history", "History"),
@@ -569,6 +572,16 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         ?.filter { it.videoId != null }
         ?.take(10)
         .orEmpty()
+    // The podcasts page: YouTube Music's own shows, Apple's catalogue shelves, and the search
+    // over Apple's catalogue — the same three sources the phone's page draws on.
+    var podcastShows by remember { mutableStateOf<UiState<List<ShelfItem>>>(UiState.Loading) }
+    var podcastSections by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Success(emptyList())) }
+    var podcastSearchQuery by remember { mutableStateOf("") }
+    var podcastSearchResults by remember { mutableStateOf<UiState<List<ShelfItem>>>(UiState.Success(emptyList())) }
+    var podcastReloads by remember { mutableStateOf(0) }
+    /** The show opened from Apple's catalogue, with its episodes. */
+    var openedPodcastShow by remember { mutableStateOf<DesktopPodcastShow?>(null) }
+    val podcastListState = rememberLazyListState()
     // The home feed is paged: `FEmusic_home` answers with a couple of shelves and a token, and
     // everything else arrives by following it.
     var homeContinuation by remember { mutableStateOf<String?>(null) }
@@ -2466,6 +2479,41 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         }
     }
 
+    // The podcasts page loads its own two things: YouTube Music's shows, and Apple's catalogue
+    // shelves. Both are fetched once, when the page is opened.
+    LaunchedEffect(destination, podcastReloads) {
+        if (destination != DesktopDestination.PODCASTS) return@LaunchedEffect
+        if (podcastShows is UiState.Loading) {
+            DesktopSearchClient.podcastShows().fold(
+                onSuccess = { shows ->
+                    podcastShows = if (shows.isEmpty()) {
+                        UiState.Error("No podcasts to show right now")
+                    } else {
+                        UiState.Success(shows)
+                    }
+                },
+                onFailure = { podcastShows = UiState.Error(it.message ?: "Could not load the podcasts") },
+            )
+        }
+        if ((podcastSections as? UiState.Success)?.data.isNullOrEmpty()) {
+            fetchPodcastShelves { shelves -> podcastSections = UiState.Success(shelves) }
+        }
+    }
+
+    // The search on the podcasts page covers Apple's catalogue, which is where the shows are.
+    LaunchedEffect(podcastSearchQuery) {
+        val term = podcastSearchQuery.trim()
+        if (term.isBlank()) {
+            podcastSearchResults = UiState.Success(emptyList())
+            return@LaunchedEffect
+        }
+        podcastSearchResults = UiState.Loading
+        podcastSearchResults = DesktopSearchClient.podcastSearch(term).fold(
+            onSuccess = { shows -> UiState.Success(shows) },
+            onFailure = { UiState.Error(it.message ?: "Could not search the podcasts") },
+        )
+    }
+
     // Category buttons carry no artwork of their own, so a few are resolved at a time from the
     // shelves they open.
     LaunchedEffect(exploreState) {
@@ -2715,6 +2763,41 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
      * station's tracks and plays the two together as one queue, so the seed row of the queue
      * says where the station came from.
      */
+    /**
+     * A show opened from the podcasts page.
+     *
+     * Apple's catalogue is opened on its own page, with the show's episodes; YouTube Music's
+     * own shows are opened like any other browse page, which is where their episodes live.
+     */
+    fun openPodcastShow(item: ShelfItem) {
+        val browseId = item.browseId
+        if (browseId != null && browseId.startsWith("itunes:")) {
+            val collectionId = browseId.removePrefix("itunes:")
+            openedPodcastShow = DesktopPodcastShow(
+                collectionId = collectionId,
+                name = item.title,
+                artist = item.subtitle,
+                artworkUrl = item.thumbnailUrl,
+            )
+            scope.launch {
+                val loaded = loadPodcastShow(collectionId, item.title, item.subtitle, item.thumbnailUrl)
+                if (openedPodcastShow?.collectionId == collectionId) openedPodcastShow = loaded
+            }
+            return
+        }
+        browseId?.let {
+            openBrowseItem(
+                BrowseItem(
+                    browseId = it,
+                    title = item.title,
+                    subtitle = item.subtitle,
+                    thumbnailUrl = item.thumbnailUrl,
+                    type = BrowseType.PODCAST,
+                ),
+            )
+        }
+    }
+
     fun playRadioSeed(item: ShelfItem) {
         val videoId = item.videoId ?: return
         scope.launch {
@@ -3799,6 +3882,45 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                        openedPodcastShow != null -> DesktopPodcastShowPage(
+                            page = openedPodcastShow!!,
+                            onPlay = { episode ->
+                                playSong(
+                                    episode,
+                                    source = DesktopQueueSource(
+                                        openedPodcastShow?.name ?: "Podcast",
+                                        PlaybackSourceType.EXPLORE,
+                                    ),
+                                )
+                            },
+                            onPlayAll = { episodes ->
+                                playSongs(
+                                    episodes,
+                                    0,
+                                    DesktopQueueSource(
+                                        openedPodcastShow?.name ?: "Podcast",
+                                        PlaybackSourceType.EXPLORE,
+                                    ),
+                                )
+                            },
+                            onBack = { openedPodcastShow = null },
+                            contentPadding = contentPadding,
+                        )
+                        destination == DesktopDestination.PODCASTS -> PodcastsScreen(
+                            state = podcastShows,
+                            listState = podcastListState,
+                            sections = podcastSections,
+                            searchQuery = podcastSearchQuery,
+                            onSearchQueryChange = { podcastSearchQuery = it },
+                            searchResults = podcastSearchResults,
+                            onShowClick = ::openPodcastShow,
+                            onRetry = { podcastReloads++ },
+                            refreshing = false,
+                            onRefresh = { podcastReloads++ },
+                            pullState = rememberPullToRefreshState(),
+                            contentPadding = sharedPagePadding,
+                            showTitle = false,
+                        )
                         destination == DesktopDestination.RADIO -> RadioScreen(
                             state = exploreState,
                             listState = radioListState,
@@ -4416,6 +4538,9 @@ private fun DesktopSidebar(
             }
             DesktopSidebarItem(Icons.Rounded.Radio, "Radio", destination == DesktopDestination.RADIO) {
                 onDestinationSelected(DesktopDestination.RADIO)
+            }
+            DesktopSidebarItem(Icons.Rounded.Podcasts, "Podcasts", destination == DesktopDestination.PODCASTS) {
+                onDestinationSelected(DesktopDestination.PODCASTS)
             }
             DesktopSidebarItem(BitChordIcons.Library, "Library", destination == DesktopDestination.LIBRARY) {
                 onDestinationSelected(DesktopDestination.LIBRARY)

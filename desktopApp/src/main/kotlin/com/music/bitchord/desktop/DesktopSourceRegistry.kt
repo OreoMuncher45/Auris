@@ -185,6 +185,26 @@ internal object DesktopSourceRegistry {
                 }
             }
 
+    /**
+     * The codec of an audio file, from what its address ends with.
+     *
+     * The address says the type; nothing asks the server what it is serving, because a podcast
+     * episode is fetched from a plain file URL with no headers worth reading.
+     */
+    private fun codecOfAddress(url: String): String? {
+        val path = runCatching { java.net.URI(url).path }.getOrNull()?.lowercase() ?: return null
+        return when {
+            path.endsWith(".mp3") -> "audio/mpeg"
+            path.endsWith(".m4a") || path.endsWith(".m4b") || path.endsWith(".mp4") -> "audio/mp4"
+            path.endsWith(".aac") -> "audio/aac"
+            path.endsWith(".ogg") || path.endsWith(".oga") -> "audio/ogg"
+            path.endsWith(".opus") -> "audio/opus"
+            path.endsWith(".flac") -> "audio/flac"
+            path.endsWith(".wav") -> "audio/wav"
+            else -> null
+        }
+    }
+
     fun descriptors(): List<DesktopSourceDescriptor> = configs()
         .inSourceOrder()
         .map { it.descriptor() }
@@ -202,6 +222,18 @@ internal object DesktopSourceRegistry {
         /** A download: addons that said `allowDownloads: 0` are left out, see [adapters]. */
         forDownload: Boolean = false,
     ): Result<DesktopStream> = runCatching {
+        // A row that is already an address.
+        //
+        // A podcast episode is not a YouTube id: it is the show's own audio file, and the phone
+        // plays such a row straight from its URL. Without this door the desktop would look one
+        // up as a YouTube id and find nothing, and every episode would fail to play.
+        if (song.videoId.startsWith("http://") || song.videoId.startsWith("https://")) {
+            return@runCatching DesktopStream(
+                url = song.videoId,
+                format = DesktopStreamFormat(codec = codecOfAddress(song.videoId)),
+                sourceId = "direct",
+            )
+        }
         val available = playbackAdapters(quality, forDownload)
         val moduleReference = DesktopModuleSource.parseTrack(song.videoId)
         val addonReference = DesktopAddonSource.parseTrack(song.videoId)
