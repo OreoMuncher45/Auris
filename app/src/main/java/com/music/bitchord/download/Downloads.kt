@@ -729,7 +729,17 @@ object Downloads {
     fun savedReleases(onDisk: Map<String, String> = _saved.value): List<SavedCollection> {
         if (_collections.value.isEmpty()) return emptyList()
         return _collections.value.values
-            .filter { record -> record.videoIds.any { it in onDisk } }
+            // The record is written at the tap, before a byte has been fetched,
+            // and it is never rewritten afterwards: it names every track the
+            // collection had when it was asked for, and the ones that were
+            // never downloaded are in it too. Left that way the card counts
+            // tracks that are not there, and opening it lands on a playlist
+            // with holes in it.
+            //
+            // So the record is brought up to what is on the disk now, and a
+            // collection with nothing left on the disk is not a collection.
+            .map { record -> record.copy(videoIds = record.videoIds.filter { it in onDisk }) }
+            .filter { record -> record.videoIds.isNotEmpty() }
             .sortedBy { it.title.lowercase(Locale.ROOT) }
     }
 

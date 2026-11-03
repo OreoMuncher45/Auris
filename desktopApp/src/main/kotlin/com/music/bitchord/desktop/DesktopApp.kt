@@ -20,7 +20,9 @@ import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.model.EntityType
 import com.music.bitchord.data.model.SearchHistoryEntity
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
+import com.music.bitchord.data.innertube.InnertubeParser
 import com.music.bitchord.ui.screens.ExploreScreen
+import com.music.bitchord.ui.screens.RadioScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.CompactTrackRow
 import com.music.bitchord.ui.screens.LibraryGridPage
@@ -118,6 +120,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
@@ -460,6 +463,7 @@ internal fun desktopTypography(): Typography {
 internal enum class DesktopDestination(val id: String, val label: String) {
     LISTEN_NOW("listen-now", "Home"),
     EXPLORE("explore", "Explore"),
+    RADIO("radio", "Radio"),
     LIBRARY("library", "Library"),
     SEARCH("search", "Search"),
     HISTORY("history", "History"),
@@ -549,6 +553,22 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     var searchLoading by remember { mutableStateOf(false) }
     var searchError by remember { mutableStateOf<String?>(null) }
     var homeState by remember { mutableStateOf<UiState<List<HomeShelf>>>(UiState.Loading) }
+
+    // Radio's seed row: what was played recently, so a station can be started from something the
+    // listener already chose rather than a cold suggestion — the phone's own rule.
+    val radioSeeds: List<ShelfItem> = (homeState as? UiState.Success)?.data
+        ?.firstOrNull { shelf ->
+            shelf.title.trim().let { title ->
+                title.equals("Recents", ignoreCase = true) ||
+                    title.equals("Recently played", ignoreCase = true) ||
+                    title.equals("Gần đây", ignoreCase = true) ||
+                    title.equals("最近", ignoreCase = true)
+            }
+        }
+        ?.items
+        ?.filter { it.videoId != null }
+        ?.take(10)
+        .orEmpty()
     // The home feed is paged: `FEmusic_home` answers with a couple of shelves and a token, and
     // everything else arrives by following it.
     var homeContinuation by remember { mutableStateOf<String?>(null) }
@@ -559,6 +579,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // Held out here so a page keeps its place when another is visited and it is come back to.
     val homeListState = rememberLazyListState()
     val exploreListState = rememberLazyListState()
+    // Radio keeps its own scroll position, so coming back to it lands where it was left.
+    val radioListState = rememberLazyListState()
     val moodGenreListState = rememberLazyListState()
     val searchListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
@@ -2436,7 +2458,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     }
 
     LaunchedEffect(destination, exploreReloads) {
-        if (destination == DesktopDestination.EXPLORE &&
+        // Radio's stations are the explore shelves, so both pages ask for the same thing.
+        if ((destination == DesktopDestination.EXPLORE || destination == DesktopDestination.RADIO) &&
             (exploreState is UiState.Loading || exploreReloads > 0)
         ) {
             loadExplore()
@@ -2683,6 +2706,35 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     fun openMoodGenre(item: MoodGenre) {
         selectedMoodGenre = item
         moodGenreShelves = UiState.Loading
+    }
+
+    /**
+     * A station started from a seed: the seed plays first, and the station follows it.
+     *
+     * YouTube Music builds the station from the seed's own id; the desktop asks it for the
+     * station's tracks and plays the two together as one queue, so the seed row of the queue
+     * says where the station came from.
+     */
+    fun playRadioSeed(item: ShelfItem) {
+        val videoId = item.videoId ?: return
+        scope.launch {
+            val station = DesktopSearchClient.radio(videoId).getOrElse { failure ->
+                DesktopTrackLog.log("radio: no station for '${item.title}' — ${failure.message}")
+                return@launch
+            }
+            if (station.isEmpty()) return@launch
+            val seed = Song(
+                videoId = videoId,
+                title = item.title,
+                artist = InnertubeParser.artistFromSubtitle(item.subtitle),
+                thumbnailUrl = item.thumbnailUrl,
+            )
+            playSongs(
+                listOf(seed) + station,
+                0,
+                DesktopQueueSource(DesktopStrings["radio", "Radio"], PlaybackSourceType.EXPLORE),
+            )
+        }
     }
 
     LaunchedEffect(selectedMoodGenre, moodGenreReloads) {
@@ -3747,6 +3799,29 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                                 modifier = Modifier.weight(1f),
                             )
                         }
+                        destination == DesktopDestination.RADIO -> RadioScreen(
+                            state = exploreState,
+                            listState = radioListState,
+                            // The Flow tile is a community feature the desktop has no account
+                            // for; the rest of the page stands on its own.
+                            flowItem = null,
+                            onFlowClick = {},
+                            seeds = radioSeeds,
+                            onSeedClick = ::playRadioSeed,
+                            onStationClick = { item ->
+                                // The station's shelves are opened on Explore, which is where
+                                // the phone opens them too.
+                                selectDestination(DesktopDestination.EXPLORE)
+                                openMoodGenre(item)
+                            },
+                            onStartStation = { selectDestination(DesktopDestination.SEARCH) },
+                            onGenresClick = { selectDestination(DesktopDestination.EXPLORE) },
+                            onRetry = { exploreReloads++ },
+                            refreshing = false,
+                            onRefresh = { exploreReloads++ },
+                            pullState = rememberPullToRefreshState(),
+                            contentPadding = sharedPagePadding,
+                        )
                         destination == DesktopDestination.EXPLORE -> ExploreScreen(
                             state = exploreState,
                             listState = exploreListState,
@@ -4338,6 +4413,9 @@ private fun DesktopSidebar(
             }
             DesktopSidebarItem(BitChordIcons.Explore, "Explore", destination == DesktopDestination.EXPLORE) {
                 onDestinationSelected(DesktopDestination.EXPLORE)
+            }
+            DesktopSidebarItem(Icons.Rounded.Radio, "Radio", destination == DesktopDestination.RADIO) {
+                onDestinationSelected(DesktopDestination.RADIO)
             }
             DesktopSidebarItem(BitChordIcons.Library, "Library", destination == DesktopDestination.LIBRARY) {
                 onDestinationSelected(DesktopDestination.LIBRARY)

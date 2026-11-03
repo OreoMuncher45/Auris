@@ -166,6 +166,16 @@ fun LibraryScreen(
     podcastShelves: List<HomeShelf> = emptyList(),
     /** The big "Library" heading; the desktop's pages carry none. */
     showTitle: Boolean = true,
+    /**
+     * Which segment the page is on — Playlists, the device's own, Artists,
+     * Albums — and who holds it.
+     *
+     * A caller that passes these keeps the segment across the page leaving
+     * composition, which is what opening a playlist over it does. A caller
+     * that does not gets the page's own, as it always was.
+     */
+    segment: LibrarySegment? = null,
+    onSegmentChange: ((LibrarySegment) -> Unit)? = null,
 ) {
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
     val onDevice = stringResource(Res.string.on_device)
@@ -174,14 +184,22 @@ fun LibraryScreen(
     // says comes first — the segment used to open on the device's shelf
     // instead, which put a signed-in listener's own playlists one tap
     // away and the thing they came for two.
-    var segment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
+    //
+    // The segment itself is the caller's, when the caller wants to hold it:
+    // this page leaves composition entirely when a playlist is opened over
+    // it, and `rememberSaveable` does not outlive that — coming back from a
+    // playlist found the page on Playlists again, whatever segment it had
+    // been left on.
+    var localSegment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
+    val currentSegment = segment ?: localSegment
+    val setSegment: (LibrarySegment) -> Unit = onSegmentChange ?: { localSegment = it }
     // One query per segment: what was typed into Playlists is not what was
     // typed into Albums, and switching back to it should find the query still
     // there.
     // Not saved across a restart: a half-typed search is not worth restoring.
     val queries = remember { mutableStateMapOf<String, String>() }
-    val query = queries[segment.name].orEmpty()
-    val setQuery: (String) -> Unit = { value -> queries[segment.name] = value }
+    val query = queries[currentSegment.name].orEmpty()
+    val setQuery: (String) -> Unit = { value -> queries[currentSegment.name] = value }
 
     PullToRefresh(
         refreshing = refreshing,
@@ -207,8 +225,8 @@ fun LibraryScreen(
             item(key = "replay") { replay() }
             item(key = "segments") {
                 LibrarySegmentBar(
-                    selected = segment,
-                    onSelect = { segment = it },
+                    selected = currentSegment,
+                    onSelect = { setSegment(it) },
                     onCreate = onNewFolder,
                     modifier = Modifier.padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
                 )
@@ -233,7 +251,7 @@ fun LibraryScreen(
                     items = shelf.items.filter { it.title.contains(query.trim(), ignoreCase = true) },
                 )
 
-            when (segment) {
+            when (currentSegment) {
                 LibrarySegment.Device -> {
                     if (links.isNotEmpty()) {
                         item(key = "links") { LibraryLinkList(links = links, onClick = onShelfItemClick) }

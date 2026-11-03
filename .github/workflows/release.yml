@@ -162,10 +162,14 @@ jobs:
           # The media keys, built against the raw WinRT ABI because MinGW has no C++/WinRT.
           jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
           jar tf "$jar" | grep -q 'native/bitchord_window.dll'
-          # The runtime image jpackage cut from the JDK. Without the charset tables it falls back
-          # to the system code page and every UTF-8 string comes back mangled.
-          runtime=$(ls desktopApp/build/compose/binaries/main/app/BitChord/runtime/bin/java.exe)
-          & "$runtime" --list-modules | grep -q '^jdk.charsets@'
+          # The runtime image jlink cut from the JDK. Without the charset tables it falls back
+          # to the system code page and every UTF-8 string comes back mangled. The image has no
+          # java executable — the app launcher loads it directly — so the module list is read
+          # from the release file jlink writes.
+          runtime=$(ls desktopApp/build/compose/binaries/main/app/BitChord/runtime/release \
+            desktopApp/build/compose/binaries/main/app/BitChord/lib/runtime/release 2>/dev/null | head -1)
+          test -n "$runtime"
+          grep -q 'jdk.charsets' "$runtime"
 
       - name: Collect
         shell: pwsh

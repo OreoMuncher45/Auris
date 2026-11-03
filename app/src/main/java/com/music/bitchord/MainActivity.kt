@@ -332,6 +332,7 @@ import com.music.bitchord.ui.screens.LocalMusicScreen
 import com.music.bitchord.ui.screens.HomeScreen
 import com.music.bitchord.ui.screens.LibraryGridPage
 import com.music.bitchord.ui.screens.LibraryScreen
+import com.music.bitchord.ui.screens.LibrarySegment
 import com.music.bitchord.ui.screens.MoodGenrePlaylistsScreen
 import com.music.bitchord.ui.screens.RadioScreen
 import com.music.bitchord.ui.screens.SearchScreen
@@ -2399,6 +2400,13 @@ private fun BitChordApp(
             searchTextValue = TextFieldValue(query, TextRange(query.length))
         }
     }
+    // The Library's segment — Playlists, the device's own, Artists, Albums.
+    //
+    // Held here because the Library page leaves composition entirely when a
+    // playlist is opened over it, and `rememberSaveable` does not outlive
+    // that: coming back from a playlist found the page on Playlists again,
+    // whatever segment it had been left on.
+    var librarySegment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
     val navSearchState = NavSearchState(
         visualActive = searchVisualActive,
         keyboardActive = searchKeyboardActive,
@@ -4591,6 +4599,11 @@ private fun BitChordApp(
                             signedIn = signedIn,
                             state = libraryState,
                             listState = libraryListState,
+                            // The segment is the caller's, so opening a playlist
+                            // over this page and coming back finds it where it
+                            // was left.
+                            segment = librarySegment,
+                            onSegmentChange = { librarySegment = it },
                             onShelfItemClick = onLibraryItemClick,
                             // Every shelf here has a menu behind it now — the account's
                             // own playlists get rename and delete on top of what a saved
