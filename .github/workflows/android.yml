@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      draft_tag:
+        description: "Tag for a private draft release. Empty means an artifact-only build."
+        required: false
+        default: ""
+
+# A draft release needs the contents scope; the artifact build does not.
+permissions:
+  contents: write
 
 jobs:
   build-prod-release:
@@ -48,3 +57,18 @@ jobs:
       with:
         name: auris-dev-release-signed
         path: app/build/outputs/apk/dev/release/*.apk
+
+    # A draft release: visible only to this repository's collaborators, not
+    # published, no announcement. Asked for by name so the ordinary artifact
+    # build stays exactly what it was.
+    - name: Draft the release
+      if: inputs.draft_tag != ''
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ inputs.draft_tag }}
+        name: Auris ${{ inputs.draft_tag }} — private draft
+        draft: true
+        prerelease: true
+        files: app/build/outputs/apk/dev/release/*.apk
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
