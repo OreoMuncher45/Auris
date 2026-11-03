@@ -111,7 +111,7 @@ jobs:
           $mingw = "C:\mingw64\bin"
           if (Test-Path "$mingw\g++.exe") {
             Add-Content -Path $env:GITHUB_PATH -Value $mingw
-            "$mingw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append "MINGW_BIN=$mingw"
+            "MINGW_BIN=$mingw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           }
           "g++ --version"
           "ninja --version"
