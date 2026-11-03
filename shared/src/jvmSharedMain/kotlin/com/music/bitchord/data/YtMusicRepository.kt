@@ -766,6 +766,19 @@ object YtMusicRepository {
     }
 
     /**
+     * Every song on a playlist or album page, following the feed's
+     * continuations.
+     *
+     * Public because the download sync needs it. A song added to a playlist
+     * is *appended* to it, so the first page — which is all [browseSongs]
+     * reads — is exactly where a new song is not. Reading the whole page is
+     * the only way to notice one, and noticing one is the whole of what a
+     * downloaded playlist needs.
+     */
+    suspend fun browseSongsPaged(browseId: String): Result<List<Song>> =
+        call("browsePaged:$browseId") { songsPaged(browseId) }
+
+    /**
      * Every saved library card behind a feed browse id, following continuations.
      *
      * The library shelves are capped by YouTube's first page just like search:

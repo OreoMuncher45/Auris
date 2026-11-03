@@ -24,12 +24,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
@@ -126,7 +126,27 @@ private fun leadingInset(hasBack: Boolean): Dp = if (hasBack) BackInset else Wor
  */
 @Composable
 fun topBarHeight(): Dp =
-    WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + TopBarContentHeight
+    topWindowInset() + TopBarContentHeight
+
+/**
+ * The inset the top of the window has to clear.
+ *
+ * The status bar's own inset when there is one, and the display cutout's when
+ * there isn't.
+ *
+ * A hidden status bar reports no inset at all — see
+ * [AppSettings.hideStatusBar] — so a bar pinned to the top of the window
+ * would sit under the punch-hole camera on exactly the devices that hide the
+ * status bar, which is the wrong way round. The cutout is still reported
+ * while the bar is hidden, which is what makes it the right fallback: the
+ * deeper of the two is what the top of the window actually has to clear.
+ */
+@Composable
+fun topWindowInset(): Dp {
+    val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val cutout = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    return maxOf(statusBar, cutout)
+}
 
 /**
  * Where page content should start: clear of the bar, plus [TopBarContentGap].
@@ -205,7 +225,7 @@ fun FrostedTopBar(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
+                .padding(top = topWindowInset())
                 .height(TopBarContentHeight),
         ) {
             /* Temporarily hidden: keep the scrolling center-title implementation

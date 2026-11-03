@@ -78,7 +78,19 @@ import kotlin.random.Random
  * as the old backdrop draws — would be thirty-six full-screen radial gradients.
  */
 @Immutable
-class ArtworkMesh internal constructor(internal val image: ImageBitmap)
+class ArtworkMesh internal constructor(
+    internal val image: ImageBitmap,
+    /**
+     * Whether this mesh was read off a moving picture.
+     *
+     * It changes how the mesh arrives rather than what it is: a mesh read off
+     * a still sleeve is a change of record and is eased in slowly, while a
+     * mesh read off a clip is the next moment of the same picture and has to
+     * be there before the next one — a long fade there would never finish,
+     * and the backdrop would sit at a fraction of every colour for ever.
+     */
+    internal val live: Boolean = false,
+)
 
 /**
  * One pre-blurred bitmap for the full-cover player backdrop.
@@ -260,7 +272,7 @@ fun rememberArtworkMesh(
         // threshold is discarded; the last valid mesh is kept instead.
         if (isLikelyBlackFrame(frame)) return@LaunchedEffect
         mesh = withContext(Dispatchers.Default) {
-            meshOf(frame, cacheKey?.hashCode() ?: 0)
+            meshOf(frame, cacheKey?.hashCode() ?: 0, live = true)
         } ?: mesh
         meshUrl = cacheKey
     }
@@ -357,7 +369,15 @@ fun ArtworkMeshBackdrop(
         }
         incoming = next
         fade.snapTo(0f)
-        fade.animateTo(1f, tween(MESH_FADE_MS, easing = FastOutSlowInEasing))
+        // A moving picture's mesh is eased in over a fraction of the gap
+        // between reads, so the backdrop is at the colour the picture is at
+        // by the time the next picture arrives. A still sleeve's mesh keeps
+        // the long fade, which is a change of record rather than a change of
+        // frame.
+        fade.animateTo(
+            1f,
+            tween(if (next.live) LIVE_MESH_FADE_MS else MESH_FADE_MS, easing = FastOutSlowInEasing),
+        )
         shown = next
         incoming = null
     }
@@ -576,6 +596,16 @@ private const val MESH_TEX = 32
 private const val MESH_FADE_MS = 900
 
 /**
+ * The fade for a mesh read off a moving picture.
+ *
+ * Well inside the gap between reads — see `LIVE_REFRESH_MS` in
+ * `NowPlayingScreen` — because a fade that outlives its own input never
+ * arrives: the backdrop would sit at a fraction of every colour for ever
+ * instead of at the colour the picture is actually at.
+ */
+private const val LIVE_MESH_FADE_MS = 180
+
+/**
  * The most rows and columns of [source] that are actually looked at.
  *
  * A still sleeve is decoded at [MESH_PX] and falls well under this, but a clip
@@ -601,6 +631,7 @@ private const val MESH_SAMPLE = 128
 private fun meshOf(
     source: ImageBitmap,
     seed: Int,
+    live: Boolean = false,
 ): ArtworkMesh? {
     val width = source.width
     val height = source.height
@@ -646,7 +677,7 @@ private fun meshOf(
             .lifted()
     }
     val texels = grid.rotatedBelowSeam(cols, rows, seed).resampled(cols, rows, MESH_TEX)
-    return ArtworkMesh(imageBitmapOf(texels, MESH_TEX, MESH_TEX))
+    return ArtworkMesh(imageBitmapOf(texels, MESH_TEX, MESH_TEX), live)
 }
 
 /**

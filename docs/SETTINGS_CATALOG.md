@@ -114,6 +114,7 @@ at once.
 - [x] `appearance.reduce_animation` — Reduce animation
 - [x] `appearance.reduce_dynamic_blur` — Reduce dynamic blur
 - [x] `appearance.liquid_glass_haptics` — Liquid glass haptics
+- [x] `appearance.hide_status_bar` — Hide status bar
 
 ### Performance
 - [x] `performance.high_performance_mode` — High performance mode

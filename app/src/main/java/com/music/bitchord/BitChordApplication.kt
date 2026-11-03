@@ -188,6 +188,11 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         // What's already saved to Downloads, so the song menu can say so
         // without a media-store query per row.
         Downloads.init(this)
+        // A playlist downloaded whole is a promise about a moving thing: the
+        // songs added to it since are downloaded too. See
+        // [DownloadedPlaylistSync] — it throttles itself and never runs
+        // offline.
+        com.music.bitchord.download.DownloadedPlaylistSync.schedule(this)
         // Flow's mix, mood, tuner and bans. Missing this call was the whole
         // "Flow deletes on restart" bug: every save and restore silently
         // no-ops until prefs are opened, and nothing opened them.

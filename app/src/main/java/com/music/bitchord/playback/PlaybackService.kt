@@ -466,10 +466,32 @@ class PlaybackService : MediaLibraryService() {
     private val playlistsMutex = Mutex()
     private val PLAYLISTS_CACHE_TTL_MS = 60_000L
 
+    /**
+     * The account's playlists, as cards Android Auto can browse.
+     *
+     * [YtMusicRepository.userPlaylists] is the list the app's own Library
+     * screen shows: the library feed followed through its continuations and
+     * narrowed to the playlists on it. It is the *primary* answer here, not a
+     * fallback, because it is the only one of the two that sees past the
+     * first page of the feed — which is where a long playlist collection
+     * lives — and because a folder that lists something different from the
+     * app is a bug waiting to be reported twice.
+     *
+     * [YtMusicRepository.libraryPlaylists] is the raw first page of the same
+     * feed, cards and all. It is still worth having: it is one request
+     * instead of a walk, so it answers fast when the feed is short, and it
+     * sees the cards the playlist filter drops.
+     *
+     * What used to be here asked for the raw page first and only fell
+     * through to the playlist list when the request *failed*, because `?:`
+     * fires on a null and not on an empty list. An account whose library
+     * page came back without cards therefore got an empty Playlists folder
+     * in Android Auto while the app showed them perfectly well.
+     */
     private suspend fun fetchPlaylistCards(): List<ShelfItem> = try {
-        withTimeoutOrNull(3_000L) {
-            YtMusicRepository.libraryPlaylists().getOrNull()
-                ?: YtMusicRepository.userPlaylists().getOrNull()?.map {
+        withTimeoutOrNull(PLAYLISTS_FETCH_TIMEOUT_MS) {
+            val playlists = YtMusicRepository.userPlaylists().getOrNull()
+                ?.map {
                     ShelfItem(
                         title = it.title,
                         subtitle = it.subtitle,
@@ -478,6 +500,16 @@ class PlaybackService : MediaLibraryService() {
                         browseId = "VL${it.playlistId}",
                     )
                 }
+                .orEmpty()
+            if (playlists.isNotEmpty()) {
+                playlists
+            } else {
+                // Nothing from the playlist list: read the raw feed instead,
+                // narrowed to what can actually be browsed as a playlist.
+                YtMusicRepository.libraryPlaylists().getOrNull()
+                    ?.filter { it.browseId?.startsWith("VL") == true }
+                    .orEmpty()
+            }
         } ?: emptyList()
     } catch (_: Exception) {
         emptyList()
@@ -1009,6 +1041,11 @@ class PlaybackService : MediaLibraryService() {
         }
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            // Everything below is the app's own work, and it all runs inside
+            // Media3's event dispatch — see [guardPlaybackStep] for why a
+            // throw in here used to cost the listener the whole app at the
+            // one moment they can least afford it: the end of a track.
+            guardPlaybackStep("track transition", mediaItem?.mediaId) {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
@@ -1078,6 +1115,7 @@ class PlaybackService : MediaLibraryService() {
             loadLyricsForCurrentTrack()
             if (exoPlayer.isPlaying) startLyricsTicker()
             refreshCustomLayouts()
+            }
         }
 
         /**
@@ -1387,6 +1425,14 @@ class PlaybackService : MediaLibraryService() {
         localBitrateCache.clear()
         measuredBitrate.forget()
         QualityUpgrade.forgetLastSession()
+
+        // A playlist downloaded whole stays whole: the songs added to it since
+        // are downloaded too. Throttled inside, and never offline — see
+        // [com.music.bitchord.download.DownloadedPlaylistSync]. Started here
+        // as well as at startup because the service is what runs when the
+        // app is being *used*, and a listener who left the app open all day
+        // is the one whose playlist would otherwise go stale.
+        com.music.bitchord.download.DownloadedPlaylistSync.schedule(this)
 
         setMediaNotificationProvider(
             DefaultMediaNotificationProvider.Builder(this)
@@ -3901,11 +3947,51 @@ class PlaybackService : MediaLibraryService() {
      * @param alreadyAudible whether the track was already sounding when it
      *   became current, which is only true of a crossfade handoff.
      */
+    /**
+     * Runs one of this service's own bookkeeping steps, and keeps a failure
+     * in it from taking the process down.
+     *
+     * The steps are the app's own work — scrobbling, the history, the cache,
+     * the loudness, the party — and they run inside Media3's event dispatch,
+     * which is the one place a throw is not survivable: it leaves as an
+     * uncaught exception on the main thread, the process dies, and the queue
+     * is lost with it. The music is still loaded, the listener's next track
+     * is still queued, and nothing says why the app went away.
+     *
+     * A half-finished bookkeeping step is recoverable. A dead process is not,
+     * and a crash at the end of a song is the one crash nobody can reproduce
+     * on demand — so the failure is logged with the track it happened on and
+     * the session carries on.
+     */
+    private inline fun guardPlaybackStep(what: String, mediaId: String?, block: () -> Unit) {
+        try {
+            block()
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            TrackLog.e("BitChord", "$what failed", t, mediaId)
+        }
+    }
+
+    /**
+     * A track became current, and everything the app books against that.
+     *
+     * Wrapped in [guardPlaybackStep]: see there for why a throw in here used
+     * to cost the listener the whole app.
+     */
     private fun onTrackBecameCurrent(
         mediaItem: MediaItem?,
         previousEnded: Boolean,
         reason: Int,
         alreadyAudible: Boolean = false,
+    ) = guardPlaybackStep("track became current", mediaItem?.mediaId) {
+        runTrackBecameCurrent(mediaItem, previousEnded, reason, alreadyAudible)
+    }
+
+    private fun runTrackBecameCurrent(
+        mediaItem: MediaItem?,
+        previousEnded: Boolean,
+        reason: Int,
+        alreadyAudible: Boolean,
     ) {
         val exoPlayer = player ?: return
         currentAudioInputFormat = null
@@ -3929,6 +4015,9 @@ class PlaybackService : MediaLibraryService() {
         activeTrackIsDolbyAtmos = NerdStats.declaredFormat(mediaItem?.mediaId)?.isDolbyAtmos == true
         applySpatialAudioEnabled()
         applySimulatedAtmosEnabled()
+        // The same claim, published for the screen to read — see
+        // [publishClaimedFormat].
+        publishClaimedFormat(mediaItem?.mediaId)
 
         // A genuinely different track, so the gain is re-read for it. A
         // quality upgrade never reaches here — it returns early in
@@ -6412,6 +6501,37 @@ class PlaybackService : MediaLibraryService() {
         else -> null
     }
 
+    /**
+     * Publishes what the source said about this track, before the decoder has
+     * said anything about it.
+     *
+     * The Now Playing badge is read off [NerdStats.current], and that
+     * snapshot was only ever written when the renderer reported a format —
+     * which is *after* the decoder has been configured, and on a stream the
+     * decoder cannot configure, never. An Atmos track therefore spent its
+     * first seconds reading as ordinary lossy audio, and on a device with no
+     * Dolby decoder it read that way for good.
+     *
+     * Only the immersive claim is published this way, and only until the
+     * measurement replaces it — [publishNerdStats] writes over it the moment
+     * the renderer speaks. Nothing else is claimed from here: the lossless
+     * badge has its own rule, and its own reasons, in
+     * [NerdStats.Snapshot.isLossless].
+     */
+    private fun publishClaimedFormat(mediaId: String?) {
+        val claimed = NerdStats.declaredFormat(mediaId) ?: return
+        if (!claimed.isDolbyAtmos) return
+        NerdStats.current.value = NerdStats.Snapshot(
+            mimeType = null,
+            bitrateKbps = null,
+            sampleRateHz = claimed.sampleRateHz,
+            channels = null,
+            bitDepth = null,
+            claimed = claimed,
+            sourceName = currentSourceName(mediaId, player?.currentMediaItem),
+        )
+    }
+
     private fun publishNerdStats() {
         val player = player ?: return
         val format = player.audioFormat
@@ -7785,13 +7905,36 @@ class PlaybackService : MediaLibraryService() {
         val items: List<MediaItem> = (0 until count).map { player.getMediaItemAt(it) }
         val from = player.currentMediaItemIndex + 1
         if (from >= items.size) return
-        val rebuilt = (from until items.size)
-            .mapNotNull { items[it].toSong().takeIf { song -> song.localUri != null } }
-            .map { it.toMediaItem() }
-        if (rebuilt.isEmpty()) return
+        // Every upcoming track is rebuilt, not only the ones with a file.
+        //
+        // The old version handed [Player.replaceMediaItems] a list built with
+        // `mapNotNull`, so a track without a file was *dropped* from the list
+        // and therefore removed from the queue: the listener's own music,
+        // gone, because the wifi came back. A track that was left alone
+        // going offline has to be left alone coming back too.
+        val rebuilt = (from until items.size).map { index ->
+            val item = items[index]
+            val scheme = item.localConfiguration?.uri?.scheme
+            // Only a download is put back on the network. A file of the
+            // listener's own — a track in their music folder — is not
+            // something a stream can replace, and stripping its path would
+            // send it looking for one.
+            if (scheme != "file" && scheme != "content") {
+                item
+            } else if (Downloads.verifiedSavedUri(item.mediaId) == null) {
+                item
+            } else {
+                item.toSong().copy(localUri = null, localPath = null).toMediaItem()
+            }
+        }
+        if (rebuilt == items.subList(from, items.size)) return
+        val restored = rebuilt.indices.count { i ->
+            rebuilt[i].localConfiguration?.uri != items[from + i].localConfiguration?.uri
+        }
+        if (restored == 0) return
         TrackLog.d(
             "BitChord",
-            "back online; ${rebuilt.size} queued track(s) return to streaming",
+            "back online; $restored queued track(s) return to streaming",
             about = player.currentMediaItem?.mediaId,
         )
         player.replaceMediaItems(from, items.size, rebuilt)
@@ -7817,23 +7960,72 @@ class PlaybackService : MediaLibraryService() {
      * restore: cutting the source under an audible track is a gap nobody
      * asked for, and the ladder can rescue that one failure on its own.
      */
+    /**
+     * The queue, switched to the files behind it, the moment the network goes.
+     *
+     * Everything from the *current* track onwards. The track playing when the
+     * connection dropped is the one that most needs to stop streaming — it is
+     * the one the listener is listening to — and it used to be left alone,
+     * because this only ever looked at what came *after* it. The stream it
+     * was already on kept running, which is the whole of "offline mode
+     * still streams".
+     *
+     * A track with a file behind it is rebuilt from the file; one without is
+     * left exactly as it is, so the queue the listener built survives the
+     * switch. The player skips what it cannot play (see [recoverFrom]), which
+     * is a different thing from deleting it from under them.
+     *
+     * The current track's position is kept: the file is the same song, and a
+     * song that restarts from its first second every time the wifi drops is
+     * not a switch to the local copy.
+     */
     private fun applyOfflineFilesToQueue() {
         val player = player ?: return
         val count = player.mediaItemCount
         if (count == 0) return
         val items: List<MediaItem> = (0 until count).map { player.getMediaItemAt(it) }
-        val from = player.currentMediaItemIndex + 1
+        val from = player.currentMediaItemIndex.coerceAtLeast(0)
         if (from >= items.size) return
-        val rebuilt = (from until items.size)
-            .mapNotNull { items[it].toSong().takeIf { song -> song.localUri != null } }
-            .map { it.toMediaItem() }
-        if (rebuilt.isEmpty()) return
+        val position = player.currentPosition
+        val rebuilt = (from until items.size).map { index ->
+            val item = items[index]
+            val scheme = item.localConfiguration?.uri?.scheme
+            // Already a file: there is nothing to switch it to.
+            if (scheme == "file" || scheme == "content") {
+                item
+            } else {
+                val song = item.toSong()
+                // The file has to exist: a record can outlive the file it
+                // names whenever one is deleted from a file manager, and
+                // handing the player a URI to a path that is gone is the
+                // failure this whole path exists to avoid.
+                val file = song.localUri?.takeUnless(Downloads::isMissingLocalFile)
+                    ?: Downloads.verifiedSavedUri(song.videoId)
+                if (file == null) {
+                    item
+                } else {
+                    // Rebuilt with the local uri stripped, so [Song.toMediaItem]
+                    // sends it down its file branch — the same shape
+                    // [fallbackOnlineStreamToFile] builds.
+                    song.copy(localUri = null, localPath = null).toMediaItem()
+                }
+            }
+        }
+        if (rebuilt == items.subList(from, items.size)) return
+        val switched = rebuilt.indices.count { i ->
+            rebuilt[i].localConfiguration?.uri != items[from + i].localConfiguration?.uri
+        }
+        if (switched == 0) return
         TrackLog.d(
             "BitChord",
-            "offline; ${rebuilt.size} queued track(s) with files switch to them",
+            "offline; $switched queued track(s) switch to their files",
             about = player.currentMediaItem?.mediaId,
         )
         player.replaceMediaItems(from, items.size, rebuilt)
+        // The same song, from the same point: the file took over mid-track.
+        if (from <= player.currentMediaItemIndex) {
+            player.seekTo(player.currentMediaItemIndex, position)
+        }
     }
 
     /**
@@ -9194,7 +9386,7 @@ class PlaybackService : MediaLibraryService() {
                 MEDIA_ROOT_ID -> listOf(
                     createFolderItem(MEDIA_QUICK_PICKS_ID, getString(R.string.auto_quick_picks), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
                     createFolderItem(MEDIA_RECENTS_ID, getString(R.string.auto_recents), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
-                    createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS, isGrid = true),
+                    createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_MIXED, isGrid = true),
                     createFolderItem(MEDIA_LIKED_ID, getString(R.string.auto_liked), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS),
                     createFolderItem(MEDIA_MORE_ID, getString(R.string.more), folderType = MediaMetadata.FOLDER_TYPE_MIXED),
                 )
@@ -9302,7 +9494,18 @@ class PlaybackService : MediaLibraryService() {
                             }
                             snapshot
                         } else {
-                            cachedPlaylistCards()
+                            val fresh = cachedPlaylistCards()
+                            if (fresh.isEmpty()) {
+                                // Nothing came back. Ask once more in the
+                                // background rather than leaving the folder
+                                // blank: the first fetch of a cold car
+                                // connection can time out, and "not yet" must
+                                // not be shown as "there is nothing here".
+                                refreshFolderInBackground(session, browser, parentId, params) {
+                                    cachedPlaylistCards().size
+                                }
+                            }
+                            fresh
                         }
                         if (playlists.isNotEmpty()) playlists.map(::shelfToGridPlaylistItem) else listOf(
                             createInfoItem(
@@ -9391,7 +9594,7 @@ class PlaybackService : MediaLibraryService() {
                     ).build()
                 MEDIA_RECENTS_ID -> createFolderItem(MEDIA_RECENTS_ID, getString(R.string.auto_recents), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
                 MEDIA_QUICK_PICKS_ID -> createFolderItem(MEDIA_QUICK_PICKS_ID, getString(R.string.auto_quick_picks), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
-                MEDIA_PLAYLISTS_ID -> createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS, isGrid = true)
+                MEDIA_PLAYLISTS_ID -> createFolderItem(MEDIA_PLAYLISTS_ID, getString(R.string.playlists), folderType = MediaMetadata.FOLDER_TYPE_MIXED, isGrid = true)
                 MEDIA_MORE_ID -> createFolderItem(MEDIA_MORE_ID, getString(R.string.more), folderType = MediaMetadata.FOLDER_TYPE_MIXED)
                 MEDIA_LIKED_ID -> createFolderItem(MEDIA_LIKED_ID, getString(R.string.auto_liked), folderType = MediaMetadata.FOLDER_TYPE_PLAYLISTS)
                 MEDIA_DOWNLOADS_ID -> createFolderItem(MEDIA_DOWNLOADS_ID, getString(R.string.downloads))
@@ -9726,13 +9929,27 @@ class PlaybackService : MediaLibraryService() {
             putBoolean(EXTRA_CONTENT_STYLE_SUPPORTED_AX, true)
         }
 
+    /**
+     * The slice of [items] a client asked for.
+     *
+     * The offset is counted in the client's own page size. The old code
+     * counted in the *capped* one, so a client that asked for twenty items
+     * a page and then asked for page two was answered with the forty-first
+     * item onwards — the pages overlapped and the client walked over the
+     * same rows twice, skipping nothing but seeing everything twice.
+     *
+     * A page size of zero means "no limit asked for", which some Android
+     * Auto clients do send. It used to be read as "an empty page", and the
+     * folder it was asked about came up blank on exactly the head units that
+     * send it — the Playlists folder among them.
+     */
     private fun <T> paginate(items: List<T>, page: Int, pageSize: Int): List<T> {
-        if (page < 0 || pageSize <= 0 || items.isEmpty()) return emptyList()
-        val safePageSize = pageSize.coerceAtMost(MAX_AUTO_PAGE_SIZE)
-        val fromLong = page.toLong() * safePageSize.toLong()
+        if (page < 0 || items.isEmpty()) return emptyList()
+        val size = if (pageSize <= 0) MAX_AUTO_PAGE_SIZE else pageSize.coerceAtMost(MAX_AUTO_PAGE_LIMIT)
+        val fromLong = page.toLong() * size.toLong()
         if (fromLong >= items.size.toLong()) return emptyList()
         val from = fromLong.toInt()
-        val to = (fromLong + safePageSize).coerceAtMost(items.size.toLong()).toInt()
+        val to = (fromLong + size.toLong()).coerceAtMost(items.size.toLong()).toInt()
         return items.subList(from, to)
     }
 
@@ -9809,6 +10026,27 @@ class PlaybackService : MediaLibraryService() {
         folderType = if (item.browseId.startsWith("MPREb_")) MediaMetadata.FOLDER_TYPE_ALBUMS else MediaMetadata.FOLDER_TYPE_PLAYLISTS,
     )
 
+    /**
+     * A folder in the browse tree.
+     *
+     * [folderType] is kept exactly as asked for. It used to be rewritten to
+     * [MediaMetadata.FOLDER_TYPE_ALBUMS] whenever a grid folder was asked
+     * for — which, since the Playlists folder is the only grid folder in the
+     * tree, meant that one folder and nothing else.
+     *
+     * The rewrite was wrong in both directions. A folder type says what its
+     * *children* are: albums, artists and playlists are all folders whose
+     * children are playable songs, while
+     * [MediaMetadata.FOLDER_TYPE_MIXED] is the only one that admits children
+     * that are themselves folders. The Playlists folder's children are
+     * folders — one per playlist — so it is a mixed folder, and a head unit
+     * that reads the type strictly would have been asked to render a folder
+     * of songs and shown nothing at all, because none of the children were
+     * songs. That is the Playlists folder coming up empty on the car.
+     *
+     * How the folder is *drawn* — a grid of tiles or a list of rows — is the
+     * content style hint's business, and it is set from [isGrid] below.
+     */
     private fun createFolderItem(
         mediaId: String,
         title: String,
@@ -9826,7 +10064,7 @@ class PlaybackService : MediaLibraryService() {
                     .setSubtitle(subtitle)
                     .setIsBrowsable(true)
                     .setIsPlayable(false)
-                    .setFolderType(if (isGrid && folderType == MediaMetadata.FOLDER_TYPE_MIXED) MediaMetadata.FOLDER_TYPE_ALBUMS else folderType)
+                    .setFolderType(folderType)
                     .setExtras(extras)
                     .build(),
             )
@@ -9943,6 +10181,22 @@ class PlaybackService : MediaLibraryService() {
         const val MEDIA_DOWNLOADS_ID = "downloads"
         const val MEDIA_LOCAL_MUSIC_ID = "local_music"
         const val MAX_AUTO_PAGE_SIZE = 50
+        /**
+         * The most a client can ask for in one page. Far above what any
+         * Android Auto client sends, and a ceiling rather than a page size:
+         * the offset is counted in the same unit, so a clamped page and a
+         * clamped offset still agree with each other.
+         */
+        const val MAX_AUTO_PAGE_LIMIT = 10_000
+        /**
+         * How long the Playlists folder may spend fetching.
+         *
+         * A car is often on a phone's hotspot, and the library feed is two
+         * requests on a cold connection. Three seconds was the old budget:
+         * past it the folder answered "nothing here" for a playlist list that
+         * was merely slow, and the answer was cached as the truth.
+         */
+        const val PLAYLISTS_FETCH_TIMEOUT_MS = 8_000L
         const val MAX_AUTO_SEARCH_QUERY_CHARS = 200
         const val MAX_AUTO_SEARCH_CACHE_ENTRIES = 20
 

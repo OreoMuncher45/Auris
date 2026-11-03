@@ -1565,6 +1565,22 @@ private fun LosslessOrStats(
     val showLossless by PlayerSettings.showLosslessBadge.collectAsStateWithLifecycle()
     val showHiRes by PlayerSettings.showHiResBadge.collectAsStateWithLifecycle()
     when {
+        // Dolby Atmos first, ahead of everything else the badge can say.
+        //
+        // It is the one answer that is *about this stream* rather than about
+        // the search for a better one: an immersive mix is neither lossless
+        // nor "still being looked for", and a track that is playing one said
+        // so the moment the source named it. Read after the "upgrading" label,
+        // it was hidden behind that label for as long as the lookup took —
+        // which is how an Atmos track spent its opening seconds reading as a
+        // plain lossy one, and how a phone that could not decode it kept
+        // saying nothing at all.
+        nerdStats?.isDolbyAtmos == true -> LosslessLabel(
+            text = "Dolby Atmos",
+            animated = true,
+            iconPainter = painterResource(Res.drawable.ic_dolby_atmos),
+            modifier = modifier,
+        )
         // Still resolving — either the player itself is buffering, or a
         // module is still racing YouTube for this track in the background
         // (see [NerdStats.racingLossless]) even though YouTube already won
@@ -1629,12 +1645,6 @@ private fun LosslessOrStats(
             // confirmed. It is what makes the badge read as an achievement
             // rather than a label, which only one of these two is.
             animated = true,
-            modifier = modifier,
-        )
-        nerdStats?.isDolbyAtmos == true -> LosslessLabel(
-            text = "Dolby Atmos",
-            animated = true,
-            iconPainter = painterResource(Res.drawable.ic_dolby_atmos),
             modifier = modifier,
         )
         // Lossy, but the good end of lossy — a module's 320kbps tier, which

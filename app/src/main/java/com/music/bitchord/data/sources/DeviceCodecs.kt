@@ -97,12 +97,18 @@ object DeviceCodecs {
     private const val TAG = "BitChord"
 
     /**
-     * E-AC-3 JOC, and the plain E-AC-3 core it degrades to. Either decoder is
-     * enough to say yes — see the note on fallback above. Spelt out rather
-     * than taken from Media3's `MimeTypes`, so that everything outside
-     * [media3Decoders] stays clear of the unstable API surface.
+     * E-AC-3 JOC, the plain E-AC-3 core it degrades to, and AC-3 — the Dolby
+     * family the app treats as one thing. Either decoder is enough to say yes
+     * — see the note on fallback above. Spelt out rather than taken from
+     * Media3's `MimeTypes`, so that everything outside [media3Decoders] stays
+     * clear of the unstable API surface.
+     *
+     * AC-3 is here because the app now recognises it as Dolby when a source
+     * names it — see [com.music.bitchord.data.sources.StreamFormat.isDolbyAtmos]
+     * — and a question asked about half the family would refuse exactly the
+     * streams the other half lets through.
      */
-    private val DOLBY_MIMES = listOf("audio/eac3-joc", "audio/eac3")
+    private val DOLBY_MIMES = listOf("audio/eac3-joc", "audio/eac3", "audio/ac3", "audio/ac-3")
 
     @Volatile
     private var probed: Boolean? = null

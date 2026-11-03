@@ -137,7 +137,7 @@ class SettingsCatalogTest {
             "appearance.theme", "appearance.app_ui", "appearance.fonts", "appearance.script_fonts",
             "appearance.liquid_glass", "appearance.liquid_glass_intensity", "appearance.folding_nav_bar",
             "appearance.reduce_animation", "appearance.reduce_dynamic_blur",
-            "appearance.liquid_glass_haptics",
+            "appearance.liquid_glass_haptics", "appearance.hide_status_bar",
             "performance.high_performance_mode", "performance.refresh_rate",
             "storage.show_cache_folder", "storage.song_cache_limit", "storage.clear_song_cache",
             "storage.clear_image_cache", "storage.local_music_folder", "storage.use_all_audio_folders",

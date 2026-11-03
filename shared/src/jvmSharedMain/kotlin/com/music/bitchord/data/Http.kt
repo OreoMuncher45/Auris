@@ -130,12 +130,38 @@ object Http {
         chain.proceed(request)
     }
 
+    /**
+     * The app's own verdict on whether anything may leave the device.
+     *
+     * One interceptor, in the one client every request in the app goes
+     * through, is what makes "offline mode" mean *zero* internet access
+     * rather than "the subsystems that remembered to check".
+     *
+     * The request is refused with an [java.io.IOException] rather than
+     * answered with a cached or empty body: a refusal is a network failure,
+     * which every caller in this app already knows how to be wrong about —
+     * the player falls back to the downloaded file, the library shows its
+     * last answer, the lyrics page says it could not reach anybody. A
+     * fabricated empty answer would be a lie told to the listener's ear.
+     */
+    private val offlineInterceptor = okhttp3.Interceptor { chain ->
+        val request = chain.request()
+        val host = request.url.host
+        if (!NetworkPolicy.allows(host)) {
+            throw java.io.IOException(
+                "offline mode: no request to $host (${request.method} ${request.url.encodedPath})",
+            )
+        }
+        chain.proceed(request)
+    }
+
     val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
         .connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        .addInterceptor(offlineInterceptor)
         .addInterceptor(webDavInterceptor)
         .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()

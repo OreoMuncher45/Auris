@@ -418,13 +418,35 @@ object AppSettings {
     val liquidGlassHaptics = MutableStateFlow(true)
 
     /**
+     * Whether the status bar is hidden, app-wide.
+     *
+     * On by default, and app-wide in the literal sense: every window this app
+     * owns — the activity's and the player's own — answers to it, so the
+     * clock is either there everywhere or nowhere. There used to be one
+     * place that hid it (the player's sheet window) and the rest of the app
+     * showing it, which is a mixed answer to a question the listener only
+     * gets to ask once.
+     *
+     * A hidden status bar reports no inset at all, so anything pinned to the
+     * top of the window has to fall back to the display cutout's own inset —
+     * otherwise the top bar ends up under the punch-hole camera. See
+     * [com.music.bitchord.ui.components.topBarHeight].
+     */
+    val hideStatusBar = MutableStateFlow(true)
+
+    /**
      * "Simulated Dolby Atmos": a widening DSP effect applied to ordinary
      * stereo (mid/side widening with the side channel high-passed so bass
      * stays centered). It is a *sound* effect, not a stream — the Atmos
      * quality rung already handles real object-based mixes — so it lives
      * beside [spatialAudio] and runs in the same DSP chain.
+     *
+     * On by default. Nothing about the effect itself is decided here — this
+     * is the value a fresh install starts from, and the value a listener who
+     * turns it off stays off at, because the switch is read from the stored
+     * preference when there is one.
      */
-    val simulatedAtmos = MutableStateFlow(false)
+    val simulatedAtmos = MutableStateFlow(true)
 
     /**
      * Apple Music Sing equivalent: how much of the center-mixed lead vocal to
@@ -864,6 +886,34 @@ object AppSettings {
         return "name:$normalized" in keys
     }
 
+    /**
+     * Where a settings page was left, in pixels.
+     *
+     * The settings screen is long — some of its pages are a screenful and a
+     * half — and it is a page the listener goes into, changes one thing and
+     * comes back to. Opening it at the top every time meant finding the same
+     * row again after every visit, which on the pages with the most rows in
+     * them was most of the work.
+     *
+     * Kept per page rather than as one offset: the index and each category
+     * are different lists, and an offset that belonged to one of them means
+     * nothing in another.
+     */
+    fun settingsScrollOffset(page: String): Int {
+        if (!::prefs.isInitialized) return 0
+        return runCatching {
+            prefs.getInt(KEY_SETTINGS_SCROLL_PREFIX + page, 0)
+        }.getOrDefault(0).coerceAtLeast(0)
+    }
+
+    /** Remembers where a settings page was left — see [settingsScrollOffset]. */
+    fun saveSettingsScrollOffset(page: String, offset: Int) {
+        if (!::prefs.isInitialized) return
+        prefs.edit()
+            .putInt(KEY_SETTINGS_SCROLL_PREFIX + page, offset.coerceAtLeast(0))
+            .apply()
+    }
+
     /** True when any credit on [song] is hidden, including a collaboration. */
     fun isSongBlocked(song: Song): Boolean {
         // isSongAi covers both YouTube's own disclosure and the listener's
@@ -1201,9 +1251,19 @@ object AppSettings {
      * deliberately allowed through: a download with nothing to download over
      * fails on the network and says so, which is true, where refusing it here
      * would blame a Wi-Fi setting for an outage.
+     *
+     * Offline mode is not that case. Offline mode is not "there is no network"
+     * — it is the listener saying that nothing may leave the device — so a
+     * download asked for in it is refused outright rather than started and
+     * left to fail. The refusal is the truth: there is nowhere to fetch it
+     * from, and a row that spins forever is a worse answer than one that says
+     * so.
      */
     val downloadsAllowedNow: Boolean
-        get() = !wifiOnlyDownloads.value || meteredConnection.value != true
+        get() {
+            if (effectiveOffline.value) return false
+            return !wifiOnlyDownloads.value || meteredConnection.value != true
+        }
 
     /**
      * [authStore] is the application's own, passed in rather than opened again:
@@ -1231,6 +1291,19 @@ object AppSettings {
         com.music.bitchord.data.spotify.LocalPlaylistStore.init(context)
         readAll()
         watchConnection(context)
+        // The offline verdict, published to the one place every request in the
+        // app goes through — see [com.music.bitchord.data.NetworkPolicy].
+        //
+        // This is what makes offline mode mean *zero* internet access rather
+        // than "the subsystems that remembered to check": the switch is on, or
+        // the network has gone, and from that moment not one request leaves
+        // the device — not the player's, not the library's, not the lyrics
+        // provider's, not the scrobbler's.
+        networkScope.launch {
+            effectiveOffline.collect { offline ->
+                com.music.bitchord.data.NetworkPolicy.offline = offline
+            }
+        }
     }
 
     /**
@@ -1288,7 +1361,10 @@ object AppSettings {
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
         liquidGlassHaptics.value = prefs.getBoolean(KEY_LIQUID_GLASS_HAPTICS, true)
-        simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, false)
+        hideStatusBar.value = prefs.getBoolean(KEY_HIDE_STATUS_BAR, true)
+        // On by default: see [simulatedAtmos]. A listener who has turned it
+        // off keeps it off — the stored preference wins over the default.
+        simulatedAtmos.value = prefs.getBoolean(KEY_SIMULATED_ATMOS, true)
         singLevel.value = prefs.getFloat(KEY_SING_LEVEL, 0f).coerceIn(0f, 1f)
         singMethod.value = SingMethod.fromName(prefs.getString(KEY_SING_METHOD, null))
         equalizerEnabled.value = prefs.getBoolean(KEY_EQ_ENABLED, false)
@@ -1453,6 +1529,12 @@ object AppSettings {
             webdavUrl.value,
             webdavUsername.value,
             webdavPassword.value,
+        )
+        // The listener's own storage is not the internet: offline mode takes
+        // the internet away, not the files that live on a server they set up
+        // themselves. See [com.music.bitchord.data.NetworkPolicy].
+        com.music.bitchord.data.NetworkPolicy.setLocalHost(
+            com.music.bitchord.data.webdav.WebDavConfig.hostOf(webdavUrl.value),
         )
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
@@ -1762,6 +1844,11 @@ object AppSettings {
     fun setLiquidGlassHaptics(value: Boolean) {
         liquidGlassHaptics.value = value
         prefs.edit().putBoolean(KEY_LIQUID_GLASS_HAPTICS, value).apply()
+    }
+
+    fun setHideStatusBar(value: Boolean) {
+        hideStatusBar.value = value
+        prefs.edit().putBoolean(KEY_HIDE_STATUS_BAR, value).apply()
     }
 
     fun setSpatialAudio(value: Boolean) {
@@ -2602,6 +2689,11 @@ object AppSettings {
             webdavUsername.value,
             webdavPassword.value,
         )
+        // The host is the listener's own storage, so it keeps working while
+        // the internet is off — see [com.music.bitchord.data.NetworkPolicy].
+        com.music.bitchord.data.NetworkPolicy.setLocalHost(
+            com.music.bitchord.data.webdav.WebDavConfig.hostOf(webdavUrl.value),
+        )
     }
 
     private fun readLocalMusicSort(key: String): LocalMusicSort =
@@ -2791,6 +2883,7 @@ object AppSettings {
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
     private const val KEY_LIQUID_GLASS_HAPTICS = "liquid_glass_haptics"
+    private const val KEY_HIDE_STATUS_BAR = "hide_status_bar"
     private const val KEY_SIMULATED_ATMOS = "simulated_atmos"
     /** Sticky: read back at every launch, written only by [setOfflineMode]. */
     private const val KEY_OFFLINE_MODE = "offline_mode"
@@ -2944,6 +3037,9 @@ object AppSettings {
     private const val KEY_DISCORD_BUTTON_2_VISIBLE = "discord_button_2_visible"
     private const val KEY_DISCORD_INFO_DISMISSED = "discord_info_dismissed"
     private const val KEY_LAST_VERSION_CODE = "last_version_code"
+
+    /** Prefix for the per-page settings scroll offsets — see [settingsScrollOffset]. */
+    private const val KEY_SETTINGS_SCROLL_PREFIX = "settings_scroll_"
 }
 
 

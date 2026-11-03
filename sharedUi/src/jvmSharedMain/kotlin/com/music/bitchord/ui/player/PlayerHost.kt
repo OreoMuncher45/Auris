@@ -316,8 +316,15 @@ fun CanvasArtworkPlayer(
     )
 }
 
-/** The longest edge of a frame handed to [CanvasArtworkPlayer]'s onFrameCaptured. */
-const val CANVAS_FRAME_CAPTURE_PX = 128
+/**
+ * The longest edge of a frame handed to [CanvasArtworkPlayer]'s onFrameCaptured.
+ *
+ * Small on purpose. Everything downstream averages the frame down — the mesh
+ * to thirty-six cells, the palette to a handful of colours — so a bigger
+ * frame buys nothing but a bigger copy off the GPU, and the copy is what
+ * decides whether a phone stays cool while a clip plays.
+ */
+const val CANVAS_FRAME_CAPTURE_PX = 64
 
 /** Media3's repeat modes, by value, so the transport can speak them without Media3. */
 object RepeatModes {

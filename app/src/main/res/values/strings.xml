@@ -537,6 +537,7 @@
     <string name="mobile_data">Mobile data</string>
     <string name="couldnt_load_tracks">Could not load these tracks</string>
     <string name="wifi_only_download_refusal">Downloads are limited to Wi-Fi. Turn that off in Settings to use mobile data.</string>
+    <string name="offline_download_refusal">Offline mode is on, so nothing can be downloaded. Turn it off in Settings.</string>
     <string name="pinned_playlist_limit">Only %1$d playlists can be pinned</string>
     <string name="downloaded_playlist">Downloaded playlist</string>
     <string name="library_sign_in_description">Sign in to your Google account to see your liked songs, playlists, and YouTube Music history.</string>
@@ -1373,4 +1374,6 @@
     <string name="podcasts">Podcasts</string>
     <string name="liquid_glass_haptics">Liquid glass haptics</string>
     <string name="liquid_glass_haptics_subtitle">Haptic buzz on glass nav, toggles, sliders and menus</string>
+    <string name="hide_status_bar">Hide status bar</string>
+    <string name="hide_status_bar_subtitle">Hides the clock and status icons everywhere in the app</string>
 </resources>

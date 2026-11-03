@@ -105,9 +105,26 @@ object NerdStats {
         val isLossless: Boolean
             get() = isLosslessMime(mimeType)
 
-        /** Dolby Atmos decoded as E-AC-3 JOC; deliberately distinct from lossless. */
+        /**
+         * Dolby Atmos decoded as E-AC-3 JOC; deliberately distinct from lossless.
+         *
+         * The decoder's word is the one that counts, for the same reason
+         * [isLossless] gives: a source that says "E-AC-3" and quietly serves
+         * Opus is not playing Atmos.
+         *
+         * The one exception is the window before the decoder has said anything
+         * at all — [mimeType] is null there, which means "not measured yet",
+         * not "measured and found to be something else". In that window the
+         * source's own claim is what there is, and waiting for the decoder to
+         * be configured before the badge appears is how a track that *is*
+         * Atmos spent its first few seconds reading as ordinary lossy audio.
+         * The moment the decoder reports, its answer replaces the claim
+         * outright — and a claim that has been abandoned is dropped by
+         * [clearDeclared], so it cannot outlive the stream it described.
+         */
         val isDolbyAtmos: Boolean
-            get() = isDolbyAtmosMime(mimeType)
+            get() = isDolbyAtmosMime(mimeType) ||
+                (mimeType == null && claimed?.isDolbyAtmos == true)
 
         /**
          * Whether this is better than CD quality — the line Tidal, Deezer and

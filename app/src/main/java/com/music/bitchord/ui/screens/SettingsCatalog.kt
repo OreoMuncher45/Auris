@@ -139,6 +139,7 @@ object SettingsCatalog {
             "appearance.reduce_animation",
             "appearance.reduce_dynamic_blur",
             "appearance.liquid_glass_haptics",
+            "appearance.hide_status_bar",
         ),
         SettingsCategory.PERFORMANCE to listOf(
             "performance.high_performance_mode",

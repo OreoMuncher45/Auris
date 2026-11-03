@@ -1,7 +1,9 @@
 package com.music.bitchord
 
 import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
@@ -365,6 +367,19 @@ private const val TOP_FADE_RAMP = 0.3f
 
 private const val INITIAL_RADIO_TRACKS = 24
 
+/**
+ * The activity a context belongs to, however many times it is wrapped.
+ *
+ * A composable's context is usually the activity itself, but it can be a
+ * themed wrapper around it — and the window this app hides its status bar on
+ * is the activity's, not the wrapper's.
+ */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
 internal fun shouldSkipAfterDislike(
     previousStatus: LikeStatus,
     targetVideoId: String,
@@ -389,9 +404,39 @@ class MainActivity : AppCompatActivity() {
             val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
+            val hideStatusBar by AppSettings.hideStatusBar.collectAsStateWithLifecycle()
             val composeView = LocalView.current
             LaunchedEffect(highPerformance, performanceRefreshRate, composeView) {
                 applyPerformanceMode(highPerformance, performanceRefreshRate, composeView)
+            }
+            // The status bar, app-wide.
+            //
+            // This window and the player's own sheet window are the only two
+            // the app has, and they used to answer differently — the player
+            // hid the status bar, the rest of the app showed it — which is a
+            // mixed answer to a question the listener only gets to ask once.
+            // The setting decides both, and it is read here so a change
+            // takes effect without the app having to be restarted.
+            //
+            // Only the status bar: the navigation bar stays. The player is
+            // full-screen without needing to take the back/home gesture away,
+            // and taking it away app-wide is a bigger decision than this
+            // setting is about.
+            DisposableEffect(hideStatusBar, composeView) {
+                val window = (composeView.context as? Activity)?.window
+                    ?: composeView.context.findActivity()?.window
+                if (window != null) {
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        systemBarsBehavior =
+                            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                        if (hideStatusBar) {
+                            hide(WindowInsetsCompat.Type.statusBars())
+                        } else {
+                            show(WindowInsetsCompat.Type.statusBars())
+                        }
+                    }
+                }
+                onDispose { }
             }
             val darkTheme = when (theme) {
                 ThemeMode.SYSTEM -> isSystemInDarkTheme()
@@ -581,6 +626,10 @@ private fun BitChordApp(
     // below goes with them, which is the part that costs a draw pass.
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
+    // Whether the status bar is hidden, app-wide — see
+    // [AppSettings.hideStatusBar]. The player's sheet window is one of the
+    // two windows the answer applies to.
+    val hideStatusBar by AppSettings.hideStatusBar.collectAsStateWithLifecycle()
     val useFoldingNav = foldingNavBar && glassActive
     val glassSamplesBackdrop = glassActive && !reduceDynamicBlur
     // What folds [GlassNavBar] between its expanded and inline shapes. Held here
@@ -2501,6 +2550,9 @@ private fun BitChordApp(
         // the one place that knows the tap was for forty tracks and can say so
         // once, rather than leaving forty identical failed rows to be read.
         val blocked = songs.isNotEmpty() && !AppSettings.downloadsAllowedNow
+        // Two refusals, two reasons: blaming the Wi-Fi setting for an offline
+        // switch would send the listener to the wrong page.
+        val offlineRefusal = AppSettings.effectiveOffline.value
         if (songs.isNotEmpty() && !blocked) {
             val needsStorage = AppSettings.exportDownloads.value && DownloadStore.needsLegacyPermission() &&
                 ContextCompat.checkSelfPermission(
@@ -2554,7 +2606,10 @@ private fun BitChordApp(
             // long message. So this one is said whatever the count.
             blocked -> Toast.makeText(
                 context,
-                context.getString(R.string.wifi_only_download_refusal),
+                context.getString(
+                    if (offlineRefusal) R.string.offline_download_refusal
+                    else R.string.wifi_only_download_refusal,
+                ),
                 Toast.LENGTH_LONG,
             ).show()
             requested.size > 1 -> {
@@ -5190,7 +5245,7 @@ private fun BitChordApp(
                 // scroll from taking the next touch meant for that list.
                 // See [PlayerSheetMotion.attachWindow].
                 val sheetWindow = dialogWindowOf(LocalView.current)
-                DisposableEffect(sheetWindow, reducePlayerMotion) {
+                DisposableEffect(sheetWindow, reducePlayerMotion, hideStatusBar) {
                     if (!reducePlayerMotion) playerSheetMotion.attachWindow(sheetWindow)
                     // The sheet is a dialog window of its own, and it does not
                     // inherit the activity's edge-to-edge setup: left alone it
@@ -5210,10 +5265,19 @@ private fun BitChordApp(
                         // as the bars came and went — the resize jitter. The
                         // navigation bar stays: the player is full-screen
                         // without needing to take the back/home gesture away.
+                        //
+                        // Whether the status bar is hidden at all is the
+                        // app's one answer, not this window's private
+                        // decision — see [AppSettings.hideStatusBar]. A
+                        // listener who wants the clock has it here too.
                         WindowCompat.getInsetsController(window, window.decorView).apply {
                             systemBarsBehavior =
                                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                            hide(WindowInsetsCompat.Type.statusBars())
+                            if (hideStatusBar) {
+                                hide(WindowInsetsCompat.Type.statusBars())
+                            } else {
+                                show(WindowInsetsCompat.Type.statusBars())
+                            }
                         }
                     }
                     onDispose {

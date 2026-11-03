@@ -18,6 +18,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.CubicBezierEasing
@@ -52,6 +53,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.offset
@@ -355,15 +357,38 @@ private const val TOP_SCRIM_ALPHA = 0.40f
 private const val TOP_SCRIM_FRACTION = 0.14f
 
 /**
- * How often the backdrop re-reads the colours of a playing Canvas clip.
+ * How often a playing clip is read for its own colours.
  *
- * Every three seconds, with `MESH_FADE_MS` easing each read into the last so
- * the backdrop arrives at its new colour rather than cutting to it. The read is
- * the expensive half — a texture readback off the GPU — and this is the number
- * that decides how many of them there are; the fade is the cheap half and is
- * over well inside the gap, which leaves the backdrop still for most of it.
+ * The backdrop and the ink both follow the clip, so this is the rate at which
+ * the screen changes colour. It used to be three seconds, which is a
+ * slideshow: a Canvas that pans from black to white kept its buttons the
+ * colour of the sleeve it had replaced for three whole seconds at a time.
+ *
+ * The read is the expensive half — a copy of the clip's texture off the GPU —
+ * so this is the number that decides how much of the phone it takes. The read
+ * itself adapts: on a device where a read is slow, the gap grows on its own
+ * rather than the phone getting hot. See `CanvasArtworkPlayer`'s adaptive
+ * capture.
  */
-private const val MESH_REFRESH_MS = 3_000L
+private const val LIVE_REFRESH_MS = 400L
+
+/**
+ * The same read, for a device that has asked for less motion.
+ *
+ * Slow rather than off: the ink still has to belong to the picture under it,
+ * and a black Canvas under a white sleeve is exactly the case that goes
+ * wrong when the colours are never read.
+ */
+private const val LIVE_REFRESH_REDUCED_MS = 1_200L
+
+/**
+ * How fast the ink eases into a clip's colour.
+ *
+ * Short, because the clip's colour is changing under the controls while they
+ * sit there: an ink that took half a second to arrive was always a little
+ * late.
+ */
+private const val LIVE_INK_FADE_MS = 160
 
 /** The player's side margin. Scrollable panels reach back across it. */
 internal val PLAYER_GUTTER = 30.dp
@@ -876,34 +901,6 @@ fun NowPlayingScreen(
     // every surface below reads the same value rather than each triggering
     // its own extraction.
     val remoteArt = rememberRemoteArtworkUrl(song)
-    // The ink follows the sleeve's secondary colour, lightened or deepened by
-    // how bright the cover is. The backdrop keeps the artwork's own colours,
-    // so the two do not collapse into one grey wash. See
-    // [computeNowPlayingPalette].
-    val nowPlayingPalette = rememberNowPlayingPalette(remoteArt, ART_PX)
-    val playerInkTarget = nowPlayingPalette.fg
-    val playerInk by animateColorAsState(
-        targetValue = playerInkTarget,
-        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
-        label = "playerInk",
-    )
-    // The ink is always light now, so its halo is the dark one. It is also
-    // strictly optional: with the switch off neither the composition local
-    // nor the text shadow may carry any colour at all.
-    val playerInkGlowTarget = if (playerInkTarget.isLightInk()) {
-        PLAYER_GLOW_ON_LIGHT
-    } else {
-        PLAYER_GLOW_ON_DARK
-    }
-    val playerInkGlow by animateColorAsState(
-        targetValue = playerInkGlowTarget,
-        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
-        label = "playerInkGlow",
-    )
-    val playerShadow = remember(playerInkGlow, textGlow) {
-        if (textGlow) Shadow(color = playerInkGlow, blurRadius = 9f) else null
-    }
-
     // Media-player convention: the player always owns light status icons. The
     // top treatment below, rather than a window-flag flip per cover, provides
     // their contrast and stays visually stable through artwork transitions.
@@ -999,7 +996,7 @@ fun NowPlayingScreen(
     // read stalls the GPU to copy a texture, and the mesh it re-tints is a
     // subtle background wash nobody is watching frame by frame.
     val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val meshRefreshMs = if (reduceAnimation) null else MESH_REFRESH_MS
+    val liveRefreshMs = if (reduceAnimation) LIVE_REFRESH_REDUCED_MS else LIVE_REFRESH_MS
 
     val scrub = rememberPlayerScrub(song.videoId, position, durationMs)
     // Read by the scrubber itself — see [PlayerScrubber.shown].
@@ -1023,13 +1020,19 @@ fun NowPlayingScreen(
         mutableStateOf(restoredPlayerScreen == LastPlayerScreen.LYRICS)
     }
     val queueSlide = remember { mutableFloatStateOf(0f) }
-    // Expensive, song-scoped preparation is deliberately staggered. The small
-    // backdrop decode runs after the track hand-off has settled; lyrics and
-    // queue are then composed offscreen on separate beats rather than all three
-    // competing with the song change. Opening a panel early bypasses its wait.
+    // Expensive, song-scoped preparation is deliberately staggered — but the
+    // backdrop goes first, and at once.
+    //
+    // It used to wait six hundred milliseconds for the track hand-off to
+    // settle, which put the blur behind the artwork it was made of: a
+    // backdrop that arrives after the picture it belongs to is a backdrop
+    // that is late, and on the tablets and in the lyrics and queue panels it
+    // is the whole background. The decode is a hundred-and-twenty-eight
+    // pixels and a blur on a worker thread; the hand-off can wait for that.
+    // Lyrics and queue are still composed offscreen on separate beats rather
+    // than all three competing with the song change.
     var playerPrewarmStage by remember(song.videoId) { mutableIntStateOf(0) }
     LaunchedEffect(song.videoId) {
-        delay(600)
         playerPrewarmStage = 1 // 128px backdrop decode + CPU blur
         delay(650)
         playerPrewarmStage = 2 // lyrics layout
@@ -1445,6 +1448,65 @@ fun NowPlayingScreen(
     val clipPortrait = !clipFullscreen &&
         heroClipMounted != null && canvasAspect > 0f && canvasAspect < 1f
 
+    // The ink follows the sleeve's secondary colour, lightened or deepened by
+    // how bright the cover is. The backdrop keeps the artwork's own colours,
+    // so the two do not collapse into one grey wash. See
+    // [computeNowPlayingPalette].
+    val nowPlayingPalette = rememberNowPlayingPalette(remoteArt, ART_PX)
+    // …unless a clip is standing in for the sleeve, in which case the picture
+    // behind the controls is the clip and the clip is what the ink has to
+    // belong to. A white sleeve under a black Canvas is the case that used to
+    // put black buttons on a black screen: the sleeve said "bright, use dark
+    // ink" and the screen said nothing of the sort.
+    //
+    // Read off the clip's own frames as it plays, so a clip that changes
+    // colour under its sleeve — which a Canvas does — takes the ink with it.
+    //
+    // Spotify's Canvas and every other clip are two different sources with
+    // two different rules: the Canvas takes over the whole screen and owns
+    // everything on it, while another provider's motion cover sits over the
+    // sleeve and only the backdrop follows it.
+    val canvasSource = if (heroClipMounted?.source == CanvasSource.SPOTIFY) {
+        LiveColorSource.CANVAS
+    } else {
+        LiveColorSource.LIVE_ART
+    }
+    val canvasPalette = rememberLivePalette(canvasFrame, canvasSource)
+    // The clip owns the whole screen when Spotify's presentation is on. Then
+    // there is no sleeve in the answer at all.
+    val canvasOwnsScreen = spotifyCanvasPresentation || clipFullscreen
+    val inkFromClip = canvasOwnsScreen && canvasPalette != null
+    val playerInkTarget = if (inkFromClip) canvasPalette.palette.fg else nowPlayingPalette.fg
+    // A clip's colour changes while it plays, so its ink is eased in quickly —
+    // long enough not to flicker, short enough that the buttons look like they
+    // belong to the picture under them. A track change still gets the long
+    // fade, which is a change of record rather than a change of frame.
+    val playerInkSpec: AnimationSpec<Color> = tween(
+        durationMillis = if (inkFromClip) LIVE_INK_FADE_MS else PLAYER_INK_FADE_MS,
+    )
+    val playerInk by animateColorAsState(
+        targetValue = playerInkTarget,
+        animationSpec = playerInkSpec,
+        label = "playerInk",
+    )
+    // The ink is always light now, so its halo is the dark one. It is also
+    // strictly optional: with the switch off neither the composition local
+    // nor the text shadow may carry any colour at all.
+    val playerInkGlowTarget = if (playerInkTarget.isLightInk()) {
+        PLAYER_GLOW_ON_LIGHT
+    } else {
+        PLAYER_GLOW_ON_DARK
+    }
+    val playerInkGlow by animateColorAsState(
+        targetValue = playerInkGlowTarget,
+        animationSpec = tween(durationMillis = PLAYER_INK_FADE_MS),
+        label = "playerInkGlow",
+    )
+    val playerShadow = remember(playerInkGlow, textGlow) {
+        if (textGlow) Shadow(color = playerInkGlow, blurRadius = 9f) else null
+    }
+
+
     // The setting defaults on, restoring the five-second stand-down, but the
     // listener can keep the deck open indefinitely from Spotify integration.
     // Pausing or interacting with a continuous control suspends the countdown;
@@ -1483,11 +1545,15 @@ fun NowPlayingScreen(
     }
     // Portrait clips always use the existing artwork mesh, even if the user
     // selected the legacy backdrop for ordinary artwork.
+    // The mesh follows the clip only while the mesh is the backdrop. When
+    // Spotify's Canvas owns the screen there is no mesh behind it, and
+    // averaging one that nobody can see is work for nothing.
+    val meshFrame = if (spotifyCanvasPresentation) null else canvasFrame
     val artMesh = if (legacyMesh && !canvasFirstPortrait) null else
         key(song.videoId) {
             rememberArtworkMesh(
                 remoteArt,
-                canvasFrame,
+                meshFrame,
                 ART_PX,
             )
         }
@@ -1544,6 +1610,20 @@ fun NowPlayingScreen(
         (heroHeight.value * HERO_FADE_FRACTION / clipBottom.value).coerceIn(0f, 1f)
     } else 0f
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    // The camera cutout is its own inset, and it is the one that decides where
+    // the top of the player may sit.
+    //
+    // The player is a sheet with a window of its own, drawn under the cutout
+    // and with the status bar hidden — see the window setup in MainActivity.
+    // A hidden status bar reports no inset at all, so `statusBarsPadding()`
+    // adds nothing there and the top of the sheet lands *in* the cutout: the
+    // drag handle and the "Playing from …" caption under it both end up
+    // behind the camera. The cutout's own inset is what keeps them clear, so
+    // it is read here and the deeper of the two wins.
+    val cutoutTop = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    val topInset = maxOf(statusBarTop, cutoutTop)
+    // What the status bar did not already account for, added on top of it.
+    val topInsetExtra = (topInset - statusBarTop).coerceAtLeast(0.dp)
     // What sits between the status bar and the artwork: the drag strip. Read
     // in three places — the strip itself,
     // the scrim drawn over it and the banner's own height — which all have to
@@ -2259,7 +2339,7 @@ fun NowPlayingScreen(
             // drag a full-screen blur along with them, which is why the palette
             // is passed as one immutable value.
             MeshGradientBackground(
-                palette = rememberArtworkColors(remoteArt, canvasFrame),
+                palette = rememberArtworkColors(remoteArt, meshFrame),
                 trackKey = song.videoId,
                 modifier = Modifier.graphicsLayer { alpha = 1f - fullArtworkBackdropAlpha },
             )
@@ -2342,21 +2422,24 @@ fun NowPlayingScreen(
                     // Compose layer around it.
                     presentationAlpha = { (1f - 2f * p()).coerceIn(0f, 1f) * dockFade() },
                     onRenderedChanged = { canvasRendered = it },
-                    onFrameCaptured = {
-                        if (!clipFullscreen && !tabletArtworkBackdrop &&
-                            !lyricsOpen && !queueOpen && !queueDragging
-                        ) canvasFrame = it
+                    onFrameCaptured = { frame ->
+                        // The clip's own colours, read as it plays. The ink
+                        // follows them wherever the clip is — including when
+                        // Spotify's Canvas owns the whole screen, which is the
+                        // case where the sleeve's colours are worth nothing —
+                        // and the mesh follows them when the mesh is the
+                        // backdrop. One readback, two consumers.
+                        if (!lyricsOpen && !queueOpen && !queueDragging) canvasFrame = frame
                     },
-                    // The full-screen Spotify video has no mesh to re-tint.
-                    // Keeping this null also removes the old three-second GPU
-                    // readback cadence from this provider alone.
+                    // The readback is the expensive half, so this is the number
+                    // that decides what it costs. Much lower than it was, and
+                    // the read itself backs off on a device where it is slow.
                     refreshFrameEveryMs = if (
-                        clipFullscreen || tabletArtworkBackdrop || lyricsOpen || queueOpen ||
-                        queueDragging || dockMoving
+                        lyricsOpen || queueOpen || queueDragging || dockMoving
                     ) {
                         null
                     } else {
-                        meshRefreshMs
+                        liveRefreshMs
                     },
                     onCoverChanged = { canvasCover.floatValue = it },
                     bottomFade = when {
@@ -2500,6 +2583,11 @@ fun NowPlayingScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
+                // The rest of the cutout, where the status bar does not reach.
+                // Everything under it — the handle, the caption, the artwork —
+                // moves down by the same amount, so nothing lands in the
+                // camera's way.
+                .padding(top = topInsetExtra)
                 .navigationBarsPadding()
                 // Observe unclaimed taps across the whole Canvas. Buttons and
                 // the compact metadata row consume their own taps first; empty
@@ -2531,7 +2619,12 @@ fun NowPlayingScreen(
                         // runs past this strip to 14% of the player, over the
                         // top of the artwork, which is what the caption and
                         // the system icons actually sit on.
-                        val above = statusBarTop.toPx()
+                        //
+                        // Up by the whole top inset rather than by the status
+                        // bar alone: the strip now starts below the cutout as
+                        // well, and the scrim still has to reach the screen's
+                        // own top edge to darken the camera's corner.
+                        val above = topInset.toPx()
                         val scrimHeight = playerBounds.height
                             .takeIf { it > 0 }
                             ?.let { it * TOP_SCRIM_FRACTION }
@@ -2860,7 +2953,7 @@ fun NowPlayingScreen(
                 // the dissolve gets a stage that reaches through the credits
                 // instead of stopping short of them. Nothing above the title
                 // changes size or place.
-                val bannerBottom = (statusBarTop + topStrip + ART_BOX_TOP_PAD +
+                val bannerBottom = (topInset + topStrip + ART_BOX_TOP_PAD +
                     groupTop + fullArt + ART_TITLE_GAP / 2) * HERO_ART_ZOOM
                 // Frozen while lyrics are up. The controls now retain their full
                 // footprint across the transition, so this answer is identical
@@ -2898,7 +2991,7 @@ fun NowPlayingScreen(
                 // fixed padding (see [bannerBottom]), and either side the
                 // gutter, which the two widths give back between them.
                 val bannerTopPx = with(density) {
-                    -(statusBarTop.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
+                    -(topInset.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
                 }
                 val boxWidthPx = constraints.maxWidth
                 // How far the expanded sleeve is the banner rather than the
@@ -3297,7 +3390,7 @@ fun NowPlayingScreen(
                                 },
                                 refreshFrameEveryMs = if (
                                     tabletArtworkBackdrop || lyricsOpen || queueOpen || dockMoving
-                                ) null else meshRefreshMs,
+                                ) null else liveRefreshMs,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }

@@ -54,6 +54,8 @@ import com.music.bitchord.data.audiobook.AudiobookChapter
 import com.music.bitchord.data.audiobook.LibriVox
 import com.music.bitchord.data.podcast.ItunesPodcasts
 import com.music.bitchord.data.podcast.ItunesShow
+import com.music.bitchord.data.podcast.PodcastShelfCache
+import com.music.bitchord.data.podcast.PodcastShelfCache.toHomeShelves
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.SongMenu
@@ -88,7 +90,9 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
@@ -175,7 +179,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val podcastSections: StateFlow<UiState<List<HomeShelf>>> = _podcastSections.asStateFlow()
 
     /** collectionId -> show, so a tapped recommendation can open its feed. */
-    private val itunesShows = mutableMapOf<String, ItunesShow>()
+    private val itunesShows = ConcurrentHashMap<String, ItunesShow>()
     fun itunesShow(collectionId: String): ItunesShow? = itunesShows[collectionId]
 
     /** Episodes of the currently open Apple-catalogue podcast. */
@@ -1623,6 +1627,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
         loadHome()
+        // The podcasts page's own shelves, from the last launch, published
+        // before the tab is even opened — so the page has something on it the
+        // moment it is looked at. The catalogue is refreshed on every launch
+        // all the same; this is only what the page is drawn from until the
+        // fresh answer lands. See [PodcastShelfCache].
+        publishCachedPodcastSections()
+        // And refreshed, on every launch, whether or not the tab is opened.
+        ensurePodcastSectionsFetched()
         // Explore is fetched when its tab (or Radio, which is built from the
         // same mood/genre page) is first shown. Loading it here put a second
         // network page and its artwork lookups on the wire before the home
@@ -1779,7 +1791,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 Feed.HOME -> refreshHome(identity)
                 Feed.EXPLORE -> fetchExplore()
                 Feed.LIBRARY -> fetchLibrary(identity)
-                Feed.PODCASTS -> { fetchPodcasts(); fetchPodcastSections() }
+                Feed.PODCASTS -> {
+                    fetchPodcasts()
+                    ensurePodcastSectionsFetched(force = true)
+                }
             }
             _refreshing.value = _refreshing.value - feed
         }
@@ -1803,11 +1818,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _podcasts.value = UiState.Loading
         viewModelScope.launch {
             fetchPodcasts()
-            fetchPodcastSections()
         }
+        // The catalogue's own shelves, from the cache until the fresh answer
+        // lands. Fetched at launch already, so this is usually a no-op.
+        ensurePodcastSectionsFetched()
+    }
+
+    /**
+     * The discoverable shelves as they were last read, off the disk.
+     *
+     * Published before anything is fetched, so the podcasts page has its
+     * shelves from the first frame rather than after thirteen round trips to
+     * Apple's catalogue. See [PodcastShelfCache] for why they are kept.
+     */
+    private fun publishCachedPodcastSections() {
+        val cached = PodcastShelfCache.load(getApplication()) ?: return
+        cached.forEach { shelf -> shelf.shows.forEach { itunesShows[it.collectionId] = it } }
+        val shelves = cached.toHomeShelves()
+        if (shelves.isEmpty()) return
+        _podcastSections.value = UiState.Success(shelves)
     }
 
     private var podcastsRequested = false
+
+    /** Whether the catalogue has already been asked for this launch. */
+    private var podcastSectionsRequested = false
+
+    /**
+     * Reads the discoverable shelves from Apple's catalogue, once per launch
+     * unless a refresh asks for them again.
+     *
+     * Started at launch rather than when the tab is opened, so the catalogue
+     * is current by the time anybody looks at it — and so the page is never
+     * waiting on thirteen searches while it is being read.
+     */
+    private fun ensurePodcastSectionsFetched(force: Boolean = false) {
+        if (podcastSectionsRequested && !force) return
+        podcastSectionsRequested = true
+        viewModelScope.launch(Dispatchers.IO) { fetchPodcastSections() }
+    }
 
     /** The title being looked for, or null for the whole catalogue. */
     private var audiobookQuery: String? = null
@@ -1854,37 +1903,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Builds the discoverable shelves for the podcasts page: a "Recommended"
      * shelf plus one shelf per browse category, each filled with the top
      * shows the Apple Podcasts catalogue returns for that category.
+     *
+     * All thirteen searches run at once rather than one after another. They
+     * are independent — a category shelf does not need the recommendation
+     * shelf's answer — and running them in a line meant the last shelf waited
+     * for twelve round trips before it could be drawn, which read as a page
+     * that had nothing on it. Each shelf is published the moment its own
+     * search lands, so the page fills in as the answers arrive.
+     *
+     * What comes back is kept for the next launch: see [PodcastShelfCache].
      */
     private suspend fun fetchPodcastSections() {
-        _podcastSections.value = UiState.Loading
-        val shelves = mutableListOf<HomeShelf>()
-        // Recommended: a broad, high-signal query across all podcasts.
-        runCatching { ItunesPodcasts.search("podcast", limit = 30) }
-            .onSuccess { shows ->
-                if (shows.isNotEmpty()) {
+        // The shelves already on screen stay there until a new one replaces
+        // them. A refresh that empties the page first is worse than the stale
+        // content it replaces.
+        val searches = buildList {
+            add("Recommended podcasts" to "podcast")
+            ItunesPodcasts.CATEGORIES.forEach { (label, term) -> add(label to "$term podcast") }
+        }
+        val shelves = LinkedHashMap<String, List<ItunesShow>>()
+        val lock = Mutex()
+        coroutineScope {
+            searches.forEach { (label, term) ->
+                launch(Dispatchers.IO) {
+                    val limit = if (label == "Recommended podcasts") 30 else 20
+                    val shows = runCatching { ItunesPodcasts.search(term, limit = limit) }
+                        .getOrDefault(emptyList())
+                    if (shows.isEmpty()) return@launch
                     shows.forEach { itunesShows[it.collectionId] = it }
-                    shelves += HomeShelf(
-                        title = "Recommended podcasts",
-                        items = shows.map { it.toShelfItem() },
-                    )
-                }
-            }
-        // One shelf per category.
-        for ((label, term) in ItunesPodcasts.CATEGORIES) {
-            runCatching { ItunesPodcasts.search("$term podcast", limit = 20) }
-                .onSuccess { shows ->
-                    if (shows.isNotEmpty()) {
-                        shows.forEach { itunesShows[it.collectionId] = it }
-                        shelves += HomeShelf(
-                            title = label,
-                            items = shows.map { it.toShelfItem() },
+                    lock.withLock {
+                        shelves[label] = shows
+                        // Published as each shelf lands, in the order the
+                        // shelves are declared — not in the order the answers
+                        // happen to arrive.
+                        _podcastSections.value = UiState.Success(
+                            searches.mapNotNull { (name, _) ->
+                                shelves[name]?.let { PodcastShelfCache.Shelf(name, it) }
+                            }.toHomeShelves(),
                         )
                     }
                 }
+            }
         }
-        _podcastSections.value = UiState.Success(shelves)
+        PodcastShelfCache.save(
+            getApplication(),
+            shelves.map { (title, shows) -> PodcastShelfCache.Shelf(title, shows) },
+        )
     }
 
+    /** A show as a card on the podcasts page. */
     private fun ItunesShow.toShelfItem() = ShelfItem(
         title = name,
         subtitle = artist,
@@ -1894,8 +1961,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     private fun ItunesShow.toPodcastBrowse() = SearchResult.Browse(
-        BrowseItem(
-            browseId = "itunes:$collectionId",
+        BrowseItem(            browseId = "itunes:$collectionId",
             title = name,
             subtitle = artist.ifBlank { genre.orEmpty() },
             thumbnailUrl = artworkUrl,

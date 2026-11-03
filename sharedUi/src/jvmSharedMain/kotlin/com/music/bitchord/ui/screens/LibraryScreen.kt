@@ -169,7 +169,12 @@ fun LibraryScreen(
 ) {
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
     val onDevice = stringResource(Res.string.on_device)
-    var segment by rememberSaveable { mutableStateOf(LibrarySegment.Device) }
+    // Playlists, not the device's own shelf. This is what a signed-in
+    // listener came to this page for, and it is what the page's own doc
+    // says comes first — the segment used to open on the device's shelf
+    // instead, which put a signed-in listener's own playlists one tap
+    // away and the thing they came for two.
+    var segment by rememberSaveable { mutableStateOf(LibrarySegment.Playlists) }
     // One query per segment: what was typed into Playlists is not what was
     // typed into Albums, and switching back to it should find the query still
     // there.

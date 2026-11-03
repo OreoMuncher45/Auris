@@ -13,6 +13,7 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.SurfaceTexture
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import android.view.TextureView
 import android.view.ViewGroup
@@ -322,17 +323,39 @@ internal fun AndroidCanvasArtworkPlayer(
     // again on every fade-in, and this one only needs to start once a fade-in
     // has actually happened and then keep going for as long as it holds.
     LaunchedEffect(rendered, refreshFrameEveryMs, frameCapturePx, clipAspect, contentMode, alignPortraitTop, foreground, isPlaying) {
-        val interval = refreshFrameEveryMs ?: return@LaunchedEffect
-        Log.d(TAG, "periodic frame refresh started, interval=$interval")
+        val requested = refreshFrameEveryMs ?: return@LaunchedEffect
+        Log.d(TAG, "periodic frame refresh started, interval=$requested")
         // A paused clip has no new colours to follow; re-reading the same
         // frame off the GPU would only stall it.
         if (!rendered || !foreground || !isPlaying) return@LaunchedEffect
+        // The gap between reads, and the thing that moves it.
+        //
+        // The read is a copy of the clip's texture off the GPU: by far the
+        // most expensive thing this component does, and the thing that
+        // decides whether a phone stays cool while a clip plays. So the gap
+        // is not a constant — it is what the last read actually cost. A read
+        // that came back in a couple of milliseconds is asked for more
+        // often; a read that took the better part of a frame backs off, on
+        // its own, until the picture is still followed but the device is not
+        // paying for it.
+        //
+        // The caller's interval is the floor, never crossed: a caller that
+        // asked for a slower read than the phone can afford gets its slower
+        // read, not a faster one.
+        var gap = requested
         while (isActive) {
-            delay(interval)
+            delay(gap)
             val view = textureView ?: continue
+            val started = SystemClock.elapsedRealtime()
             val bitmap = view.captureAt(frameCapturePx, clipAspect, contentMode, alignPortraitTop)
+            val cost = SystemClock.elapsedRealtime() - started
+            gap = when {
+                cost > SLOW_READ_MS -> (gap * 2).coerceAtMost(MAX_READ_GAP_MS)
+                cost < FAST_READ_MS -> (gap - READ_GAP_STEP_MS).coerceAtLeast(requested)
+                else -> gap
+            }
             if (bitmap != null) {
-                Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}")
+                Log.d(TAG, "periodic frame captured, size=${bitmap.width}x${bitmap.height}, cost=${cost}ms, gap=${gap}ms")
                 onFrameCaptured(bitmap.asImageBitmap())
             } else {
                 Log.w(TAG, "periodic frame capture returned null")
@@ -559,6 +582,29 @@ private fun TextureView.captureAt(
  * the GPU is not an event. Every consumer reduces this to a handful of colours.
  */
 private const val FRAME_CAPTURE_PX = 128
+
+/**
+ * A read that took longer than this is a frame the screen did not get.
+ *
+ * The gap between reads grows when one of these lands, so a device that
+ * cannot afford the read backs off instead of paying for it on every tick.
+ */
+private const val SLOW_READ_MS = 12L
+
+/** A read this quick is free enough to be asked for more often. */
+private const val FAST_READ_MS = 4L
+
+/** How much a cheap read shortens the gap by. */
+private const val READ_GAP_STEP_MS = 50L
+
+/**
+ * The longest the gap may grow.
+ *
+ * A second and a half is still a *live* picture — the backdrop and the ink
+ * keep up with the clip — and it is the difference between a device that is
+ * warm and one that is not.
+ */
+private const val MAX_READ_GAP_MS = 1_500L
 
 /**
  * A TextureView stretches its content to its own bounds. Compensate with a

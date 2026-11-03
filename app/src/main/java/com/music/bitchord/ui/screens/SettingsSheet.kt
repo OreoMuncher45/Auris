@@ -106,6 +106,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -113,6 +114,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -172,6 +174,9 @@ import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import java.util.Locale
@@ -228,6 +233,7 @@ fun SettingsScreen(
     val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val simulatedAtmos by AppSettings.simulatedAtmos.collectAsStateWithLifecycle()
     val liquidGlassHaptics by AppSettings.liquidGlassHaptics.collectAsStateWithLifecycle()
+    val hideStatusBar by AppSettings.hideStatusBar.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -423,18 +429,63 @@ fun SettingsScreen(
     val openCategory = SettingsCategory.fromId(category ?: "")
     val searchActive = searchQuery.isNotBlank()
 
-    // What is left after a keystroke is a different list, and the offset the
-    // last one was scrolled to means nothing in it.
-    val scrollState = rememberSaveable(saver = ScrollState.Saver) { ScrollState(0) }
+    // Which page is on screen, and therefore which list the scroll offset
+    // belongs to. The index and each category are different lists, and an
+    // offset that belonged to one of them means nothing in another.
+    val scrollPage = openCategory?.id ?: SETTINGS_INDEX_PAGE
+    // A fresh scroll state per page, so one page's offset never carries into
+    // another.
+    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) { ScrollState(0) }
+    // Where this page was left the last time it was closed.
+    val restoredOffset = remember(scrollPage) { AppSettings.settingsScrollOffset(scrollPage) }
+    // Restored once the page has been measured: a scroll state cannot hold an
+    // offset its content has not got yet, so asking for it before the first
+    // layout would land on zero — which is exactly what the page did before
+    // this, every time it was opened.
+    LaunchedEffect(scrollState, scrollPage, searchQuery) {
+        if (restoredOffset <= 0 || searchQuery.isNotBlank()) return@LaunchedEffect
+        snapshotFlow { scrollState.maxValue }.first { it > 0 }
+        scrollState.scrollTo(restoredOffset.coerceAtMost(scrollState.maxValue))
+    }
+    // Written out as the listener scrolls, so the place survives the app
+    // being closed rather than only a page change. Debounced, because a drag
+    // produces an offset every frame and none of them is worth a write.
+    //
+    // Not while a search is running: what is on screen then is a different
+    // list, and its top is not a place in the page.
+    LaunchedEffect(scrollState, scrollPage, searchActive) {
+        if (searchActive) return@LaunchedEffect
+        snapshotFlow { scrollState.value }
+            .distinctUntilChanged()
+            .debounce(SCROLL_SAVE_DEBOUNCE_MS)
+            .collect { AppSettings.saveSettingsScrollOffset(scrollPage, it) }
+    }
+    // …and written out again the moment the page is left, so the last drag
+    // before leaving is not lost to the debounce.
+    DisposableEffect(scrollState, scrollPage, searchActive) {
+        onDispose {
+            if (!searchActive) AppSettings.saveSettingsScrollOffset(scrollPage, scrollState.value)
+        }
+    }
     var isFirstSearchComposition by remember { mutableStateOf(true) }
-    LaunchedEffect(searchQuery) {
+    LaunchedEffect(searchQuery, scrollState, scrollPage) {
         if (isFirstSearchComposition && searchQuery.isEmpty()) {
             // Skip the initial composition during Activity recreation:
             // rememberSaveable already restored the scroll position.
             isFirstSearchComposition = false
         } else {
             isFirstSearchComposition = false
-            scrollState.scrollTo(0)
+            if (searchQuery.isEmpty()) {
+                // The page's own list is back, so its own place in it applies.
+                scrollState.scrollTo(
+                    AppSettings.settingsScrollOffset(scrollPage)
+                        .coerceAtMost(scrollState.maxValue),
+                )
+            } else {
+                // What is left after a keystroke is a different list, and the
+                // offset the last one was scrolled to means nothing in it.
+                scrollState.scrollTo(0)
+            }
         }
     }
 
@@ -1606,6 +1657,25 @@ fun SettingsScreen(
                     onClick = { AppSettings.setLiquidGlassHaptics(!liquidGlassHaptics) },
                 )
             }
+            val hideStatusBarTitle = stringResource(R.string.hide_status_bar)
+            row(hideStatusBarTitle, "status", "bar", "clock", "immersive", "fullscreen") {
+                SettingsRow(
+                    icon = Icons.Rounded.Fullscreen,
+                    title = hideStatusBarTitle,
+                    subtitle = stringResource(R.string.hide_status_bar_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = hideStatusBar,
+                            onCheckedChange = AppSettings::setHideStatusBar,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setHideStatusBar(!hideStatusBar) },
+                )
+            }
             val fontsTitle = stringResource(R.string.custom_fonts)
             val fontValue = when (appFont) {
                 AppFonts.CHOICE_SYSTEM -> stringResource(R.string.font_system)
@@ -2355,6 +2425,20 @@ internal fun openEqualizer(context: Context, sessionId: Int) {
 
 /** Above this, the cache limit slider's subtitle warns rather than reassures. */
 private const val CACHE_WARNING_MB = 2048
+
+/**
+ * The page key for the settings index — the list of categories, as opposed to
+ * any one category's own page.
+ */
+private const val SETTINGS_INDEX_PAGE = "index"
+
+/**
+ * How long a scroll has to be still before its offset is written down.
+ *
+ * A drag produces an offset on every frame; none of them is worth a write, and
+ * the one that matters — where the listener stopped — is the last.
+ */
+private const val SCROLL_SAVE_DEBOUNCE_MS = 400L
 
 /**
  * Where the cache limit slider's "Unlimited" stop sits: one 512MB step past

@@ -932,9 +932,7 @@ class CrossfadeController(
     private fun considerSmartTransition(duration: Long) {
         val player = active()
         val currentItem = player.currentMediaItem ?: return
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return
-        val nextItem = player.getMediaItemAt(nextIndex)
+        val nextItem = player.nextItemOrNull() ?: return
         // Even a manual catalogue match is still video-origin. AutoMix's
         // analysis and cueing are deliberately never applied to either side
         // of a transition involving a video row.
@@ -943,7 +941,7 @@ class CrossfadeController(
             AppSettings.smartMixInProgress.value = false
             return
         }
-        val nextDuration = nextItemDurationMs(nextIndex, nextItem)
+        val nextDuration = nextItemDurationMs(nextItem)
 
         requestAnalysisAround(player, duration)
 
@@ -1107,12 +1105,10 @@ class CrossfadeController(
      */
     private fun requestAnalysisAround(player: ExoPlayer, duration: Long) {
         val currentItem = player.currentMediaItem ?: return
-        val nextIndex = player.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return
-        val nextItem = player.getMediaItemAt(nextIndex)
+        val nextItem = player.nextItemOrNull() ?: return
         if (currentItem.isVideoOrigin || nextItem.isVideoOrigin) return
         requestAnalysis(currentItem, duration)
-        requestAnalysis(nextItem, nextItemDurationMs(nextIndex, nextItem))
+        requestAnalysis(nextItem, nextItemDurationMs(nextItem))
     }
 
     /**
@@ -1125,8 +1121,7 @@ class CrossfadeController(
     private fun publishAnalysisState() {
         val player = active()
         val currentItem = player.currentMediaItem
-        val nextIndex = player.nextMediaItemIndex
-        val nextItem = if (nextIndex == C.INDEX_UNSET) null else player.getMediaItemAt(nextIndex)
+        val nextItem = player.nextItemOrNull()
         AppSettings.smartAnalysis.value = SmartAnalysis(
             current = currentItem?.let { stateOf(it, analysisFor(it)) } ?: TrackAnalysisState.WAITING,
             next = nextItem?.let { stateOf(it, analysisFor(it)) } ?: TrackAnalysisState.WAITING,
@@ -1161,6 +1156,23 @@ class CrossfadeController(
     }
 
     /**
+     * The next queue item, or null when there is none to read.
+     *
+     * [Player.getMediaItemAt] throws when the index is out of range, and the
+     * index comes from the timeline while the item comes from the playlist —
+     * two views of one queue that a queue edit between the two reads can
+     * leave disagreeing. A track's end is exactly when the queue is being
+     * edited: AutoPlay appends to it, a quality upgrade replaces an item in
+     * it, a skip takes one out of it. Reading it unguarded was a crash
+     * waiting for the one moment the queue moved.
+     */
+    private fun ExoPlayer.nextItemOrNull(): MediaItem? {
+        val index = nextMediaItemIndex
+        if (index == C.INDEX_UNSET || index < 0 || index >= mediaItemCount) return null
+        return runCatching { getMediaItemAt(index) }.getOrNull()
+    }
+
+    /**
      * The next queue item's own duration.
      *
      * Media3 fills a timeline window's duration in when the item is *prepared*,
@@ -1168,8 +1180,8 @@ class CrossfadeController(
      * playing. So for almost the whole of the current track this answered zero —
      * and zero is not a harmless "don't know" downstream. It reaches
      * [com.music.bitchord.playback.smart.TrackAnalyzer.request] as the next
-     * track's duration, and with no duration to check a sibling copy against the
-     * analyzer will only read the rendition the cache key resolves to *right
+     * track's duration, and with no duration to check a sibling copy against
+     * the analyzer will only read the rendition the cache key resolves to *right
      * now*, which with source substitution on is the `#alt` entry — while the
      * copy actually on disk is the plain one its own head fetch just pulled
      * down. Nothing matches, the pass returns silently, and it does that on every
@@ -1182,12 +1194,15 @@ class CrossfadeController(
      * it (see `Song.matchQuery`). Reading it here costs nothing and is available
      * from the moment the queue is set.
      */
-    private fun nextItemDurationMs(nextIndex: Int, item: MediaItem): Long {
+    private fun nextItemDurationMs(item: MediaItem): Long {
         val timeline = active().currentTimeline
         if (!timeline.isEmpty) {
-            timeline.getWindow(nextIndex, Timeline.Window()).durationMs
-                .takeIf { it != C.TIME_UNSET && it > 0 }
-                ?.let { return it }
+            val index = active().nextMediaItemIndex
+            if (index != C.INDEX_UNSET && index in 0 until timeline.windowCount) {
+                timeline.getWindow(index, Timeline.Window()).durationMs
+                    .takeIf { it != C.TIME_UNSET && it > 0 }
+                    ?.let { return it }
+            }
         }
         return item.claimedDurationMs()
     }
@@ -1229,7 +1244,7 @@ class CrossfadeController(
         val into = standby()
         if (out === into) return false
         val nextIndex = out.nextMediaItemIndex
-        if (nextIndex == C.INDEX_UNSET) return false
+        if (nextIndex == C.INDEX_UNSET || nextIndex < 0 || nextIndex >= out.mediaItemCount) return false
         // The last blend's stretch, if it is somehow still easing off: this
         // player is about to be the outgoing side of a new one.
         endEase(clickless = false)
@@ -1250,7 +1265,13 @@ class CrossfadeController(
         outgoing = out
         incoming = into
 
-        val items = (0 until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        // Copied whole, index for index: the incoming player is handed this
+        // list and a position in it, so a list with a hole in it would point
+        // the blend at the wrong song.
+        val items = runCatching {
+            (0 until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        }.getOrNull() ?: return false
+        if (nextIndex >= items.size) return false
         queuedItemCount = items.size
 
         Log.d(
@@ -1504,7 +1525,9 @@ class CrossfadeController(
      * [listener] has already bailed the transition for it.
      */
     private fun reconcileQueue(out: ExoPlayer, into: ExoPlayer) {
-        val appended = (queuedItemCount until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        val appended = runCatching {
+            (queuedItemCount until out.mediaItemCount).map { out.getMediaItemAt(it) }
+        }.getOrNull().orEmpty()
         if (appended.isEmpty()) return
         into.addMediaItems(appended)
         queuedItemCount = out.mediaItemCount
