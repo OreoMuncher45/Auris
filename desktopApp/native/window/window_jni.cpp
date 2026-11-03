@@ -6,7 +6,6 @@
 #include <windows.h>
 #include <audioclient.h>
 #include <dwmapi.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <mmdeviceapi.h>
 #include <propvarutil.h>
 #include <windowsx.h>
@@ -50,6 +49,17 @@ BOOL CALLBACK find_own_window(HWND window, LPARAM param) {
     return FALSE;
 }
 
+// The friendly name of an audio endpoint.
+//
+// The SDK declares this key as an extern symbol living in functiondiscoverykeys.lib, a library
+// MinGW does not ship — a MinGW build had an undefined reference at link time, and the CI job
+// that builds the Windows installer with MinGW could not have linked either. A property key is
+// a GUID and a property id, so it is written out here and the SDK's declaration is not needed.
+const PROPERTYKEY kDeviceFriendlyName = {
+    {0xa45c254e, 0xdf1c, 0x4efd, {0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0}},
+    14,
+};
+
 HWND find_window(JNIEnv* env, jstring title) {
     if (g_window != nullptr && IsWindow(g_window)) return g_window;
     const jchar* chars = env->GetStringChars(title, nullptr);
@@ -61,10 +71,38 @@ HWND find_window(JNIEnv* env, jstring title) {
     return context.found;
 }
 
+// The per-monitor DPI calls arrived in Windows 10 1607. Recent Windows headers declare them,
+// older MinGW ones do not, and the Windows versions before 1607 do not have them at all — so
+// they are looked up once and called through the pointer, with the system-wide calls as the
+// fallback.
+struct DpiApi {
+    UINT(WINAPI* for_window)(HWND) = nullptr;
+    int(WINAPI* system_metrics_for_dpi)(int, UINT) = nullptr;
+};
+
+const DpiApi& dpi_api() {
+    static const DpiApi api = [] {
+        DpiApi loaded;
+        HMODULE user32 = GetModuleHandleW(L"user32.dll");
+        loaded.for_window = reinterpret_cast<UINT(WINAPI*)(HWND)>(
+            GetProcAddress(user32, "GetDpiForWindow"));
+        loaded.system_metrics_for_dpi = reinterpret_cast<int(WINAPI*)(int, UINT)>(
+            GetProcAddress(user32, "GetSystemMetricsForDpi"));
+        return loaded;
+    }();
+    return api;
+}
+
 int resize_border(HWND window, bool horizontal) {
-    const UINT dpi = GetDpiForWindow(window);
-    const int frame = GetSystemMetricsForDpi(horizontal ? SM_CXFRAME : SM_CYFRAME, dpi);
-    const int padding = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
+    const DpiApi& api = dpi_api();
+    const UINT dpi = api.for_window != nullptr ? api.for_window(window) : 96;
+    const int metric = horizontal ? SM_CXFRAME : SM_CYFRAME;
+    const int frame = api.system_metrics_for_dpi != nullptr
+        ? api.system_metrics_for_dpi(metric, dpi)
+        : GetSystemMetrics(metric);
+    const int padding = api.system_metrics_for_dpi != nullptr
+        ? api.system_metrics_for_dpi(SM_CXPADDEDBORDER, dpi)
+        : GetSystemMetrics(SM_CXPADDEDBORDER);
     return frame + padding;
 }
 
@@ -434,7 +472,7 @@ IMMDevice* device_named(IMMDeviceEnumerator* enumerator, const std::wstring& wan
     for (UINT index = 0; index < count && match == nullptr; ++index) {
         IMMDevice* candidate = nullptr;
         if (FAILED(devices->Item(index, &candidate)) || candidate == nullptr) continue;
-        if (lower(property_string(candidate, PKEY_Device_FriendlyName)) == needle) {
+        if (lower(property_string(candidate, kDeviceFriendlyName)) == needle) {
             match = candidate;
         } else {
             candidate->Release();
@@ -511,7 +549,7 @@ bool start_client_locked(IMMDevice* device) {
         return false;
     }
     g_audio_endpoint_id = endpoint_id(device);
-    g_audio_device_name = property_string(device, PKEY_Device_FriendlyName);
+    g_audio_device_name = property_string(device, kDeviceFriendlyName);
     return true;
 }
 
@@ -680,7 +718,7 @@ jobjectArray list_devices(JNIEnv* env) {
                 IMMDevice* device = nullptr;
                 if (FAILED(devices->Item(index, &device)) || device == nullptr) continue;
                 values.push_back(endpoint_id(device));
-                values.push_back(property_string(device, PKEY_Device_FriendlyName));
+                values.push_back(property_string(device, kDeviceFriendlyName));
                 device->Release();
             }
             devices->Release();

@@ -276,7 +276,7 @@ private fun DialogField(
                 visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
                 keyboardOptions = KeyboardOptions(imeAction = imeAction),
                 keyboardActions = KeyboardActions(onDone = { onSubmit() }),
-                modifier = modifier.fillMaxWidth(),
+                modifier = modifier.fillMaxWidth().desktopTextInput(),
             )
         }
         if (value.isNotEmpty() && enabled) {

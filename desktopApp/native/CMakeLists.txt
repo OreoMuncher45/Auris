@@ -84,15 +84,40 @@ endif()
 # The Windows media controls, which are WinRT. MSVC builds them with C++/WinRT;
 # MinGW has no C++/WinRT, so it builds smtc_abi.cpp — the same exports written
 # against the raw ABI headers — whenever its headers carry the Media namespace.
-include(CheckIncludeFileCXX)
+include(CheckCXXSourceCompiles)
 if(MINGW)
-    check_include_file_cxx(systemmediatransportcontrolsinterop.h BITCHORD_HAVE_SMTC_INTEROP)
-    # The same guard smtc_abi.cpp defines: MinGW's windows.foundation.h does not compile without it.
+    # The media-key library is written against the raw WinRT ABI headers, which MinGW ships in
+    # full only from v13 on: before that, the timeline interface and the random-access-stream
+    # statics the library uses are missing, and a header that is merely present is no promise
+    # that the library compiles. So the check compiles a piece that uses what the library needs —
+    # complete types, and the two TimeSpans that older headers make ambiguous.
+    #
+    # An older MinGW therefore skips the library, and the app runs without the media keys; what
+    # it must not do is fail the build.
     set(CMAKE_REQUIRED_DEFINITIONS -D____FIReference_1_BYTE_INTERFACE_DEFINED__)
-    check_include_file_cxx(windows.media.h BITCHORD_HAVE_WINRT_MEDIA)
+    check_cxx_source_compiles("
+#include <roapi.h>
+#include <winstring.h>
+#include <systemmediatransportcontrolsinterop.h>
+#include <windows.foundation.h>
+#include <windows.media.h>
+#include <windows.storage.streams.h>
+using namespace ABI::Windows::Foundation;
+using namespace ABI::Windows::Media;
+using namespace ABI::Windows::Storage::Streams;
+int main() {
+    IRandomAccessStreamReferenceStatics* statics = nullptr;
+    (void)sizeof(*statics);
+    ISystemMediaTransportControlsTimelineProperties* timeline = nullptr;
+    (void)sizeof(*timeline);
+    TimeSpan span{0};
+    (void)span;
+    return 0;
+}
+" BITCHORD_HAVE_SMTC_ABI)
     unset(CMAKE_REQUIRED_DEFINITIONS)
 endif()
-if(MINGW AND BITCHORD_HAVE_SMTC_INTEROP AND BITCHORD_HAVE_WINRT_MEDIA)
+if(MINGW AND BITCHORD_HAVE_SMTC_ABI)
     add_library(bitchord_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_abi.cpp)
     set_target_properties(bitchord_smtc PROPERTIES PREFIX "")
     if(DEFINED ENV{JAVA_HOME})

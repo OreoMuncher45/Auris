@@ -43,6 +43,18 @@ private fun localProperty(name: String): String = rootProject.file("local.proper
 
 val desktopModuleIndexUrl = localProperty("MODULE_INDEX_URL")
 
+/**
+ * Whether this build must have the native libraries.
+ *
+ * A build that quietly drops the Automix analyser, the Windows frame bridge and the media-key
+ * library is a build that ships a broken app: the analyser is what the cross-section and the
+ * auto-mix need, the frame bridge is what makes the window behave like a Windows window, and the
+ * media-key library is what puts the track in the volume flyout. A development build on a
+ * machine without the toolchain has no way to run them anyway, so it carries on without them and
+ * says so; a release build stops instead.
+ */
+val requireNative = providers.gradleProperty("bitchord.requireNative").orNull?.toBoolean() ?: false
+
 // Last.fm signs every request with these, so signing in from inside the app
 // needs them at hand. Supplied locally and never committed, as on Android.
 val listenTogetherServer = localProperty("LISTEN_TOGETHER_SERVER")
@@ -206,6 +218,20 @@ fun findOnPath(tool: String): File? {
 
 fun cmakeBinary(): String = findOnPath("cmake")?.absolutePath ?: "cmake"
 
+/**
+ * The cross compiler for a Windows build made on another platform.
+ *
+ * The POSIX threading model where the toolchain offers one: the win32 model ships no <mutex>
+ * and no <thread>, and the Windows libraries here use both. Debian's alternatives point at the
+ * win32 one by default, so the bare name is the wrong compiler there.
+ */
+fun crossCompilerName(): String =
+    if (findOnPath("x86_64-w64-mingw32-g++-posix") != null) {
+        "x86_64-w64-mingw32-g++-posix"
+    } else {
+        "x86_64-w64-mingw32-g++"
+    }
+
 val buildAnalysisNative by tasks.registering {
     val cmakeSource = project.file("native")
     val outputDir = analysisNativeDir.get().asFile
@@ -218,27 +244,37 @@ val buildAnalysisNative by tasks.registering {
     outputs.dir(outputDir)
     onlyIf {
         val cmake = findOnPath("cmake")
-        if (cmake == null) {
-            logger.lifecycle(
-                "no usable cmake — building without the Automix analyser. If cmake is installed, " +
-                    "a Gradle daemon started before it was on PATH may be in use: ./gradlew --stop",
-            )
-        }
-        val compilerName = if (crossing) "x86_64-w64-mingw32-g++" else "g++"
+        val compilerName = if (crossing) crossCompilerName() else "g++"
         val compiler = targetOs != "windows" || findOnPath(compilerName) != null
         val ninja = targetOs != "windows" || findOnPath("ninja") != null
-        if (cmake != null && (!compiler || !ninja)) {
-            logger.lifecycle(
-                "$compilerName or Ninja not found — the Windows build will have no Automix analyser. " +
-                    "Install a MinGW C++ compiler and Ninja, then rebuild.",
-            )
+        val available = cmake != null && compiler && ninja
+        if (!available) {
+            val hint = buildString {
+                append("BitChord desktop: ")
+                if (cmake == null) {
+                    append("cmake is not on PATH")
+                } else {
+                    append("$compilerName or Ninja not found")
+                }
+                append(" — the Automix analyser and the media-key library cannot be built.")
+                if (requireNative) {
+                    append(" Install the toolchain and rebuild; a release build must not ship without them.")
+                } else {
+                    append(
+                        " Continuing without them. If the toolchain is installed, a Gradle daemon " +
+                            "started before it was on PATH may be in use: ./gradlew --stop",
+                    )
+                }
+            }
+            if (requireNative) throw GradleException(hint)
+            logger.lifecycle(hint)
         }
-        cmake != null && compiler && ninja
+        available
     }
     doLast {
         val javaHome = System.getProperty("java.home")
         val compiler = if (targetOs == "windows") {
-            findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
+            findOnPath(if (crossing) crossCompilerName() else "g++")
                 ?: error("the Windows C++ compiler disappeared while building the analyser")
         } else {
             null
@@ -293,19 +329,24 @@ val buildWindowNative by tasks.registering {
     onlyIf {
         if (targetOs != "windows") return@onlyIf false
         val cmake = findOnPath("cmake")
-        val compiler = findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
+        val compiler = findOnPath(if (crossing) crossCompilerName() else "g++")
         val ninja = findOnPath("ninja")
-        if (cmake == null || compiler == null || ninja == null) {
-            logger.lifecycle(
-                "cmake, Ninja, or a MinGW C++ compiler is unavailable — the Windows build will " +
-                    "fall back to Compose's frameless window behaviour.",
-            )
+        val available = cmake != null && compiler != null && ninja != null
+        if (!available) {
+            val hint = "BitChord desktop: cmake, Ninja, or a MinGW C++ compiler is unavailable — " +
+                "the Windows build falls back to Compose's frameless window behaviour."
+            if (requireNative) {
+                throw GradleException(
+                    "$hint A release build must have the frame bridge; install the toolchain and rebuild.",
+                )
+            }
+            logger.lifecycle(hint)
         }
-        cmake != null && compiler != null && ninja != null
+        available
     }
     doLast {
         val javaHome = System.getProperty("java.home")
-        val compiler = findOnPath(if (crossing) "x86_64-w64-mingw32-g++" else "g++")
+        val compiler = findOnPath(if (crossing) crossCompilerName() else "g++")
             ?: error("MinGW C++ compiler disappeared while building the Windows frame")
         val ninja = findOnPath("ninja")
             ?: error("Ninja disappeared while building the Windows frame")
@@ -335,8 +376,56 @@ val buildWindowNative by tasks.registering {
     }
 }
 
-tasks.named<ProcessResources>("processResources") {
+/**
+ * Checks that the native libraries the app loads by name are actually there.
+ *
+ * The analyser, the Windows frame bridge and the Windows media-key library are each loaded with a
+ * name and nothing else: a missing one is a crash in the middle of the app — no cross-section, no
+ * snap layouts, no track in the volume flyout — rather than a build error. A release build finds
+ * out here, before the packages are cut, instead of a user finding out at runtime.
+ */
+val verifyNativeLibraries by tasks.registering {
+    group = "verification"
+    description = "Fails when a native library the app loads by name is missing."
     dependsOn(buildAnalysisNative, buildWindowNative)
+    doLast {
+        val libraryExtension = when (targetOs) {
+            "windows" -> "dll"
+            "linux" -> "so"
+            else -> "dylib"
+        }
+        val required = buildList {
+            add(
+                File(
+                    analysisNativeDir.get().asFile,
+                    if (targetOs == "windows") "bitchord_analysis.dll" else "libbitchord_analysis.$libraryExtension",
+                ),
+            )
+            if (targetOs == "windows") {
+                add(File(windowNativeDir.get().asFile, "bitchord_window.dll"))
+                // The media keys are the one library that a build can legitimately leave out: the
+                // MinGW headers that carry the WinRT ABI are recent, and the app runs without the
+                // library — it only loses the volume-flyout card and the media keys. A release
+                // build does not accept that.
+                if (requireNative) add(File(analysisNativeDir.get().asFile, "bitchord_smtc.dll"))
+            }
+        }
+        val missing = required.filterNot { it.isFile }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "BitChord desktop: the native libraries are missing — " +
+                    missing.joinToString(", ") { it.name } +
+                    ". The build needs cmake, Ninja and a C++ compiler; on Windows a MinGW-w64 " +
+                    "toolchain whose headers carry the WinRT ABI (mingw-w64 11 or newer) builds " +
+                    "the media-key library.",
+            )
+        }
+        logger.lifecycle("BitChord desktop: native libraries verified — ${required.joinToString(", ") { it.name }}")
+    }
+}
+
+tasks.named<ProcessResources>("processResources") {
+    dependsOn(buildAnalysisNative, buildWindowNative, verifyNativeLibraries)
     from(analysisNativeDir) {
         include("*.so", "*.dll", "*.dylib")
         into("native")
@@ -520,6 +609,11 @@ compose.desktop {
                 "java.xml",
                 "jdk.crypto.ec",
                 "jdk.dynalink",
+                // Without this the runtime image has only the ANSI code page, and every UTF-8
+                // request — a song title, a playlist description, a lyrics file the app wrote
+                // itself — comes back as replacement characters. A development run works because
+                // the full JDK carries the charset tables; the packaged app did not.
+                "jdk.charsets",
                 // JavaFX WebEngine returns JavaScript objects through netscape.javascript.JSObject.
                 // Without this module the slim production runtime crashes in twkExecuteScript,
                 // while development runs work because the full JDK already contains it.

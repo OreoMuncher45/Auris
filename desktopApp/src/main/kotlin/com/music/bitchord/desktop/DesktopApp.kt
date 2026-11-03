@@ -457,7 +457,7 @@ internal fun desktopTypography(): Typography {
     )
 }
 
-private enum class DesktopDestination(val id: String, val label: String) {
+internal enum class DesktopDestination(val id: String, val label: String) {
     LISTEN_NOW("listen-now", "Home"),
     EXPLORE("explore", "Explore"),
     LIBRARY("library", "Library"),
@@ -488,7 +488,14 @@ private enum class DesktopRepeatMode {
 }
 
 @Composable
-fun BitChordDesktopApp() {
+/**
+ * The desktop app.
+ *
+ * [onRequestExit] ends the process — the keyboard's ctrl+Q, and whatever else decides the window
+ * is not coming back. It is a callback because the application scope that owns the exit lives
+ * outside this function.
+ */
+fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     // Filled once the audio engine exists. Local playback helpers use this single hook so every
     // transport and queue gesture reaches Listen Together without duplicating protocol logic.
@@ -2846,6 +2853,9 @@ fun BitChordDesktopApp() {
         CompositionLocalProvider(
             LocalContentColor provides Color.White,
             LocalNowPlaying provides selectedSong,
+            // Which of the app's text fields holds the focus, so the app's own keys can keep out
+            // of the way while something is being typed.
+            LocalDesktopTypingState provides remember { DesktopTypingState() },
         ) {
             DesktopFrame(
                 // The phone's page is black, not the near-black of its cards.
@@ -2858,7 +2868,22 @@ fun BitChordDesktopApp() {
                         transparentBase = transparentBase,
                     )
                 },
-                modifier = Modifier.onPreviewKeyEvent { event ->
+                modifier = Modifier
+                    .desktopShortcuts(
+                        onPlayPause = { if (selectedSong != null) togglePlayPauseFromUser() },
+                        onNext = ::playNext,
+                        onPrevious = ::playPrevious,
+                        onVolumeBy = { delta ->
+                            val moved = (volume + delta).coerceIn(0.0f, 1.0f)
+                            volume = moved
+                            persistence.saveString("volume", moved.toString())
+                        },
+                        onFocusSearch = { selectDestination(DesktopDestination.SEARCH) },
+                        onDestination = ::selectDestination,
+                        onOpenSettings = { openSettings() },
+                        onQuit = onRequestExit,
+                    )
+                    .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     when (event.key) {
                         Key.MediaPlayPause -> {
@@ -4556,6 +4581,7 @@ internal fun DesktopSearchField(
                 .fillMaxWidth()
                 .focusRequester(focusRequester)
                 .onFocusChanged { onFocusChanged(it.isFocused) }
+                .desktopTextInput()
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
                         onSearch()
@@ -6253,7 +6279,7 @@ private fun DesktopSourceEditorDialog(
                         baseUrl = it
                         message = null
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().desktopTextInput(),
                     label = { Text(DesktopStrings["d_addon_url", "Addon URL"]) },
                     placeholder = { Text("https://example.com/addon") },
                     singleLine = true,
@@ -6270,7 +6296,7 @@ private fun DesktopSourceEditorDialog(
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().desktopTextInput(),
                     label = { Text(DesktopStrings["d_name_optional", "Name (optional)"]) },
                     placeholder = { Text(DesktopStrings["d_my_music_source", "My music source"]) },
                     singleLine = true,

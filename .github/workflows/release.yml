@@ -59,7 +59,7 @@ jobs:
       - name: Build deb, rpm and the app image
         run: |
           ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable \
-            -Pbitchord.version=${{ steps.version.outputs.value }}
+            -Pbitchord.version=${{ steps.version.outputs.value }} -Pbitchord.requireNative=true
 
       - name: The analyser and models are in the jar
         run: |
@@ -101,6 +101,23 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Ninja is CMake's generator for the native libraries, and the image ships MinGW without
+      # putting it on the PATH. Without both, the native builds are skipped and the packaged app
+      # has no Automix analyser, no Windows frame bridge and no media keys.
+      - name: Native toolchain
+        shell: pwsh
+        run: |
+          choco install ninja --no-progress -y
+          $mingw = "C:\mingw64\bin"
+          if (Test-Path "$mingw\g++.exe") {
+            Add-Content -Path $env:GITHUB_PATH -Value $mingw
+            "$mingw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append "MINGW_BIN=$mingw"
+          }
+          "g++ --version"
+          "ninja --version"
+          "cmake --version"
+
+      # jpackage builds the MSI through WiX 3, which the image does not carry.
       - name: WiX Toolset 3
         shell: pwsh
         run: |
@@ -132,7 +149,9 @@ jobs:
 
       - name: Build msi, exe and the app image
         run: |
-          .\gradlew.bat :desktopApp:packageMsi :desktopApp:packageExe :desktopApp:createDistributable "-Pbitchord.version=${{ steps.version.outputs.value }}"
+          .\gradlew.bat :desktopApp:packageMsi :desktopApp:packageExe :desktopApp:createDistributable `
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" `
+            "-Pbitchord.requireNative=true"
 
       - name: The analyser and models are in the jar
         shell: bash
@@ -140,8 +159,13 @@ jobs:
           jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/app/desktopApp*.jar)
           jar tf "$jar" | grep -q 'native/bitchord_analysis.dll'
           jar tf "$jar" | grep -q 'models/.*\.onnx'
-          # WinRT, so only MSVC can build it and only this job ever does.
+          # The media keys, built against the raw WinRT ABI because MinGW has no C++/WinRT.
           jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
+          jar tf "$jar" | grep -q 'native/bitchord_window.dll'
+          # The runtime image jpackage cut from the JDK. Without the charset tables it falls back
+          # to the system code page and every UTF-8 string comes back mangled.
+          runtime=$(ls desktopApp/build/compose/binaries/main/app/BitChord/runtime/bin/java.exe)
+          & "$runtime" --list-modules | grep -q '^jdk.charsets@'
 
       - name: Collect
         shell: pwsh

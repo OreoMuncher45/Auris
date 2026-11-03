@@ -1,0 +1,129 @@
+name: Desktop (Windows)
+
+# The Windows desktop build on its own, so the installer can be produced and downloaded without
+# cutting a tag. The tagged release workflow builds the same thing; this one is for "does the
+# Windows build still work, and what does the .exe look like today".
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the packages, without the leading v"
+        required: false
+        default: "2.3.5-desktop"
+      run_tests:
+        description: "Run the shared and desktop test suites first"
+        type: boolean
+        required: false
+        default: true
+  push:
+    branches:
+      - "desktop/**"
+
+# Artifacts only. Nothing here publishes a release: the build lands as a workflow artifact that
+# can be downloaded and tried, and the tagged release workflow stays the only thing that cuts a
+# release — and that one drafts it privately.
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows · installer, msi, portable
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Work out the version
+        id: version
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          [ -n "$version" ] || version="2.3.5-desktop"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+
+      - name: Write local.properties
+        shell: bash
+        run: |
+          echo "LASTFM_API_KEY=${{ secrets.LASTFM_API_KEY }}" > local.properties
+          echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
+
+      # Ninja is CMake's generator for the native libraries; the image ships MinGW but not on the
+      # PATH, and without both the build quietly produces an app with no analyser, no frame
+      # bridge and no media keys.
+      - name: Native toolchain
+        shell: pwsh
+        run: |
+          choco install ninja --no-progress -y
+          $mingw = "C:\mingw64\bin"
+          if (Test-Path "$mingw\g++.exe") {
+            Add-Content -Path $env:GITHUB_PATH -Value $mingw
+            "$mingw" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append "MINGW_BIN=$mingw"
+          }
+          "g++ --version"
+          "ninja --version"
+          "cmake --version"
+
+      # jpackage builds the MSI through WiX 3, which the image does not carry.
+      - name: WiX Toolset 3
+        shell: pwsh
+        run: |
+          $url = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+          Invoke-WebRequest -Uri $url -OutFile wix.zip
+          Expand-Archive wix.zip -DestinationPath "$env:RUNNER_TEMP\wix"
+          "$env:RUNNER_TEMP\wix" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Tests
+        if: inputs.run_tests
+        run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pbitchord.version=${{ steps.version.outputs.value }}"
+
+      - name: Build the installer, the msi and the portable folders
+        run: |
+          .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:createDistributable `
+            :desktopApp:windowsPortable `
+            "-Pbitchord.version=${{ steps.version.outputs.value }}" `
+            "-Pbitchord.requireNative=true"
+
+      - name: The native libraries and the models are in the jar
+        shell: bash
+        run: |
+          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/bitchord_analysis.dll'
+          jar tf "$jar" | grep -q 'native/bitchord_window.dll'
+          jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
+          jar tf "$jar" | grep -q 'models/.*\.onnx'
+          # The runtime image jpackage cut from the JDK. Without the charset tables it falls back
+          # to the system code page and every UTF-8 string comes back mangled.
+          runtime=$(ls desktopApp/build/compose/binaries/main/app/BitChord/runtime/bin/java.exe)
+          & "$runtime" --list-modules | grep -q '^jdk.charsets@'
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.value }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item desktopApp/build/compose/binaries/main/msi/*.msi "dist/BitChord-$v-windows-x64.msi"
+          Copy-Item desktopApp/build/compose/binaries/main/exe/*.exe "dist/BitChord-$v-windows-x64-setup.exe"
+          # The app image: its own runtime, so it runs on a machine with no Java installed.
+          7z a -tzip -mx=5 "dist/BitChord-$v-windows-x64-appimage.zip" `
+            "desktopApp/build/compose/binaries/main/app/BitChord/*" | Out-Null
+          # The jars-only folder: small, but it needs a Java 21 runtime on the machine.
+          Copy-Item desktopApp/build/distributions/BitChord-$v-windows-portable.zip "dist/BitChord-$v-windows-x64-portable.zip"
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop
+          path: dist/*

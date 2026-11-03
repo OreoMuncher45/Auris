@@ -150,7 +150,9 @@ private fun desktopMain() = application {
             LocalDesktopWindowActions provides actions,
             LocalDesktopWindowScope provides this,
         ) {
-            BitChordDesktopApp()
+            // Ctrl+Q ends the process outright: the app has a tray icon, but a quit asked for on
+            // the keyboard is a quit, not a hide.
+            BitChordDesktopApp(onRequestExit = { exitApplication() })
         }
     }
 }
