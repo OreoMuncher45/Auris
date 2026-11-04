@@ -1529,4 +1529,6 @@
     <string name="song_info_no_credits">No credits listed for this song</string>
     <string name="song_info_credits_error">Couldn\'t load the credits.</string>
     <string name="song_info_retry">Retry</string>
+    <string name="find_a_playlist">Find a playlist</string>
+    <string name="no_playlists_match">No playlists match “%1$s”</string>
 </resources>

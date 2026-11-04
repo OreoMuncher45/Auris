@@ -1678,4 +1678,6 @@
     <string name="song_info_no_credits">No credits listed for this song</string>
     <string name="song_info_credits_error">Couldn\'t load the credits.</string>
     <string name="song_info_retry">Réessayer</string>
+    <string name="find_a_playlist">Rechercher une playlist</string>
+    <string name="no_playlists_match">Aucune playlist ne correspond à « %1$s »</string>
 </resources>

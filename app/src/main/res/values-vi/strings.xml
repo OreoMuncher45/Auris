@@ -1594,4 +1594,6 @@
     <string name="song_info_no_credits">No credits listed for this song</string>
     <string name="song_info_credits_error">Couldn\'t load the credits.</string>
     <string name="song_info_retry">Thử lại</string>
+    <string name="find_a_playlist">Tìm danh sách phát</string>
+    <string name="no_playlists_match">Không có danh sách phát nào khớp với “%1$s”</string>
 </resources>

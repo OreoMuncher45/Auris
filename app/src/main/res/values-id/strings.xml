@@ -1654,4 +1654,6 @@
     <string name="song_info_no_credits">No credits listed for this song</string>
     <string name="song_info_credits_error">Couldn\'t load the credits.</string>
     <string name="song_info_retry">Coba lagi</string>
+    <string name="find_a_playlist">Cari playlist</string>
+    <string name="no_playlists_match">Tidak ada playlist yang cocok dengan “%1$s”</string>
 </resources>
