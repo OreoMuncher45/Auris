@@ -875,7 +875,8 @@ private fun BitChordApp(
     var showQuickPicks by remember { mutableStateOf(false) }
     val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
-    val homeShelfOrder by AppSettings.homeShelfOrder.collectAsStateWithLifecycle()
+    val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
+    val homeShelfTitles by viewModel.homeShelfTitles.collectAsStateWithLifecycle()
     val playerAccentColor by AppSettings.playerAccentColor.collectAsStateWithLifecycle()
     val transportSmoothness by AppSettings.transportSmoothness.collectAsStateWithLifecycle()
     val aiArtists by AppSettings.aiArtists.collectAsStateWithLifecycle()
@@ -1037,7 +1038,7 @@ private fun BitChordApp(
     } else {
         null
     }
-    val homeWithFlow by remember(homeState, flowTile, homeShelfOrder, offlineActive, offlinePicksTitle) {
+    val homeWithFlow by remember(homeState, flowTile, offlineActive, offlinePicksTitle) {
         derivedStateOf {
             // Offline: the home is what is on disk. The feed needs a connection
             // that is not there, so the shelf that matters is the downloads —
@@ -1064,40 +1065,13 @@ private fun BitChordApp(
                     )
                 }
             }
+            // The feed arrives in the listener's order already: the order is
+            // the feed's, not the screen's, so a row moved to the top is
+            // loaded at the top and is the row the page opens on. Sorting it
+            // again here would put the screen's idea of the order back over
+            // the feed's, which is how a move that did nothing used to look.
             val base = (homeState as? UiState.Success)?.data ?: return@derivedStateOf homeState
-            // Quick Picks is the top row, always. Flow is not a shelf at all
-            // any more — it rides at the head of that row — so reordering the
-            // other topics can never bury either of them. This is what used to
-            // happen: the synthetic Flow shelf was not in the saved order, so
-            // it sorted to Int.MAX_VALUE and vanished off the bottom.
-            val quickPicks = base.firstOrNull {
-                com.music.bitchord.ui.screens.isQuickPicksShelf(it.title)
-            }
-            val rest = base.filterNot {
-                com.music.bitchord.ui.screens.isQuickPicksShelf(it.title)
-            }
-            val orderedRest = if (homeShelfOrder.isEmpty()) {
-                rest
-            } else {
-                // Stable sort: listed titles take their chosen rank, anything
-                // YouTube added later keeps its feed position after them.
-                val rank = homeShelfOrder.withIndex().associate { (i, title) -> title to i }
-                rest.sortedBy { rank[it.title] ?: Int.MAX_VALUE }
-            }
-            val shelves = buildList {
-                // Quick Picks is the second row, pinned: the feed's own lead
-                // row stays first, because that is what the account came to
-                // see, and Quick Picks is the answer to the question that row
-                // raises. It was first itself until it grew a page of its
-                // own, and with the page there it no longer needed the top
-                // of the feed to be found.
-                addAll(orderedRest.take(1))
-                if (quickPicks != null) {
-                    add(quickPicks)
-                }
-                addAll(orderedRest.drop(1))
-            }
-            UiState.Success(shelves)
+            UiState.Success(base)
         }
     }
     // The Flow and Replay cards ride at the head of the page: in the quick
@@ -1365,6 +1339,14 @@ private fun BitChordApp(
     }
 
     val homeListState = rememberLazyListState()
+    // The order of the shelves is the listener's, and when they change it the
+    // page goes back to the top of the feed: the row they moved to the top
+    // is the row the page should open on, and the only way to see that is
+    // from the top of it.
+    val homeShelfOrder by AppSettings.homeShelfOrder.collectAsStateWithLifecycle()
+    LaunchedEffect(homeShelfOrder) {
+        if (homeShelfOrder.isNotEmpty()) homeListState.scrollToItem(0)
+    }
     val exploreListState = rememberLazyListState()
     val moodGenreListState = rememberLazyListState()
     val radioListState = rememberLazyListState()
@@ -2352,15 +2334,16 @@ private fun BitChordApp(
      * shows: the row is what fits on a screen, the page is the set.
      */
     val downloadedSongs by Downloads.saved.collectAsStateWithLifecycle()
-    val quickPicksSongs: List<Song> = remember(homeWithFlow, offlineActive, downloadedSongs) {
+    val homeQuickPicksItems by viewModel.homeQuickPicksItems.collectAsStateWithLifecycle()
+    val quickPicksSongs: List<Song> = remember(homeQuickPicksItems, offlineActive, downloadedSongs) {
         if (offlineActive) {
             Downloads.snapshotSongs()
                 .filter { it.videoId.isNotBlank() }
                 .sortedByDescending { it.localDateAddedSeconds ?: 0L }
         } else {
-            val shelf = (homeWithFlow as? UiState.Success)?.data
-                ?.firstOrNull { com.music.bitchord.ui.screens.isQuickPicksShelf(it.title) }
-            shelf?.items?.mapNotNull { item -> shelfSong(item) }.orEmpty()
+            // The set behind the arrow, kept whole whether the row is on the
+            // page or not: hiding the row on Home says nothing about the set.
+            homeQuickPicksItems.mapNotNull { item -> shelfSong(item) }
         }
     }
 
@@ -4250,10 +4233,11 @@ private fun BitChordApp(
                             onAppLanguage = { showAppLanguage = true },
                             category = settingsCategory,
                             onOpenCategory = { settingsCategory = it },
-                            homeShelfTitles = (homeState as? UiState.Success)?.data
-                                ?.map { it.title }
-                                ?.filterNot { com.music.bitchord.ui.screens.isQuickPicksShelf(it) }
-                                .orEmpty(),
+                            // Every shelf the feed has brought, hidden ones
+                            // included — a hidden shelf stays in the editor
+                            // so it can be put back. Quick Picks is one of
+                            // them: it is a shelf like any other.
+                            homeShelfTitles = homeShelfTitles,
                             contentPadding = listPadding,
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
@@ -4511,9 +4495,16 @@ private fun BitChordApp(
                             // the shelf shows what fits on a screen, this is
                             // the set behind it.
                             onOpenQuickPicks = { showQuickPicks = true },
-                            onOpenReplay = {
-                                replayLandingPage = ReplayStoryPage.INTRO
-                                showReplay = true
+                            // The Replay card is a card, not a page: a
+                            // listener who never opens it should not have to
+                            // look at it. The switch is in Settings → Home.
+                            onOpenReplay = if (homeReplayVisible) {
+                                {
+                                    replayLandingPage = ReplayStoryPage.INTRO
+                                    showReplay = true
+                                }
+                            } else {
+                                null
                             },
                             onItemLongPress = onShelfLongPress,
                             onRetry = viewModel::loadHome,

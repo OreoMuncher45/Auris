@@ -76,6 +76,7 @@ import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Replay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.SurroundSound
@@ -240,6 +241,7 @@ fun SettingsScreen(
     val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
     val foldingNavBar by AppSettings.foldingNavBar.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
+    val homeReplayVisible by AppSettings.homeReplayVisible.collectAsStateWithLifecycle()
     val blockedArtists by AppSettings.blockedArtists.collectAsStateWithLifecycle()
     val blockAi by AppSettings.blockAiMusic.collectAsStateWithLifecycle()
     val liquidGlassSupported = isGlassSupported()
@@ -1439,6 +1441,25 @@ fun SettingsScreen(
                         )
                     },
                     onClick = { AppSettings.setBlockAiMusic(!blockAi) },
+                )
+            }
+            val homeReplayVisibleTitle = stringResource(R.string.show_replay_on_home)
+            row(homeReplayVisibleTitle, "replay", "home", "hide", "card") {
+                SettingsRow(
+                    icon = Icons.Rounded.Replay,
+                    title = homeReplayVisibleTitle,
+                    subtitle = stringResource(R.string.show_replay_on_home_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = homeReplayVisible,
+                            onCheckedChange = AppSettings::setHomeReplayVisible,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setHomeReplayVisible(!homeReplayVisible) },
                 )
             }
             val shelfOrderTitle = stringResource(R.string.settings_home_order)

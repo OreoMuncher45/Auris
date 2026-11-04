@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +30,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -190,11 +193,24 @@ internal fun PlayerColorsSheet(onDismiss: () -> Unit) {
     }
 }
 
-/** The order the Home shelves stand in, Quick Picks and Flow excepted. */
+/**
+ * The Home shelves: the order they stand in, and which of them are on the
+ * page at all.
+ *
+ * Quick Picks is one of them — it is a shelf like any other, and a listener
+ * who wants it somewhere else, or nowhere, should be able to say so. Flow is
+ * not: it is a card that rides in the Quick Picks row, not a row of its own,
+ * so it has no place in this list.
+ *
+ * The order set here is the feed's order. A row moved to the top is loaded
+ * at the top, and the page opens on it — not merely drawn there after the
+ * feed has arrived.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () -> Unit) {
     val saved by AppSettings.homeShelfOrder.collectAsStateWithLifecycle()
+    val hidden by AppSettings.hiddenHomeShelves.collectAsStateWithLifecycle()
     val current = remember(homeShelfTitles, saved) {
         val rank = saved.withIndex().associate { (i, title) -> title to i }
         homeShelfTitles.distinct().sortedBy { rank[it] ?: Int.MAX_VALUE }
@@ -230,7 +246,14 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
                     modifier = Modifier.padding(vertical = 16.dp),
                 )
             } else {
-                current.forEachIndexed { index, title ->
+                // The feed brings more shelves than a sheet can hold, and the
+                // ones at the bottom are the ones a listener is most likely
+                // to want to move: the list scrolls.
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 420.dp),
+                ) {
+                itemsIndexed(current) { index, title ->
+                    val isHidden = title in hidden
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -238,11 +261,36 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
                         Text(
                             text = title,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
+                            color = if (isHidden) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.onBackground
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f).padding(vertical = 6.dp),
                         )
+                        // The eye: a shelf that is off the page stays in the
+                        // list, so it can be put back.
+                        IconButton(
+                            onClick = { AppSettings.setHomeShelfHidden(title, !isHidden) },
+                        ) {
+                            Icon(
+                                imageVector = if (isHidden) {
+                                    Icons.Rounded.VisibilityOff
+                                } else {
+                                    Icons.Rounded.Visibility
+                                },
+                                contentDescription = stringResource(
+                                    if (isHidden) R.string.custom_show_shelf else R.string.custom_hide_shelf,
+                                ),
+                                tint = if (isHidden) {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground
+                                },
+                            )
+                        }
                         IconButton(
                             enabled = index > 0,
                             onClick = { AppSettings.setHomeShelfOrder(current.moved(index, index - 1)) },
@@ -258,9 +306,13 @@ internal fun HomeShelfOrderSheet(homeShelfTitles: List<String>, onDismiss: () ->
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
                 }
+                }
             }
             TextButton(
-                onClick = { AppSettings.setHomeShelfOrder(emptyList()) },
+                onClick = {
+                    AppSettings.setHomeShelfOrder(emptyList())
+                    AppSettings.showAllHomeShelves()
+                },
                 modifier = Modifier.padding(top = 6.dp),
             ) {
                 Icon(Icons.Rounded.RestartAlt, contentDescription = null)

@@ -580,8 +580,21 @@ object AppSettings {
      * Home shelf titles in the listener's order. Titles not present in the
      * feed are ignored; shelves missing from the list keep their feed order
      * after the ones that are listed. Empty means "leave YouTube's order".
+     *
+     * The order is the feed's order, not the screen's: the shelves are
+     * published in it, so a row moved to the top is loaded at the top.
      */
     val homeShelfOrder = MutableStateFlow<List<String>>(emptyList())
+
+    /**
+     * Home shelves the listener has hidden, by title.
+     *
+     * A hidden shelf is not on the page at all — it is not rendered and not
+     * loaded — so the feed it would have brought is not fetched either. The
+     * title is the one the feed gave the shelf, so a shelf YouTube renames
+     * comes back on its own.
+     */
+    val hiddenHomeShelves = MutableStateFlow<Set<String>>(emptySet())
 
     /** Never play a track YouTube has labelled as generated with AI. */
     val blockAiMusic = MutableStateFlow(false)
@@ -854,6 +867,16 @@ object AppSettings {
      * Quick Picks is deliberately not part of this switch.
      */
     val homeFlowVisible = MutableStateFlow(true)
+
+    /**
+     * Whether the Replay card is shown on Home.
+     *
+     * The same switch as [homeFlowVisible] and for the same reason: Replay
+     * is a card in the top row, and a listener who never opens it should not
+     * have to look at it. Turning it off hides the card only — Replay itself,
+     * and everything saved in it, are untouched.
+     */
+    val homeReplayVisible = MutableStateFlow(true)
 
     /**
      * Artists the listener has hidden, encoded as `<identity>\t<display name>`.
@@ -1505,6 +1528,9 @@ object AppSettings {
         downloadedMusicViewType.value = readLibraryViewType(KEY_DOWNLOADED_MUSIC_VIEW_TYPE)
         homeRecentsViewType.value = readLibraryViewType(KEY_HOME_RECENTS_VIEW_TYPE)
         homeFlowVisible.value = prefs.getBoolean(KEY_HOME_FLOW_VISIBLE, true)
+        homeReplayVisible.value = prefs.getBoolean(KEY_HOME_REPLAY_VISIBLE, true)
+        hiddenHomeShelves.value = prefs.getStringSet(KEY_HIDDEN_HOME_SHELVES, emptySet())
+            .orEmpty().filter { it.isNotBlank() }.toSet()
         blockedArtists.value = prefs.getStringSet(KEY_BLOCKED_ARTISTS, emptySet())
             .orEmpty().filter { it.isNotBlank() }.toSet()
         aiArtists.value = prefs.getStringSet(KEY_AI_ARTISTS, emptySet())
@@ -1759,6 +1785,26 @@ object AppSettings {
             .take(MAX_RECENT_PLAYER_COLORS)
         recentPlayerColors.value = next
         prefs.edit().putString(KEY_RECENT_PLAYER_COLORS, next.joinToString(",")).apply()
+    }
+
+    /** Hides a Home shelf by title, or lets it back onto the page. */
+    fun setHomeShelfHidden(title: String, hidden: Boolean) {
+        val clean = title.trim()
+        if (clean.isEmpty()) return
+        val next = if (hidden) hiddenHomeShelves.value + clean else hiddenHomeShelves.value - clean
+        hiddenHomeShelves.value = next
+        prefs.edit().putStringSet(KEY_HIDDEN_HOME_SHELVES, next).apply()
+    }
+
+    /** Puts every hidden shelf back on the page. */
+    fun showAllHomeShelves() {
+        hiddenHomeShelves.value = emptySet()
+        prefs.edit().putStringSet(KEY_HIDDEN_HOME_SHELVES, emptySet()).apply()
+    }
+
+    fun setHomeReplayVisible(value: Boolean) {
+        homeReplayVisible.value = value
+        prefs.edit().putBoolean(KEY_HOME_REPLAY_VISIBLE, value).apply()
     }
 
     fun setHomeShelfOrder(titles: List<String>) {
@@ -2929,6 +2975,8 @@ object AppSettings {
     private const val KEY_PLAYER_LYRICS = "player_lyrics_color"
     private const val KEY_RECENT_PLAYER_COLORS = "recent_player_colors"
     private const val KEY_HOME_SHELF_ORDER = "home_shelf_order"
+    private const val KEY_HIDDEN_HOME_SHELVES = "hidden_home_shelves"
+    private const val KEY_HOME_REPLAY_VISIBLE = "home_replay_visible"
     private const val KEY_BLOCK_AI_MUSIC = "block_ai_music"
 
     /** Sentinel for "no override"; distinct from every opaque ARGB value. */

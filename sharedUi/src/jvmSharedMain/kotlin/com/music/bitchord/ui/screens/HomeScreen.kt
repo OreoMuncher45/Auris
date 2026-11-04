@@ -71,6 +71,7 @@ import com.music.bitchord.data.model.ROW_ART_PX
 import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.UiState
+import com.music.bitchord.data.model.isQuickPicksShelfTitle
 import java.util.Locale
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.settings.LibraryViewType
@@ -351,8 +352,31 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
         }
     }
 
+    // The hero is the first ordinary shelf — not the quick-picks row, which
+    // carries the cards, and not Recents, which has a treatment of its own.
+    // It used to be the first row whatever it was, which meant that a
+    // quick-picks row at the top took the hero slot with it and the page
+    // lost the one shelf it was built around.
+    val heroIndex = shelves.indexOfFirst { shelf ->
+        !isQuickPicksShelf(shelf.title) &&
+            !shelf.title.equals(RECENTS_TITLE, ignoreCase = true)
+    }
+
+    // The keys are the shelves' own, not their places: a key carrying the
+    // index changes when the shelves are reordered, and the list then reads
+    // as a different list — it loses the row the listener was looking at, and
+    // the row they moved to the top is somewhere else.
+    //
+    // Two shelves can share a title and a first song — the feed has been
+    // known to send the same row twice — and a key given twice is a crash,
+    // so the second one is counted off.
+    val keyCounts = mutableMapOf<String, Int>()
     shelves.forEachIndexed { index, shelf ->
-        item(key = shelf.title + index) {
+        val base = "shelf:" + shelf.title + ":" + (shelf.items.firstOrNull()?.videoId
+            ?: shelf.items.firstOrNull()?.browseId ?: index)
+        val seen = keyCounts.getOrDefault(base, 0)
+        keyCounts[base] = seen + 1
+        item(key = if (seen == 0) base else "$base#$seen") {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             val quickPicks = isQuickPicksShelf(shelf.title)
             if (quickPicks) {
@@ -370,7 +394,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     headerIcon = Icons.Rounded.AutoAwesome,
                     onHeaderNavigate = onOpenQuickPicks,
                 )
-            } else if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
+            } else if (shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
                 RecentShelf(
                     shelf = shelf,
                     onItemClick = openItem,
@@ -380,7 +404,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     viewType = recentsViewType,
                     onViewTypeToggle = onRecentsViewTypeToggle,
                 )
-            } else if (index == 0 && firstIsHero) {
+            } else if (index == heroIndex && firstIsHero) {
                 HeroShelf(
                     shelf = shelf,
                     onItemClick = openItem,
@@ -701,100 +725,11 @@ internal fun SectionHeader(
 /**
  * Whether a feed shelf is Quick Picks.
  *
- * Matched on the raw titles YouTube sends in the app's three languages rather
- * than on the localised label, because the label is computed for display and
- * the raw title is what this module sees. Getting this wrong is not cosmetic:
- * Quick Picks is pinned to the top of Home and hosts the Flow tile, so a miss
- * would put Flow back in an ordinary shelf where reordering can bury it.
+ * The matcher itself lives in the data layer, because the feed has to know
+ * too: the row is not always in the response, and what stands in for it is
+ * built from the same table. See [isQuickPicksShelfTitle].
  */
-fun isQuickPicksShelf(title: String): Boolean {
-    val normalized = normalizeShelfTitle(title)
-    if (normalized in QUICK_PICKS_TITLES) return true
-    // The account's own language decides the raw title, and the app ships
-    // eighteen locales while YouTube sends a title per account language. A
-    // title outside the table is still the quick-picks row when it says
-    // "quick" in any of the words that word takes — the table covers the
-    // languages this app knows, the word covers the ones it does not.
-    return QUICK_PICKS_WORDS.any { normalized.contains(it) }
-}
-
-/**
- * A shelf title reduced to something two spellings of the same words agree
- * on: case folded, punctuation gone, spacing collapsed.
- *
- * Letters of every script are kept: a title written in Devanagari or
- * Japanese must still fold to something the table can hold.
- */
-private fun normalizeShelfTitle(title: String): String {
-    val folded = title.trim().lowercase()
-    val stripped = buildString {
-        for (ch in folded) {
-            when {
-                ch.isLetter() || ch.isDigit() -> append(ch)
-                ch == ' ' || ch == '-' || ch == '_' -> append(' ')
-                else -> Unit
-            }
-        }
-    }
-    return stripped
-        .replace(Regex("\\s+"), " ")
-        .trim()
-}
-
-/**
- * The raw titles YouTube sends for the quick-picks row, in every language the
- * app ships plus the ones YouTube has used for the account language.
- */
-private val QUICK_PICKS_TITLES = setOf(
-    "Quick picks",
-    "Quick picks for you",
-    "Quick mixes",
-    "Lựa chọn nhanh",
-    "Chọn nhanh đài phát",
-    "クイック ミックス",
-    "Escolhas rápidas",
-    "Hızlı seçimler",
-    "Pilihan cepat",
-    "Scelte rapide",
-    "Schnellauswahl",
-    "Selección rápida",
-    "Szybki wybór",
-    "Sélection rapide",
-    "Быстрый выбор",
-    "בחירות מהירות",
-    "त्वरित चयन",
-    "快速选择",
-).map { normalizeShelfTitle(it) }.toSet()
-
-/**
- * The words "quick picks" is written with, folded the same way.
- *
- * A title carrying one of these is the quick-picks row whatever language the
- * account is in. This is the safety net under the table: a miss here is what
- * puts the Flow card back into a shelf of its own, and a shelf of its own at
- * the top of Home is a full-width hero.
- */
-private val QUICK_PICKS_WORDS = setOf(
-    "quick",
-    "schnell",
-    "rapide",
-    "rapida",
-    "rapidas",
-    "rapido",
-    "rapides",
-    "szybki",
-    "szybkie",
-    "hizli",
-    "pilihan",
-    "scelte",
-    "выбор",
-    "nhanh",
-    "benharter",
-    "מהירות",
-    "चयन",
-    "快速",
-    "クイック",
-)
+fun isQuickPicksShelf(title: String): Boolean = isQuickPicksShelfTitle(title)
 
 @Composable
 internal fun localizeShelfTitle(title: String): String {

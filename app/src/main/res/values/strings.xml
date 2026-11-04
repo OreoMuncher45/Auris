@@ -1329,12 +1329,16 @@
     <string name="custom_hires_badge">Hi-Res badge</string>
     <string name="custom_hires_badge_help">Prefers the Hi-Res wording over plain Lossless for high-resolution streams.</string>
     <string name="custom_use_artwork">Use artwork</string>
-    <string name="custom_home_help">Quick Picks and Flow stay pinned at the top. Move the categories below them. Flow can be hidden without affecting Quick Picks.</string>
+    <string name="custom_home_help">Move the shelves into the order you want — the feed is built in it, so a row at the top is loaded at the top. The eye takes a shelf off the page without losing it.</string>
     <string name="custom_home_empty">More Home categories appear here once the feed has loaded.</string>
     <string name="custom_reset_order">Reset to YouTube\'s order</string>
     <string name="custom_library_help">How the Library presents its shelves.</string>
     <string name="custom_library_sort">Show-all order</string>
     <string name="custom_show_replay">Replay cards in Library</string>
+    <string name="show_replay_on_home">Replay card on Home</string>
+    <string name="show_replay_on_home_subtitle">Shows the Replay card in the top row of Home. Replay itself is untouched.</string>
+    <string name="custom_hide_shelf">Hide this shelf</string>
+    <string name="custom_show_shelf">Show this shelf</string>
     <string name="custom_show_replay_subtitle">Show your listening-history cards above the shelves</string>
     <string name="custom_theme_help">Switch between the Auris and Classipod shells, and pick a light or dark theme.</string>
     <string name="change">Change</string>

@@ -40,6 +40,9 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.isQuickPicksShelfTitle
+import com.music.bitchord.data.model.withQuickPicks
+import com.music.bitchord.data.model.orderHomeShelves
 import com.music.bitchord.data.model.isEndlessMix
 import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.model.LibraryPage
@@ -127,6 +130,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _home = MutableStateFlow<UiState<List<HomeShelf>>>(UiState.Loading)
     val home: StateFlow<UiState<List<HomeShelf>>> = _home.asStateFlow()
+
+    /**
+     * Every shelf the feed has brought, hidden ones included.
+     *
+     * The published feed leaves out the shelves the listener has hidden, so
+     * this is what the shelf editor lists: a hidden shelf stays in the list,
+     * marked as hidden, so it can be let back onto the page.
+     */
+    private val _homeShelfTitles = MutableStateFlow<List<String>>(emptyList())
+    val homeShelfTitles: StateFlow<List<String>> = _homeShelfTitles.asStateFlow()
+
+    /**
+     * The feed as it came, in the feed's own order.
+     *
+     * The published feed is the ordered, filtered one. This is what the
+     * order is applied to, so a change to the order — a shelf moved to the
+     * top, a shelf hidden — can be carried out on the feed itself instead
+     * of being painted over the top of it.
+     */
+    private val _homeRaw = MutableStateFlow<List<HomeShelf>>(emptyList())
+
+    /**
+     * The quick-picks row's own songs, kept whether the row is on the page
+     * or not.
+     *
+     * The page behind the arrow is the whole set. Hiding the row on Home is
+     * a statement about the page, not about the set — so the songs live
+     * here, where hiding cannot reach them.
+     */
+    private val _homeQuickPicksItems = MutableStateFlow<List<ShelfItem>>(emptyList())
+    val homeQuickPicksItems: StateFlow<List<ShelfItem>> = _homeQuickPicksItems.asStateFlow()
 
     /**
      * Token for the next page of Home shelves; null once there's nothing
@@ -1673,6 +1707,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
+        watchHomeShelfSettings()
         loadHome()
         // The podcasts page's own shelves, from the last launch, published
         // before the tab is even opened — so the page has something on it the
@@ -2104,6 +2139,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _home.value = UiState.Loading
         homeContinuation = null
         homeSeenTitles.clear()
+        _homeShelfTitles.value = emptyList()
+        _homeQuickPicksItems.value = emptyList()
+        _homeRaw.value = emptyList()
         _homeLoadingMore.value = false
         _homeRecentlyPlayedLoading.value = _signedIn.value
         // The core feed plus one browse per supplement. Recently played is left
@@ -2170,21 +2208,94 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun publishHomeShelves(shelves: List<HomeShelf>, prepend: Boolean = false) {
         val visible = shelves.withoutBlockedArtists()
-        val existing = (_home.value as? UiState.Success)?.data.orEmpty()
+        val existing = _homeRaw.value
         if (prepend) {
             // YouTube's core home can also contain a stale "Recently played"
             // shelf. The dedicated history endpoint wins and replaces it.
             val replacing = visible.map { it.title.lowercase(Locale.ROOT) }.toSet()
             homeSeenTitles.addAll(replacing)
-            _home.value = UiState.Success(visible + existing.filterNot {
-                it.title.lowercase(Locale.ROOT) in replacing
-            })
+            _homeRaw.value = visible + existing.filterNot { it.title.lowercase(Locale.ROOT) in replacing }
+            publishHome()
             return
         }
         val added = visible.withoutRepeatsOf(existing)
             .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-        if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+        if (added.isNotEmpty()) {
+            _homeRaw.value = existing + added
+            publishHome()
+        }
     }
+
+    /**
+     * Publishes the feed in the order the listener has set.
+     *
+     * The order and the hidden shelves are the listener's, and they are
+     * carried out on the feed — the published list is the feed in that
+     * order, not the feed with a new arrangement painted over it.
+     */
+    private fun publishHome() {
+        val raw = _homeRaw.value
+        if (raw.isEmpty()) return
+        _home.value = UiState.Success(orderedHomeShelves(raw))
+    }
+
+    /**
+     * The listener's order and their hidden shelves, carried out on the feed
+     * the moment they change.
+     *
+     * A shelf moved to the top is moved in the feed, not in the drawing of
+     * it: the page is the feed, and the feed is what the order says it is.
+     */
+    private fun watchHomeShelfSettings() {
+        viewModelScope.launch {
+            AppSettings.homeShelfOrder.collect { publishHome() }
+        }
+        viewModelScope.launch {
+            AppSettings.hiddenHomeShelves.collect { publishHome() }
+        }
+    }
+
+    /**
+     * The order the shelves are published in.
+     *
+     * The listener's own order when they have set one — and it is the order
+     * of the feed itself, not of the screen: a row moved to the top is
+     * published at the top, so it is loaded there and it is the row the page
+     * opens on. Without one, the account's lead row stays first and Quick
+     * Picks rides second, which is where the Flow and Replay cards live.
+     *
+     * Hidden shelves are gone from the list altogether: not rendered, and not
+     * carried along as a row of nothing.
+     */
+    private fun orderedHomeShelves(shelves: List<HomeShelf>): List<HomeShelf> {
+        // Exactly one quick-picks row, and it is there even when the feed
+        // came without one: a page missing the row is a page whose first
+        // load is a page without it.
+        val ensured = shelves.withQuickPicks()
+        val ordered = orderHomeShelves(ensured)
+        // The editor's list follows the page's order: what the listener sees
+        // in the editor is the page as it stands, not the feed before it.
+        _homeShelfTitles.value = ordered.map { it.title }.distinct()
+        // The row's songs are kept even when the row is hidden: hiding the
+        // row on the page says nothing about the set behind it.
+        _homeQuickPicksItems.value =
+            ensured.firstOrNull { isQuickPicksShelfTitle(it.title) }?.items.orEmpty()
+        val hidden = AppSettings.hiddenHomeShelves.value
+        return ordered.filterNot { it.title in hidden }
+    }
+
+    /**
+     * The order the shelves stand in.
+     *
+     * The listener's own order when they have set one — and it is the order
+     * of the feed itself, not of the screen: a row moved to the top is
+     * published at the top, so it is loaded there and it is the row the page
+     * opens on. Without one, the quick-picks row is first and the feed's own
+     * rows follow it in the feed's order.
+     */
+    private fun orderHomeShelves(shelves: List<HomeShelf>): List<HomeShelf> =
+        orderHomeShelves(shelves, AppSettings.homeShelfOrder.value)
+
 
     /** Refreshes the core feed without blanking the current Play page first. */
     private suspend fun refreshHome(identity: String?) = coroutineScope {
@@ -2195,7 +2306,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             homeSeenTitles.clear()
             val shelves = feed.shelves.withoutBlockedArtists().withoutRepeatsOf(emptyList())
                 .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
-            if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
+            if (shelves.isNotEmpty()) {
+                _homeRaw.value = shelves
+                publishHome()
+            }
         }
         recent?.await()?.onSuccess { shelf ->
             if (identity == listenerKey()) shelf?.let { publishHomeShelves(listOf(it), prepend = true) }
@@ -2226,14 +2340,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             YtMusicRepository.moreHome(token).onSuccess { feed ->
                 if (identity == listenerKey()) {
-                    val existing = (_home.value as? UiState.Success)?.data ?: emptyList()
+                    val existing = _homeRaw.value
                     val added = feed.shelves.withoutBlockedArtists().withoutRepeatsOf(existing)
                         .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
                     // A page with nothing new signals the feed has looped back on
                     // itself rather than run dry with a token still attached —
                     // treat it the same as exhausted so scrolling can't spin here.
                     homeContinuation = feed.continuation.takeIf { added.isNotEmpty() }
-                    if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+                    if (added.isNotEmpty()) {
+                        _homeRaw.value = existing + added
+                        publishHome()
+                    }
                 }
             }
             if (identity == listenerKey()) _homeLoadingMore.value = false
