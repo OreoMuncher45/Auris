@@ -1,12 +1,10 @@
 package com.music.bitchord.ui.screens
 
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,8 +24,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AllInclusive
 import androidx.compose.material.icons.rounded.Block
+import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Save
@@ -44,9 +44,9 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,8 +57,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -83,7 +81,6 @@ import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.songListSkeleton
-import kotlin.math.roundToInt
 
 /**
  * Flow, per the approved proposal: dark gradient hero, left-aligned title
@@ -118,7 +115,7 @@ fun FlowScreen(
     onNewMix: () -> Unit,
     onToggleLike: () -> Unit,
     currentLiked: Boolean,
-    onApply: (FlowMood, Float, Float, Set<String>) -> Unit,
+    onApply: (FlowMood, Float, Float, Set<String>, Boolean) -> Unit,
     onUnban: (String) -> Unit,
     onBan: (Song) -> Unit,
     onSongClick: (List<Song>, Int) -> Unit,
@@ -134,9 +131,11 @@ fun FlowScreen(
     var draftDiscovery by remember(tuner.discovery) { mutableFloatStateOf(tuner.discovery) }
     var draftMemory by remember(tuner.memory) { mutableFloatStateOf(tuner.memory) }
     var draftExcluded by remember(tuner.excludedGenres) { mutableStateOf(tuner.excludedGenres) }
+    var draftSimilarLiked by remember(tuner.similarLiked) { mutableStateOf(tuner.similarLiked) }
     var showTuner by remember { mutableStateOf(false) }
     val dirty = draftMood != mood || draftDiscovery != tuner.discovery ||
-        draftMemory != tuner.memory || draftExcluded != tuner.excludedGenres
+        draftMemory != tuner.memory || draftExcluded != tuner.excludedGenres ||
+        draftSimilarLiked != tuner.similarLiked
     val songs = (tracksState as? UiState.Success)?.data.orEmpty()
 
     LazyColumn(
@@ -169,21 +168,25 @@ fun FlowScreen(
         }
         if (showTuner) {
             item(key = "flow:tuner") {
-                FlowTunerCard(
+                FlowTunerGroup(
                     tuner = tuner.copy(
                         discovery = draftDiscovery,
                         memory = draftMemory,
                         excludedGenres = draftExcluded,
+                        similarLiked = draftSimilarLiked,
                     ),
                     onDiscovery = { draftDiscovery = it },
                     onMemory = { draftMemory = it },
+                    onSimilarLiked = { draftSimilarLiked = it },
                     onToggleGenre = { genre, enabled ->
                         draftExcluded = if (enabled) draftExcluded - genre.lowercase()
                         else draftExcluded + genre.lowercase()
                     },
                     dirty = dirty,
                     rebuilding = rebuilding,
-                    onApply = { onApply(draftMood, draftDiscovery, draftMemory, draftExcluded) },
+                    onApply = {
+                        onApply(draftMood, draftDiscovery, draftMemory, draftExcluded, draftSimilarLiked)
+                    },
                 )
             }
         }
@@ -456,14 +459,10 @@ private fun FlowMoodStrip(
     mood: FlowMood,
     onMood: (FlowMood) -> Unit,
 ) {
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp, bottom = 2.dp)) {
-        Text(
-            text = stringResource(R.string.flow_moods),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-        )
-        Spacer(Modifier.height(8.dp))
+    Column(Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp)) {
+        // No heading: the chips are the moods, and a label above them said
+        // the same thing in a bigger voice. The row reads as part of the
+        // header rather than as a section of its own.
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
@@ -479,76 +478,70 @@ private fun FlowMoodStrip(
     }
 }
 
+/**
+ * The tuner, as a settings group.
+ *
+ * The same group, rows and dividers the Settings sheet is built from, so the
+ * Flow page reads as part of the app rather than as a card someone dropped
+ * into it. Nothing was dropped to get here: both sliders keep their two ends
+ * and their explanation, the genres keep their chips, and the switch that
+ * asks for songs like the ones the listener liked sits with the rest.
+ */
 @Composable
-private fun FlowTunerCard(
+private fun FlowTunerGroup(
     tuner: FlowTuner,
     onDiscovery: (Float) -> Unit,
     onMemory: (Float) -> Unit,
+    onSimilarLiked: (Boolean) -> Unit,
     onToggleGenre: (String, Boolean) -> Unit,
     dirty: Boolean,
     rebuilding: Boolean,
     onApply: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
+    SettingsGroup(
+        header = stringResource(R.string.flow_tuner),
+        footer = stringResource(R.string.flow_draft_hint),
+        topSpacing = 8.dp,
     ) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(
-                stringResource(R.string.flow_tuner),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.flow_draft_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    stringResource(R.string.flow_personal),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
+        FlowTunerSlider(
+            icon = Icons.Rounded.Explore,
+            title = stringResource(R.string.flow_discovery),
+            startLabel = stringResource(R.string.flow_personal),
+            endLabel = stringResource(R.string.flow_adventurous),
+            value = tuner.discovery,
+            onValue = onDiscovery,
+            subtitle = stringResource(R.string.flow_discovery_subtitle),
+        )
+        RowDivider()
+        FlowTunerSlider(
+            icon = Icons.Rounded.History,
+            title = stringResource(R.string.flow_memory),
+            startLabel = stringResource(R.string.flow_alltime),
+            endLabel = stringResource(R.string.flow_recent),
+            value = tuner.memory,
+            onValue = onMemory,
+            subtitle = stringResource(R.string.flow_memory_subtitle),
+        )
+        RowDivider()
+        SettingsRow(
+            icon = Icons.Rounded.Favorite,
+            title = stringResource(R.string.flow_similar_liked),
+            subtitle = stringResource(R.string.flow_similar_liked_subtitle),
+            trailing = {
+                Switch(
+                    checked = tuner.similarLiked,
+                    onCheckedChange = onSimilarLiked,
                 )
-                Text(
-                    stringResource(R.string.flow_adventurous),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            AurisSlider(value = tuner.discovery, onValueChange = onDiscovery, modifier = Modifier.fillMaxWidth())
+            },
+        )
+        RowDivider()
+        Column(Modifier.padding(start = ROW_INSET, end = ROW_INSET, top = 14.dp, bottom = 12.dp)) {
             Text(
-                stringResource(R.string.flow_discovery_subtitle),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                text = stringResource(R.string.flow_genres),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
             )
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    stringResource(R.string.flow_alltime),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    stringResource(R.string.flow_recent),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-            }
-            AurisSlider(value = tuner.memory, onValueChange = onMemory, modifier = Modifier.fillMaxWidth())
-            Text(
-                stringResource(R.string.flow_memory_subtitle),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                stringResource(R.string.flow_genres),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             @OptIn(ExperimentalLayoutApi::class)
             androidx.compose.foundation.layout.FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -562,8 +555,14 @@ private fun FlowTunerCard(
                     )
                 }
             }
-            if (dirty) {
-                Spacer(Modifier.height(12.dp))
+        }
+        if (dirty) {
+            RowDivider()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = ROW_INSET, vertical = 12.dp),
+            ) {
                 Button(
                     onClick = onApply,
                     modifier = Modifier.fillMaxWidth(),
@@ -577,6 +576,72 @@ private fun FlowTunerCard(
                 }
             }
         }
+    }
+}
+
+/**
+ * A slider with both of its ends named.
+ *
+ * [SliderRow] shows one value beside the label; these two are ranges, and
+ * what they mean is in the names at either end — Personal to Adventurous,
+ * All-time to Recent. So the ends are kept, under the label and above the
+ * track, where the tuner has always had them.
+ */
+@Composable
+private fun FlowTunerSlider(
+    icon: ImageVector,
+    title: String,
+    startLabel: String,
+    endLabel: String,
+    value: Float,
+    onValue: (Float) -> Unit,
+    subtitle: String,
+) {
+    Column(Modifier.padding(start = ROW_INSET, end = ROW_INSET, top = 14.dp, bottom = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.size(ICON_SIZE),
+            )
+            Spacer(Modifier.width(ICON_GAP))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = ICON_SIZE + ICON_GAP, top = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = startLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = endLabel,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        AurisSlider(
+            value = value,
+            onValueChange = onValue,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = ICON_SIZE + ICON_GAP),
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = ICON_SIZE + ICON_GAP, top = 2.dp),
+        )
     }
 }
 

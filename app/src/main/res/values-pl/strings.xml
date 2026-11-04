@@ -1424,10 +1424,6 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
-    <plurals name="playlist_synced_new_tracks">
-        <item quantity="one">Pobieranie %1$d nowego utworu z %2$s</item>
-        <item quantity="other">Pobieranie %1$d nowych utworów z %2$s</item>
-    </plurals>
     <string name="quick_picks">Szybki wybór</string>
     <string name="quick_picks_subtitle">Wybrane dla Ciebie, odświeżane codziennie</string>
     <string name="quick_picks_offline_subtitle">Odtwarzanie z tego, co jest na tym urządzeniu</string>

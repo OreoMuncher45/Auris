@@ -36,6 +36,11 @@ object FlowEngine {
         val favorites: List<Song> = emptyList(),
         val history: List<Song> = emptyList(),
         val quickPicks: List<Song> = emptyList(),
+        /**
+         * The mood's own collections — the Radio tab's playlists for the
+         * mood, and the songs in them. Empty for the unfiltered mix.
+         */
+        val moodPool: List<Song> = emptyList(),
     )
 
     /**
@@ -150,7 +155,10 @@ object FlowEngine {
         genreOf: (String) -> List<String> = { emptyList() },
     ): List<Song> {
         val favIds = seeds.favorites.map { it.videoId }.toSet()
-        val localPool = (seeds.favorites + seeds.history + seeds.quickPicks).distinctBy { it.videoId }
+        // A mood's own collections lead: the mix is about the mood, and the
+        // songs the Radio tab plays for it are the ones that are about it.
+        val localPool = (seeds.moodPool + seeds.favorites + seeds.history + seeds.quickPicks)
+            .distinctBy { it.videoId }
             .filterNot { isExcluded(it, bannedIds, likeStatuses, skipCounts, config.tuner, genreOf) }
         val ordered = orderLocalPool(
             pool = localPool.ifEmpty { seeds.quickPicks },
@@ -171,7 +179,7 @@ object FlowEngine {
         }
         // Expand via radio on rotating favorite/history seeds for breadth.
         val expanded = ordered.toMutableList()
-        val radioSeeds = pickRadioSeeds(ordered, seeds.favorites, config.tuner)
+        val radioSeeds = pickRadioSeeds(ordered, seeds.favorites, config.tuner, seeds.moodPool)
         for (seed in radioSeeds) {
             if (expanded.size >= limit) break
             val related = runCatching { YtMusicRepository.radio(seed.videoId).getOrNull() }
@@ -202,14 +210,31 @@ object FlowEngine {
         return queue.lastOrNull()
     }
 
+    /**
+     * The tracks the catalogue is asked for more of.
+     *
+     * A mood's own collections come first: the mix is about the mood, and
+     * the radio is asked for more of what those collections hold. Then the
+     * listener's liked songs — the "songs like the ones you liked" half of
+     * the mix, which the tuner can switch off. With it off, nothing is
+     * seeded from the liked songs at all, so the radio is asked for more of
+     * what has been playing lately and of the mood instead.
+     *
+     * Discovery high -> seed from what is fresh; low -> from what is known.
+     */
     private fun pickRadioSeeds(
         ordered: List<Song>,
         favorites: List<Song>,
         tuner: FlowTuner,
+        moodPool: List<Song>,
     ): List<Song> {
-        // Discovery high -> seed from history/quick picks; low -> favorites.
-        return if (tuner.discovery > 0.6f) ordered.take(4)
-        else (favorites.take(2) + ordered.take(2)).distinctBy { it.videoId }.take(4)
+        val liked = favorites.map { it.videoId }.toSet()
+        val seeds = mutableListOf<Song>()
+        seeds += moodPool.take(2)
+        if (tuner.similarLiked) seeds += favorites.take(2)
+        val candidates = if (tuner.similarLiked) ordered else ordered.filter { it.videoId !in liked }
+        seeds += if (tuner.discovery > 0.6f) candidates.take(4) else candidates.take(2)
+        return seeds.distinctBy { it.videoId }.take(4)
     }
 
     private fun spreadArtists(tracks: List<Song>, random: Random): List<Song> {

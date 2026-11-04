@@ -10,6 +10,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
@@ -46,6 +47,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -240,6 +242,7 @@ import com.music.bitchord.ui.components.HeldContextMenu
 import com.music.bitchord.ui.components.HeldItem
 import androidx.media3.session.MediaController
 import com.music.bitchord.playback.QualityUpgrade
+import com.music.bitchord.playback.StreamChoice
 import com.music.bitchord.playback.rememberMediaController
 import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.playback.setQueueDragActive
@@ -864,10 +867,12 @@ private fun BitChordApp(
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
-    val homeCanLoadMore by viewModel.homeCanLoadMore.collectAsStateWithLifecycle()
     val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
     // Flow: unlock gate + temp playlist + tuner.
     var showFlow by remember { mutableStateOf(false) }
+    // The whole Quick Picks set, opened from the arrow at the end of its
+    // heading on Home. It is a section of Home rather than a tab of its own.
+    var showQuickPicks by remember { mutableStateOf(false) }
     val flowStatus by viewModel.flowStatus.collectAsStateWithLifecycle()
     val homeFlowVisible by AppSettings.homeFlowVisible.collectAsStateWithLifecycle()
     val homeShelfOrder by AppSettings.homeShelfOrder.collectAsStateWithLifecycle()
@@ -906,31 +911,6 @@ private fun BitChordApp(
         }
     }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
-
-    /**
-     * A downloaded playlist that gained tracks says so.
-     *
-     * The sync runs in the background, and a background download the listener
-     * cannot see is indistinguishable from one that silently failed — which is
-     * what made this read as "it just doesn't download them". One line, once,
-     * naming the playlist and the count.
-     */
-    val playlistSyncNotice by com.music.bitchord.download.DownloadedPlaylistSync.notice
-        .collectAsStateWithLifecycle()
-    LaunchedEffect(playlistSyncNotice) {
-        val notice = playlistSyncNotice ?: return@LaunchedEffect
-        com.music.bitchord.download.DownloadedPlaylistSync.consumeNotice()
-        Toast.makeText(
-            context,
-            context.resources.getQuantityString(
-                R.plurals.playlist_synced_new_tracks,
-                notice.newTracks,
-                notice.newTracks,
-                notice.playlistTitle,
-            ),
-            Toast.LENGTH_SHORT,
-        ).show()
-    }
 
     /**
      * The single gate both surfaces read, so the icon can't announce the update
@@ -982,12 +962,6 @@ private fun BitChordApp(
     // The podcast feed is fetched once, the first time its tab is opened.
     LaunchedEffect(selectedTab) {
         if (selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
-        // Quick Picks is read off the home feed. The feed is fetched at
-        // startup, so by the time the tab is opened there is usually an
-        // answer; when there is not, this is the retry.
-        if (selectedTab == TAB_QUICK_PICKS && homeState is UiState.Error) {
-            viewModel.loadHome()
-        }
     }
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
     val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
@@ -1402,7 +1376,6 @@ private fun BitChordApp(
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
-        TAB_QUICK_PICKS -> quickPicksListState
         TAB_PODCASTS -> podcastListState
         TAB_RADIO -> if (selectedMoodGenre == null) radioListState else moodGenreListState
         TAB_LIBRARY -> libraryListState
@@ -1503,13 +1476,12 @@ private fun BitChordApp(
     val queueLabel = stringResource(R.string.queue)
     val sharedLinkLabel = stringResource(R.string.shared_link)
     val quickPicksLabel = stringResource(R.string.quick_picks)
-    val tabs = remember(homeLabel, quickPicksLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
+    val tabs = remember(homeLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(homeLabel, BitChordIcons.Home),
-            // Quick Picks sits second, the same place it sits on the Home
-            // page: the feed's lead row is the account's own, and Quick Picks
-            // is the answer to the question that row raises.
-            BottomTab(quickPicksLabel, Icons.Rounded.AutoAwesome),
+            // Quick Picks is not a tab: it is a section of Home, with the
+            // arrow at the end of its heading opening the whole set. The
+            // navbar was crowded enough already.
             BottomTab(podcastsLabel, Icons.Rounded.GraphicEq),
             BottomTab(radioLabel, Icons.Rounded.Radio),
             BottomTab(libraryLabel, BitChordIcons.TabLibrary),
@@ -1805,16 +1777,28 @@ private fun BitChordApp(
     LaunchedEffect(player.song?.videoId, preferMusicOnly) {
         val song = player.song ?: return@LaunchedEffect
         if (!preferMusicOnly || !song.isVideo || song.videoId == keepVideoId) return@LaunchedEffect
-        // The controller can be a beat behind the state flow right after a
-        // track change: the queue is being rebuilt and `mediaItemCount` reads
-        // zero for a frame. That window is the whole of why the switch "did
-        // nothing" for some people — the one attempt landed in it and was
-        // dropped with no retry. Ask again a few times, and stop the moment
-        // the player has moved on.
-        repeat(5) { attempt ->
-            if (attempt > 0) delay(120)
+        // The controller can be a long way behind the state flow right after a
+        // track change, and it is much further behind when the track was
+        // *opened* rather than reached: a song picked on its own starts a
+        // station, and the queue is built while the video item is already the
+        // current one — `mediaItemCount` reads zero for as long as that build
+        // takes, which is seconds, not a frame.
+        //
+        // The old window was five tries 120ms apart, so it closed inside that
+        // build and the attempt was dropped with no retry: the first video
+        // song of a session never upgraded, and the next one did, because by
+        // then the controller had settled. That is the whole of the bug.
+        //
+        // So the question is asked until the controller answers it, for as
+        // long as this is still the track playing. The deadline is only there
+        // so a controller that never settles does not leave the coroutine
+        // asking forever — it is not a timeout on the swap itself, which is
+        // the resolve's business, not this loop's.
+        val deadline = SystemClock.elapsedRealtime() + VIDEO_UPGRADE_WAIT_MS
+        while (SystemClock.elapsedRealtime() < deadline) {
             if (player.song?.videoId != song.videoId) return@LaunchedEffect
             if (switchToMusicOnly(song, pauseWhileResolving = true)) return@LaunchedEffect
+            delay(VIDEO_UPGRADE_POLL_MS)
         }
     }
 
@@ -3267,7 +3251,7 @@ private fun BitChordApp(
         BackHandler(
             enabled = detail == null && !showSettings && !showAccountScrobbling && !showSpotify &&
                 !showSources && !showListenTogether && !showEqualizer && !showReplay && selectedMoodGenre == null &&
-                !showDiscord && !showHistory && !showFlow && !showGenres &&
+                !showDiscord && !showHistory && !showFlow && !showQuickPicks && !showGenres &&
                 !showAudiobooks && openAudiobook == null && itunesPodcastId == null &&
                 selectedTab != TAB_HOME,
         ) {
@@ -3281,6 +3265,7 @@ private fun BitChordApp(
         BackHandler(enabled = editingPartyServer) { editingPartyServer = false }
         BackHandler(enabled = showHistory) { showHistory = false }
         BackHandler(enabled = showFlow) { showFlow = false }
+        BackHandler(enabled = showQuickPicks) { showQuickPicks = false }
         // Disabled while a detail page is open over the grid: that one's own
         // BackHandler below has to close first, or back would skip past it
         // straight to Library. See [onLibraryItemClick].
@@ -3512,12 +3497,18 @@ private fun BitChordApp(
                 // whatever ids it's ever going to have.
                 resolvingLinks = fromPlayer && linksLoading,
                 showSleepTimer = fromPlayer,
-                // Offered for every playing track with a YouTube upload
-                // behind it, not only for one an upgrade visibly swapped:
-                // a source ranked above YouTube can be playing its own
-                // idea of the song from the first second, and a wrong
-                // match sounds like a wrong match whether or not anything
-                // announced itself. See [Song.hasYouTubeOriginal].
+                // Offered for a playing track that something other than
+                // YouTube is actually serving — a module's copy, or an
+                // upgrade that won the race.
+                //
+                // The old condition was the mirror of that: "not known to be
+                // YouTube's own", which is true of every track nobody had
+                // looked at yet as well — a video row, a track whose source
+                // was never resolved, a track the app had swapped for a
+                // catalogue copy without the listener asking. The menu read
+                // that as "there is an undo here" and offered "Revert to
+                // original" for a track that had never been changed, which is
+                // what it said on a video that had not upgraded.
                 onRollbackToOriginal = if (fromPlayer &&
                     song.hasYouTubeOriginal() &&
                     // Nothing to revert *from*: the listener is hearing a
@@ -3526,12 +3517,9 @@ private fun BitChordApp(
                     // Already there, and the menu says so with the row
                     // below instead.
                     song.videoId !in pinnedToOriginal &&
-                    // And the same for a track that got back here without
-                    // the listener asking: an upgrade that failed to prove
-                    // itself is reverted automatically and pins nothing, so
-                    // this row was being offered for a track already on
-                    // YouTube's own stream, where it does nothing.
-                    !playingYouTubesOwn(song.videoId, controller) &&
+                    // And something else is serving it, which is the whole
+                    // of what there is to revert to.
+                    playingASubstitute(song.videoId, controller) &&
                     controller?.currentMediaItem?.mediaId == song.videoId
                 ) {
                     {
@@ -3550,10 +3538,21 @@ private fun BitChordApp(
                 // takes a broken track off the automatic path for the rest
                 // of the session, and `askByHand` is what clears that.
                 onUpgradeQuality = if (fromPlayer &&
+                    // A video is never upgraded — the quality search refuses
+                    // a video outright, so the row would be a button that
+                    // does nothing. Its way to the audio copy is the version
+                    // row below.
+                    !song.isVideo &&
                     controller?.currentMediaItem?.mediaId == song.videoId &&
                     (
                         song.videoId in pinnedToOriginal ||
                             playingYouTubesOwn(song.videoId, controller) ||
+                            // Nothing is known to be serving this track other
+                            // than YouTube, and nothing is known to be serving
+                            // it at all: either way there is no revert to
+                            // offer, and a manual bump is the action that
+                            // still makes sense.
+                            !playingASubstitute(song.videoId, controller) ||
                             // A finished download sits on the disk; offer the
                             // same manual bump to a better copy that a stream
                             // gets, even though Wi-Fi auto-upgrades run in the
@@ -3743,6 +3742,7 @@ private fun BitChordApp(
                     showDiscord -> "discord"
                     showHistory -> "history"
                     showFlow -> "flow"
+                    showQuickPicks -> "quick_picks"
                     // `&& detail == null`: a card opened from the grid
                     // stacks a detail page over it exactly as one opened
                     // from the Library tab does — see
@@ -3840,6 +3840,14 @@ private fun BitChordApp(
                     },
                     modifier = Modifier
                         .hazeSource(hazeState)
+                        // The page stops above the keyboard rather than under
+                        // it. The search field is the one thing in the app that
+                        // opens one, and the page it opens was being drawn
+                        // straight into it: the results ran off the bottom of
+                        // the screen and the last of them sat under the
+                        // keyboard, where the floating bars had already
+                        // reserved the space they needed to cover them.
+                        .imePadding()
                         .then(
                             if (glassActive) {
                                 Modifier
@@ -3931,8 +3939,8 @@ private fun BitChordApp(
                                 }
                                 showFlowSave = true
                             },
-                            onApply = { mood, discovery, memory, excluded ->
-                                viewModel.applyFlowConfig(mood, discovery, memory, excluded)
+                            onApply = { mood, discovery, memory, excluded, similarLiked ->
+                                viewModel.applyFlowConfig(mood, discovery, memory, excluded, similarLiked)
                             },
                             onUnban = { viewModel.unbanFromFlow(it) },
                             onBan = { song ->
@@ -3960,6 +3968,26 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             currentSong = player.song,
                             isPlaying = player.isPlaying,
+                        )
+                    } else if (key == "quick_picks") {
+                        QuickPicksScreen(
+                            songs = quickPicksSongs,
+                            offline = offlineActive,
+                            onPlay = { song ->
+                                val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
+                                if (offlineActive && isOnDevice(song.videoId)) {
+                                    playOfflineLibrary(song, source)
+                                } else {
+                                    playRadio(song, source)
+                                }
+                            },
+                            onPlayAll = { playQuickPicks(false) },
+                            onShuffle = { playQuickPicks(true) },
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
+                            onItemLongPress = { song -> openSongMenu(song) },
+                            listState = quickPicksListState,
+                            contentPadding = listPadding,
                         )
                     } else if (key == "library_show_all") {
                         libraryShowAll?.let { shelf ->
@@ -4336,6 +4364,9 @@ private fun BitChordApp(
                             listState = pageDetailListState,
                             activeShelf = detailActiveShelf,
                             onActiveShelfChange = { detailActiveShelf = it },
+                            // A Super Mix has no last page: it grows a page at a
+                            // time as the listener reaches the end of the list.
+                            onLoadMore = { viewModel.loadMoreDetail(page.browseId) },
                             onSongClick = { songs, index ->
                                 playFrom(
                                     songs,
@@ -4476,6 +4507,10 @@ private fun BitChordApp(
                             },
                             flowItem = homeFlowLeading,
                             onFlowClick = { showFlow = true },
+                            // The arrow at the end of the Quick Picks heading:
+                            // the shelf shows what fits on a screen, this is
+                            // the set behind it.
+                            onOpenQuickPicks = { showQuickPicks = true },
                             onOpenReplay = {
                                 replayLandingPage = ReplayStoryPage.INTRO
                                 showReplay = true
@@ -4488,28 +4523,7 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             onLoadMore = viewModel::loadMoreHome,
                             loadingMore = homeLoadingMore,
-                            canLoadMore = homeCanLoadMore,
-                            onLoadMoreByHand = viewModel::loadMoreHomeByHand,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
-                        )
-                        TAB_QUICK_PICKS -> QuickPicksScreen(
-                            songs = quickPicksSongs,
-                            offline = offlineActive,
-                            onPlay = { song ->
-                                val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
-                                if (offlineActive && isOnDevice(song.videoId)) {
-                                    playOfflineLibrary(song, source)
-                                } else {
-                                    playRadio(song, source)
-                                }
-                            },
-                            onPlayAll = { playQuickPicks(false) },
-                            onShuffle = { playQuickPicks(true) },
-                            currentSong = player.song,
-                            isPlaying = player.isPlaying,
-                            onItemLongPress = { song -> openSongMenu(song) },
-                            listState = quickPicksListState,
-                            contentPadding = listPadding,
                         )
                         TAB_PODCASTS -> PodcastsScreen(
                             state = podcastsState,
@@ -4886,6 +4900,7 @@ private fun BitChordApp(
                         showDiscord -> "Discord"
                         showHistory -> stringResource(R.string.history)
                         showFlow -> stringResource(R.string.flow)
+                        showQuickPicks -> quickPicksLabel
                         libraryShowAll != null && detail == null -> libraryShowAll?.title.orEmpty()
                         showAccountScrobbling -> stringResource(R.string.account_scrobbling)
                         showSources -> stringResource(R.string.sources)
@@ -4915,7 +4930,7 @@ private fun BitChordApp(
                     scrolled = when {
                         showSettings || showAccountScrobbling || showSources || showListenTogether ||
                             showEqualizer ||
-                            showDiscord || showHistory || showFlow ||
+                            showDiscord || showHistory || showFlow || showQuickPicks ||
                             (libraryShowAll != null && detail == null) ||
                             (detail != null && detailActiveShelf != null) ||
                             selectedMoodGenre != null -> true
@@ -4932,6 +4947,7 @@ private fun BitChordApp(
                         showDiscord -> ({ showDiscord = false })
                         showHistory -> ({ showHistory = false })
                         showFlow -> ({ showFlow = false })
+                        showQuickPicks -> ({ showQuickPicks = false })
                         libraryShowAll != null && detail == null -> ({ libraryShowAll = null })
                         showAccountScrobbling -> ({
                             showAccountScrobbling = false
@@ -4973,7 +4989,7 @@ private fun BitChordApp(
                         selectedTab == TAB_SEARCH && detail == null && selectedMoodGenre == null &&
                         libraryShowAll == null && !showSettings && !showAccountScrobbling &&
                         !showSources && !showListenTogether && !showEqualizer && !showDiscord &&
-                        !showHistory && !showFlow && !showReplay
+                        !showHistory && !showFlow && !showQuickPicks && !showReplay
                     ) {
                         {
                             // The search field lives up here in the bar, beside the
@@ -5212,7 +5228,12 @@ private fun BitChordApp(
                  // (declared up with listPadding so the content inset can use it)
                 FloatingBarsTapGuard(
                     barsHeight = { floatingBarsHeight.intValue },
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        // With the bars: they are lifted clear of the keyboard,
+                        // and a guard left at the foot of the screen would be
+                        // swallowing taps meant for the page above them.
+                        .imePadding(),
                 )
 
                 // One tab handler, whichever bar is drawing it.
@@ -5259,72 +5280,47 @@ private fun BitChordApp(
                     }
                 }
 
-                if (glassActive) Column(
+                if (glassActive) Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        // Clear of the keyboard, and measured inside it: the
+                        // mini player is the only bar the search tab loses,
+                        // because the keyboard was drawing over it. The
+                        // inset belongs around the bars rather than inside
+                        // them, so what the page reserves is the bars'
+                        // height and not the bars' height plus a keyboard.
+                        .imePadding()
                         .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                        .fillMaxWidth()
-                        .onSizeChanged { floatingBarsHeight.intValue = it.height },
+                        .fillMaxWidth(),
                 ) {
-                    QueueActionNoticeHost(queueNotice)
-                    // Liquid glass replaces the two stacked bars with the single
-                    // component they are stacked to imitate: the now playing
-                    // controls dock into the tab bar rather than riding above it,
-                    // and the pair folds together on scroll. See [GlassNavBar].
-                    AppGlassNav(
-                        useFoldingNav = useFoldingNav,
-                        tabs = tabs,
-                        selectedIndex = selectedTab,
-                        onTabSelected = onTabSelected,
-                        scrollConnection = navBarScroll,
-                        search = navSearchState,
-                        placeholder = org.jetbrains.compose.resources.stringResource(
-                            if (searchSource == SearchSource.LIBRARY) {
-                                SharedRes.string.search_library_hint
-                            } else {
-                                SharedRes.string.search_hint
-                            },
-                        ),
-                        song = player.song,
-                        isPlaying = player.isPlaying,
-                        isLoading = playPauseBusy,
-                        onPlayPause = { togglePlayPause() },
-                        onNext = { controller?.seekToNextMediaItem() },
-                        onPrevious = { controller?.seekToPrevious() },
-                        onExpand = if (reducePlayerMotion) {
-                            { showNowPlaying = true }
-                        } else {
-                            playerSheetMotion::open
-                        },
-                        controlsLocked = controlsLocked,
-                        onBlockedControl = showHostOnlyNotice,
-                        dock = activeDock,
-                        pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                    )
-                } else Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        // Capped and centred rather than run to the page's edges
-                        // — see [FLOATING_BAR_MAX_WIDTH]. It sits on the Column
-                        // rather than on each bar so the two are held to the same
-                        // width and keep the shared left and right edge they have
-                        // on a phone. Before fillMaxWidth, so the fill has
-                        // already been bounded by the time it is applied.
-                        .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                        .fillMaxWidth()
-                        .onSizeChanged { floatingBarsHeight.intValue = it.height },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    QueueActionNoticeHost(queueNotice)
-                    player.song?.let { song ->
-                        MiniPlayer(
-                            song = song,
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { floatingBarsHeight.intValue = it.height },
+                    ) {
+                        QueueActionNoticeHost(queueNotice)
+                        // Liquid glass replaces the two stacked bars with the single
+                        // component they are stacked to imitate: the now playing
+                        // controls dock into the tab bar rather than riding above it,
+                        // and the pair folds together on scroll. See [GlassNavBar].
+                        AppGlassNav(
+                            useFoldingNav = useFoldingNav,
+                            tabs = tabs,
+                            selectedIndex = selectedTab,
+                            onTabSelected = onTabSelected,
+                            scrollConnection = navBarScroll,
+                            search = navSearchState,
+                            placeholder = org.jetbrains.compose.resources.stringResource(
+                                if (searchSource == SearchSource.LIBRARY) {
+                                    SharedRes.string.search_library_hint
+                                } else {
+                                    SharedRes.string.search_hint
+                                },
+                            ),
+                            song = player.song,
                             isPlaying = player.isPlaying,
                             isLoading = playPauseBusy,
-                            hazeState = hazeState,
-                            onPlayPause = {
-                                togglePlayPause()
-                            },
+                            onPlayPause = { togglePlayPause() },
                             onNext = { controller?.seekToNextMediaItem() },
                             onPrevious = { controller?.seekToPrevious() },
                             onExpand = if (reducePlayerMotion) {
@@ -5336,16 +5332,65 @@ private fun BitChordApp(
                             onBlockedControl = showHostOnlyNotice,
                             dock = activeDock,
                             pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                            modifier = Modifier.fillMaxWidth(),
                         )
-                        Spacer(Modifier.height(8.dp))
                     }
-                    FloatingBottomBar(
-                        tabs = tabs,
-                        selectedIndex = selectedTab,
-                        hazeState = hazeState,
-                        onTabSelected = onTabSelected,
-                    )
+                } else Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        // Clear of the keyboard, and measured inside it: the
+                        // mini player is the only bar the search tab loses,
+                        // because the keyboard was drawing over it. The
+                        // inset belongs around the bars rather than inside
+                        // them, so what the page reserves is the bars'
+                        // height and not the bars' height plus a keyboard.
+                        .imePadding()
+                        // Capped and centred rather than run to the page's edges
+                        // — see [FLOATING_BAR_MAX_WIDTH]. It sits on the Box
+                        // rather than on each bar so the two are held to the same
+                        // width and keep the shared left and right edge they have
+                        // on a phone. Before fillMaxWidth, so the fill has
+                        // already been bounded by the time it is applied.
+                        .widthIn(max = FLOATING_BAR_MAX_WIDTH)
+                        .fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onSizeChanged { floatingBarsHeight.intValue = it.height },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        QueueActionNoticeHost(queueNotice)
+                        player.song?.let { song ->
+                            MiniPlayer(
+                                song = song,
+                                isPlaying = player.isPlaying,
+                                isLoading = playPauseBusy,
+                                hazeState = hazeState,
+                                onPlayPause = {
+                                    togglePlayPause()
+                                },
+                                onNext = { controller?.seekToNextMediaItem() },
+                                onPrevious = { controller?.seekToPrevious() },
+                                onExpand = if (reducePlayerMotion) {
+                                    { showNowPlaying = true }
+                                } else {
+                                    playerSheetMotion::open
+                                },
+                                controlsLocked = controlsLocked,
+                                onBlockedControl = showHostOnlyNotice,
+                                dock = activeDock,
+                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        FloatingBottomBar(
+                            tabs = tabs,
+                            selectedIndex = selectedTab,
+                            hazeState = hazeState,
+                            onTabSelected = onTabSelected,
+                        )
+                    }
                 }
             }
 
@@ -6824,6 +6869,30 @@ private fun playingYouTubesOwn(videoId: String, controller: MediaController?): B
     )
 }
 
+/**
+ * Whether [videoId] is the track playing, and is known to be playing a copy
+ * that is not YouTube's own — a module's idea of the song, or an upgrade that
+ * won the race for it.
+ *
+ * This is the positive form of the question the player menu used to ask, and
+ * the difference is the whole of the "Revert to original" bug. The old
+ * question was "not known to be YouTube's own", and that is also true of a
+ * track nobody had looked at yet: a video row, a track whose source was
+ * never resolved, a track the app had swapped for a catalogue copy without
+ * the listener ever asking for an upgrade. The menu read that as "there is
+ * an undo here" and offered an undo for something that had never been done.
+ *
+ * Between this and [playingYouTubesOwn] the menu can say what is actually
+ * serving the track. A track neither can vouch for is one where the manual
+ * "Upgrade quality" is the action that still makes sense.
+ */
+private fun playingASubstitute(videoId: String, controller: MediaController?): Boolean {
+    val item = controller?.currentMediaItem?.takeIf { it.mediaId == videoId } ?: return false
+    if (StreamChoice.isSubstitute(videoId)) return true
+    val uri = item.localConfiguration?.uri ?: return false
+    return QualityUpgrade.forcedStream(uri) != null
+}
+
 /** `M:SS`/`H:MM:SS`, the same shape [String?.durationMillis] parses back. */
 private fun formatDurationText(ms: Long): String {
     val totalSeconds = ms / 1000
@@ -6956,11 +7025,10 @@ private const val PAGE_PUSH_MS = 260
 private const val PAGE_FADE_MS = 200
 
 private const val TAB_HOME = 0
-private const val TAB_QUICK_PICKS = 1
-private const val TAB_PODCASTS = 2
-private const val TAB_RADIO = 3
-private const val TAB_LIBRARY = 4
-private const val TAB_SEARCH = 5
+private const val TAB_PODCASTS = 1
+private const val TAB_RADIO = 2
+private const val TAB_LIBRARY = 3
+private const val TAB_SEARCH = 4
 
 /**
  * What a tab's key is prefixed with in the content switcher above.
@@ -6969,3 +7037,16 @@ private const val TAB_SEARCH = 5
  * prefix has to be the one thing both the writing and the reading agree on.
  */
 private const val TAB_KEY = "tab:"
+
+/**
+ * How long the automatic video-to-audio switch keeps asking a controller
+ * that has not caught up yet.
+ *
+ * A station's queue can take seconds to build, and the switch asks the
+ * controller whether it is ready to be swapped before it tries; the answer
+ * was being collected inside a window far shorter than that build.
+ */
+private const val VIDEO_UPGRADE_WAIT_MS = 20_000L
+
+/** How often that question is asked while the controller catches up. */
+private const val VIDEO_UPGRADE_POLL_MS = 150L

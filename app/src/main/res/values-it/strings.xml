@@ -1323,10 +1323,6 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
-    <plurals name="playlist_synced_new_tracks">
-        <item quantity="one">Download di %1$d nuovo brano da %2$s</item>
-        <item quantity="other">Download di %1$d nuovi brani da %2$s</item>
-    </plurals>
     <string name="quick_picks">Scelte rapide</string>
     <string name="quick_picks_subtitle">Scelte per te, aggiornate ogni giorno</string>
     <string name="quick_picks_offline_subtitle">Riproduzione da ciò che è su questo dispositivo</string>

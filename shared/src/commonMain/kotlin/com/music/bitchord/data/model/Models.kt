@@ -515,7 +515,27 @@ data class DetailPage(
      * fetched with a session; see [SubscriptionState].
      */
     val subscription: SubscriptionState? = null,
+    /**
+     * The token for the next page of this page's tracks, when it has one.
+     *
+     * Kept on the page rather than followed to the end in the background for
+     * the collections that have no last page — see [isEndlessMix]. Those grow
+     * as the listener scrolls instead.
+     */
+    val continuation: String? = null,
+    /** A next page is on the wire for this page. */
+    val loadingMore: Boolean = false,
 )
+
+/**
+ * Whether this browse id belongs to one of YouTube's endless generated mixes.
+ *
+ * The "RD…" families are the mixes: a Super Mix, an artist radio, the watch
+ * queue behind a track. Their continuation never runs dry — there is no last
+ * page to reach — so following it in the background fetches until the app is
+ * killed. They are grown by the listener scrolling instead.
+ */
+fun String.isEndlessMix(): Boolean = startsWith("RD")
 
 /**
  * Whether an album or playlist is in the library, and the id that changes that.

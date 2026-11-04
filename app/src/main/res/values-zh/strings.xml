@@ -1361,10 +1361,6 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
-    <plurals name="playlist_synced_new_tracks">
-        <item quantity="one">正在从 %2$s 下载 %1$d 首新歌</item>
-        <item quantity="other">正在从 %2$s 下载 %1$d 首新歌</item>
-    </plurals>
     <string name="quick_picks">快速精选</string>
     <string name="quick_picks_subtitle">为你挑选，每天更新</string>
     <string name="quick_picks_offline_subtitle">播放本机已有的歌曲</string>

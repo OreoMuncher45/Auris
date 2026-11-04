@@ -27,6 +27,7 @@ object FlowStore {
     private const val KEY_DISCOVERY = "flow_discovery"
     private const val KEY_MEMORY = "flow_memory"
     private const val KEY_EXCLUDED_GENRES = "flow_excluded_genres"
+    private const val KEY_SIMILAR_LIKED = "flow_similar_liked"
     private const val KEY_BANNED = "flow_banned"
     private const val KEY_SKIPS = "flow_skips"
     private const val KEY_SEED_CURSOR = "flow_seed_cursor"
@@ -137,6 +138,7 @@ object FlowStore {
             discovery = prefs.getFloat(KEY_DISCOVERY, 0.35f),
             memory = prefs.getFloat(KEY_MEMORY, 0.5f),
             excludedGenres = prefs.getStringSet(KEY_EXCLUDED_GENRES, emptySet()).orEmpty(),
+            similarLiked = prefs.getBoolean(KEY_SIMILAR_LIKED, true),
         )
         _bannedIds.value = prefs.getStringSet(KEY_BANNED, emptySet()).orEmpty().take(MAX_BANNED).toSet()
         _skipCounts.value = readSkips()
@@ -156,6 +158,14 @@ object FlowStore {
     fun setMemory(value: Float) {
         _tuner.value = _tuner.value.withMemory(value)
         if (this::prefs.isInitialized) prefs.edit().putFloat(KEY_MEMORY, _tuner.value.memory).apply()
+    }
+
+    /** Whether the mix is seeded from the listener's liked songs. */
+    fun setSimilarLiked(value: Boolean) {
+        _tuner.value = _tuner.value.withSimilarLiked(value)
+        if (this::prefs.isInitialized) {
+            prefs.edit().putBoolean(KEY_SIMILAR_LIKED, _tuner.value.similarLiked).apply()
+        }
     }
 
     fun toggleGenre(genre: String, enabled: Boolean) {

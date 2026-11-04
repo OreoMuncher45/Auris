@@ -74,8 +74,10 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -310,6 +312,14 @@ fun DetailScreen(
      * photo, not in this header.
      */
     songSort: SongSort = SongSort.DEFAULT,
+    /**
+     * Asks for the next page of an endless mix — a Super Mix, an artist radio.
+     *
+     * Those pages have no last one, so the list grows as the listener reaches
+     * its end rather than being fetched to the end in the background. Null on
+     * the pages whose tracks are all there already.
+     */
+    onLoadMore: (() -> Unit)? = null,
 ) {
     val rawSongs = (page.songs as? UiState.Success)?.data.orEmpty()
     val songs = remember(rawSongs, songSort) { rawSongs.sortedForDetail(songSort) }
@@ -753,6 +763,23 @@ fun DetailScreen(
             if (isArtist) aboutItem()
         }
 
+        // The end of an endless mix: the next page is asked for when the last
+        // row is the one in view, which is where the listener has to be to
+        // have got there. The page's own continuation is the only thing that
+        // makes it endless — an ordinary playlist's pages were all fetched
+        // long before this, and has no token left to spend.
+        if (onLoadMore != null && page.continuation != null) {
+            val loadMore by rememberUpdatedState(onLoadMore)
+            val loading by rememberUpdatedState(page.loadingMore)
+            LaunchedEffect(listState, page.continuation) {
+                snapshotFlow {
+                    val layout = listState.layoutInfo
+                    (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
+                }.collect { (lastVisible, total) ->
+                    if (!loading && total > 0 && lastVisible >= total - 1) loadMore()
+                }
+            }
+        }
     }
 } else {
     ArtistShelfGridPage(

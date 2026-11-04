@@ -8,9 +8,6 @@ import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -90,25 +87,6 @@ object DownloadedPlaylistSync {
 
     /** One pass at a time: two walks would fetch the same pages twice. */
     private val mutex = Mutex()
-
-    /**
-     * What the last pass found, for the screen to say out loud.
-     *
-     * A download that happens with nobody watching is a download the listener
-     * cannot tell from a download that silently failed — and "my playlist grew
-     * and the app noticed" is the whole promise being kept. Null when the last
-     * pass found nothing.
-     */
-    private val _notice = MutableStateFlow<SyncNotice?>(null)
-    val notice: StateFlow<SyncNotice?> = _notice.asStateFlow()
-
-    /** A playlist that gained tracks, and how many. */
-    data class SyncNotice(val playlistTitle: String, val newTracks: Int)
-
-    /** Called once the screen has shown the notice. */
-    fun consumeNotice() {
-        _notice.value = null
-    }
 
     /**
      * Runs a pass, if one is due and the device is allowed to talk to the
@@ -222,7 +200,6 @@ object DownloadedPlaylistSync {
                 ),
                 missing,
             )
-            _notice.value = SyncNotice(collection.title, missing.size)
         }
     }
 

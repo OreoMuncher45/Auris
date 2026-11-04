@@ -55,6 +55,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Cached
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
@@ -137,16 +138,6 @@ fun HomeScreen(
     // Explore doesn't page — only Home has a continuation worth following.
     onLoadMore: (() -> Unit)? = null,
     loadingMore: Boolean = false,
-    /**
-     * True when the feed has stopped paging on its own and there is more of
-     * it to have. The end of the feed then offers the rest by hand instead
-     * of reaching for it: YouTube's Home continuation never runs dry, and a
-     * feed that follows it as far as the scroll goes is a request every time
-     * the tail comes into view.
-     */
-    canLoadMore: Boolean = false,
-    /** The listener asked for more of the feed by hand. */
-    onLoadMoreByHand: (() -> Unit)? = null,
     recentlyPlayedLoading: Boolean = false,
     /**
      * Whether the feed's first shelf gets the big full-bleed cards. The phone
@@ -166,6 +157,15 @@ fun HomeScreen(
     onFlowClick: (() -> Unit)? = null,
     /** Opens Replay; its card leads Top Picks, the way Apple's does. */
     onOpenReplay: (() -> Unit)? = null,
+    /**
+     * Opens the whole Quick Picks set.
+     *
+     * The arrow at the end of the Quick Picks heading: the shelf shows what
+     * fits on a screen, and this is the set behind it. Quick Picks is a
+     * section of Home rather than a tab of its own — the navbar is crowded
+     * enough, and the feed's own shelf is already the card row it needs.
+     */
+    onOpenQuickPicks: (() -> Unit)? = null,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
 
@@ -232,6 +232,7 @@ fun HomeScreen(
                         flowItem = flowItem,
                         onFlowClick = onFlowClick,
                         onOpenReplay = onOpenReplay,
+                        onOpenQuickPicks = onOpenQuickPicks,
                         firstIsHero = leadHero && !recentlyPlayedLoading,
                         recentsViewType = recentsViewType,
                         onRecentsViewTypeToggle = {
@@ -245,9 +246,6 @@ fun HomeScreen(
                         },
                     )
                     if (loadingMore) feedMoreSkeleton()
-                    if (canLoadMore && onLoadMoreByHand != null) {
-                        item { LoadMoreRow(onClick = onLoadMoreByHand) }
-                    }
                 }
             }
         }
@@ -263,39 +261,21 @@ fun HomeScreen(
         // [loadingMore] re-checks the moment a page settles, so the next one is
         // asked for while the tail is still on screen to show it loading.
         //
-        // [canLoadMore] holds the feed back once it has taken the pages it is
-        // allowed to take by itself. Without it the list would ask for the
-        // next page the instant the previous one settled, and the next, and
-        // the next — a request every time the tail came into view, forever.
-        LaunchedEffect(listState, loadingMore, canLoadMore) {
+        // The trigger is the *end* of the list, not the last three rows of it:
+        // Home's continuation is endless — every page it hands back is another
+        // set of generated Super Mixes — so a trigger that fires while the tail
+        // merely happens to be on screen asks for a page the listener never
+        // scrolled to, and asks again for the next one, and the feed runs away
+        // on its own. The last row has to be the one in view, which means the
+        // listener got there.
+        LaunchedEffect(listState, loadingMore) {
             snapshotFlow {
                 val layout = listState.layoutInfo
                 (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
             }.collect { (lastVisible, total) ->
-                if (!loadingMore && !canLoadMore && total > 0 && lastVisible >= total - 3) loadMore()
+                if (!loadingMore && total > 0 && lastVisible >= total - 1) loadMore()
             }
         }
-    }
-}
-
-/**
- * The end of the feed, when there is more of it and the feed will not reach
- * for it by itself.
- */
-@Composable
-private fun LoadMoreRow(onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = stringResource(Res.string.home_load_more),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-        )
     }
 }
 
@@ -312,6 +292,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     flowItem: ShelfItem? = null,
     onFlowClick: (() -> Unit)? = null,
     onOpenReplay: (() -> Unit)? = null,
+    /** Opens the whole Quick Picks set — the arrow at the end of its heading. */
+    onOpenQuickPicks: (() -> Unit)? = null,
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
@@ -383,6 +365,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     leadingCard = topPickLeading,
                     currentSong = currentSong,
                     isPlaying = isPlaying,
+                    // The section's own mark, and the arrow that opens the
+                    // whole set rather than one card of it.
+                    headerIcon = Icons.Rounded.AutoAwesome,
+                    onHeaderNavigate = onOpenQuickPicks,
                 )
             } else if (index == 0 && shelf.title.equals(RECENTS_TITLE, ignoreCase = true)) {
                 RecentShelf(
@@ -643,9 +629,19 @@ private const val LOGO_ASPECT = 374f / 521f
  * [onShowAll] is only ever set on Library, whose rows stop at five cards
  * rather than running the shelf's whole length — see [LibraryGridShelf].
  * Home and Explore never pass it, so their heading is unchanged.
+ *
+ * [icon] is the mark a section carries — Quick Picks' spark, the same one the
+ * navbar tab wore — and [onNavigate] is the arrow at the end of the heading,
+ * which opens the whole section rather than one card of it.
  */
 @Composable
-internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() -> Unit)? = null) {
+internal fun SectionHeader(
+    title: String,
+    subtitle: String = "",
+    onShowAll: (() -> Unit)? = null,
+    icon: ImageVector? = null,
+    onNavigate: (() -> Unit)? = null,
+) {
     val displayTitle = localizeShelfTitle(title)
     val displaySubtitle = localizeShelfSubtitle(subtitle)
     Row(
@@ -654,6 +650,15 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
             .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 text = displayTitle,
@@ -680,6 +685,15 @@ internal fun SectionHeader(title: String, subtitle: String = "", onShowAll: (() 
                 modifier = Modifier
                     .clickable(onClick = onShowAll)
                     .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+            )
+        } else if (onNavigate != null) {
+            Icon(
+                imageVector = BitChordIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .size(24.dp)
+                    .clickable(onClick = onNavigate),
             )
         }
     }
@@ -1063,9 +1077,18 @@ internal fun Shelf(
     leadingCard: (@Composable () -> Unit)? = null,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
+    /** The mark this section's heading carries. */
+    headerIcon: ImageVector? = null,
+    /** The arrow at the end of the heading, which opens the whole section. */
+    onHeaderNavigate: (() -> Unit)? = null,
 ) {
     Column(Modifier.padding(bottom = 26.dp)) {
-        SectionHeader(shelf.title, shelf.subtitle)
+        SectionHeader(
+            shelf.title,
+            shelf.subtitle,
+            icon = headerIcon,
+            onNavigate = onHeaderNavigate,
+        )
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),

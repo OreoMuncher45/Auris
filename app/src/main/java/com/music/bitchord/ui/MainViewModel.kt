@@ -40,6 +40,7 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.BrowseItem
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.HomeShelf
+import com.music.bitchord.data.model.isEndlessMix
 import com.music.bitchord.data.model.withoutRepeatsOf
 import com.music.bitchord.data.model.LibraryPage
 import com.music.bitchord.data.model.LibraryState
@@ -137,31 +138,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Titles already on screen, so a later page can't repeat a shelf. */
     private val homeSeenTitles = mutableSetOf<String>()
-
-    /**
-     * How many pages of Home the feed fetches on its own.
-     *
-     * YouTube's Home continuation is endless by design: every page it hands
-     * back is another set of generated "Super mixes", and following it as far
-     * as the scroll goes means another request every time the tail comes into
-     * view. That is a machine hammering an API rather than a person using an
-     * app, and an account that does it is the kind of account YouTube stops
-     * answering. So the feed takes a page or two by itself and then stops,
-     * and the rest is the listener's to ask for.
-     */
-    private val homeAutoPageBudget = 2
-
-    /** Pages fetched on this load's own account so far. */
-    private var homeAutoPages = 0
-
-    private val _homeCanLoadMore = MutableStateFlow(false)
-
-    /**
-     * True when the feed has stopped paging and there is more of it to have.
-     *
-     * The end of the feed offers the rest by hand rather than reaching for it.
-     */
-    val homeCanLoadMore: StateFlow<Boolean> = _homeCanLoadMore.asStateFlow()
 
     private val _homeLoadingMore = MutableStateFlow(false)
 
@@ -2128,8 +2104,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _home.value = UiState.Loading
         homeContinuation = null
         homeSeenTitles.clear()
-        homeAutoPages = 0
-        _homeCanLoadMore.value = false
         _homeLoadingMore.value = false
         _homeRecentlyPlayedLoading.value = _signedIn.value
         // The core feed plus one browse per supplement. Recently played is left
@@ -2219,8 +2193,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (identity != listenerKey()) return@onSuccess
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
-            homeAutoPages = 0
-            _homeCanLoadMore.value = false
             val shelves = feed.shelves.withoutBlockedArtists().withoutRepeatsOf(emptyList())
                 .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
             if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
@@ -2235,28 +2207,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * in flight, once the feed is exhausted, or before the first page has
      * loaded — [homeContinuation] covers all three by construction.
      *
-     * Bounded on purpose: once the feed has taken the pages it is allowed to
-     * take by itself, it stops and says so. See [homeAutoPageBudget].
+     * The feed pages itself as the listener scrolls: that is what Home is for,
+     * and YouTube's Home continuation is endless by design, so the page that
+     * lands brings another set of generated Super Mixes with it. The screen
+     * only asks for the next page once the tail is actually in view (see the
+     * scroll trigger in the Home screen), which is what keeps it a listener
+     * scrolling rather than the app asking and asking.
      */
     fun loadMoreHome() {
-        if (homeAutoPages >= homeAutoPageBudget) {
-            _homeCanLoadMore.value = homeContinuation != null
-            return
-        }
-        fetchMoreHome()
-    }
-
-    /**
-     * The listener asked for more of the feed by hand.
-     *
-     * Re-arms the automatic run: a deliberate pull is a request for the feed
-     * to behave, and refusing to fetch anything after it would be the app
-     * deciding for the listener that they had seen enough. The run is still
-     * bounded, so one pull cannot turn into an endless feed.
-     */
-    fun loadMoreHomeByHand() {
-        homeAutoPages = 0
-        _homeCanLoadMore.value = false
         fetchMoreHome()
     }
 
@@ -2275,9 +2233,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // itself rather than run dry with a token still attached —
                     // treat it the same as exhausted so scrolling can't spin here.
                     homeContinuation = feed.continuation.takeIf { added.isNotEmpty() }
-                    homeAutoPages++
                     if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
-                    _homeCanLoadMore.value = homeContinuation != null && homeAutoPages >= homeAutoPageBudget
                 }
             }
             if (identity == listenerKey()) _homeLoadingMore.value = false
@@ -3482,6 +3438,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Stops the moment the page leaves the stack: there is no one to append
      * for. A page that adds nothing new (below) is the other exit, for a feed
      * that loops back on itself instead of running dry.
+     *
+     * An endless mix — a Super Mix, an artist radio — has no last page, so
+     * following its continuation here would fetch one page after another for
+     * as long as the app is alive. Its next page is kept on the page instead
+     * and asked for as the listener scrolls to the end of the list — see
+     * [loadMoreDetail].
      */
     private fun fillIn(browseId: String, token: String, artworkFallback: String?) {
         viewModelScope.launch {
@@ -3522,6 +3484,59 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 next = fetched.continuation
+                if (browseId.isEndlessMix()) {
+                    // Hand the next page to the screen instead of taking it
+                    // here: the mix grows when the listener reaches the end of
+                    // the list, and not one request at a time in the dark.
+                    _detailStack.value = _detailStack.value.map { page ->
+                        if (page.browseId == browseId) page.copy(continuation = next) else page
+                    }
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /**
+     * The next page of an endless mix, asked for as the listener reaches the
+     * end of the list.
+     *
+     * A Super Mix is a playlist with no limit: it grows a page at a time as
+     * long as the listener keeps scrolling, and stops the moment they stop.
+     * That is the whole difference between it and an ordinary playlist, whose
+     * pages are followed to the end in the background so the whole thing is
+     * there to shuffle from.
+     */
+    fun loadMoreDetail(browseId: String) {
+        val page = _detailStack.value.firstOrNull { it.browseId == browseId } ?: return
+        val token = page.continuation ?: return
+        if (page.loadingMore) return
+        _detailStack.value = _detailStack.value.map {
+            if (it.browseId == browseId) it.copy(loadingMore = true) else it
+        }
+        viewModelScope.launch {
+            val fetched = YtMusicRepository.moreSongs(token).getOrNull()
+            val stack = _detailStack.value
+            val index = stack.indexOfFirst { it.browseId == browseId }
+            if (index < 0 || fetched == null) {
+                _detailStack.value = stack.map {
+                    if (it.browseId == browseId) it.copy(loadingMore = false) else it
+                }
+                return@launch
+            }
+            val current = stack[index]
+            val existing = (current.songs as? UiState.Success)?.data ?: emptyList()
+            val known = existing.mapTo(HashSet()) { it.videoId }
+            val added = fetched.songs
+                .filter { known.add(it.videoId) }
+                .withoutBlockedArtists()
+                .withArtwork(current.thumbnailUrl)
+            _detailStack.value = stack.toMutableList().also {
+                it[index] = current.copy(
+                    songs = UiState.Success(existing + added),
+                    continuation = fetched.continuation,
+                    loadingMore = false,
+                )
             }
         }
     }
@@ -4007,11 +4022,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun setFlowExcludedGenres(genres: Set<String>) = FlowStore.setExcludedGenres(genres)
 
     /** Commits a batched tuner edit (mood + sliders + genres) and rebuilds once. */
-    fun applyFlowConfig(mood: FlowMood, discovery: Float, memory: Float, excludedGenres: Set<String>) {
+    fun applyFlowConfig(
+        mood: FlowMood,
+        discovery: Float,
+        memory: Float,
+        excludedGenres: Set<String>,
+        similarLiked: Boolean = FlowStore.tuner.value.similarLiked,
+    ) {
         FlowStore.setMood(mood)
         FlowStore.setDiscovery(discovery)
         FlowStore.setMemory(memory)
         FlowStore.setExcludedGenres(excludedGenres)
+        FlowStore.setSimilarLiked(similarLiked)
         refreshFlow()
     }
     fun banFromFlow(videoId: String) = FlowStore.ban(videoId)
@@ -4041,12 +4063,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val exclude = (favorites.map { it.videoId } + history.map { it.videoId }).toSet()
         val quickPicks = YtMusicRepository.quickPicks(exclude).getOrNull().orEmpty()
             .withoutBlockedArtists()
+        // A mood is played from the Radio tab's own collections: the station
+        // behind the mood is a wall of playlists, and their entries are the
+        // songs the mood is made of. The unfiltered mix has no station and
+        // asks for none.
+        val moodPool = fetchFlowMoodPool(FlowStore.config.mood)
         // Hidden acts can also arrive inside the engine's own radio lookups, so
         // the finished queue is filtered as well. Ask for a little extra so a
         // mix does not come back short after that pass.
         val buffer = if (AppSettings.blockedArtists.value.isEmpty()) 0 else 12
         return FlowEngine.buildInitialQueue(
-            seeds = FlowEngine.SeedPool(favorites, history, quickPicks),
+            seeds = FlowEngine.SeedPool(favorites, history, quickPicks, moodPool),
             likeStatuses = likeStatuses.value,
             bannedIds = FlowStore.bannedIds.value,
             skipCounts = FlowStore.skipCounts.value,
@@ -4054,6 +4081,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             limit = limit + buffer,
             genreOf = ::flowGenreOf,
         ).withoutBlockedArtists().distinctBy { it.videoId }.take(limit)
+    }
+
+    /**
+     * The songs behind the Radio tab's station for [mood].
+     *
+     * The Radio tab's stations are the app's own mood and genre grid: a
+     * station opens a wall of playlists, and each playlist is a collection of
+     * songs. The link between the two is the station's name, and YouTube
+     * Music calls some of the moods something else — the station behind
+     * "Love" is "Romance" — so every name a mood answers to is tried.
+     *
+     * Bounded on purpose: the station's own playlists are enough for a mix,
+     * and a wall of them is a lot of requests to make before the first
+     * track plays.
+     */
+    private suspend fun fetchFlowMoodPool(mood: FlowMood): List<Song> {
+        if (mood == FlowMood.FLOW) return emptyList()
+        val wanted = mood.stationNames.map { it.lowercase() }.toSet()
+        val stations = YtMusicRepository.moodAndGenres().getOrNull().orEmpty()
+            .flatMap { it.items }
+            .filter { it.title.lowercase() in wanted }
+        if (stations.isEmpty()) return emptyList()
+        val songs = LinkedHashMap<String, Song>()
+        for (station in stations) {
+            val shelves = YtMusicRepository.moodGenreShelves(station.browseId, station.params)
+                .getOrNull().orEmpty()
+            val playlists = shelves.flatMap { it.items }
+                .mapNotNull { it.browseId }
+                .distinct()
+                .take(FLOW_MOOD_PLAYLISTS)
+            for (playlist in playlists) {
+                val entries = YtMusicRepository.browseSongsPaged(playlist).getOrNull().orEmpty()
+                entries.take(FLOW_MOOD_PLAYLIST_SONGS).forEach { song ->
+                    songs.putIfAbsent(song.videoId, song)
+                }
+                if (songs.size >= FLOW_MOOD_POOL_SIZE) break
+            }
+            if (songs.size >= FLOW_MOOD_POOL_SIZE) break
+        }
+        return songs.values.toList()
     }
 
     fun refreshFlow(limit: Int = FlowEngine.INITIAL_TRACKS) {
@@ -4216,3 +4283,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun text(id: Int): String = getApplication<Application>().getString(id)
 }
+
+/** How many of a mood station's playlists are opened for its pool. */
+private const val FLOW_MOOD_PLAYLISTS = 4
+
+/** How many songs are taken from each of those playlists. */
+private const val FLOW_MOOD_PLAYLIST_SONGS = 60
+
+/** How many songs the mood's pool holds in total. */
+private const val FLOW_MOOD_POOL_SIZE = 240
