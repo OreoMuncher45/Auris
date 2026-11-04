@@ -1182,12 +1182,6 @@ fun planTransition(
     mode: CrossfadeMode = CrossfadeMode.STANDARD,
     albumSequential: Boolean = false,
     advanced: Boolean = false,
-    /**
-     * Engine V2 policies (entrance rescoring, vocal-gated outro) layered
-     * over the advanced plan. Default off so every existing expectation
-     * pins legacy behavior; the app passes its engine setting here.
-     */
-    engineV2: Boolean = false,
 ): TransitionPlan {
     val length = max(duration.orZero(), trackDurationSeconds(currentTrack))
     val playbackTime = max(0.0, currentTime.orZero())
@@ -1292,7 +1286,6 @@ fun planTransition(
     val filterVariant = if (traits != null) filterVariantFor(currentTrack, nextTrack) else FilterTransitionVariant.SWEEP
     val primary = mixPlan(
         analysis, nextAnalysis, mixAnchor, mixOutAnchor.type, length, nextLength, traits, filterVariant,
-        engineV2,
     )
     // An exit where the outgoing track is still singing over the incoming one
     // is worth trading for another the analysis ranked, if one halves the
@@ -1305,7 +1298,7 @@ fun planTransition(
         rankedMixOuts.asSequence()
             .filter { abs(it.time - mixAnchor) > 1.0 && it.time <= length }
             .take(MAX_REROUTE_CANDIDATES)
-            .map { mixPlan(analysis, nextAnalysis, it.time, it.type, length, nextLength, traits, filterVariant, engineV2) }
+            .map { mixPlan(analysis, nextAnalysis, it.time, it.type, length, nextLength, traits, filterVariant) }
             .filter { playbackTime < it.transitionStart }
             .minByOrNull { it.vocalOverlap }
             ?.takeIf { it.vocalOverlap <= primary.vocalOverlap * VOCAL_REROUTE_GAIN }
@@ -1339,7 +1332,6 @@ private fun mixPlan(
     nextLength: Double,
     traits: PairTraits?,
     filterVariant: FilterTransitionVariant,
-    engineV2: Boolean = false,
 ): TransitionPlan {
     val currentBpm = analysis.bpm.orZero()
     val nextBpm = nextAnalysis.bpm.orZero()
@@ -1413,26 +1405,26 @@ private fun mixPlan(
         } else {
             incomingDropTime
         }
-    // Engine V2: move the entrance onto the strongest drum/bass onset.
+    // Move the entrance onto the strongest drum/bass onset.
+    //
+    // The grid the onsets are read against is the *incoming* track's own beat:
+    // its onsets are the ones being ranked, so its tempo is the one they are
+    // measured in.
     val v2Reasons = mutableListOf<String>()
-    val v2Entrance = if (engineV2) {
-        val beatSeconds = nextAnalysis.beatInterval.takeIf { it > 0 }
-            ?: nextAnalysis.bpm.takeIf { it > 0 }?.let { 60.0 / it }
-            ?: 0.0
-        AutomixEngineV2.rescoreEntrance(
-            candidates = nextAnalysis.mixInCandidates,
-            original = requestedIncomingHandoff,
-            lowEnergy = nextAnalysis.lowEnergyCurve.ifEmpty { nextAnalysis.energyCurve },
-            beatInterval = beatSeconds,
-            firstBeat = nextAnalysis.firstBeat,
-            duration = nextLength,
-        )
-    } else {
-        null
-    }
-    val effectiveIncomingHandoff = v2Entrance?.takeIf { it.applied }?.time
+    val incomingBeatSeconds = nextAnalysis.beatInterval.takeIf { it > 0 }
+        ?: nextAnalysis.bpm.takeIf { it > 0 }?.let { 60.0 / it }
+        ?: 0.0
+    val v2Entrance = AutomixEngineV2.rescoreEntrance(
+        candidates = nextAnalysis.mixInCandidates,
+        original = requestedIncomingHandoff,
+        lowEnergy = nextAnalysis.lowEnergyCurve.ifEmpty { nextAnalysis.energyCurve },
+        beatInterval = incomingBeatSeconds,
+        firstBeat = nextAnalysis.firstBeat,
+        duration = nextLength,
+    )
+    val effectiveIncomingHandoff = v2Entrance.takeIf { it.applied }?.time
         ?: requestedIncomingHandoff
-    if (v2Entrance?.applied == true) {
+    if (v2Entrance.applied) {
         v2Reasons += "v2-entrance+${tenths(v2Entrance.improvementDb)}dB"
     }
     val maxIncomingHandoff = nextLength - MIN_INCOMING_CLEARANCE_SECONDS
@@ -1462,7 +1454,7 @@ private fun mixPlan(
         val totalOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
         val targetStart = max(0.0, mixEnd - totalOverlap)
         val earliestTransitionStart = max(0.0, mixEnd - maximumOverlap)
-        val v2Gate1 = if (engineV2) v2VocalGate(analysis, targetStart, mixEnd) else 0.0
+        val v2Gate1 = v2VocalGate(analysis, targetStart, mixEnd)
         if (v2Gate1 > 0.05) v2Reasons += "v2-vocal-gate+${tenths(v2Gate1)}s"
         transitionStart = alignedTransitionStart(
             analysis,
@@ -1479,7 +1471,7 @@ private fun mixPlan(
         val actualOverlap = if (traits != null) wholeBars(clamped, beatSeconds, maximumOverlap) else clamped
         val targetStart = max(0.0, mixEnd - actualOverlap)
         val earliestTransitionStart = max(0.0, mixEnd - maximumOverlap)
-        val v2Gate2 = if (engineV2) v2VocalGate(analysis, targetStart, mixEnd) else 0.0
+        val v2Gate2 = v2VocalGate(analysis, targetStart, mixEnd)
         if (v2Gate2 > 0.05) v2Reasons += "v2-vocal-gate+${tenths(v2Gate2)}s"
         transitionStart = alignedTransitionStart(
             analysis,

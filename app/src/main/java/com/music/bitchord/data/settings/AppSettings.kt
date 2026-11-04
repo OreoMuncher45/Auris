@@ -273,7 +273,14 @@ object AppSettings {
     /** The CPU budget used by Beat This! and vocal analysis for Automix. */
     val automixPerformanceMode = MutableStateFlow(AutomixPerformanceMode.BALANCED)
 
-    /** Which transition planner Automix runs. V2 is the default; Legacy is the way back. */
+    /**
+     * The transition planner Automix runs.
+     *
+     * Pinned to the phrase-aware engine: the legacy plan it replaced is gone,
+     * so there is nothing to switch back to. Kept as a setting because the
+     * plan reads it, and because an install that still has the old engine
+     * name in its preferences has to land somewhere that resolves.
+     */
     val automixEngine = MutableStateFlow(AutomixEngine.V2)
     val skipSilence = MutableStateFlow(false)
 
@@ -1338,6 +1345,8 @@ object AppSettings {
                 prefs.getString(KEY_AUTOMIX_PERFORMANCE_MODE, null) ?: AutomixPerformanceMode.BALANCED.name,
             )
         }.getOrDefault(AutomixPerformanceMode.BALANCED)
+        // An install that still has the removed engine's name in its
+        // preferences fails the lookup and lands on the one engine there is.
         automixEngine.value = runCatching {
             AutomixEngine.valueOf(
                 prefs.getString(KEY_AUTOMIX_ENGINE, null) ?: AutomixEngine.V2.name,
@@ -1822,6 +1831,12 @@ object AppSettings {
         prefs.edit().putString(KEY_AUTOMIX_PERFORMANCE_MODE, value.name).apply()
     }
 
+    /**
+     * Records the engine in the preferences.
+     *
+     * The only engine is the phrase-aware one, so this writes what it is
+     * given and nothing can be moved off it.
+     */
     fun setAutomixEngine(value: AutomixEngine) {
         automixEngine.value = value
         prefs.edit().putString(KEY_AUTOMIX_ENGINE, value.name).apply()

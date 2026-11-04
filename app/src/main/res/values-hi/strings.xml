@@ -1384,4 +1384,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">%2$s से %1$d नया गाना डाउनलोड हो रहा है</item>
+        <item quantity="other">%2$s से %1$d नए गाने डाउनलोड हो रहे हैं</item>
+    </plurals>
+    <string name="quick_picks">त्वरित चुनाव</string>
+    <string name="quick_picks_subtitle">आपके लिए चुने गए, हर दिन ताज़ा</string>
+    <string name="quick_picks_offline_subtitle">इस डिवाइस पर मौजूद चीज़ों से चल रहा है</string>
+    <string name="quick_picks_empty">अभी कोई त्वरित चुनाव नहीं</string>
+    <string name="quick_picks_offline_empty">अभी तक कुछ भी डाउनलोड नहीं हुआ</string>
+    <string name="quick_picks_play_all">सभी चलाएँ</string>
+    <string name="quick_picks_shuffle">क्रम बदलें</string>
 </resources>

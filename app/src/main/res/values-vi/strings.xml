@@ -1301,4 +1301,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">Đang tải %1$d bài mới từ %2$s</item>
+        <item quantity="other">Đang tải %1$d bài mới từ %2$s</item>
+    </plurals>
+    <string name="quick_picks">Chọn nhanh</string>
+    <string name="quick_picks_subtitle">Chọn cho bạn, làm mới mỗi ngày</string>
+    <string name="quick_picks_offline_subtitle">Đang phát từ những gì có trên thiết bị này</string>
+    <string name="quick_picks_empty">Hiện chưa có mục chọn nhanh</string>
+    <string name="quick_picks_offline_empty">Chưa tải xuống gì cả</string>
+    <string name="quick_picks_play_all">Phát tất cả</string>
+    <string name="quick_picks_shuffle">Ngẫu nhiên</string>
 </resources>

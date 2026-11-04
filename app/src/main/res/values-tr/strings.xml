@@ -1341,4 +1341,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">%2$s\'den %1$d yeni parça indiriliyor</item>
+        <item quantity="other">%2$s\'den %1$d yeni parça indiriliyor</item>
+    </plurals>
+    <string name="quick_picks">Hızlı seçimler</string>
+    <string name="quick_picks_subtitle">Senin için seçildi, her gün yenileniyor</string>
+    <string name="quick_picks_offline_subtitle">Bu cihazda bulunanlardan çalıyor</string>
+    <string name="quick_picks_empty">Şu anda hızlı seçim yok</string>
+    <string name="quick_picks_offline_empty">Henüz hiçbir şey indirilmedi</string>
+    <string name="quick_picks_play_all">Tümünü çal</string>
+    <string name="quick_picks_shuffle">Karıştır</string>
 </resources>

@@ -18,6 +18,7 @@ import com.music.bitchord.data.sources.SourceStream
 import com.music.bitchord.data.sources.StreamFormat
 import com.music.bitchord.data.sources.TrackMatcher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -209,6 +210,23 @@ object Downloads {
      */
     private val running = LinkedHashMap<String, Job?>()
 
+    /**
+     * Completed once the index has been read off disk.
+     *
+     * The read happens on a background thread, so for a moment after [init]
+     * the live flows are empty even though a library is on the device. Anything
+     * that asks "what has been downloaded?" in that window is told "nothing" —
+     * which is the one answer that must never be wrong. The downloaded-playlist
+     * sync asked it and then went away for two hours; see
+     * [com.music.bitchord.download.DownloadedPlaylistSync].
+     */
+    private val indexReady = CompletableDeferred<Unit>()
+
+    /** Suspends until the download index has been read off disk. */
+    suspend fun awaitIndexReady() {
+        indexReady.await()
+    }
+
     fun init(context: Context) {
         appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
@@ -230,6 +248,11 @@ object Downloads {
             _saved.updateAndGet { saved + it }
             _savedMetadata.updateAndGet { metadata + it }
             _collections.updateAndGet { collections + it }
+            // Opened last, and opened whatever happened above: a decode failure
+            // is logged and treated as an empty library, and the waiter still
+            // has to be let go — it is waiting on an answer, not on a
+            // successful read.
+            indexReady.complete(Unit)
         }
     }
 
@@ -656,6 +679,15 @@ object Downloads {
         if (id !in _collections.value) return
         recordCollections { it - id }
     }
+
+    /**
+     * Whether [id] is a release that was downloaded whole.
+     *
+     * The question the downloaded-playlist sync asks before it spends a walk
+     * on a playlist: there is no promise to keep about a release that was
+     * never downloaded, and fetching it would be a request for nothing.
+     */
+    fun isDownloadedCollection(id: String): Boolean = id in _collections.value
 
     /**
      * Delete every file downloaded for release [id] and drop the record of it.

@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">Nouveau dossier</string>
     <string name="folders">Dossiers</string>
+    <string name="home_load_more">Charger plus</string>
 </resources>

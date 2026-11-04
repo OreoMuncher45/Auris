@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">Новая папка</string>
     <string name="folders">Папки</string>
+    <string name="home_load_more">Загрузить ещё</string>
 </resources>

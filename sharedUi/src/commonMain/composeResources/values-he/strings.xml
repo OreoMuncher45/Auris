@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">תיקייה חדשה</string>
     <string name="folders">תיקיות</string>
+    <string name="home_load_more">טען עוד</string>
 </resources>

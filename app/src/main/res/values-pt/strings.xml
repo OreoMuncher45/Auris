@@ -1389,4 +1389,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">A transferir %1$d nova faixa de %2$s</item>
+        <item quantity="other">A transferir %1$d novas faixas de %2$s</item>
+    </plurals>
+    <string name="quick_picks">Escolhas rápidas</string>
+    <string name="quick_picks_subtitle">Escolhidas para si, atualizadas todos os dias</string>
+    <string name="quick_picks_offline_subtitle">A reproduzir o que está neste dispositivo</string>
+    <string name="quick_picks_empty">Sem escolhas rápidas de momento</string>
+    <string name="quick_picks_offline_empty">Ainda não foi transferido nada</string>
+    <string name="quick_picks_play_all">Reproduzir tudo</string>
+    <string name="quick_picks_shuffle">Aleatório</string>
 </resources>

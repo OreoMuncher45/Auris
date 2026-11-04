@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">โฟลเดอร์ใหม่</string>
     <string name="folders">โฟลเดอร์</string>
+    <string name="home_load_more">โหลดเพิ่ม</string>
 </resources>

@@ -150,7 +150,6 @@ fun ClassipodHost(
     val skipSil by AppSettings.skipSilence.collectAsStateWithLifecycle()
     val usbDac by AppSettings.preferUsbDac.collectAsStateWithLifecycle()
     val spatial by AppSettings.spatialAudio.collectAsStateWithLifecycle()
-    val automixEngineVal by AppSettings.automixEngine.collectAsStateWithLifecycle()
     val speed by AppSettings.playbackSpeed.collectAsStateWithLifecycle()
     val crossfade by AppSettings.crossfadeSeconds.collectAsStateWithLifecycle()
     val themeModeVal by AppSettings.themeMode.collectAsStateWithLifecycle()
@@ -527,17 +526,6 @@ fun ClassipodHost(
     fun advPlaybackPage(): ClassipodPage.Menu = ClassipodPage.Menu(
         "Playback",
         listOf(
-            MenuItem("Automix engine", automixEngineVal.label) {
-                AppSettings.setAutomixEngine(
-                    if (automixEngineVal == com.music.bitchord.data.settings.AutomixEngine.V2) {
-                        com.music.bitchord.data.settings.AutomixEngine.LEGACY
-                    } else {
-                        com.music.bitchord.data.settings.AutomixEngine.V2
-                    },
-                )
-                push(advPlaybackPage())
-                pop()
-            },
             tog("Music only", musicOnly, AppSettings::setPreferMusicOnly, ::advPlaybackPage),
             tog("Autoplay", autoplayOn, AppSettings::setAutoplay, ::advPlaybackPage),
             tog("Loudness", loudness, AppSettings::setLoudnessNormalization, ::advPlaybackPage),

@@ -229,4 +229,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="library_search_hint">Search this</string>
     <string name="library_empty_segment">Nothing here yet</string>
+    <string name="home_load_more">Load more</string>
 </resources>

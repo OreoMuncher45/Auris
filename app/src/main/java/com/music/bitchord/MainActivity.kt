@@ -71,6 +71,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.LocalOverscrollFactory
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CloudOff
@@ -179,6 +180,7 @@ import com.music.bitchord.ui.screens.libraryLinks
 import com.music.bitchord.ui.screens.CACHE_FOLDER_BROWSE_ID
 import com.music.bitchord.ui.screens.ListenTogetherScreen
 import com.music.bitchord.ui.screens.PartyServerEditor
+import com.music.bitchord.ui.screens.QuickPicksScreen
 import com.music.bitchord.ui.screens.SettingsScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
@@ -862,6 +864,7 @@ private fun BitChordApp(
 
     val homeState by viewModel.home.collectAsStateWithLifecycle()
     val homeLoadingMore by viewModel.homeLoadingMore.collectAsStateWithLifecycle()
+    val homeCanLoadMore by viewModel.homeCanLoadMore.collectAsStateWithLifecycle()
     val homeRecentlyPlayedLoading by viewModel.homeRecentlyPlayedLoading.collectAsStateWithLifecycle()
     // Flow: unlock gate + temp playlist + tuner.
     var showFlow by remember { mutableStateOf(false) }
@@ -903,6 +906,31 @@ private fun BitChordApp(
         }
     }
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
+
+    /**
+     * A downloaded playlist that gained tracks says so.
+     *
+     * The sync runs in the background, and a background download the listener
+     * cannot see is indistinguishable from one that silently failed — which is
+     * what made this read as "it just doesn't download them". One line, once,
+     * naming the playlist and the count.
+     */
+    val playlistSyncNotice by com.music.bitchord.download.DownloadedPlaylistSync.notice
+        .collectAsStateWithLifecycle()
+    LaunchedEffect(playlistSyncNotice) {
+        val notice = playlistSyncNotice ?: return@LaunchedEffect
+        com.music.bitchord.download.DownloadedPlaylistSync.consumeNotice()
+        Toast.makeText(
+            context,
+            context.resources.getQuantityString(
+                R.plurals.playlist_synced_new_tracks,
+                notice.newTracks,
+                notice.newTracks,
+                notice.playlistTitle,
+            ),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
 
     /**
      * The single gate both surfaces read, so the icon can't announce the update
@@ -954,6 +982,12 @@ private fun BitChordApp(
     // The podcast feed is fetched once, the first time its tab is opened.
     LaunchedEffect(selectedTab) {
         if (selectedTab == TAB_PODCASTS) viewModel.ensurePodcastsLoaded()
+        // Quick Picks is read off the home feed. The feed is fetched at
+        // startup, so by the time the tab is opened there is usually an
+        // answer; when there is not, this is the retry.
+        if (selectedTab == TAB_QUICK_PICKS && homeState is UiState.Error) {
+            viewModel.loadHome()
+        }
     }
     val selectedMoodGenre by viewModel.selectedMoodGenre.collectAsStateWithLifecycle()
     val moodGenreShelves by viewModel.moodGenreShelves.collectAsStateWithLifecycle()
@@ -1077,10 +1111,17 @@ private fun BitChordApp(
                 rest.sortedBy { rank[it.title] ?: Int.MAX_VALUE }
             }
             val shelves = buildList {
+                // Quick Picks is the second row, pinned: the feed's own lead
+                // row stays first, because that is what the account came to
+                // see, and Quick Picks is the answer to the question that row
+                // raises. It was first itself until it grew a page of its
+                // own, and with the page there it no longer needed the top
+                // of the feed to be found.
+                addAll(orderedRest.take(1))
                 if (quickPicks != null) {
                     add(quickPicks)
                 }
-                addAll(orderedRest)
+                addAll(orderedRest.drop(1))
             }
             UiState.Success(shelves)
         }
@@ -1355,11 +1396,13 @@ private fun BitChordApp(
     val radioListState = rememberLazyListState()
     val podcastListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
+    val quickPicksListState = rememberLazyListState()
     val historyListState = rememberLazyListState()
     val libraryShowAllGridState = rememberLazyGridState()
     val searchListState = rememberLazyListState()
     val currentListState = when (selectedTab) {
         TAB_HOME -> homeListState
+        TAB_QUICK_PICKS -> quickPicksListState
         TAB_PODCASTS -> podcastListState
         TAB_RADIO -> if (selectedMoodGenre == null) radioListState else moodGenreListState
         TAB_LIBRARY -> libraryListState
@@ -1459,9 +1502,14 @@ private fun BitChordApp(
     val replayLabel = stringResource(R.string.replay)
     val queueLabel = stringResource(R.string.queue)
     val sharedLinkLabel = stringResource(R.string.shared_link)
-    val tabs = remember(homeLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
+    val quickPicksLabel = stringResource(R.string.quick_picks)
+    val tabs = remember(homeLabel, quickPicksLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(homeLabel, BitChordIcons.Home),
+            // Quick Picks sits second, the same place it sits on the Home
+            // page: the feed's lead row is the account's own, and Quick Picks
+            // is the answer to the question that row raises.
+            BottomTab(quickPicksLabel, Icons.Rounded.AutoAwesome),
             BottomTab(podcastsLabel, Icons.Rounded.GraphicEq),
             BottomTab(radioLabel, Icons.Rounded.Radio),
             BottomTab(libraryLabel, BitChordIcons.TabLibrary),
@@ -1539,8 +1587,17 @@ private fun BitChordApp(
             convertedFromVideo = song
             convertedAudioId = audio.videoId
             TrackLog.d("Player", "audio switch applying '${audio.title}' (${audio.videoId})", song.videoId)
+            // The row this came from still wears the video's own thumbnail on
+            // the page it was opened from. The catalogue track knows the
+            // sleeve, so the page is told to wear it too.
+            viewModel.noteConvertedTrack(song.videoId, audio)
+            // The catalogue track is a music track. It keeps the queue identity
+            // of the video row it replaces, but it is no longer video-origin:
+            // AutoMix declines a video because there is no beat analysis to
+            // plan a transition from, and that analysis exists for this one.
+            // Leaving the flag on meant a converted track played on and never
+            // joined the mix.
             val target = audio.copy(
-                isVideoOrigin = true,
                 queueTier = song.queueTier,
                 queueEntryId = song.queueEntryId,
                 radioName = song.radioName,
@@ -1820,6 +1877,41 @@ private fun BitChordApp(
             )
             c.playSongs(oneOffQueue, 0)
             // Start radio in the mini-player; the user opens the full view by tapping it.
+        }
+    }
+
+    /**
+     * The offline queue: the device's own library, with the tapped track
+     * first.
+     *
+     * Offline there is no station to start — the radio request needs the
+     * network the app does not have — so a tap on a Quick Picks card plays
+     * what is on the disk instead. The whole of it, not the twenty the shelf
+     * shows: the shelf is what fits on a screen, the queue is what plays.
+     */
+    val playOfflineLibrary: (Song, QueueSource) -> Unit = { song, source ->
+        playRequestGeneration++
+        activeRadioSeed = null
+        scope.launch {
+            if (refusedByHost()) return@launch
+            val c = controller ?: return@launch
+            val library = Downloads.snapshotSongs()
+                .filter { it.videoId.isNotBlank() }
+                .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+            if (library.isEmpty()) return@launch
+            // The card names a track the shelf drew; the library holds the
+            // same track with its file, its album and its quality badge, and
+            // that is the one worth queueing.
+            val selected = library.firstOrNull { it.videoId == song.videoId } ?: song
+            val rest = library.filter { it.videoId != selected.videoId }
+            val queue = (listOf(selected) + rest).map { entry ->
+                entry.copy(
+                    playbackSource = source.title,
+                    playbackSourceType = source.type,
+                    playbackSourceId = source.id,
+                ).asQueueEntry(QueueTier.CONTEXT)
+            }
+            c.playSongs(queue, 0)
         }
     }
 
@@ -2258,6 +2350,66 @@ private fun BitChordApp(
                 artist = InnertubeParser.artistFromSubtitle(item.subtitle),
                 thumbnailUrl = item.thumbnailUrl,
             )
+        }
+    }
+
+    /**
+     * Whether this track is on the device, and so playable without a network.
+     */
+    val isOnDevice: (String) -> Boolean = { videoId ->
+        Downloads.snapshotSongs().any { it.videoId == videoId }
+    }
+
+    /**
+     * Quick Picks as a page: the feed's own shelf, or the device's library
+     * when there is no feed to ask.
+     *
+     * Offline the list is the whole library, not the twenty the Home row
+     * shows: the row is what fits on a screen, the page is the set.
+     */
+    val downloadedSongs by Downloads.saved.collectAsStateWithLifecycle()
+    val quickPicksSongs: List<Song> = remember(homeWithFlow, offlineActive, downloadedSongs) {
+        if (offlineActive) {
+            Downloads.snapshotSongs()
+                .filter { it.videoId.isNotBlank() }
+                .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+        } else {
+            val shelf = (homeWithFlow as? UiState.Success)?.data
+                ?.firstOrNull { com.music.bitchord.ui.screens.isQuickPicksShelf(it.title) }
+            shelf?.items?.mapNotNull { item -> shelfSong(item) }.orEmpty()
+        }
+    }
+
+    /**
+     * Plays the whole Quick Picks set.
+     *
+     * Offline the set is the device's library, and it plays all of it: a
+     * library of forty tracks that plays four of them is not a library, it is
+     * a preview.
+     */
+    val playQuickPicks: (Boolean) -> Unit = { shuffled ->
+        val songs = quickPicksSongs
+        if (songs.isNotEmpty()) {
+            playRequestGeneration++
+            activeRadioSeed = null
+            scope.launch {
+                if (refusedByHost()) return@launch
+                val c = controller ?: return@launch
+                // Shuffle goes on before the queue is built, so the queue is
+                // built shuffled rather than played shuffled.
+                val ordered = if (shuffled) songs.shuffled() else songs
+                val source = QueueSource(
+                    title = quickPicksLabel,
+                    type = PlaybackSourceType.HOME,
+                )
+                val queue = ordered.map { entry ->
+                    entry.copy(
+                        playbackSource = source.title,
+                        playbackSourceType = source.type,
+                    ).asQueueEntry(QueueTier.CONTEXT)
+                }
+                c.playSongs(queue, 0)
+            }
         }
     }
 
@@ -3231,7 +3383,6 @@ private fun BitChordApp(
                                 !versionAlignmentPending(cached.videoId)
                             ) {
                                 optimisticVersionSong = cached.copy(
-                                    isVideoOrigin = true,
                                     queueTier = song.queueTier,
                                     queueEntryId = song.queueEntryId,
                                     radioName = song.radioName,
@@ -4300,10 +4451,21 @@ private fun BitChordApp(
                                         // playback, New mix is the only reset.
                                         showFlow = true
                                     }
-                                    song != null -> playRadio(
-                                        song,
-                                        QueueSource(shelfTitle, PlaybackSourceType.HOME),
-                                    )
+                                    song != null -> {
+                                        val source = QueueSource(shelfTitle, PlaybackSourceType.HOME)
+                                        // A track that is on the device plays
+                                        // from the device: the station it would
+                                        // otherwise start needs the network, and
+                                        // offline the app has none. The whole
+                                        // library goes with it, so the shelf is
+                                        // the start of a set rather than one
+                                        // track.
+                                        if (offlineActive && isOnDevice(song.videoId)) {
+                                            playOfflineLibrary(song, source)
+                                        } else {
+                                            playRadio(song, source)
+                                        }
+                                    }
                                     browseId != null -> viewModel.openDetail(
                                         browseId = browseId,
                                         title = item.title,
@@ -4326,7 +4488,28 @@ private fun BitChordApp(
                             contentPadding = listPadding,
                             onLoadMore = viewModel::loadMoreHome,
                             loadingMore = homeLoadingMore,
+                            canLoadMore = homeCanLoadMore,
+                            onLoadMoreByHand = viewModel::loadMoreHomeByHand,
                             recentlyPlayedLoading = homeRecentlyPlayedLoading,
+                        )
+                        TAB_QUICK_PICKS -> QuickPicksScreen(
+                            songs = quickPicksSongs,
+                            offline = offlineActive,
+                            onPlay = { song ->
+                                val source = QueueSource(quickPicksLabel, PlaybackSourceType.HOME)
+                                if (offlineActive && isOnDevice(song.videoId)) {
+                                    playOfflineLibrary(song, source)
+                                } else {
+                                    playRadio(song, source)
+                                }
+                            },
+                            onPlayAll = { playQuickPicks(false) },
+                            onShuffle = { playQuickPicks(true) },
+                            currentSong = player.song,
+                            isPlaying = player.isPlaying,
+                            onItemLongPress = { song -> openSongMenu(song) },
+                            listState = quickPicksListState,
+                            contentPadding = listPadding,
                         )
                         TAB_PODCASTS -> PodcastsScreen(
                             state = podcastsState,
@@ -6773,10 +6956,11 @@ private const val PAGE_PUSH_MS = 260
 private const val PAGE_FADE_MS = 200
 
 private const val TAB_HOME = 0
-private const val TAB_PODCASTS = 1
-private const val TAB_RADIO = 2
-private const val TAB_LIBRARY = 3
-private const val TAB_SEARCH = 4
+private const val TAB_QUICK_PICKS = 1
+private const val TAB_PODCASTS = 2
+private const val TAB_RADIO = 3
+private const val TAB_LIBRARY = 4
+private const val TAB_SEARCH = 5
 
 /**
  * What a tab's key is prefixed with in the content switcher above.

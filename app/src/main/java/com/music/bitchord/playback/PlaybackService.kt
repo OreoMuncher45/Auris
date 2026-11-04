@@ -130,6 +130,7 @@ import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.download.Downloads
+import com.music.bitchord.playback.QueueCoordinator.asQueueEntry
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicLong
@@ -2254,6 +2255,20 @@ class PlaybackService : MediaLibraryService() {
                     activePlayer.seekTo(currentIndex, pos)
                     if (wasPlaying) activePlayer.play()
                     onSwapCommitted?.invoke()
+                    // The handover is a track change for everything the app
+                    // books against the current track, even when the bytes
+                    // never stop: the media id moved to the other rendition,
+                    // and the quality hunt, the analysis fetch and the
+                    // AutoMix re-arm are all keyed off that id. Skipping this
+                    // left the swapped track with no prefetch, no second-look
+                    // upgrade and no AutoMix plan — the standby path below
+                    // has always made the call.
+                    onTrackBecameCurrent(
+                        targetMediaItem,
+                        previousEnded = false,
+                        reason = Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED,
+                        alreadyAudible = true,
+                    )
                     refreshCustomLayouts()
                     swappingMediaId = null
                     return@launch
@@ -3518,6 +3533,13 @@ class PlaybackService : MediaLibraryService() {
         }
         val current = exoPlayer.currentMediaItem?.toSong() ?: return
         if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += current
+        // Offline: the suggestions come from the device, not from YouTube.
+        // There is no radio to ask — the request needs the network the app
+        // does not have — so the queue is topped up with what is on disk.
+        if (AppSettings.effectiveOffline.value) {
+            topUpOfflineAutoplay(exoPlayer, current)
+            return
+        }
         // In a party the server's queue is the one being topped up, and this
         // player's copy of it lags behind by however long reconcile is held off
         // — read from the copy, a batch that had already landed counted as
@@ -3606,6 +3628,37 @@ class PlaybackService : MediaLibraryService() {
                 remaining = MAX_QUEUED_AUTOPLAY
             }
         }
+    }
+
+    /**
+     * Tops the queue up with the songs on this device.
+     *
+     * The offline version of AutoPlay. Every track on the device that is not
+     * already queued and not already played this session, newest first — the
+     * whole library, in the order it arrived, with the queue growing as the
+     * earlier tracks are heard.
+     *
+     * The seed is only latched once something has actually been added: with
+     * nothing left to offer, a latched seed would suppress every later
+     * callback and leave AutoPlay visibly on with an empty queue.
+     */
+    private fun topUpOfflineAutoplay(exoPlayer: ExoPlayer, current: Song) {
+        if (autoplaySeed == current.videoId) return
+        val queued = (0 until exoPlayer.mediaItemCount)
+            .map { exoPlayer.getMediaItemAt(it).toSong() }
+            .map { it.videoId }
+            .toSet()
+        val played = sessionSongHistory.map { it.videoId }.toSet()
+        val additions = Downloads.snapshotSongs()
+            .filter { it.videoId.isNotBlank() }
+            .filter { it.videoId !in queued && it.videoId !in played }
+            .sortedByDescending { it.localDateAddedSeconds ?: 0L }
+            .take(MAX_QUEUED_AUTOPLAY)
+            .map { it.asQueueEntry(QueueTier.AUTOPLAY) }
+        if (additions.isEmpty()) return
+        autoplaySeed = current.videoId
+        exoPlayer.addMediaItems(additions.map { it.toMediaItem() })
+        if (AppSettings.dontRepeatSuggestions.value) sessionSongHistory += additions
     }
 
     /**
@@ -6777,6 +6830,16 @@ class PlaybackService : MediaLibraryService() {
     /**
      * Hands the cache the queue ahead of the one playing: [AudioCache.QUEUE_DEPTH]
      * tracks is more than it does anything with, but it decides that, not this.
+     *
+     * With music-only on, the next track is looked up in the catalogue while it
+     * is still next, and the queue is rewritten to hold the catalogue track
+     * instead of the video row it was matched from. Doing it here rather than
+     * when the track starts playing is what makes the next track arrive as
+     * music: a video row carries the video's own audio, has no beat analysis
+     * for the mix to plan against, and wears a frame from a music video
+     * instead of the record's sleeve. Converted in advance it is an ordinary
+     * music track from its first sample — eligible for the lossless copy,
+     * eligible for AutoMix, and wearing the album art.
      */
     private fun prefetchAround(player: ExoPlayer) {
         val nextIndex = player.nextMediaItemIndex
@@ -6785,20 +6848,6 @@ class PlaybackService : MediaLibraryService() {
             (nextIndex..end).map { index -> player.getMediaItemAt(index).toSong() }
         } else {
             emptyList()
-        }
-        // The item's own playback URI, which read-ahead needs to warm a
-        // source-backed track: its resolver has config and track ids plus the
-        // title, artist and runtime a cross-source match is made on, and none
-        // of that is reconstructible from a media id. See [AudioCache.Upcoming].
-        val upcomingUris = if (nextIndex != C.INDEX_UNSET) {
-            val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
-            (nextIndex..end).associate { index ->
-                player.getMediaItemAt(index).let { item ->
-                    item.mediaId to item.localConfiguration?.uri
-                }
-            }
-        } else {
-            emptyMap()
         }
         // So whatever read-ahead writes for these can be named in the Cached
         // songs folder; its own requests carry nothing but an id.
@@ -6809,25 +6858,10 @@ class PlaybackService : MediaLibraryService() {
         preferredPrefetchRequest = request
         preferredPrefetchJob?.cancel()
 
-        fun warm(songs: List<Song>) {
-            AudioCache.prefetchQueue(
-                songs.map { song ->
-                    // The title, artist and runtime the item was built with —
-                    // see [Song.toMediaItem]. Read from the queued item because
-                    // read-ahead has no other way to reach this metadata.
-                    AudioCache.Upcoming(
-                        mediaId = song.videoId,
-                        target = TrackMatcher.targetOf(song),
-                        uri = upcomingUris[song.videoId],
-                    )
-                },
-            )
-        }
-
         val next = upcomingSongs.firstOrNull()
         if (!preferAudio || next?.isVideo != true) {
             preferredPrefetchJob = null
-            warm(upcomingSongs)
+            warmUpcoming(player, nextIndex)
             return
         }
 
@@ -6847,8 +6881,77 @@ class PlaybackService : MediaLibraryService() {
                 }
                 .getOrDefault(next)
             if (preferredPrefetchRequest != request) return@launch
-            warm(listOf(preferred) + upcomingSongs.drop(1))
+            if (preferred.videoId != next.videoId && !preferred.isVideo) {
+                replaceUpcomingWithCatalogueTrack(player, nextIndex, next, preferred)
+            }
+            warmUpcoming(player, nextIndex)
         }
+    }
+
+    /**
+     * Warms the queue ahead of the player.
+     *
+     * Read from the player rather than from the snapshot taken before the
+     * catalogue lookup: the item may have been rewritten in the meantime, and
+     * the bytes worth warming are the ones the rewritten item will ask for.
+     */
+    private fun warmUpcoming(player: ExoPlayer, nextIndex: Int) {
+        if (nextIndex == C.INDEX_UNSET) return
+        val end = (nextIndex + AudioCache.QUEUE_DEPTH - 1).coerceAtMost(player.mediaItemCount - 1)
+        if (nextIndex !in 0..end) return
+        val items = (nextIndex..end).map { player.getMediaItemAt(it) }
+        val songs = items.map { it.toSong() }
+        AudioCache.noteSongs(songs)
+        AudioCache.prefetchQueue(
+            items.map { item ->
+                // The title, artist and runtime the item was built with —
+                // see [Song.toMediaItem]. Read from the queued item because
+                // read-ahead has no other way to reach this metadata.
+                AudioCache.Upcoming(
+                    mediaId = item.mediaId,
+                    target = TrackMatcher.targetOf(item.toSong()),
+                    uri = item.localConfiguration?.uri,
+                )
+            },
+        )
+    }
+
+    /**
+     * Puts the catalogue track in the queue in place of the video row it was
+     * matched from.
+     *
+     * The entry keeps the queue identity of the row it replaces, so the
+     * playlist the listener built survives the swap and the "switch to the
+     * video" action still has its original to go back to.
+     */
+    private fun replaceUpcomingWithCatalogueTrack(
+        player: ExoPlayer,
+        index: Int,
+        videoSong: Song,
+        audio: Song,
+    ) {
+        if (index !in 0 until player.mediaItemCount) return
+        if (player.currentMediaItemIndex == index) return
+        // A version swap is rewriting the queue right now; a second writer
+        // would race it.
+        if (swappingMediaId != null) return
+        val item = player.getMediaItemAt(index)
+        if (item.mediaId != videoSong.videoId) return
+        val replacement = audio.copy(
+            queueTier = videoSong.queueTier,
+            queueEntryId = videoSong.queueEntryId,
+            radioName = videoSong.radioName,
+            playbackSource = videoSong.playbackSource,
+            playbackSourceType = videoSong.playbackSourceType,
+            playbackSourceId = videoSong.playbackSourceId,
+            setVideoId = videoSong.setVideoId,
+        ).toMediaItem()
+        player.replaceMediaItem(index, replacement)
+        TrackLog.d(
+            "BitChord",
+            "queued '${audio.title}' in place of the video row",
+            about = videoSong.videoId,
+        )
     }
 
     /** Stops both rendition selection and byte read-ahead, and makes resume retry. */

@@ -1389,4 +1389,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">מוריד %1$d שירה חדשה מ־%2$s</item>
+        <item quantity="other">מוריד %1$d שירים חדשים מ־%2$s</item>
+    </plurals>
+    <string name="quick_picks">בחירות מהירות</string>
+    <string name="quick_picks_subtitle">נבחרו עבורך, מתעדכנות כל יום</string>
+    <string name="quick_picks_offline_subtitle">מנגן את מה שיש במכשיר הזה</string>
+    <string name="quick_picks_empty">אין כרגע בחירות מהירות</string>
+    <string name="quick_picks_offline_empty">עדיין לא הורד דבר</string>
+    <string name="quick_picks_play_all">נגן הכול</string>
+    <string name="quick_picks_shuffle">ערבוב</string>
 </resources>

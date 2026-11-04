@@ -60,9 +60,14 @@ data class Song(    val videoId: String,
     /** A music-video upload rather than the catalogue track. */
     val isVideo: Boolean = false,
     /**
-     * True for a video upload and for its manually selected catalogue match.
-     * The latter remains video-origin so playback policies such as AutoMix do
-     * not mistake a converted video for a normal music track.
+     * True for a video upload, and false for a catalogue track.
+     *
+     * Playback policies use this to decide what they can do with a track:
+     * AutoMix declines a video because there is no beat analysis to plan a
+     * transition from, and a catalogue track has one. A video that has been
+     * converted to its catalogue match is a catalogue track from then on, so
+     * the flag is cleared on the way in — a converted track plays in the mix
+     * like any other music track.
      */
     val isVideoOrigin: Boolean = isVideo,
     /**

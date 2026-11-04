@@ -1361,4 +1361,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">Mengunduh %1$d lagu baru dari %2$s</item>
+        <item quantity="other">Mengunduh %1$d lagu baru dari %2$s</item>
+    </plurals>
+    <string name="quick_picks">Pilihan cepat</string>
+    <string name="quick_picks_subtitle">Dipilih untuk Anda, disegarkan setiap hari</string>
+    <string name="quick_picks_offline_subtitle">Memutar dari yang ada di perangkat ini</string>
+    <string name="quick_picks_empty">Belum ada pilihan cepat</string>
+    <string name="quick_picks_offline_empty">Belum ada yang diunduh</string>
+    <string name="quick_picks_play_all">Putar semua</string>
+    <string name="quick_picks_shuffle">Acak</string>
 </resources>

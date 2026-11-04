@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">Nova pasta</string>
     <string name="folders">Pastas</string>
+    <string name="home_load_more">Carregar mais</string>
 </resources>

@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">Nueva carpeta</string>
     <string name="folders">Carpetas</string>
+    <string name="home_load_more">Cargar más</string>
 </resources>

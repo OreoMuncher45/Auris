@@ -1367,4 +1367,15 @@
     <string name="settings_category_advanced">Advanced</string>
     <string name="settings_category_support">Support</string>
     <string name="settings_category_subtitle">Everything to do with this part of the app</string>
+    <plurals name="playlist_synced_new_tracks">
+        <item quantity="one">กำลังดาวน์โหลดเพลงใหม่ %1$d เพลงจาก %2$s</item>
+        <item quantity="other">กำลังดาวน์โหลดเพลงใหม่ %1$d เพลงจาก %2$s</item>
+    </plurals>
+    <string name="quick_picks">เลือกด่วน</string>
+    <string name="quick_picks_subtitle">คัดมาให้คุณ อัปเดตทุกวัน</string>
+    <string name="quick_picks_offline_subtitle">กำลังเล่นจากสิ่งที่อยู่ในเครื่องนี้</string>
+    <string name="quick_picks_empty">ยังไม่มีรายการเลือกด่วน</string>
+    <string name="quick_picks_offline_empty">ยังไม่ได้ดาวน์โหลดอะไรเลย</string>
+    <string name="quick_picks_play_all">เล่นทั้งหมด</string>
+    <string name="quick_picks_shuffle">สุ่ม</string>
 </resources>

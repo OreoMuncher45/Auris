@@ -138,6 +138,31 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** Titles already on screen, so a later page can't repeat a shelf. */
     private val homeSeenTitles = mutableSetOf<String>()
 
+    /**
+     * How many pages of Home the feed fetches on its own.
+     *
+     * YouTube's Home continuation is endless by design: every page it hands
+     * back is another set of generated "Super mixes", and following it as far
+     * as the scroll goes means another request every time the tail comes into
+     * view. That is a machine hammering an API rather than a person using an
+     * app, and an account that does it is the kind of account YouTube stops
+     * answering. So the feed takes a page or two by itself and then stops,
+     * and the rest is the listener's to ask for.
+     */
+    private val homeAutoPageBudget = 2
+
+    /** Pages fetched on this load's own account so far. */
+    private var homeAutoPages = 0
+
+    private val _homeCanLoadMore = MutableStateFlow(false)
+
+    /**
+     * True when the feed has stopped paging and there is more of it to have.
+     *
+     * The end of the feed offers the rest by hand rather than reaching for it.
+     */
+    val homeCanLoadMore: StateFlow<Boolean> = _homeCanLoadMore.asStateFlow()
+
     private val _homeLoadingMore = MutableStateFlow(false)
 
     /**
@@ -900,6 +925,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * The catalogue track a video row was matched to.
+     *
+     * A community playlist's rows are video uploads, and YouTube's own
+     * artwork for one is the video's thumbnail — a frame of a music video
+     * where the record's cover belongs. Once the app knows the release behind
+     * the row, the page is told to wear it, so a list of songs stops
+     * advertising a still from a video for tracks that have a sleeve.
+     */
+    fun noteConvertedTrack(videoId: String, audio: Song) {
+        _detailStack.value = _detailStack.value.map { page ->
+            val songs = (page.songs as? UiState.Success)?.data ?: return@map page
+            var changed = false
+            val rewritten = songs.map { song ->
+                if (song.videoId == videoId && song.thumbnailUrl != audio.thumbnailUrl) {
+                    changed = true
+                    song.copy(
+                        thumbnailUrl = audio.thumbnailUrl,
+                        albumId = song.albumId ?: audio.albumId,
+                        albumName = song.albumName ?: audio.albumName,
+                    )
+                } else {
+                    song
+                }
+            }
+            if (changed) page.copy(songs = UiState.Success(rewritten)) else page
+        }
+    }
+
+    /**
      * A fresh like lands on top without a refetch: one first-page read,
      * merged into the cache, the open Liked page and the library list.
      * Next library load would place it anyway; this just skips the wait.
@@ -1205,6 +1259,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // reachable from a row's own menu on it — so the track goes
                 // into it for the same reason [addSuggestedSong] does.
                 appendToOpenPlaylist(playlist.browseId, song, added[song.videoId])
+                // A playlist that was downloaded whole is a promise about a
+                // moving thing: this track is now part of it, so it belongs on
+                // the device too. Looked at now rather than at the next
+                // scheduled pass, because this is the moment the listener
+                // knows it happened.
+                com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+                    getApplication(),
+                    playlist.browseId,
+                    force = true,
+                )
                 AddOutcome.ADDED
             },
             onFailure = { AddOutcome.FAILED },
@@ -1392,6 +1456,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     appendToOpenPlaylist(browseId, song, added[song.videoId])
+                    // Same promise as the picker above: a playlist downloaded
+                    // whole keeps up with what is added to it.
+                    com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+                        getApplication(),
+                        browseId,
+                        force = true,
+                    )
                 },
                 onFailure = {},
             )
@@ -2057,6 +2128,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _home.value = UiState.Loading
         homeContinuation = null
         homeSeenTitles.clear()
+        homeAutoPages = 0
+        _homeCanLoadMore.value = false
         _homeLoadingMore.value = false
         _homeRecentlyPlayedLoading.value = _signedIn.value
         // The core feed plus one browse per supplement. Recently played is left
@@ -2146,6 +2219,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (identity != listenerKey()) return@onSuccess
             homeContinuation = feed.continuation
             homeSeenTitles.clear()
+            homeAutoPages = 0
+            _homeCanLoadMore.value = false
             val shelves = feed.shelves.withoutBlockedArtists().withoutRepeatsOf(emptyList())
                 .filter { homeSeenTitles.add(it.title.lowercase(Locale.ROOT)) }
             if (shelves.isNotEmpty()) _home.value = UiState.Success(shelves)
@@ -2159,8 +2234,33 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Called as the Home list nears its end. A no-op while a page is already
      * in flight, once the feed is exhausted, or before the first page has
      * loaded — [homeContinuation] covers all three by construction.
+     *
+     * Bounded on purpose: once the feed has taken the pages it is allowed to
+     * take by itself, it stops and says so. See [homeAutoPageBudget].
      */
     fun loadMoreHome() {
+        if (homeAutoPages >= homeAutoPageBudget) {
+            _homeCanLoadMore.value = homeContinuation != null
+            return
+        }
+        fetchMoreHome()
+    }
+
+    /**
+     * The listener asked for more of the feed by hand.
+     *
+     * Re-arms the automatic run: a deliberate pull is a request for the feed
+     * to behave, and refusing to fetch anything after it would be the app
+     * deciding for the listener that they had seen enough. The run is still
+     * bounded, so one pull cannot turn into an endless feed.
+     */
+    fun loadMoreHomeByHand() {
+        homeAutoPages = 0
+        _homeCanLoadMore.value = false
+        fetchMoreHome()
+    }
+
+    private fun fetchMoreHome() {
         val token = homeContinuation ?: return
         if (_homeLoadingMore.value) return
         val identity = listenerKey()
@@ -2175,7 +2275,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // itself rather than run dry with a token still attached —
                     // treat it the same as exhausted so scrolling can't spin here.
                     homeContinuation = feed.continuation.takeIf { added.isNotEmpty() }
+                    homeAutoPages++
                     if (added.isNotEmpty()) _home.value = UiState.Success(existing + added)
+                    _homeCanLoadMore.value = homeContinuation != null && homeAutoPages >= homeAutoPageBudget
                 }
             }
             if (identity == listenerKey()) _homeLoadingMore.value = false
@@ -2981,6 +3083,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _detailStack.value = _detailStack.value.map {
                     if (it.browseId == browseId && it.songs is UiState.Loading) it.copy(songs = UiState.Success(onDevice)) else it
                 }
+            }
+            // A playlist that was downloaded whole is a promise about a moving
+            // thing, and opening its page is the moment the listener is most
+            // likely to have just added something to it. So this is when it is
+            // worth looking — throttled inside the sync itself, because
+            // flicking between playlists must not become a machine walking
+            // each one to its end.
+            if (!browseId.startsWith("local:") && Downloads.isDownloadedCollection(browseId)) {
+                com.music.bitchord.download.DownloadedPlaylistSync.refresh(
+                    getApplication(),
+                    browseId,
+                )
             }
             val state = when {
                 localPlaylist != null -> {

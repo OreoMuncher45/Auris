@@ -189,6 +189,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -377,6 +378,9 @@ internal fun desktopSwitchColors() = SwitchDefaults.colors(
 )
 internal val DesktopSecondary = Color(0xFF8E8E93)
 internal val DesktopDivider = Color(0xFF2C2C2E)
+/** How many pages of the home feed the app fetches on its own. See [homeAutoPages]. */
+private const val HOME_AUTO_PAGE_BUDGET = 2
+
 private const val STATS_SAMPLE_MS = 5_000L
 
 /** How often the playhead is offered to the history tracker. */
@@ -586,6 +590,11 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
     // everything else arrives by following it.
     var homeContinuation by remember { mutableStateOf<String?>(null) }
     var homeLoadingMore by remember { mutableStateOf(false) }
+    // How many pages of the feed the app fetches on its own. YouTube's Home continuation never runs
+    // dry, so following it as far as the scroll goes means another request every time the tail comes
+    // into view — the same hammering the phone stopped doing. The rest is the listener's to ask for.
+    var homeAutoPages by remember { mutableIntStateOf(0) }
+    var homeCanLoadMore by remember { mutableStateOf(false) }
     // Recently Played has its own request and its own skeleton at the head of the page, as on the
     // phone; it is only asked for with an account to have played on.
     var homeRecentsLoading by remember { mutableStateOf(false) }
@@ -2275,6 +2284,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         homeState = UiState.Loading
         homeContinuation = null
         homeSeenTitles.clear()
+        homeAutoPages = 0
+        homeCanLoadMore = false
         homeLoadingMore = false
         homeRecentsLoading = signedIn
         scope.launch {
@@ -2313,8 +2324,7 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
         }
     }
 
-    /** The next page of the core feed, as the list nears its end; a no-op once it has run dry. */
-    fun loadMoreHome() {
+    fun fetchMoreHome() {
         val token = homeContinuation ?: return
         if (homeLoadingMore || homeState !is UiState.Success) return
         val generation = homeGeneration
@@ -2327,11 +2337,35 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                     publishHomeShelves(feed.shelves)
                     // A page with nothing new is the feed looping back on itself, not running dry.
                     homeContinuation = feed.continuation.takeIf { homeSeenTitles.size > before }
+                    homeAutoPages++
+                    homeCanLoadMore = homeContinuation != null && homeAutoPages >= HOME_AUTO_PAGE_BUDGET
                 },
                 onFailure = { homeContinuation = null },
             )
             homeLoadingMore = false
         }
+    }
+
+    /**
+     * The next page of the core feed, as the list nears its end; a no-op once it has run dry, and
+     * once the feed has taken the pages it is allowed to take by itself.
+     */
+    fun loadMoreHome() {
+        if (homeAutoPages >= HOME_AUTO_PAGE_BUDGET) {
+            homeCanLoadMore = homeContinuation != null
+            return
+        }
+        fetchMoreHome()
+    }
+
+    /**
+     * The listener asked for more of the feed by hand. Re-arms the automatic run — a deliberate
+     * pull is a request for the feed to behave — while still keeping the run bounded.
+     */
+    fun loadMoreHomeByHand() {
+        homeAutoPages = 0
+        homeCanLoadMore = false
+        fetchMoreHome()
     }
 
     // The tray icon speaks StatusNotifierItem rather than going through AWT, which only implements
@@ -3865,6 +3899,8 @@ fun BitChordDesktopApp(onRequestExit: () -> Unit = {}) {
                             onItemLongPress = { item -> if (item.videoId != null) openMenu(item.toSong()) },
                             onLoadMore = ::loadMoreHome,
                             loadingMore = homeLoadingMore,
+                            canLoadMore = homeCanLoadMore,
+                            onLoadMoreByHand = ::loadMoreHomeByHand,
                             recentlyPlayedLoading = homeRecentsLoading,
                             leadHero = false,
                         )

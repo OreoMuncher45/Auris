@@ -206,4 +206,5 @@
     <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
     <string name="new_folder">Folder baru</string>
     <string name="folders">Folder</string>
+    <string name="home_load_more">Muat lagi</string>
 </resources>

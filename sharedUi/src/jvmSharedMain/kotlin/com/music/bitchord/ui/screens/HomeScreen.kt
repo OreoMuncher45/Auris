@@ -137,6 +137,16 @@ fun HomeScreen(
     // Explore doesn't page — only Home has a continuation worth following.
     onLoadMore: (() -> Unit)? = null,
     loadingMore: Boolean = false,
+    /**
+     * True when the feed has stopped paging on its own and there is more of
+     * it to have. The end of the feed then offers the rest by hand instead
+     * of reaching for it: YouTube's Home continuation never runs dry, and a
+     * feed that follows it as far as the scroll goes is a request every time
+     * the tail comes into view.
+     */
+    canLoadMore: Boolean = false,
+    /** The listener asked for more of the feed by hand. */
+    onLoadMoreByHand: (() -> Unit)? = null,
     recentlyPlayedLoading: Boolean = false,
     /**
      * Whether the feed's first shelf gets the big full-bleed cards. The phone
@@ -235,6 +245,9 @@ fun HomeScreen(
                         },
                     )
                     if (loadingMore) feedMoreSkeleton()
+                    if (canLoadMore && onLoadMoreByHand != null) {
+                        item { LoadMoreRow(onClick = onLoadMoreByHand) }
+                    }
                 }
             }
         }
@@ -249,14 +262,40 @@ fun HomeScreen(
         // skeleton and no request in flight to explain it. Restarting on
         // [loadingMore] re-checks the moment a page settles, so the next one is
         // asked for while the tail is still on screen to show it loading.
-        LaunchedEffect(listState, loadingMore) {
+        //
+        // [canLoadMore] holds the feed back once it has taken the pages it is
+        // allowed to take by itself. Without it the list would ask for the
+        // next page the instant the previous one settled, and the next, and
+        // the next — a request every time the tail came into view, forever.
+        LaunchedEffect(listState, loadingMore, canLoadMore) {
             snapshotFlow {
                 val layout = listState.layoutInfo
                 (layout.visibleItemsInfo.lastOrNull()?.index ?: -1) to layout.totalItemsCount
             }.collect { (lastVisible, total) ->
-                if (!loadingMore && total > 0 && lastVisible >= total - 3) loadMore()
+                if (!loadingMore && !canLoadMore && total > 0 && lastVisible >= total - 3) loadMore()
             }
         }
+    }
+}
+
+/**
+ * The end of the feed, when there is more of it and the feed will not reach
+ * for it by itself.
+ */
+@Composable
+private fun LoadMoreRow(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = stringResource(Res.string.home_load_more),
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }
 
