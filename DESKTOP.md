@@ -1,12 +1,38 @@
-# BitChord Desktop
+# Auris Desktop
 
-BitChord now has a Kotlin Multiplatform shared module and a Compose Multiplatform
-desktop application for Linux and Windows. Desktop uses the JVM target, which is
-the supported Compose Multiplatform desktop model; macOS is intentionally not a
-configured target.
+Auris on the desktop is the Android app, converted: the same screens, the same
+data layer, the same player, drawn by Compose Multiplatform and given the things
+a window has and a phone does not.
 
-The desktop target uses Java 21. Run it on Linux with the JDK and native
-libraries available in the shell:
+The desktop application lives in `desktopApp/`. It is the phone's UI taken from
+`:sharedUi` — Home, Explore, Library, Search, Radio, Podcasts and the player —
+with a desktop shell around it: a sidebar, a strip of open tabs, a full keyboard,
+media keys, a system tray and MPRIS.
+
+Everything the window says is Auris. The package is `com.music.auris.desktop`,
+the installer is `Auris`, the native libraries are `auris_analysis`,
+`auris_window` and `auris_smtc`, the state lives under `~/.local/state/auris`,
+and the MPRIS bus is `org.mpris.MediaPlayer2.auris`.
+
+## What the desktop has that the phone does not
+
+- **A sidebar** down the left: the pages the phone's bottom bar carries, plus
+  the ones that were always a page of their own — History, Downloads, Local
+  Music, Settings.
+- **Tabs.** `Ctrl+T` opens one, `Ctrl+W` closes it, `Ctrl+Tab` walks through
+  them and `Ctrl+1…9` goes straight to one. Every tab keeps its own road back,
+  so a tab left on an album is still on that album when you come back to it.
+- **The full keyboard.** Space plays and pauses, `Ctrl+←`/`Ctrl+→` change
+  track, `Ctrl+↑`/`Ctrl+↓` move the volume, `Ctrl+F` and `Ctrl+L` go to the
+  search, `Alt+1…9` jump to a page, `Ctrl+,` opens Settings, `Ctrl+/` lists
+  every shortcut, `F11` fills the screen and `Ctrl+Q` quits.
+- **Media keys**, the system tray, MPRIS on Linux and SMTC on Windows, and a
+  window that remembers where it was.
+
+## Running it
+
+The desktop target uses Java 21. On Linux, run it with the JDK and the native
+libraries in the shell:
 
 On NixOS:
 ```bash
@@ -21,18 +47,19 @@ running `gradlew.bat :desktopApp:run`.
 
 ## Installing a release
 
-Every download on the [releases page](https://github.com/kushagrasinghx/BitChord/releases) carries its own Java
-runtime, the FFmpeg and ONNX natives, the Automix analyser and its models.
-Nothing else has to be installed first — no JDK, no codec pack.
+Every download on the [releases page](https://github.com/OreoMuncher45/Auris/releases)
+carries its own Java runtime, the FFmpeg and ONNX natives, the Automix
+analyser and its models. Nothing else has to be installed first — no JDK, no
+codec pack.
 
 | Platform | Download | Notes |
 |---|---|---|
-| Linux | `BitChord-<version>-linux-x86_64.AppImage` | `chmod +x` it and run. No install, works on any distribution. |
-| Linux | `BitChord-<version>-linux-amd64.deb` | `sudo apt install ./BitChord-*.deb` on Debian, Ubuntu and derivatives. |
-| Linux | `BitChord-<version>-linux-x86_64.rpm` | `sudo dnf install ./BitChord-*.rpm` on Fedora, RHEL and openSUSE. |
-| Windows | `BitChord-<version>-windows-x64-setup.exe` | The ordinary installer. Installs for the current user, so it never asks for an administrator. |
-| Windows | `BitChord-<version>-windows-x64.msi` | The same thing for anyone who deploys by MSI. |
-| Windows | `BitChord-<version>-windows-x64-portable.zip` | Unzip anywhere and run `BitChord.exe`. Writes nothing outside the folder. |
+| Linux | `Auris-<version>-linux-x86_64.AppImage` | `chmod +x` it and run. No install, works on any distribution. |
+| Linux | `Auris-<version>-linux-amd64.deb` | `sudo apt install ./Auris-*.deb` on Debian, Ubuntu and derivatives. |
+| Linux | `Auris-<version>-linux-x86_64.rpm` | `sudo dnf install ./Auris-*.rpm` on Fedora, RHEL and openSUSE. |
+| Windows | `Auris-<version>-windows-x64-setup.exe` | The ordinary installer. Installs for the current user, so it never asks for an administrator. |
+| Windows | `Auris-<version>-windows-x64.msi` | The same thing for anyone who deploys by MSI. |
+| Windows | `Auris-<version>-windows-x64-portable.zip` | Unzip anywhere and run `Auris.exe`. Writes nothing outside the folder. |
 
 The Linux packages are built on Ubuntu 22.04 against its glibc, so they install
 on that release and anything newer.
@@ -46,7 +73,7 @@ time.
 
 **Windows and the Visual C++ runtime.** The Automix analyser is linked against a
 static C runtime, so on almost every machine there is nothing to install. If
-BitChord starts but Automix never analyses anything, install the
+Auris starts but Automix never analyses anything, install the
 [Microsoft Visual C++ 2015–2022 Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe)
 and restart it — that is the one dependency the bundled runtime cannot carry
 itself, because Windows expects it to be a system component.
@@ -67,8 +94,8 @@ bash ./gradlew :desktopApp:packageRpm
 # The AppImage is wrapped around the app image jpackage produces.
 bash ./gradlew :desktopApp:createDistributable
 desktopApp/packaging/appimage.sh \
-  desktopApp/build/compose/binaries/main/app/BitChord \
-  dist/BitChord-linux-x86_64.AppImage
+  desktopApp/build/compose/binaries/main/app/Auris \
+  dist/Auris-linux-x86_64.AppImage
 ```
 
 On Windows — [WiX Toolset 3](https://github.com/wixtoolset/wix3/releases) must
@@ -82,5 +109,11 @@ REM The portable build is the app image, zipped.
 gradlew.bat :desktopApp:createDistributable
 ```
 
-Pass `-Pbitchord.version=1.2.3` to stamp a version other than the one in
-`desktopApp/build.gradle.kts`; a release build takes it from the tag.
+### Build properties
+
+| Property | What it does |
+|---|---|
+| `-Pauris.version=1.2.3` | The version stamped into the packages; a release build takes it from the tag. |
+| `-Pauris.target=windows` | Build for Windows from a Linux machine, with a MinGW toolchain. |
+| `-Pauris.arch=arm64` | The processor architecture. Defaults to the host's, so an ARM Linux machine builds an ARM app. |
+| `-Pauris.requireNative=true` | Stop the build when a native library is missing, instead of shipping an app without it. |

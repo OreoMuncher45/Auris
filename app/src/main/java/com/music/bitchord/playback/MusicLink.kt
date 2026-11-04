@@ -31,11 +31,11 @@ sealed interface LinkRequest {
 }
 
 /**
- * Links and voice requests handed to BitChord from elsewhere on the device.
+ * Links and voice requests handed to Auris from elsewhere on the device.
  *
  * The same relay [PlayerDeepLink] is, and for the same reason: what has to
  * happen — start a queue, push a page, run a search — is all inside
- * `BitChordApp`'s composition, which [MainActivity][com.music.bitchord.MainActivity]
+ * `AurisApp`'s composition, which [MainActivity][com.music.bitchord.MainActivity]
  * has no handle on. The activity reads the intent, this holds the answer, and
  * the composition serves it once its controller and view model exist.
  *

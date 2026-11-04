@@ -39,8 +39,8 @@ jobs:
 
       - name: The analyser is in the jar
         run: |
-          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/lib/app/desktopApp*.jar)
-          jar tf "$jar" | grep -q 'native/libbitchord_analysis.so'
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/lib/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/libauris_analysis.so'
           jar tf "$jar" | grep -q 'models/.*\.onnx'
 
       - name: Upload test reports
@@ -84,11 +84,11 @@ jobs:
       - name: The analyser is in the jar
         shell: bash
         run: |
-          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/app/desktopApp*.jar)
-          jar tf "$jar" | grep -q 'native/bitchord_analysis.dll'
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/auris_analysis.dll'
           jar tf "$jar" | grep -q 'models/.*\.onnx'
           # WinRT, so only MSVC can build it and only this job ever does.
-          jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
+          jar tf "$jar" | grep -q 'native/auris_smtc.dll'
 
       - name: Upload test reports
         if: failure()

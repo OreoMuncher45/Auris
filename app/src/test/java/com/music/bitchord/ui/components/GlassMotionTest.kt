@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord
+ * Copyright (C) 2026 Auris
  *
  * The glass motion freeze, as arithmetic.
  *

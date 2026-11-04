@@ -27,7 +27,7 @@ import okhttp3.Request
  */
 object ArtworkDownload {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /** Largest rendition for a thumbnail URL, or null when there is no art. */
     fun fullUrl(thumbnailUrl: String?): String? {

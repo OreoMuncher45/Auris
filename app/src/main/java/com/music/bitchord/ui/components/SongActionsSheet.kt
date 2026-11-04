@@ -93,7 +93,7 @@ import com.music.bitchord.download.DownloadState
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.playback.SleepTimer
 import com.music.bitchord.ui.components.thumbnailBorder
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlinx.coroutines.delay
@@ -306,7 +306,7 @@ fun SongActionsSheet(
             // into it, but still ahead of the divider both share.
             onToggleAudioVersion?.let {
                 ActionRow(
-                    icon = if (isAudioVersion) Icons.Rounded.Videocam else BitChordIcons.MusicNote,
+                    icon = if (isAudioVersion) Icons.Rounded.Videocam else AurisIcons.MusicNote,
                     label = stringResource(
                         if (isAudioVersion) R.string.convert_to_video else R.string.convert_to_audio,
                     ),
@@ -355,7 +355,7 @@ fun SongActionsSheet(
         // account to have a playlist on.
         onAddToFolder?.let {
             ActionRow(
-                icon = BitChordIcons.Plus,
+                icon = AurisIcons.Plus,
                 label = stringResource(R.string.add_to_folder),
                 accent = palette.accent,
                 onClick = it,

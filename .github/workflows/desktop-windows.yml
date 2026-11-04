@@ -87,22 +87,22 @@ jobs:
 
       - name: Tests
         if: inputs.run_tests
-        run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pbitchord.version=${{ steps.version.outputs.value }}"
+        run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pauris.version=${{ steps.version.outputs.value }}"
 
       - name: Build the installer, the msi and the portable folders
         run: |
           .\gradlew.bat :desktopApp:packageExe :desktopApp:packageMsi :desktopApp:createDistributable `
             :desktopApp:windowsPortable `
-            "-Pbitchord.version=${{ steps.version.outputs.value }}" `
-            "-Pbitchord.requireNative=true"
+            "-Pauris.version=${{ steps.version.outputs.value }}" `
+            "-Pauris.requireNative=true"
 
       - name: The native libraries and the models are in the jar
         shell: bash
         run: |
-          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/app/desktopApp*.jar)
-          jar tf "$jar" | grep -q 'native/bitchord_analysis.dll'
-          jar tf "$jar" | grep -q 'native/bitchord_window.dll'
-          jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/auris_analysis.dll'
+          jar tf "$jar" | grep -q 'native/auris_window.dll'
+          jar tf "$jar" | grep -q 'native/auris_smtc.dll'
           jar tf "$jar" | grep -q 'models/.*\.onnx'
           # The runtime image jlink cut from the JDK. Without the charset tables it falls back
           # to the system code page and every UTF-8 string comes back mangled. The image has no
@@ -110,8 +110,8 @@ jobs:
           # from the release file jlink writes.
           runtime=""
           for candidate in \
-            desktopApp/build/compose/binaries/main/app/BitChord/runtime/release \
-            desktopApp/build/compose/binaries/main/app/BitChord/lib/runtime/release; do
+            desktopApp/build/compose/binaries/main/app/Auris/runtime/release \
+            desktopApp/build/compose/binaries/main/app/Auris/lib/runtime/release; do
             if [ -f "$candidate" ]; then runtime="$candidate"; break; fi
           done
           test -n "$runtime"
@@ -122,13 +122,13 @@ jobs:
         run: |
           $v = "${{ steps.version.outputs.value }}"
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item desktopApp/build/compose/binaries/main/msi/*.msi "dist/BitChord-$v-windows-x64.msi"
-          Copy-Item desktopApp/build/compose/binaries/main/exe/*.exe "dist/BitChord-$v-windows-x64-setup.exe"
+          Copy-Item desktopApp/build/compose/binaries/main/msi/*.msi "dist/Auris-$v-windows-x64.msi"
+          Copy-Item desktopApp/build/compose/binaries/main/exe/*.exe "dist/Auris-$v-windows-x64-setup.exe"
           # The app image: its own runtime, so it runs on a machine with no Java installed.
-          7z a -tzip -mx=5 "dist/BitChord-$v-windows-x64-appimage.zip" `
-            "desktopApp/build/compose/binaries/main/app/BitChord/*" | Out-Null
+          7z a -tzip -mx=5 "dist/Auris-$v-windows-x64-appimage.zip" `
+            "desktopApp/build/compose/binaries/main/app/Auris/*" | Out-Null
           # The jars-only folder: small, but it needs a Java 21 runtime on the machine.
-          Copy-Item desktopApp/build/distributions/BitChord-$v-windows-portable.zip "dist/BitChord-$v-windows-x64-portable.zip"
+          Copy-Item desktopApp/build/distributions/Auris-$v-windows-portable.zip "dist/Auris-$v-windows-x64-portable.zip"
           Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4

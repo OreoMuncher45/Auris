@@ -33,7 +33,7 @@ internal fun redactModuleUrl(url: String): String =
  * Fetches a module index, downloads and loads module JS, and calls the
  * module's exported search/stream functions.
  *
- * Ported from Convx's `ModuleManager`, adapted to use BitChord's shared
+ * Ported from Convx's `ModuleManager`, adapted to use Auris's shared
  * [Http.client] OkHttp instance rather than a separate Ktor client.
  *
  * One instance should be held per [ModuleSource] config so that loaded
@@ -402,7 +402,7 @@ class ModuleManager {
     }
 
     private companion object {
-        const val TAG = "BitChord"
+        const val TAG = "Auris"
 
         /**
          * How long a fetched index is trusted. Long enough that a run of

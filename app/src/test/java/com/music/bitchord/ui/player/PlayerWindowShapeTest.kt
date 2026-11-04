@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord
+ * Copyright (C) 2026 Auris
  *
  * The two decisions Now Playing makes about the window it is being handed.
  *

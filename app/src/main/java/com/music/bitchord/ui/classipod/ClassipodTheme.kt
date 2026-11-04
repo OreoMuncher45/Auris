@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.sp
  * `AppPalette`: device faceplate gradients per colorway, LCD screen colors,
  * and Helvetica type.
  *
- * Only the presentation lives here — every row is backed by BitChord data
+ * Only the presentation lives here — every row is backed by Auris data
  * (library, Flow, sources), so the whole streaming workflow works under it.
  */
 object ClassipodTheme {

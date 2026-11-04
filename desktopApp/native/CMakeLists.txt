@@ -17,7 +17,7 @@ if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
 endif()
 
-project(bitchord_analysis LANGUAGES CXX)
+project(auris_analysis LANGUAGES CXX)
 
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -32,7 +32,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-add_library(bitchord_analysis SHARED
+add_library(auris_analysis SHARED
     ${REPO_ROOT}/native/analyzer/audio_analysis.cpp
     ${REPO_ROOT}/native/analyzer/tempo_analysis.cpp
     ${REPO_ROOT}/native/analyzer/resampler.cpp
@@ -43,7 +43,7 @@ add_library(bitchord_analysis SHARED
     ${REPO_ROOT}/app/src/main/cpp/jni/vocal_jni.cpp
 )
 
-target_include_directories(bitchord_analysis PRIVATE
+target_include_directories(auris_analysis PRIVATE
     ${REPO_ROOT}/native
     ${REPO_ROOT}/app/src/main/cpp
 )
@@ -51,7 +51,7 @@ target_include_directories(bitchord_analysis PRIVATE
 # JNI headers come from the JDK running the build rather than from find_package,
 # which on a JDK with no JAVA_HOME set reports a stale system install.
 if(DEFINED ENV{JAVA_HOME})
-    target_include_directories(bitchord_analysis PRIVATE
+    target_include_directories(auris_analysis PRIVATE
         $ENV{JAVA_HOME}/include
         $ENV{JAVA_HOME}/include/linux
         $ENV{JAVA_HOME}/include/win32
@@ -59,26 +59,26 @@ if(DEFINED ENV{JAVA_HOME})
     )
 else()
     find_package(JNI REQUIRED)
-    target_include_directories(bitchord_analysis PRIVATE ${JNI_INCLUDE_DIRS})
+    target_include_directories(auris_analysis PRIVATE ${JNI_INCLUDE_DIRS})
 endif()
 
 # Cross-building for Windows, the one case where the JDK running the build has
 # no header for the platform being built: `jni.h` is shared, `jni_md.h` is not.
 # Listed after the JDK's own paths so a real Windows JDK always wins.
 if(CMAKE_SYSTEM_NAME STREQUAL "Windows" AND NOT CMAKE_HOST_WIN32)
-    target_include_directories(bitchord_analysis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
+    target_include_directories(auris_analysis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
 endif()
 
-target_compile_options(bitchord_analysis PRIVATE -O2)
+target_compile_options(auris_analysis PRIVATE -O2)
 
-# `System.mapLibraryName` asks for `bitchord_analysis.dll` on Windows, with no
+# `System.mapLibraryName` asks for `auris_analysis.dll` on Windows, with no
 # prefix — but MinGW's CMake defaults to the Unix `lib` one, so a cross-built
-# library came out as `libbitchord_analysis.dll` and the loader never found it.
+# library came out as `libauris_analysis.dll` and the loader never found it.
 # Set on the target rather than in the toolchain file, because `project()`
 # reinitialises CMAKE_SHARED_LIBRARY_PREFIX per language and overwrites
 # anything the toolchain set beforehand.
 if(WIN32)
-    set_target_properties(bitchord_analysis PROPERTIES PREFIX "")
+    set_target_properties(auris_analysis PROPERTIES PREFIX "")
 endif()
 
 # The Windows media controls, which are WinRT. MSVC builds them with C++/WinRT;
@@ -114,37 +114,37 @@ int main() {
     (void)span;
     return 0;
 }
-" BITCHORD_HAVE_SMTC_ABI)
+" AURIS_HAVE_SMTC_ABI)
     unset(CMAKE_REQUIRED_DEFINITIONS)
 endif()
-if(MINGW AND BITCHORD_HAVE_SMTC_ABI)
-    add_library(bitchord_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_abi.cpp)
-    set_target_properties(bitchord_smtc PROPERTIES PREFIX "")
+if(MINGW AND AURIS_HAVE_SMTC_ABI)
+    add_library(auris_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_abi.cpp)
+    set_target_properties(auris_smtc PROPERTIES PREFIX "")
     if(DEFINED ENV{JAVA_HOME})
-        target_include_directories(bitchord_smtc PRIVATE $ENV{JAVA_HOME}/include $ENV{JAVA_HOME}/include/win32)
+        target_include_directories(auris_smtc PRIVATE $ENV{JAVA_HOME}/include $ENV{JAVA_HOME}/include/win32)
     else()
         find_package(JNI REQUIRED)
-        target_include_directories(bitchord_smtc PRIVATE ${JNI_INCLUDE_DIRS})
+        target_include_directories(auris_smtc PRIVATE ${JNI_INCLUDE_DIRS})
     endif()
     if(NOT CMAKE_HOST_WIN32)
-        target_include_directories(bitchord_smtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
+        target_include_directories(auris_smtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
     endif()
-    target_compile_options(bitchord_smtc PRIVATE -O2)
-    target_link_libraries(bitchord_smtc PRIVATE runtimeobject ole32 user32)
+    target_compile_options(auris_smtc PRIVATE -O2)
+    target_link_libraries(auris_smtc PRIVATE runtimeobject ole32 user32)
     # Loaded from the app's private runtime directory, where MinGW's own DLLs are not.
-    target_link_options(bitchord_smtc PRIVATE -static -static-libgcc -static-libstdc++)
+    target_link_options(auris_smtc PRIVATE -static -static-libgcc -static-libstdc++)
 elseif(MSVC)
-    add_library(bitchord_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_jni.cpp)
+    add_library(auris_smtc SHARED ${CMAKE_CURRENT_SOURCE_DIR}/smtc/smtc_jni.cpp)
     # C++20 rather than the 17 the analyser uses: under 17, C++/WinRT reaches for
     # <experimental/coroutine>, and current MSVC refuses to compile that header
     # at all. C++20 gives it the standard <coroutine> instead.
-    set_target_properties(bitchord_smtc PROPERTIES PREFIX "" CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+    set_target_properties(auris_smtc PROPERTIES PREFIX "" CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
     if(DEFINED ENV{JAVA_HOME})
-        target_include_directories(bitchord_smtc PRIVATE $ENV{JAVA_HOME}/include $ENV{JAVA_HOME}/include/win32)
+        target_include_directories(auris_smtc PRIVATE $ENV{JAVA_HOME}/include $ENV{JAVA_HOME}/include/win32)
     else()
         find_package(JNI REQUIRED)
-        target_include_directories(bitchord_smtc PRIVATE ${JNI_INCLUDE_DIRS})
+        target_include_directories(auris_smtc PRIVATE ${JNI_INCLUDE_DIRS})
     endif()
     # The WinRT umbrella import library.
-    target_link_libraries(bitchord_smtc PRIVATE windowsapp gdi32)
+    target_link_libraries(auris_smtc PRIVATE windowsapp gdi32)
 endif()

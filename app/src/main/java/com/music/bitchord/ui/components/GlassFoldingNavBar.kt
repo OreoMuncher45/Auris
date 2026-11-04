@@ -2,7 +2,7 @@
  * Convx Project (C) 2026
  * Licensed under GPL-3.0 | See git history for contributors
  *
- * Ported from Convx AppFloatingNavBar/FloatingNavBar, adapted to BitChord's
+ * Ported from Convx AppFloatingNavBar/FloatingNavBar, adapted to Auris's
  * tab ints, Song model, transport and strings.
  */
 

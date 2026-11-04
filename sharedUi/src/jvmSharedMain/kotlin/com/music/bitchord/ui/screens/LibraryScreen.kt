@@ -61,7 +61,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.UiState
 import com.music.bitchord.data.settings.LibrarySort
 import com.music.bitchord.ui.AppUi
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import com.music.bitchord.ui.components.LIBRARY_GRID_SPACING
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
@@ -457,7 +457,7 @@ private fun LibrarySegmentBar(
         }
         Spacer(Modifier.width(8.dp))
         Icon(
-            imageVector = BitChordIcons.Plus,
+            imageVector = AurisIcons.Plus,
             contentDescription = stringResource(Res.string.new_folder),
             tint = MaterialTheme.colorScheme.onBackground,
             modifier = Modifier
@@ -529,7 +529,7 @@ private fun LibraryLinkList(links: List<LibraryLink>, onClick: (ShelfItem) -> Un
                     modifier = Modifier.weight(1f),
                 )
                 Icon(
-                    imageVector = BitChordIcons.ChevronRight,
+                    imageVector = AurisIcons.ChevronRight,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .6f),
                     modifier = Modifier.size(20.dp),
@@ -573,14 +573,14 @@ private fun PlaylistShelf(
         leadingCard = {
             Row(horizontalArrangement = Arrangement.spacedBy(LIBRARY_GRID_SPACING)) {
                 NewShelfCard(
-                    icon = BitChordIcons.Plus,
+                    icon = AurisIcons.Plus,
                     label = stringResource(Res.string.new_playlist),
                     subtitle = stringResource(Res.string.saved_to_youtube_music),
                     onClick = onNewPlaylist,
                 )
                 if (onImportSpotifyPlaylist != null) {
                     NewShelfCard(
-                        icon = BitChordIcons.Download,
+                        icon = AurisIcons.Download,
                         label = stringResource(Res.string.import_spotify),
                         subtitle = stringResource(Res.string.import_spotify_subtitle),
                         onClick = onImportSpotifyPlaylist,
@@ -676,7 +676,7 @@ fun LibraryGridPage(
             if (onNewPlaylist != null) {
                 item(key = "leading") {
                     NewShelfCard(
-                        icon = BitChordIcons.Plus,
+                        icon = AurisIcons.Plus,
                         label = stringResource(Res.string.new_playlist),
                         subtitle = stringResource(Res.string.saved_to_youtube_music),
                         onClick = onNewPlaylist,

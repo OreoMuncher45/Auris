@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord
+ * Copyright (C) 2026 Auris
  *
  * The rows of the held context menu, one at a time.
  *

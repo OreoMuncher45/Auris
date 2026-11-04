@@ -25,7 +25,7 @@ object FallbackArtwork {
     private var packageName: String? = null
 
     /**
-     * Set once from [com.music.bitchord.BitChordApplication]. The package
+     * Set once from [com.music.bitchord.AurisApplication]. The package
      * name is what the resource uri is addressed to, and the dev flavor
      * installs under a different one than the release build — so it is read
      * at runtime rather than written into the code.

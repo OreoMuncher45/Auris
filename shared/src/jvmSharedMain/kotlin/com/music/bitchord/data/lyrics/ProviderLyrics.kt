@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** Turns the wire formats used by the smaller providers into BitChord lyrics. */
+/** Turns the wire formats used by the smaller providers into Auris lyrics. */
 object ProviderLyrics {
 
     fun parse(raw: String): List<LyricLine>? {

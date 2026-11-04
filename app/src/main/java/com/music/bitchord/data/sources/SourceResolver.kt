@@ -40,7 +40,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 object SourceResolver {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /**
      * What to ask a source for, right now.

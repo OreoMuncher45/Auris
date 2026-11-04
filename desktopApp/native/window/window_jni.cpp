@@ -27,7 +27,7 @@ HWND g_window = nullptr;
 WNDPROC g_original_proc = nullptr;
 
 // Posted from Java to start a caption drag on the thread that owns the window; see frame_proc.
-constexpr UINT WM_BITCHORD_DRAG = WM_APP + 0x42;
+constexpr UINT WM_AURIS_DRAG = WM_APP + 0x42;
 // SC_MOVE through the caption: the same move loop a real title bar starts.
 constexpr WPARAM SC_DRAGMOVE = SC_MOVE | HTCAPTION;
 
@@ -144,7 +144,7 @@ LRESULT CALLBACK frame_proc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         if (bottom) return HTBOTTOM;
     }
 
-    if (message == WM_BITCHORD_DRAG) {
+    if (message == WM_AURIS_DRAG) {
         // Windows moves the window itself from here, as it does for a system caption: DWM slides
         // the composed surface, so nothing is exposed to be filled with the class brush (the white
         // band an AWT setLocation per mouse event left along the edges), and Aero Snap and
@@ -312,7 +312,7 @@ void notify_devices_changed() {
         if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), nullptr) != JNI_OK) return;
         attached = true;
     }
-    jclass type = env->FindClass("com/music/bitchord/desktop/DesktopWindowsAudio");
+    jclass type = env->FindClass("com/music/auris/desktop/AurisWindowsAudio");
     if (type != nullptr) {
         jmethodID method = env->GetStaticMethodID(type, "onDevicesChanged", "()V");
         if (method != nullptr) env->CallStaticVoidMethod(type, method);
@@ -740,31 +740,31 @@ jobjectArray list_devices(JNIEnv* env) {
 extern "C" {
 
 JNIEXPORT jboolean JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeInstall(
+Java_com_music_auris_desktop_AurisWindowsFrame_nativeInstall(
     JNIEnv* env, jclass, jstring title) {
     return install_frame(find_window(env, title)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeMinimize(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsFrame_nativeMinimize(JNIEnv*, jclass) {
     return send_system_command(SC_MINIMIZE) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeSetBackdrop(JNIEnv*, jclass, jint kind) {
+Java_com_music_auris_desktop_AurisWindowsFrame_nativeSetBackdrop(JNIEnv*, jclass, jint kind) {
     return set_backdrop(g_window, static_cast<int>(kind)) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeStartDrag(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsFrame_nativeStartDrag(JNIEnv*, jclass) {
     HWND window = g_window;
     return window != nullptr && IsWindow(window) &&
-        PostMessageW(window, WM_BITCHORD_DRAG, 0, 0) != 0
+        PostMessageW(window, WM_AURIS_DRAG, 0, 0) != 0
         ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeToggleMaximize(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsFrame_nativeToggleMaximize(JNIEnv*, jclass) {
     HWND window = g_window;
     if (window == nullptr || !IsWindow(window)) return JNI_FALSE;
     return send_system_command(IsZoomed(window) ? SC_RESTORE : SC_MAXIMIZE)
@@ -772,7 +772,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsFrame_nativeToggleMaximize(JNIEnv*
 }
 
 JNIEXPORT jint JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeOpen(
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeOpen(
     JNIEnv* env,
     jclass,
     jstring device,
@@ -794,13 +794,13 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeOpen(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDevices(JNIEnv* env, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeDevices(JNIEnv* env, jclass) {
     if (g_vm == nullptr) env->GetJavaVM(&g_vm);
     return list_devices(env);
 }
 
 JNIEXPORT jint JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeWrite(
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeWrite(
     JNIEnv* env, jclass, jfloatArray samples, jint count, jfloat gain) {
     if (samples == nullptr || count <= 0) return 0;
     const jsize available = env->GetArrayLength(samples);
@@ -814,14 +814,14 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeWrite(
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFramesPlayed(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeFramesPlayed(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     return static_cast<jlong>(played_frames_locked());
 }
 
 JNIEXPORT void JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativePause(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativePause(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     if (!g_audio_started) return;
@@ -830,7 +830,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativePause(JNIEnv*, jclass)
 }
 
 JNIEXPORT void JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeResume(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeResume(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     if (g_audio_started && !g_audio_reroute) return;
     ComScope com;
@@ -843,7 +843,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeResume(JNIEnv*, jclass
 }
 
 JNIEXPORT void JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFlush(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeFlush(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     if (g_audio_client == nullptr) return;
@@ -854,7 +854,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeFlush(JNIEnv*, jclass)
 }
 
 JNIEXPORT void JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDrain(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeDrain(JNIEnv*, jclass) {
     while (true) {
         {
             std::lock_guard<std::mutex> guard(g_audio_mutex);
@@ -868,14 +868,14 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDrain(JNIEnv*, jclass)
 }
 
 JNIEXPORT void JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeClose(JNIEnv*, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeClose(JNIEnv*, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     ComScope com;
     release_audio_locked();
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDeviceName(JNIEnv* env, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeDeviceName(JNIEnv* env, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     return env->NewString(
         reinterpret_cast<const jchar*>(g_audio_device_name.c_str()),
@@ -883,7 +883,7 @@ Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeDeviceName(JNIEnv* env
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_music_bitchord_desktop_DesktopWindowsAudio_nativeLastError(JNIEnv* env, jclass) {
+Java_com_music_auris_desktop_AurisWindowsAudio_nativeLastError(JNIEnv* env, jclass) {
     std::lock_guard<std::mutex> guard(g_audio_mutex);
     return env->NewString(
         reinterpret_cast<const jchar*>(g_audio_error.c_str()),

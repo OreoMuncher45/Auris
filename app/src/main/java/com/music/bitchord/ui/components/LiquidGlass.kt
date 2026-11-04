@@ -4,7 +4,7 @@
  * upstream attribution. This file is the integration glue, adapted from
  * EchoMusicApp/Echo-Music's GlassEffectConfig/Modifier.liquidGlass
  * (GPL-3.0), cut down from Echo's full per-component/vibrancy-slider config
- * to the single on/off switch BitChord exposes in Settings. It is used by the
+ * to the single on/off switch Auris exposes in Settings. It is used by the
  * floating nav bar and, while enabled, the app-wide floating top controls.
  */
 package com.music.bitchord.ui.components
@@ -33,9 +33,6 @@ import com.music.bitchord.ui.components.backdrop.internal.ShapeProvider
 import com.music.bitchord.ui.components.backdrop.shadow.Shadow
 import androidx.compose.ui.unit.dp
 
-/** Whether the liquid glass nav bar is turned on — see [AppSettings.liquidGlass]. */
-val LocalLiquidGlassEnabled = staticCompositionLocalOf { false }
-
 /**
  * Where a [liquidGlass] surface composed under it also records the glass it
  * draws — the sampled, blurred and tinted backdrop, without its rim or shadow —
@@ -45,85 +42,12 @@ val LocalLiquidGlassEnabled = staticCompositionLocalOf { false }
  */
 internal val LocalGlassExport = compositionLocalOf<LayerBackdrop?> { null }
 
-private const val SURFACE_OPACITY = 0.4f
 
 
 /**
- * The hairline along a bar's edge, and what stands in for the glass rim
- * wherever the glass itself is not drawn.
- *
- * A surface filled with the theme's own `surface` colour has no edge of its own
- * against a dark page — it is the same near-black the page is. The glass gets
- * its edge from [Highlight], and this is that edge for everything that does not.
- */
-internal val GLASS_EDGE_WIDTH = 0.5.dp
-internal val GLASS_EDGE_COLOR = Color.White.copy(alpha = 0.10f)
-
-/**
- * Icon and label colour for content sitting on a glass surface.
- *
- * Glass shows whatever is behind it rather than the theme's surface colour, so
- * the usual onSurface greys have nothing dependable to sit against. Pure black
- * or white off the theme's luminance is the only tint that holds against
- * arbitrary artwork, and it is what Echo's own glass nav bar uses.
- */
-@Composable
-fun glassContentColor(): Color =
-    if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.Black else Color.White
-
-/**
- * Selected-tab indicator colour for a glass surface: the inverse of
- * [glassContentColor] rather than the same tint at lower alpha — white in
- * light theme, black in dark theme, so the pill reads as a shaded scrim
- * rather than as more of the same tint already on the glyph and label.
- */
-@Composable
-fun glassIndicatorColor(): Color =
-    if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.White else Color.Black
-
-/**
- * A lightweight visual match for liquid glass over a stable background.
- *
- * This keeps the same translucent tint, directional highlight and hairline as
- * [liquidGlass], but intentionally performs no backdrop capture, blur, lens
- * refraction or shadow rendering. When Liquid Glass is disabled or unsupported,
- * [fallbackColor] preserves the control's existing filled appearance.
- */
-@Composable
-fun Modifier.lightweightLiquidGlass(
-    shape: CornerBasedShape,
-    fallbackColor: Color,
-): Modifier {
-    val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
-    val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
-        Color(0xFFFAFAFA)
-    } else {
-        Color(0xFF121212)
-    }
-    val shapeProvider = ShapeProvider { shape }
-
-    return clip(shape)
-        .background(
-            color = if (useGlass) glassTint.copy(alpha = SURFACE_OPACITY) else fallbackColor,
-            shape = shape,
-        )
-        .then(
-            if (useGlass) {
-                HighlightElement(
-                    shapeProvider = shapeProvider,
-                    highlight = { Highlight.Default },
-                )
-            } else {
-                Modifier
-            },
-        )
-        .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
-}
-
-/**
- * BitChord-facing glass surface. Delegates to the vendored Convx
+ * Auris-facing glass surface. Delegates to the vendored Convx
  * [Modifier.liquidGlass], which is the authoritative implementation; this
- * wrapper only pins BitChord's house defaults so existing call sites keep a
+ * wrapper only pins Auris's house defaults so existing call sites keep a
  * one-argument shape API.
  *
  * Convx's signature is `liquidGlass(config, shape, ...)`; its defaults already

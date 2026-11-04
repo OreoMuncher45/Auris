@@ -8,7 +8,7 @@ import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import com.music.bitchord.BitChordApplication
+import com.music.bitchord.AurisApplication
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.DebugLog as Log
 import com.music.bitchord.data.presence.AndroidPresence
@@ -1546,7 +1546,7 @@ object ListenTogether {
      * real account identifiers would be holding something it has no use for.
      */
     private fun identity(nickname: String = nickname()): Identity? {
-        val store = BitChordApplication.authStore
+        val store = AurisApplication.authStore
         if (!store.isSignedIn) return null
         val account = store.activeSession ?: return null
         val profile = account.profiles.firstOrNull { it.profileId == account.activeProfileId }

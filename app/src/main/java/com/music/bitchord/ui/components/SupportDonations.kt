@@ -30,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import com.music.bitchord.R
 
 /**
- * Donation rails for keeping BitChord Next alive. Same addresses as the
+ * Donation rails for keeping Auris Next alive. Same addresses as the
  * README — one source of truth here so the app and the repo can never
  * disagree about where money goes.
  */

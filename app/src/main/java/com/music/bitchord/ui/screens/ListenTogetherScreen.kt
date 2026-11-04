@@ -194,7 +194,7 @@ fun ListenTogetherScreen(
         val host = ListenTogether.activePartyServerBase() ?: ListenTogether.effectiveIdleServerBase()
         // The server's own invite page, not a marketing page: it is the
         // party server that answers /invite/<CODE> with a "Join Party in
-        // BitChord" button carrying the code and the server it belongs to.
+        // Auris" button carrying the code and the server it belongs to.
         // A page that only shows the code loses the server on the way, and
         // the party then reads as ended on the wrong server.
         JamInviteLink.url(partyCode, host)

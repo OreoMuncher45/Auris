@@ -61,7 +61,7 @@ import kotlin.concurrent.thread
  * context whose compiled programs the UI's RenderThread context cannot see
  * (Skia caches programs per context). With nothing left to schedule later,
  * the right slot for the constructor work is the earliest moment at which
- * nothing can compete with anything: [com.music.bitchord.BitChordApplication]
+ * nothing can compete with anything: [com.music.bitchord.AurisApplication]
  * onCreate. No window exists yet, so there is no first frame to wait for and
  * no animation on screen that a background-priority thread could steal from.
  * The first glass frame is still an Activity launch and a first layout away,

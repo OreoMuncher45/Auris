@@ -21,7 +21,7 @@ import java.io.File
 import java.time.Instant
 
 /**
- * BitChord ships as a sideloaded APK off GitHub Releases rather than through
+ * Auris ships as a sideloaded APK off GitHub Releases rather than through
  * a store, so there's nothing to push an update notice on its own — this
  * polls the repo's "latest release" once per launch and compares its tag
  * against the running build.
@@ -51,7 +51,7 @@ object AppUpdateChecker {
     private const val CACHE_SUBDIR = "updates"
 
     private const val LATEST_RELEASE_URL =
-        "https://api.github.com/repos/OreoMuncher45/BitChordNext/releases/latest"
+        "https://api.github.com/repos/OreoMuncher45/Auris/releases/latest"
 
     private val json = Json { ignoreUnknownKeys = true }
 

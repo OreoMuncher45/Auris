@@ -4,7 +4,7 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 /** What the packages, the launcher and the settings footer all say. */
-val appVersion: String = providers.gradleProperty("bitchord.version").orNull
+val appVersion: String = providers.gradleProperty("auris.version").orNull
     ?.removePrefix("v")
     ?.takeIf { it.isNotBlank() }
     ?: "1.8-beta1"
@@ -12,10 +12,10 @@ val appVersion: String = providers.gradleProperty("bitchord.version").orNull
 /** Which platform this build is *for*, which is the host unless told otherwise. */
 val hostIsWindows = System.getProperty("os.name").contains("Windows", ignoreCase = true)
 val hostIsLinux = System.getProperty("os.name").contains("Linux", ignoreCase = true)
-val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: when {
+val targetOs: String = (providers.gradleProperty("auris.target").orNull ?: when {
     hostIsWindows -> "windows"
     hostIsLinux -> "linux"
-    else -> error("BitChord desktop supports Linux and Windows only")
+    else -> error("Auris desktop supports Linux and Windows only")
 }).lowercase()
 
 // Windows installer metadata requires MAJOR.MINOR.BUILD even though the app's public version is
@@ -24,13 +24,26 @@ val targetOs: String = (providers.gradleProperty("bitchord.target").orNull ?: wh
 val desktopVersionCode = 29
 val nativePackageVersion = appVersion.substringBefore('-').split('.').take(2).joinToString(".") + ".$desktopVersionCode"
 
-// FFmpeg decodes audio; see DesktopAudioDecoder.
+/**
+ * Which processor architecture this build is for.
+ *
+ * The host's, unless the build says otherwise. A Linux build on an ARM machine used to ask for
+ * the x64 renderer and then fail to start, because the renderer it shipped was for another
+ * processor; the architecture is now part of what the build picks, so the same tree builds and
+ * runs on both.
+ */
+val targetArch: String = (providers.gradleProperty("auris.arch").orNull ?: when {
+    System.getProperty("os.arch").contains("aarch64", ignoreCase = true) -> "arm64"
+    else -> "x64"
+}).lowercase()
+
+// FFmpeg decodes audio; see AurisAudioDecoder.
 val javacppVersion = "1.5.12"
 val ffmpegVersion = "7.1.1-$javacppVersion"
 val nativeClassifier = when (targetOs) {
     "windows" -> "windows-x86_64"
-    "linux" -> "linux-x86_64"
-    else -> error("BitChord desktop supports Linux and Windows only")
+    "linux" -> if (targetArch == "arm64") "linux-arm64" else "linux-x86_64"
+    else -> error("Auris desktop supports Linux and Windows only")
 }
 private fun localProperty(name: String): String = rootProject.file("local.properties")
     .takeIf { it.isFile }
@@ -53,7 +66,7 @@ val desktopModuleIndexUrl = localProperty("MODULE_INDEX_URL")
  * machine without the toolchain has no way to run them anyway, so it carries on without them and
  * says so; a release build stops instead.
  */
-val requireNative = providers.gradleProperty("bitchord.requireNative").orNull?.toBoolean() ?: false
+val requireNative = providers.gradleProperty("auris.requireNative").orNull?.toBoolean() ?: false
 
 // Last.fm signs every request with these, so signing in from inside the app
 // needs them at hand. Supplied locally and never committed, as on Android.
@@ -107,7 +120,13 @@ dependencies {
     implementation(compose.components.resources)
     implementation(compose.materialIconsExtended)
     // The Skiko runtime rides in on this, and Skiko is per-platform.
-    implementation(if (targetOs == "windows") compose.desktop.windows_x64 else compose.desktop.linux_x64)
+    implementation(
+        when {
+            targetOs == "windows" -> compose.desktop.windows_x64
+            targetArch == "arm64" -> compose.desktop.linux_arm64
+            else -> compose.desktop.linux_x64
+        },
+    )
 
     implementation("io.ktor:ktor-client-core:3.0.3")
     implementation("io.ktor:ktor-client-cio:3.0.3")
@@ -250,7 +269,7 @@ val buildAnalysisNative by tasks.registering {
         val available = cmake != null && compiler && ninja
         if (!available) {
             val hint = buildString {
-                append("BitChord desktop: ")
+                append("Auris desktop: ")
                 if (cmake == null) {
                     append("cmake is not on PATH")
                 } else {
@@ -333,7 +352,7 @@ val buildWindowNative by tasks.registering {
         val ninja = findOnPath("ninja")
         val available = cmake != null && compiler != null && ninja != null
         if (!available) {
-            val hint = "BitChord desktop: cmake, Ninja, or a MinGW C++ compiler is unavailable — " +
+            val hint = "Auris desktop: cmake, Ninja, or a MinGW C++ compiler is unavailable — " +
                 "the Windows build falls back to Compose's frameless window behaviour."
             if (requireNative) {
                 throw GradleException(
@@ -398,34 +417,95 @@ val verifyNativeLibraries by tasks.registering {
             add(
                 File(
                     analysisNativeDir.get().asFile,
-                    if (targetOs == "windows") "bitchord_analysis.dll" else "libbitchord_analysis.$libraryExtension",
+                    if (targetOs == "windows") "auris_analysis.dll" else "libauris_analysis.$libraryExtension",
                 ),
             )
             if (targetOs == "windows") {
-                add(File(windowNativeDir.get().asFile, "bitchord_window.dll"))
+                add(File(windowNativeDir.get().asFile, "auris_window.dll"))
                 // The media keys are the one library that a build can legitimately leave out: the
                 // MinGW headers that carry the WinRT ABI are recent, and the app runs without the
                 // library — it only loses the volume-flyout card and the media keys. A release
                 // build does not accept that.
-                if (requireNative) add(File(analysisNativeDir.get().asFile, "bitchord_smtc.dll"))
+                if (requireNative) add(File(analysisNativeDir.get().asFile, "auris_smtc.dll"))
             }
         }
         val missing = required.filterNot { it.isFile }
         if (missing.isNotEmpty()) {
             throw GradleException(
-                "BitChord desktop: the native libraries are missing — " +
+                "Auris desktop: the native libraries are missing — " +
                     missing.joinToString(", ") { it.name } +
                     ". The build needs cmake, Ninja and a C++ compiler; on Windows a MinGW-w64 " +
                     "toolchain whose headers carry the WinRT ABI (mingw-w64 11 or newer) builds " +
                     "the media-key library.",
             )
         }
-        logger.lifecycle("BitChord desktop: native libraries verified — ${required.joinToString(", ") { it.name }}")
+        logger.lifecycle("Auris desktop: native libraries verified — ${required.joinToString(", ") { it.name }}")
+    }
+}
+
+/**
+ * The strings the app is written in, taken from where they are written.
+ *
+ * The phone keeps its wording in Android's resource folders; the shared UI keeps its own in
+ * Compose's. The desktop used to keep a copy of both, which is a copy that goes stale the day a
+ * translation lands on either side. These two tasks read the originals instead — the phone's
+ * `res/values*` folders and the shared UI's `composeResources/values*` — and the catalogues are
+ * read from them at runtime, so a string written once is the string both targets show.
+ */
+val phoneStringsDir = layout.buildDirectory.dir("generated/phone-strings")
+val sharedStringsDir = layout.buildDirectory.dir("generated/shared-strings")
+
+/** Turns `values-de/strings.xml` into `de.xml`, and `values/strings.xml` into `en.xml`. */
+fun catalogueName(file: File): String {
+    val parent = file.parentFile?.name.orEmpty()
+    val language = if (parent.startsWith("values-")) parent.removePrefix("values-") else "en"
+    return "$language.xml"
+}
+
+val syncPhoneStrings by tasks.registering {
+    val source = rootProject.file("app/src/main/res")
+    val output = phoneStringsDir
+    inputs.dir(source)
+    outputs.dir(output)
+    doLast {
+        val target = output.get().asFile
+        target.deleteRecursively()
+        target.mkdirs()
+        source.listFiles { file: File -> file.isDirectory && file.name.startsWith("values") }
+            ?.forEach { folder ->
+                val strings = File(folder, "strings.xml")
+                if (!strings.isFile) return@forEach
+                strings.copyTo(File(target, catalogueName(strings)), overwrite = true)
+            }
+    }
+}
+
+val syncSharedStrings by tasks.registering {
+    // The shared catalogues are written into the resource tree by the phone-string sync, so that
+    // task has to run first or the copy below reads a tree that may not be current.
+    dependsOn(":sharedUi:syncPhoneStrings")
+    val source = rootProject.file("sharedUi/src/commonMain/composeResources")
+    val output = sharedStringsDir
+    inputs.dir(source)
+    outputs.dir(output)
+    doLast {
+        val target = output.get().asFile
+        target.deleteRecursively()
+        target.mkdirs()
+        source.listFiles { file: File -> file.isDirectory && file.name.startsWith("values") }
+            ?.forEach { folder ->
+                val strings = File(folder, "strings.xml")
+                if (!strings.isFile) return@forEach
+                strings.copyTo(File(target, catalogueName(strings)), overwrite = true)
+            }
     }
 }
 
 tasks.named<ProcessResources>("processResources") {
-    dependsOn(buildAnalysisNative, buildWindowNative, verifyNativeLibraries)
+    dependsOn(buildAnalysisNative, buildWindowNative, verifyNativeLibraries, syncPhoneStrings, syncSharedStrings)
+    // The phone's own wording, and the shared UI's, under the names the catalogue reads.
+    from(phoneStringsDir) { into("strings/phone") }
+    from(sharedStringsDir) { into("strings/shared") }
     from(analysisNativeDir) {
         include("*.so", "*.dll", "*.dylib")
         into("native")
@@ -457,7 +537,7 @@ val windowsPortableAssemble by tasks.registering {
     group = "distribution"
     description = "Lays out a Windows-runnable folder: application jars, Windows natives, launcher."
     dependsOn(tasks.named("jar"))
-    val stage = windowsPortableDir.map { it.dir("BitChord") }
+    val stage = windowsPortableDir.map { it.dir("Auris") }
     val appJar = tasks.named<Jar>("jar").flatMap { it.archiveFile }
     val runtime = configurations.named("runtimeClasspath")
     val version = appVersion
@@ -486,22 +566,22 @@ val windowsPortableAssemble by tasks.registering {
             val name = if (group.isNullOrBlank()) artifact.file.name else "$group.${artifact.file.name}"
             artifact.file.copyTo(File(lib, name), overwrite = true)
         }
-        appJar.get().asFile.copyTo(File(lib, "bitchord-app.jar"), overwrite = true)
+        appJar.get().asFile.copyTo(File(lib, "auris-app.jar"), overwrite = true)
 
         // `lib\*` rather than a spelled-out classpath: the wildcard is what keeps this working when
         // a dependency is added, and the JVM is what expands it.
-        File(target, "BitChord.bat").writeText(
+        File(target, "Auris.bat").writeText(
             buildString {
                 appendLine("@echo off")
                 appendLine("setlocal")
-                appendLine("rem BitChord, portable. Needs a Java 21+ runtime on PATH or in JAVA_HOME.")
+                appendLine("rem Auris, portable. Needs a Java 21+ runtime on PATH or in JAVA_HOME.")
                 appendLine("set \"HERE=%~dp0\"")
                 appendLine("set \"RUNNER=java\"")
                 appendLine("if defined JAVA_HOME set \"RUNNER=%JAVA_HOME%\\bin\\java\"")
-                append("\"%RUNNER%\" -Dbitchord.version=$version")
-                if (moduleIndex.isNotBlank()) append(" -Dbitchord.module.index=$moduleIndex")
+                append("\"%RUNNER%\" -Dauris.version=$version")
+                if (moduleIndex.isNotBlank()) append(" -Dauris.module.index=$moduleIndex")
                 if (lastfmKey.isNotBlank() && lastfmSharedSecret.isNotBlank()) {
-                    append(" -Dbitchord.lastfm.key=$lastfmKey -Dbitchord.lastfm.secret=$lastfmSharedSecret")
+                    append(" -Dauris.lastfm.key=$lastfmKey -Dauris.lastfm.secret=$lastfmSharedSecret")
                 }
                 appendLine(" -cp \"%HERE%lib\\*\" $mainClass %*")
                 appendLine("endlocal")
@@ -515,8 +595,8 @@ val windowsPortableAssemble by tasks.registering {
             ZipFile(jar).use { zip -> zip.getEntry(entry) != null }
         }
         val problems = buildList {
-            if (!holds("com/music/bitchord/desktop/MainKt.class")) {
-                add("the BitChord desktop entry point is missing")
+            if (!holds("com/music/auris/desktop/MainKt.class")) {
+                add("the Auris desktop entry point is missing")
             }
             if (!holds("androidx/compose/runtime/Composer.class")) {
                 add("the Compose runtime is missing")
@@ -535,12 +615,12 @@ val windowsPortableAssemble by tasks.registering {
         }
         check(problems.isEmpty()) { "windowsPortable: " + problems.joinToString("; ") }
 
-        val analyser = File(analysisNativeDir.get().asFile, "bitchord_analysis.dll").isFile
+        val analyser = File(analysisNativeDir.get().asFile, "auris_analysis.dll").isFile
         logger.lifecycle(
             if (analyser) {
                 "windowsPortable: verified — Compose runtime, Windows renderer, Windows FFmpeg, Automix analyser."
             } else {
-                "windowsPortable: verified, but no bitchord_analysis.dll — Automix will not run in this archive. " +
+                "windowsPortable: verified, but no auris_analysis.dll — Automix will not run in this archive. " +
                     "Rebuild with: nix-shell -p cmake pkgsCross.mingwW64.buildPackages.gcc"
             },
         )
@@ -552,27 +632,38 @@ val windowsPortable by tasks.registering(Zip::class) {
     description = "Zips the portable Windows folder for copying to a Windows machine."
     dependsOn(windowsPortableAssemble)
     from(windowsPortableDir)
-    archiveFileName.set("BitChord-$appVersion-windows-portable.zip")
+    archiveFileName.set("Auris-$appVersion-windows-portable.zip")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
     doLast { logger.lifecycle("windowsPortable: ${archiveFile.get().asFile.absolutePath}") }
 }
 
-val composeMainClass = "com.music.bitchord.desktop.MainKt"
+val composeMainClass = "com.music.auris.desktop.MainKt"
 
 compose.desktop {
     application {
         mainClass = composeMainClass
         jvmArgs("-Xmx512m")
+        // Software rendering, for a machine with no GPU: a virtual desktop, a container, a
+        // build agent. The renderer that normally wants a GL context draws through Skia's own
+        // rasteriser instead, which is slower but works anywhere.
+        if (providers.gradleProperty("auris.softwareRender").orNull?.toBoolean() == true) {
+            jvmArgs("-Dskiko.renderApi=SOFTWARE")
+        }
         jvmArgs("-XX:+UseG1GC", "-XX:G1PeriodicGCInterval=20000", "-XX:G1PeriodicGCSystemLoadThreshold=0")
-        jvmArgs("-Dbitchord.version=$appVersion")
+        jvmArgs("-Dauris.version=$appVersion")
+        // The window's own shape can be overrule from the command line, for a screen nobody
+        // touches: -Pauris.sidebar=off puts the sidebar away for good.
+        providers.gradleProperty("auris.sidebar").orNull?.let { sidebarChoice ->
+            jvmArgs("-Dauris.sidebar=$sidebarChoice")
+        }
         if (desktopModuleIndexUrl.isNotBlank()) {
-            jvmArgs("-Dbitchord.module.index=$desktopModuleIndexUrl")
+            jvmArgs("-Dauris.module.index=$desktopModuleIndexUrl")
         }
         if (lastfmApiKey.isNotBlank() && lastfmSecret.isNotBlank()) {
-            jvmArgs("-Dbitchord.lastfm.key=$lastfmApiKey", "-Dbitchord.lastfm.secret=$lastfmSecret")
+            jvmArgs("-Dauris.lastfm.key=$lastfmApiKey", "-Dauris.lastfm.secret=$lastfmSecret")
         }
         if (listenTogetherServer.isNotBlank()) {
-            jvmArgs("-Dbitchord.listentogether.server=$listenTogetherServer")
+            jvmArgs("-Dauris.listentogether.server=$listenTogetherServer")
         }
 
         buildTypes.release.proguard {
@@ -589,11 +680,11 @@ compose.desktop {
                 TargetFormat.Deb,
                 TargetFormat.Rpm,
             )
-            packageName = "BitChord"
+            packageName = "Auris"
             packageVersion = nativePackageVersion
-            description = if (targetOs == "windows") "BitChord" else "Aesthetic YouTube Music client"
-            vendor = "BitChord contributors"
-            copyright = "Copyright © 2026 BitChord contributors"
+            description = if (targetOs == "windows") "Auris" else "Aesthetic YouTube Music client"
+            vendor = "Auris contributors"
+            copyright = "Copyright © 2026 Auris contributors"
 
             modules(
                 "java.base",
@@ -635,7 +726,7 @@ compose.desktop {
             windows {
                 iconFile.set(project.file("packaging/icons/AppIcon.ico"))
                 upgradeUuid = "8f3c1d24-6a2b-4f5e-9c17-2b8d54e0a913"
-                menuGroup = "BitChord"
+                menuGroup = "Auris"
                 shortcut = true
                 dirChooser = false
                 perUserInstall = true

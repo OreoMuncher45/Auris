@@ -119,7 +119,7 @@ enum class ThemeMode(val label: String) {
 }
 
 /**
- * Which interface shell the app wears. BitChord is the full modern UI;
+ * Which interface shell the app wears. Auris is the full modern UI;
  * Classipod is the iPod Classic re-creation (click wheel + LCD) running on
  * the same playback, library, Flow and sources underneath. Switchable both
  * ways, from either shell's settings.
@@ -149,23 +149,6 @@ enum class LocalMusicSort {
     TITLE_DESC,
     DATE_ADDED,
     DATE_MODIFIED,
-}
-
-/**
- * Ordering for the track list on an album or playlist page — the same idea as
- * the Downloads folder's sort, with a date option for the one thing a
- * catalogue row can still be dated by: the position it sits at. A playlist's
- * running order is the order songs were added in — YouTube Music appends each
- * addition at the foot — so read backwards it *is* a date order, newest first.
- * DetailScreen.kt holds the sort itself. Persisted app-wide rather than per
- * page: one choice, kept until the user makes another.
- */
-enum class SongSort {
-    DEFAULT,
-    TITLE_ASC,
-    TITLE_DESC,
-    DATE_ADDED_ASC,
-    DATE_ADDED_DESC,
 }
 
 /**
@@ -231,7 +214,7 @@ object AppSettings {
     val wifiOnlyDownloads = MutableStateFlow(true)
 
     /**
-     * Keep ordinary downloads in Music/BitChord where other music apps can see
+     * Keep ordinary downloads in Music/Auris where other music apps can see
      * them. Off (the default) keeps downloads in this app's private storage.
      * HLS downloads always stay private because they are a playlist package,
      * not one portable audio file.
@@ -355,7 +338,7 @@ object AppSettings {
      * normalizes by default for the same reason.
      *
      * The case against it is that a constant gain is still a multiplication,
-     * so this is the first thing in BitChord that is *on* out of the box and
+     * so this is the first thing in Auris that is *on* out of the box and
      * alters samples. Rather than hide that, the Audio Pipeline readout names
      * it: its Bit-exact row reports the first stage in the chain that is
      * altering samples, and switching this off is the first thing a listener
@@ -509,7 +492,7 @@ object AppSettings {
 
     // ---- JamesDSP ---------------------------------------------------------
     //
-    // A second, native tone/space stage after BitChord's own equaliser. It is
+    // A second, native tone/space stage after Auris's own equaliser. It is
     // deliberately opt-in and neutral by default: bass, widening, tube drive
     // and reverb all start at zero, so turning the engine on alone does not
     // change the sound beyond its final safety limiter. See
@@ -928,7 +911,7 @@ object AppSettings {
     /**
      * Acts the listener has marked as AI-generated.
      *
-     * YouTube's disclosure never reaches the clients BitChord reads: the live
+     * YouTube's disclosure never reaches the clients Auris reads: the live
      * WEB_REMIX search rows and player-overlay payloads for known AI acts
      * (Xania Monet, Blue Monroe) contain no marker at all, so
      * [GenAiDisclosure] can only ever be a bonus for the day YouTube starts
@@ -1560,7 +1543,7 @@ object AppSettings {
      * the very first call seeds the stored value from [currentVersionCode]
      * rather than reporting an update.
      *
-     * BitChord ships sideloaded (see [com.music.bitchord.data.AppUpdateChecker]),
+     * Auris ships sideloaded (see [com.music.bitchord.data.AppUpdateChecker]),
      * so installing a new APK over the old one is the only "update" there is —
      * app data, this pref included, survives it exactly like a Play Store
      * update. Call once per process start, before anything reads a cache that

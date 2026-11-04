@@ -21,13 +21,13 @@ import java.util.Locale
  * The presence Discord renders from one [updateSong] call:
  *
  * ```
- *   Listening to BitChord          <- activityName, or the app's own name
+ *   Listening to Auris          <- activityName, or the app's own name
  *   ┌────┐  Song title             <- details
  *   │art │  Artist                 <- state
  *   └────┘  Hi-Res Lossless · FLAC · 4608 kbps · 24-bit · 96 kHz
  *           ▁▁▁▁▁▁ 1:04 / 3:47     <- from the timestamps
  *   [ Listen on YouTube Music ]    <- button 1
- *   [ Visit BitChord           ]   <- button 2
+ *   [ Visit Auris           ]   <- button 2
  * ```
  */
 class DiscordRPC(

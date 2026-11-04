@@ -21,6 +21,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -291,7 +293,7 @@ import com.music.bitchord.ui.components.AnnouncementDialog
 import com.music.bitchord.ui.components.UpdateAvailableDialog
 import com.music.bitchord.ui.components.WebDavConflictAlert
 import com.music.bitchord.ui.components.FieldConfig
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.ui.player.ListenTogetherMembersSheet
@@ -343,7 +345,7 @@ import com.music.bitchord.ui.replay.ReplayShareSheet
 import com.music.bitchord.ui.replay.ReplayStories
 import com.music.bitchord.ui.replay.ReplayStoryPage
 import com.music.bitchord.ui.replay.rememberReplayState
-import com.music.bitchord.ui.theme.BitChordTheme
+import com.music.bitchord.ui.theme.AurisTheme
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.data.canvas.AppleArtistArtRepository
 import com.music.bitchord.data.canvas.keyColors
@@ -388,12 +390,42 @@ internal fun shouldSkipAfterDislike(
 ): Boolean = previousStatus != LikeStatus.DISLIKE && targetVideoId == currentVideoId
 
 
+/**
+ * Whether this is the Windows Subsystem for Android rather than a phone.
+ *
+ * The subsystem says so in more than one place, and which one it uses has
+ * changed over its life, so the marks are looked for together. The check is
+ * only ever about the system bars: the app is the same app either way.
+ */
+private fun runningInWindowsSubsystem(): Boolean {
+    val model = android.os.Build.MODEL.orEmpty()
+    val brand = android.os.Build.BRAND.orEmpty()
+    val fingerprint = android.os.Build.FINGERPRINT.orEmpty()
+    val manufacturer = android.os.Build.MANUFACTURER.orEmpty()
+    return model.contains("subsystem for android", ignoreCase = true) ||
+        brand.contains("windowssubsystemforandroid", ignoreCase = true) ||
+        fingerprint.contains("windowssubsystemforandroid", ignoreCase = true) ||
+        (manufacturer.equals("microsoft", ignoreCase = true) &&
+            model.contains("android", ignoreCase = true))
+}
+
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Inside the Windows Subsystem for Android the app is a window on a
+        // PC: the Android status bar and navigation bar say nothing to the
+        // person looking at it, and they are the last border round the app's
+        // own chrome. Everywhere else they are the phone's, and they stay.
+        if (runningInWindowsSubsystem()) {
+            WindowInsetsControllerCompat(window, window.decorView).apply {
+                hide(WindowInsetsCompat.Type.systemBars())
+                systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        }
         // Before the composition, so a cold launch from a widget's artwork has
-        // the request already standing by the time BitChordApp first reads it.
+        // the request already standing by the time AurisApp first reads it.
         PlayerDeepLink.consume(intent)
         JamInviteLink.consume(intent)
         // Likewise for a link tapped or shared from another app — see [MusicLink].
@@ -420,9 +452,9 @@ class MainActivity : AppCompatActivity() {
                 ThemeMode.LIGHT -> false
                 ThemeMode.DARK -> true
             }
-            BitChordTheme(darkTheme = darkTheme) {
+            AurisTheme(darkTheme = darkTheme) {
                 // The glass surfaces sample this layer, and a layer records only
-                // what is drawn into it — which, for BitChord, is a page that
+                // what is drawn into it — which, for Auris, is a page that
                 // paints no background of its own. Everywhere a page is not
                 // showing artwork the recording is transparent, so the glass had
                 // nothing to blur there and you saw straight through it to the
@@ -475,7 +507,7 @@ class MainActivity : AppCompatActivity() {
                 // A measured constraint cannot be stale — it is the very width
                 // the split is about to be laid out in.
                 BoxWithConstraints(Modifier.fillMaxSize()) {
-                    BitChordApp(
+                    AurisApp(
                         darkTheme = darkTheme,
                         windowWidth = maxWidth,
                         windowHeight = maxHeight,
@@ -526,7 +558,7 @@ class MainActivity : AppCompatActivity() {
 /**
  * The screen's root surface.
  *
- * This exists so [BitChordApp]'s body reaches Compose as a lambda rather than
+ * This exists so [AurisApp]'s body reaches Compose as a lambda rather than
  * through an inlined `Box`: inlined, the whole screen ended up in one method
  * and crossed the JVM's 64 KB limit. The wrapper does the same layout, but a
  * non-inline lambda is compiled separately, which keeps the caller small.
@@ -569,7 +601,7 @@ private fun AppRootBox(content: @Composable BoxScope.() -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BitChordApp(
+private fun AurisApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
@@ -1461,11 +1493,11 @@ private fun BitChordApp(
     val sharedLinkLabel = stringResource(R.string.shared_link)
     val tabs = remember(homeLabel, podcastsLabel, radioLabel, libraryLabel, searchLabel) {
         listOf(
-            BottomTab(homeLabel, BitChordIcons.Home),
+            BottomTab(homeLabel, AurisIcons.Home),
             BottomTab(podcastsLabel, Icons.Rounded.GraphicEq),
             BottomTab(radioLabel, Icons.Rounded.Radio),
-            BottomTab(libraryLabel, BitChordIcons.TabLibrary),
-            BottomTab(searchLabel, BitChordIcons.TabSearch),
+            BottomTab(libraryLabel, AurisIcons.TabLibrary),
+            BottomTab(searchLabel, AurisIcons.TabSearch),
         )
     }
 
@@ -2153,7 +2185,7 @@ private fun BitChordApp(
 
     /**
      * A YouTube Music link tapped elsewhere on the device, a link shared into
-     * BitChord, or "play something" said to the assistant — see [MusicLink].
+     * Auris, or "play something" said to the assistant — see [MusicLink].
      *
      * Keyed on the controller as well as the request, because a link is as
      * often as not what cold-starts the app: the session it has to play into is

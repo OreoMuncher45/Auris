@@ -94,7 +94,7 @@ import java.util.Locale
  */
 object DeviceCodecs {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /**
      * E-AC-3 JOC, the plain E-AC-3 core it degrades to, and AC-3 — the Dolby
@@ -116,7 +116,7 @@ object DeviceCodecs {
     /**
      * Application context for the one question that needs a system service.
      *
-     * Set once from [com.music.bitchord.BitChordApplication]; null in tests and
+     * Set once from [com.music.bitchord.AurisApplication]; null in tests and
      * before startup, where [systemSpatializer] simply answers false.
      */
     @Volatile

@@ -39,7 +39,7 @@ import com.music.bitchord.data.podcast.ItunesShow
 import com.music.bitchord.data.settings.MediaProgress
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.PAGE_GUTTER
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import androidx.compose.ui.res.stringResource
 
 /**
@@ -109,7 +109,7 @@ fun ItunesPodcastScreen(
                 }
                 IconButton(onClick = onToggleLikeShow) {
                     Icon(
-                        imageVector = if (isLikedShow) BitChordIcons.HeartFilled else BitChordIcons.Heart,
+                        imageVector = if (isLikedShow) AurisIcons.HeartFilled else AurisIcons.Heart,
                         contentDescription = null,
                         tint = if (isLikedShow) MaterialTheme.colorScheme.primary
                                else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -203,7 +203,7 @@ fun ItunesPodcastScreen(
                                 }
                                 IconButton(onClick = { onToggleLater(song) }) {
                                     Icon(
-                                        imageVector = if (isLater(song.videoId)) BitChordIcons.HeartFilled else BitChordIcons.Heart,
+                                        imageVector = if (isLater(song.videoId)) AurisIcons.HeartFilled else AurisIcons.Heart,
                                         contentDescription = null,
                                         tint = if (isLater(song.videoId)) MaterialTheme.colorScheme.primary
                                                else MaterialTheme.colorScheme.onSurfaceVariant,

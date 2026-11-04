@@ -49,7 +49,7 @@ sealed interface DetectedFormat {
 
 object SourceFormats {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     private val json = Json {
         isLenient = true

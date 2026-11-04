@@ -116,7 +116,7 @@ internal fun prioritizeExplicit(songs: List<RawSongItem>): List<RawSongItem> =
     songs.sortedByDescending { it.isExplicit }
 
 object JioSaavnService {
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
     
     // https://www.jiosaavn.com/api.php
     private val BASE_URL = String(Base64.decode("aHR0cHM6Ly93d3cuamlvc2Fhdm4uY29tL2FwaS5waHA=", Base64.DEFAULT), Charsets.UTF_8)
@@ -127,7 +127,7 @@ object JioSaavnService {
         explicitNulls = false
     }
 
-    // Note: BitChord uses OkHttp engine for ktor
+    // Note: Auris uses OkHttp engine for ktor
     private val client by lazy {
         HttpClient(OkHttp) {
             install(ContentNegotiation) { json(json) }

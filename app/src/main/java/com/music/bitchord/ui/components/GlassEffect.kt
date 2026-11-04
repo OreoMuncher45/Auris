@@ -167,12 +167,6 @@ fun glassResolutionScale(blurRadiusDp: Float): Float {
     return 1f - t * (1f - MIN_GLASS_RESOLUTION_SCALE)
 }
 
-/**
- * The backdrop blur pipeline requires [android.graphics.RenderEffect] on a
- * [android.graphics.RenderNode], which is available from Android 12 (API 31).
- */
-fun isGlassSupported(sdkInt: Int = Build.VERSION.SDK_INT): Boolean = sdkInt >= Build.VERSION_CODES.S
-
 /** Whether Android classifies this device as low-RAM. */
 fun isLowRamDevice(context: Context): Boolean =
     runCatching { context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true }

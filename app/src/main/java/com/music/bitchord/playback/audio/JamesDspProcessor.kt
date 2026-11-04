@@ -61,7 +61,7 @@ data class JamesDspConfig(
     val tubeLevel: Float = 0f,
     /** -1 is off; otherwise an SF2 reverb preset index (0..18). */
     val reverbPreset: Int = -1,
-    /** Pre-level trim in dB, applied before BitChord's loudness stage. */
+    /** Pre-level trim in dB, applied before Auris's loudness stage. */
     val preGainDb: Float = 0f,
     val limiterEnabled: Boolean = true,
 ) {
@@ -75,9 +75,9 @@ data class JamesDspConfig(
 }
 
 /**
- * Runs JamesDSP inside BitChord's existing Float32 DSP chain.
+ * Runs JamesDSP inside Auris's existing Float32 DSP chain.
  *
- * The engine is stereo interleaved. BitChord's music streams are stereo, so
+ * The engine is stereo interleaved. Auris's music streams are stereo, so
  * the normal path is a straight copy in and out; mono is duplicated into both
  * channels and averaged back afterwards. Multichannel sources are left alone
  * rather than silently downmixed here — the output stage already owns that

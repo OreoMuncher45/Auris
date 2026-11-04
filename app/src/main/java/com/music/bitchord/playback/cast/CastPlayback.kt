@@ -553,7 +553,7 @@ class CastPlayback(
         }
 
     companion object {
-        private const val TAG = "BitChordCast"
+        private const val TAG = "AurisCast"
         private const val KEY_MEDIA_ID = "mediaId"
 
         /** Tracks kept queued on the receiver after the playing one. */

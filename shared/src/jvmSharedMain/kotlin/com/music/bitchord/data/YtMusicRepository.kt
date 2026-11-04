@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap
 /** Suspend API over Innertube. Every call returns a Result so the UI can show a real error. */
 object YtMusicRepository {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
     private val moodGenreShelfCache = ConcurrentHashMap<String, List<HomeShelf>>()
     // Includes unchanged video fallbacks as well as successful matches. The
     // queue prefetcher asks before a track becomes current; remembering its

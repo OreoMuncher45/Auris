@@ -58,7 +58,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Now Playing, 1-for-1 from Classipod's NowPlayingWidget +
- * NowPlayingBottomBar + StatusBar, with BitChord's extras folded in:
+ * NowPlayingBottomBar + StatusBar, with Auris's extras folded in:
  *
  * - Header: title left, blue play/pause glyph + battery right.
  * - Art: tilted 150px cover over a washed mirror reflection
@@ -257,7 +257,7 @@ fun ClassipodNowPlaying(
                         scroll = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    // Rating slot: no ratings in BitChord, keep the 22dp
+                    // Rating slot: no ratings in Auris, keep the 22dp
                     // gap so the counter sits exactly where theirs does.
                     Spacer(Modifier.height(22.dp))
                     if (queueTotal > 0) {

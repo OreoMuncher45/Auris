@@ -1207,7 +1207,7 @@ class CrossfadeController(
         return item.claimedDurationMs()
     }
 
-    /** BitChord doesn't carry album metadata on [MediaMetadata] yet, so [TransitionTrackInfo.album] stays blank. */
+    /** Auris doesn't carry album metadata on [MediaMetadata] yet, so [TransitionTrackInfo.album] stays blank. */
     private fun MediaItem.toTransitionInfo(durationMs: Long) = TransitionTrackInfo(
         id = mediaId,
         durationMs = durationMs,
@@ -2690,7 +2690,7 @@ class CrossfadeController(
     // equal-power is right everywhere.
 
     private companion object {
-        const val TAG = "BitChordCrossfade"
+        const val TAG = "AurisCrossfade"
 
         /**
          * Used only before a pair has been analysed, or when the evidence is

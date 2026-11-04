@@ -24,7 +24,7 @@ import com.music.bitchord.data.DebugLog as Log
  */
 internal object EncryptedPrefs {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /** Tink's own entry inside the prefs file; its presence is what makes a failed open a stale keyset. */
     private const val KEYSET_ENTRY = "__androidx_security_crypto_encrypted_prefs_key_keyset__"

@@ -52,7 +52,7 @@ import kotlinx.coroutines.launch
 
 /**
  * The iPod, hosted: menu stack, wheel transport, and every page wired to
- * the same [MainViewModel], player and stores the BitChord theme uses.
+ * the same [MainViewModel], player and stores the Auris theme uses.
  * Nothing here keeps its own copy of library, queue or Flow state — it
  * reads and writes the shared ones, so both shells always agree.
  */

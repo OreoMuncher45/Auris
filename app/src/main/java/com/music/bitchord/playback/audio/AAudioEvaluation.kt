@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord Project
+ * Copyright (C) 2026 Auris Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -11,7 +11,7 @@
 package com.music.bitchord.playback.audio
 
 /**
- * Technical Architecture Evaluation: AAudio as a Potential Native Transport for BitChord.
+ * Technical Architecture Evaluation: AAudio as a Potential Native Transport for Auris.
  *
  * OBJECTIVE:
  * Determine whether integrating an AAudio C/C++ native audio stream provides measurable
@@ -55,7 +55,7 @@ package com.music.bitchord.playback.audio
  *
  * ARCHITECTURAL DECISION:
  * - AAudio is REJECTED as an internal playback transport.
- * - BitChord achieves maximum output quality and hardware stability by combining:
+ * - Auris achieves maximum output quality and hardware stability by combining:
  *   1. Canonical Float32 DSP in [PrecisionAudioSink].
  *   2. Dynamic runtime direct-playback detection via [DirectAudioProbe].
  *   3. Authoritative route negotiation via [OutputNegotiator].

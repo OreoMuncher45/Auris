@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord
+ * Copyright (C) 2026 Auris
  */
 
 package com.music.bitchord.ui.components

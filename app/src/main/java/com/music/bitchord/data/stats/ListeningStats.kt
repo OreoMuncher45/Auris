@@ -644,7 +644,7 @@ object ListeningStats {
         RegexOption.IGNORE_CASE,
     )
 
-    private const val TAG = "BitChordListening"
+    private const val TAG = "AurisListening"
     private const val DIRECTORY = "listening"
 
     /** How far down the artist chart a page opening will send lookups for. */

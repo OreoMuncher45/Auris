@@ -151,7 +151,7 @@ import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.SupportDonations
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.thumbnailBorder
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import com.music.bitchord.ui.performance.resolvePerformanceRefreshRate
 import com.music.bitchord.ui.performance.supportedPerformanceRefreshRates
 import com.music.bitchord.data.model.Account
@@ -727,7 +727,7 @@ fun SettingsScreen(
                 )
             }
             // The system panel is not listed here as well. A device with a
-            // Dolby or Dirac panel has something BitChord cannot reproduce and
+            // Dolby or Dirac panel has something Auris cannot reproduce and
             // keeps its row — but one level in, at the foot of the equaliser
             // screen, rather than as a second equaliser entry alongside ours.
             val equalizerTitle = stringResource(R.string.equalizer)
@@ -1718,7 +1718,7 @@ fun SettingsScreen(
             val highPerformanceModeTitle = stringResource(R.string.high_performance_mode)
             row(highPerformanceModeTitle, "frame rate", "refresh rate", "hz", "battery", "smooth") {
                 SettingsRow(
-                    icon = BitChordIcons.Performance,
+                    icon = AurisIcons.Performance,
                     title = highPerformanceModeTitle,
                     subtitle = if (highPerformanceMode) {
                         stringResource(R.string.high_performance_active, selectedPerformanceRefreshRate)
@@ -1754,7 +1754,7 @@ fun SettingsScreen(
                 val refreshRateTitle = stringResource(R.string.refresh_rate)
                 row(refreshRateTitle, "hz", "frame rate") {
                     SettingsRow(
-                        icon = BitChordIcons.FrameRate,
+                        icon = AurisIcons.FrameRate,
                         title = refreshRateTitle,
                     )
                     SegmentedControl(
@@ -2776,7 +2776,7 @@ private fun DownloadQualitySheet(
 // ---- Building blocks --------------------------------------------------------
 
 private const val COMMUNITY_DISCORD_URL = "https://discord.gg/8VnWqcuzqg"
-private const val COMMUNITY_REDDIT_URL = "https://reddit.com/r/BitChordNext"
+private const val COMMUNITY_REDDIT_URL = "https://reddit.com/r/Auris"
 
 private fun openCommunityLink(context: Context, url: String) {
     runCatching {

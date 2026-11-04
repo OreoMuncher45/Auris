@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
  * (CUE-DETR) and time-stretching (Rubber Band) — none of which has an
  * on-device story here. What ports is the *policy*: where the ear wants the
  * entrance, and when a lyric is still being sung. This file answers both
- * from the analysis BitChord already measures (beat grids, low-band energy,
+ * from the analysis Auris already measures (beat grids, low-band energy,
  * vocal masks), and both answers feed the existing renderer unchanged — no
  * new styles, no new gestures, just better-placed ones.
  *

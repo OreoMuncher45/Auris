@@ -485,7 +485,7 @@ class TransitionFilterProcessor : BaseAudioProcessor() {
     }
 
     companion object {
-        private const val TAG = "BitChordTransitionFilter"
+        private const val TAG = "AurisTransitionFilter"
 
         /** A low-pass at or above this is doing nothing audible, so it counts as off. */
         const val OPEN_HZ = 20_000f

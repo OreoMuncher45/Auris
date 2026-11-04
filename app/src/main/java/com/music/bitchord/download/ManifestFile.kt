@@ -17,7 +17,7 @@ import java.io.OutputStream
  * A manifest's segments joined back into one ordinary file, so a lossless
  * download is a `.flac` whether it stays in the app or is exported.
  *
- * [OfflineHls] and [OfflineDash] keep a manifest as a package only BitChord can
+ * [OfflineHls] and [OfflineDash] keep a manifest as a package only Auris can
  * play, which is why [Downloads.routeFor][Downloads] used to decline a manifest
  * outright whenever "export downloads" was on — and declining sent the track to
  * YouTube. With Tidal answering every lossless request with a manifest, that

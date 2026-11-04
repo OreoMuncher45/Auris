@@ -54,7 +54,7 @@ import java.util.Locale
  */
 internal object QuickJsExecutor {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /**
      * How many modules stay resident.

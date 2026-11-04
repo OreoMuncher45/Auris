@@ -8,7 +8,7 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import java.util.UUID
 
 /**
- * Counts this phone toward the live open-app figure while BitChord is on
+ * Counts this phone toward the live open-app figure while Auris is on
  * screen. Playing in the background with the app closed does not count.
  * ProcessLifecycleOwner already waits out an activity restart before it
  * reports a stop, so rotating the phone does not read as closing the app.

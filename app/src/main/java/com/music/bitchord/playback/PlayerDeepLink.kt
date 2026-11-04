@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *
  * Tapping a widget's artwork should land on the now-playing sheet, and there is
  * nothing to hand that intent to: whether the sheet is up is `showNowPlaying`, a
- * `remember`ed boolean inside `BitChordApp`, which only exists once the
+ * `remember`ed boolean inside `AurisApp`, which only exists once the
  * composition is running and which
  * [MainActivity][com.music.bitchord.MainActivity] cannot reach. Because the
  * activity is `singleTask`, the intent also arrives down two different paths

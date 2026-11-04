@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Vendored by BitChord from androidx/media 1.11.0
+ * Vendored by Auris from androidx/media 1.11.0
  * (libraries/decoder_ffmpeg); there is no published artifact of the FFmpeg
  * extension, and the native half is built from librempeg by
  * native/ffmpeg/build.sh.

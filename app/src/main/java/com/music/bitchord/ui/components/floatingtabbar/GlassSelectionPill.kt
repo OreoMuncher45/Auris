@@ -5,7 +5,7 @@
  * LiquidGlassLensMotion (pub.dev/packages/liquid_glass_easy, 4.3.4).
  * Copyright (c) 2025 Ahmed Gamil, MIT License.
  *
- * The rendering is BitChord's own, on the vendored backdrop library: the lens
+ * The rendering is Auris's own, on the vendored backdrop library: the lens
  * refracts the tab bar's exported glass and its recorded tab row rather than a
  * screen capture.
  */

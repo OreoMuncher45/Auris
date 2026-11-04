@@ -28,7 +28,7 @@ import org.junit.Test
  * The addon protocol, end to end, against a real HTTP server.
  *
  * Everything here is about the seam between somebody else's server and this
- * app: what BitChord puts on the wire, and what it does with what comes back.
+ * app: what Auris puts on the wire, and what it does with what comes back.
  * That is not a seam a hand-rolled fake can test honestly — a fake client
  * would encode the same assumptions the code under test makes, and the bugs
  * worth catching here all live in the gap between an assumption and an actual

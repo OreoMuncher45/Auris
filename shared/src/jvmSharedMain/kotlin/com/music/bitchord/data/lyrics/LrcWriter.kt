@@ -56,7 +56,7 @@ private fun LyricLine.flattened(): String =
  * documents: a reader without A2 does not ignore a word stamp, it shows it, so
  * a file carrying only this reads as angle-bracket noise everywhere else. The
  * two are written to different fields — plain LRC to the container's own lyrics
- * atom, where every other player looks, and this to a BitChord-specific one
+ * atom, where every other player looks, and this to a Auris-specific one
  * they don't read (see `Mp4Tagger`, `FlacTagger`, `WebmTagger`). Other players
  * are unaffected; this app gets the timings back off the file instead of the
  * network, which is what lets a downloaded song light up word by word offline.

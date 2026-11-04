@@ -24,7 +24,7 @@ import kotlin.coroutines.CoroutineContext
  *
  * The obvious implementation shells out to `logcat`, and it works. But from
  * Android 13 an app that does so trips a system consent dialog — *"Allow
- * BitChord to access all device logs?"* — which appears whenever the process
+ * Auris to access all device logs?"* — which appears whenever the process
  * happens to spawn, asks for far more than this needs, and puts every other
  * app's output within reach of a paste made from a music player. None of that
  * is a reasonable price for a debug button.
@@ -53,7 +53,7 @@ import kotlin.coroutines.CoroutineContext
  * song's log almost every time.
  *
  * Call [d], [w] and [e] exactly where `Log.d`/`w`/`e` would go; they forward
- * to logcat as well, so `adb logcat -s BitChord` is unchanged.
+ * to logcat as well, so `adb logcat -s Auris` is unchanged.
  */
 object TrackLog {
     /**

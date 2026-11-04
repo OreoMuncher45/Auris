@@ -41,7 +41,7 @@ import kotlin.coroutines.coroutineContext
  */
 object Downloader {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /** Matches the range size read-ahead settled on; large enough to amortise, small enough to cancel promptly. */
     private const val CHUNK_BYTES = 2L * 1024 * 1024

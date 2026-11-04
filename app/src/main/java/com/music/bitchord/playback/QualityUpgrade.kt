@@ -48,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object QualityUpgrade {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /** The marker that distinguishes an upgraded item from the one it replaced. */
     const val MARKER = "q"

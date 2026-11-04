@@ -42,7 +42,7 @@ import kotlinx.coroutines.sync.withLock
  */
 object DownloadedPlaylistSync {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /**
      * How long between passes.

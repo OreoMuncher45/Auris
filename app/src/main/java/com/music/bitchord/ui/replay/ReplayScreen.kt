@@ -59,7 +59,7 @@ import com.music.bitchord.data.stats.ArtistFacts
 import com.music.bitchord.data.stats.ReplayPeriod
 import com.music.bitchord.data.stats.ReplaySummary
 import com.music.bitchord.ui.components.PAGE_GUTTER
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.ui.theme.AccentRed
@@ -182,7 +182,7 @@ fun ReplayScreen(
                         )
                     }
                     item("open") {
-                        ReplayActionRow(BitChordIcons.Play, stringResource(R.string.play_your_replay), dark) {
+                        ReplayActionRow(AurisIcons.Play, stringResource(R.string.play_your_replay), dark) {
                             onOpenStory(ReplayStoryPage.INTRO)
                         }
                     }
@@ -418,7 +418,7 @@ private fun ReplayActionRow(icon: ImageVector, label: String, dark: Boolean, onC
             modifier = Modifier.weight(1f),
         )
         Icon(
-            imageVector = BitChordIcons.ChevronRight,
+            imageVector = AurisIcons.ChevronRight,
             contentDescription = null,
             tint = textColor.copy(alpha = 0.5f),
             modifier = Modifier.size(16.dp),
@@ -601,7 +601,7 @@ private fun EmptyReplay(period: ReplayPeriod, dark: Boolean) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Icon(
-            imageVector = BitChordIcons.Clock,
+            imageVector = AurisIcons.Clock,
             contentDescription = null,
             tint = emptyVariant,
             modifier = Modifier.size(44.dp),

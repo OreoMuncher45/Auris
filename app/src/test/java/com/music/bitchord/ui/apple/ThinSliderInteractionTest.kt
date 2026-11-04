@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord
+ * Copyright (C) 2026 Auris
  *
  * The player's scrubber, driven by touch.
  *
@@ -51,7 +51,7 @@ import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
 
 @RunWith(AndroidJUnit4::class)
-// Not the manifest application: BitChordApplication.onCreate installs the
+// Not the manifest application: AurisApplication.onCreate installs the
 // stream hooks, whose class init loads innertubex's TokenProvider — published
 // as Java 21 bytecode (class file 65) that a JDK 17 test worker's Robolectric
 // sandbox cannot define, so every test in this class used to die with

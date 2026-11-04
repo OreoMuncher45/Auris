@@ -233,7 +233,7 @@ class AddonClient(rawBaseUrl: String) {
      *
      * Without it an addon holding an Atmos mix has no way to know it may serve
      * one, so it takes its default branch and sends stereo. That is the whole
-     * of why BitChord never heard Atmos from an addon: not a detection bug —
+     * of why Auris never heard Atmos from an addon: not a detection bug —
      * [AddonStream.isDolbyAtmos] reads every spelling an addon sends — but a
      * question that was never asked.
      *
@@ -417,7 +417,7 @@ class AddonClient(rawBaseUrl: String) {
     private fun keyOf(vararg parts: String) = parts.joinToString("|") { "${it.length}:$it" }
 
     companion object {
-        private const val TAG = "BitChord"
+        private const val TAG = "Auris"
 
         /** The tiers [AddonSource][com.music.bitchord.data.sources.AddonSource] asks in. */
         const val TIER_LOSSLESS = "LOSSLESS"
@@ -443,7 +443,7 @@ class AddonClient(rawBaseUrl: String) {
 
         private const val QUALITY_KEY = "quality"
 
-        /** The spec's immersive-audio parameter, and the two values BitChord sends for it. */
+        /** The spec's immersive-audio parameter, and the two values Auris sends for it. */
         private const val ATMOS_KEY = "atmos"
         private const val ATMOS_AUTO = "auto"
         private const val ATMOS_NONE = "none"
@@ -528,7 +528,7 @@ class AddonClient(rawBaseUrl: String) {
         /**
          * Deliberately a neutral browser string, not the app's name. Some
          * addon hosts Cloudflare-block our app user-agent outright (observed:
-         * manifest 200 as Chrome Mobile, 403 as BitChord on the same host,
+         * manifest 200 as Chrome Mobile, 403 as Auris on the same host,
          * same IP, seconds apart) — identifying ourselves buys nothing and
          * costs whole servers. The rest of the app's third-party traffic
          * already presents this way.

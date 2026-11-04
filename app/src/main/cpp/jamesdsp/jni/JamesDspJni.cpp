@@ -1,6 +1,6 @@
-// JNI bridge between BitChord's FloatAudioProcessor and libjamesdsp.
+// JNI bridge between Auris's FloatAudioProcessor and libjamesdsp.
 //
-// Deliberately small: BitChord already has the decoded float stream in hand,
+// Deliberately small: Auris already has the decoded float stream in hand,
 // so this exposes only the engine lifecycle, the handful of effects the v1
 // UI controls, and a stereo interleaved float process call. None of Rootless
 // JamesDSP's AudioRecord/session capture machinery is needed here.
@@ -17,7 +17,7 @@ extern "C" {
 #include "jdsp_header.h"
 }
 
-#define LOG_TAG "BitChordJamesDSP"
+#define LOG_TAG "AurisJamesDSP"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 

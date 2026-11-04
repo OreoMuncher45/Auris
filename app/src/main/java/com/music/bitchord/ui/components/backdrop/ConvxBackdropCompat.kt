@@ -11,7 +11,7 @@
  * component.backdrop` -> `com.music.bitchord.ui.components.backdrop`.
  *
  * Convx's engine expects two pieces of app-level context that live outside the
- * engine. Those are provided here, adapted to BitChord's theme, so the engine
+ * engine. Those are provided here, adapted to Auris's theme, so the engine
  * itself needs no edits.
  */
 
@@ -31,7 +31,7 @@ import androidx.compose.runtime.compositionLocalOf
  *
  * Set true while a navigation transition is *closing* (popping) rather than
  * pushing, so backdrop layers captured during the transition are frozen in the
- * right state. Convx drives this from its nav host; BitChord's shells do not
+ * right state. Convx drives this from its nav host; Auris's shells do not
  * currently drive it, so it simply stays false and the engine degrades to
  * live sampling.
  */
@@ -70,7 +70,7 @@ val LocalAmbientBackgroundColor: androidx.compose.runtime.ProvidableCompositionL
  *
  * Convx samples the actual pixels behind its chrome and reports here whether
  * that content is dark; when non-null it wins over the ambient heuristic.
- * BitChord has no sampler, so it stays null and the ambient path is used.
+ * Auris has no sampler, so it stays null and the ambient path is used.
  */
 val LocalSampledChromeDark = compositionLocalOf<Boolean?> { null }
 

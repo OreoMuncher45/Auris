@@ -1,7 +1,7 @@
 package com.music.bitchord.data.flow
 
 /**
- * Deezer-inspired Flow for BitChord: an endless personalized mix combining
+ * Deezer-inspired Flow for Auris: an endless personalized mix combining
  * listening history, favorites, skips and bans with fresh recommendations.
  *
  * Pure-Kotlin models so Android, desktop and tests share unlock rules.

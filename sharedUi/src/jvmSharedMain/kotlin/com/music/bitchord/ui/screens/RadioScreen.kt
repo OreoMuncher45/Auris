@@ -52,7 +52,7 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.ShelfRow
 import com.music.bitchord.ui.components.ShimmerBox
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.player.CanvasContentMode
 import com.music.bitchord.ui.player.PlayerSettings
@@ -265,7 +265,7 @@ private fun RadioFeatureCard(item: ShelfItem?, onClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = BitChordIcons.Play,
+                imageVector = AurisIcons.Play,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(18.dp),
@@ -302,7 +302,7 @@ private fun GenresRow(onClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = BitChordIcons.TabExplore,
+                imageVector = AurisIcons.TabExplore,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(19.dp),
@@ -348,7 +348,7 @@ private fun StartStationRow(onClick: () -> Unit) {
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = BitChordIcons.Search,
+                imageVector = AurisIcons.Search,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier.size(19.dp),
@@ -370,7 +370,7 @@ private fun StartStationRow(onClick: () -> Unit) {
             )
         }
         Icon(
-            imageVector = BitChordIcons.ChevronRight,
+            imageVector = AurisIcons.ChevronRight,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             modifier = Modifier.size(20.dp),

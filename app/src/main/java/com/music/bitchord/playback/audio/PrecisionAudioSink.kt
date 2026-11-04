@@ -20,7 +20,7 @@ import java.nio.ByteOrder
 
 /**
  * Precision audio sink intercepting decoder PCM buffers before Media3's internal
- * processing pipeline can bypass BitChord's custom DSP chain.
+ * processing pipeline can bypass Auris's custom DSP chain.
  *
  * Architecture:
  * - In Precision Mode (for all supported linear PCM sources):

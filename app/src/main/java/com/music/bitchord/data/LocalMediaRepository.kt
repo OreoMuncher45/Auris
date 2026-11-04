@@ -22,7 +22,7 @@ import java.util.Locale
 
 object LocalMediaRepository {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
     private const val MIN_LOCAL_MUSIC_DURATION_MS = 30_000L
 
     // `mp4` only ever reaches this list as an audio row — MediaStore files a
@@ -62,7 +62,7 @@ object LocalMediaRepository {
     }
 
     /**
-     * Retrieves all songs in the `Music/BitChord` directory, combining app downloads
+     * Retrieves all songs in the `Music/Auris` directory, combining app downloads
      * with any local audio files present in that folder.
      *
      * The download record is the better source for a title and a credit — it
@@ -195,7 +195,7 @@ object LocalMediaRepository {
 
         val songs = mutableListOf<Song>()
         // This scan runs over every audio file on the device, which includes
-        // whatever this app has downloaded into Music/BitChord alongside
+        // whatever this app has downloaded into Music/Auris alongside
         // everything else — but by content URI, the only thing MediaStore
         // offers here, that download is indistinguishable from a file the
         // user copied on by hand. Reversing [Downloads.saved] hands a

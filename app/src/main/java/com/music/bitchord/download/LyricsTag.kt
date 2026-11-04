@@ -34,7 +34,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 internal object LyricsTag {
 
-    private const val TAG = "BitChord"
+    private const val TAG = "Auris"
 
     /**
      * An LRC document for [track], or null when there is nothing worth writing.

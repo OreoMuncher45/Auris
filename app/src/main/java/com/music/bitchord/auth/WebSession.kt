@@ -49,7 +49,7 @@ data class CapturedSession(
  * The WebView's own cookie jar, which is not the app's.
  *
  * These are separate stores and the difference is invisible until it bites:
- * signing out of BitChord forgets the cookie the app makes requests with, and
+ * signing out of Auris forgets the cookie the app makes requests with, and
  * leaves the browser's copy untouched. The next sign-in then loads
  * accounts.google.com, is recognised immediately, redirects straight through
  * to music.youtube.com and hands back a cookie for the account that was just
@@ -71,7 +71,7 @@ object BrowserSession {
     fun installGoogleCookies(cookieHeader: String) {
         clearGoogleCookies()
         val manager = runCatching { CookieManager.getInstance() }.getOrElse {
-            Log.w("BitChord", "no cookie manager to restore: ${it.message}")
+            Log.w("Auris", "no cookie manager to restore: ${it.message}")
             return
         }
         val entries = cookieHeader.split(';').mapNotNull { entry ->
@@ -83,7 +83,7 @@ object BrowserSession {
             entries.forEach { cookie -> manager.setCookie(origin, cookie) }
         }
         runCatching { manager.flush() }
-        Log.d("BitChord", "restored ${entries.size} browser cookies for the selected account")
+        Log.d("Auris", "restored ${entries.size} browser cookies for the selected account")
     }
 
     /**
@@ -101,7 +101,7 @@ object BrowserSession {
         // a reason for the next sign-in to be less convenient, not a reason for
         // signing out to crash.
         val manager = runCatching { CookieManager.getInstance() }.getOrElse {
-            Log.w("BitChord", "no cookie manager to clear: ${it.message}")
+            Log.w("Auris", "no cookie manager to clear: ${it.message}")
             return
         }
         var cleared = 0
@@ -121,7 +121,7 @@ object BrowserSession {
             }
         }
         runCatching { manager.flush() }
-        Log.d("BitChord", "cleared $cleared browser cookies for Google")
+        Log.d("Auris", "cleared $cleared browser cookies for Google")
     }
 
     private val GOOGLE_ORIGINS = listOf(

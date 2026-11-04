@@ -9,7 +9,7 @@ import com.music.bitchord.playback.TransitionFilterProcessor
 import com.music.bitchord.playback.VocalCutProcessor
 
 /**
- * Composite DSP chain executing BitChord's custom audio processors in their canonical sequence:
+ * Composite DSP chain executing Auris's custom audio processors in their canonical sequence:
  *
  * AudioBlock(Float32) -> VocalCutProcessor -> SpatialAudioProcessor -> EqualizerProcessor
  *   -> JamesDspProcessor -> TransitionFilterProcessor -> LoudnessProcessor -> AudioBlock(Float32)

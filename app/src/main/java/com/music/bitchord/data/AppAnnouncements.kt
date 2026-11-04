@@ -60,7 +60,7 @@ object AppAnnouncements {
     )
 
     private const val FEED_URL =
-        "https://raw.githubusercontent.com/OreoMuncher45/BitChordNext/main/announcements.json"
+        "https://raw.githubusercontent.com/OreoMuncher45/Auris/main/announcements.json"
 
     private const val FILE = "bitchord_announcements"
     private const val KEY_SEEN = "seen_ids"

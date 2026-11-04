@@ -50,7 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.LaunchedEffect
 import com.music.bitchord.R
 import com.music.bitchord.data.spotify.LocalPlaylist
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import java.util.Locale
 
 /**
@@ -87,7 +87,7 @@ fun FolderPickerSheet(
     Column(modifier.fillMaxWidth()) {
         SheetHeading(stringResource(R.string.add_to_folder).uppercase(Locale.getDefault()))
         ActionRow(
-            icon = BitChordIcons.Plus,
+            icon = AurisIcons.Plus,
             label = stringResource(R.string.new_folder),
             onClick = { creating = true },
         )
@@ -148,7 +148,7 @@ private fun FolderRow(folder: LocalPlaylist, selected: Boolean, onClick: () -> U
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = BitChordIcons.Plus,
+                imageVector = AurisIcons.Plus,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),

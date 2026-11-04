@@ -60,7 +60,7 @@ import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Storage
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.flow.FlowRules
 import com.music.bitchord.data.model.CARD_ART_PX
@@ -480,9 +480,9 @@ private fun RecentSectionHeader(
         ) {
             Icon(
                 imageVector = if (viewType == LibraryViewType.LIST) {
-                    BitChordIcons.GridView
+                    AurisIcons.GridView
                 } else {
-                    BitChordIcons.ListView
+                    AurisIcons.ListView
                 },
                 contentDescription = stringResource(
                     if (viewType == LibraryViewType.LIST) {
@@ -1237,7 +1237,7 @@ internal fun ShelfCard(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = BitChordIcons.MusicNote,
+                        imageVector = AurisIcons.MusicNote,
                         contentDescription = null,
                         tint = Color.White.copy(alpha = 0.92f),
                         modifier = Modifier.size(40.dp),
@@ -1272,7 +1272,7 @@ internal fun ShelfCard(
                         blurRadius = 24.dp,
                     )
                     Icon(
-                        imageVector = BitChordIcons.Download,
+                        imageVector = AurisIcons.Download,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(40.dp),
@@ -1325,7 +1325,7 @@ internal fun ShelfCard(
         ) {
             if (isPinned) {
                 Icon(
-                    imageVector = BitChordIcons.Pin,
+                    imageVector = AurisIcons.Pin,
                     contentDescription = stringResource(Res.string.pinned),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(14.dp),

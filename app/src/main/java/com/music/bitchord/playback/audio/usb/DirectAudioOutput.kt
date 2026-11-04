@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2026 BitChord Project
+ * Copyright (C) 2026 Auris Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ import java.nio.ByteBuffer
  * Isolated abstraction for direct USB hardware audio streaming.
  *
  * Designed to bypass system audio mixers when an authorized, compatible USB Audio Class 2.0
- * DAC is active. When direct streaming is inactive, unavailable, or unpermitted, BitChord
+ * DAC is active. When direct streaming is inactive, unavailable, or unpermitted, Auris
  * cleanly falls back to [com.music.bitchord.playback.audio.PrecisionAudioSink] and AudioTrack.
  */
 interface DirectAudioOutput {

@@ -729,7 +729,7 @@ class ExclusiveUsbOutput(
 
     /** Text for the signal-path "copy USB diagnostic" button. */
     fun diagnosticReport(): String = buildString {
-        append("BitChord USB diagnostic\n")
+        append("Auris USB diagnostic\n")
         append("active=$active wanted=$wanted rate=$configuredRateHz clockMatched=$clockMatched ")
         append("hardwareVolume=$hardwareVolume forceSoftwareVolume=$forceSoftwareVolume\n")
         if (sessionSummary.isNotEmpty()) append(sessionSummary).append('\n')

@@ -1,8 +1,8 @@
-# JamesDSP native engine for BitChord.
+# JamesDSP native engine for Auris.
 #
-# BitChord already owns the decoded Float32 stream before it reaches Media3's
+# Auris already owns the decoded Float32 stream before it reaches Media3's
 # AudioTrack sink (see DspChain / PrecisionAudioSink). That means JamesDSP can
-# run in-process on exactly BitChord's own playback, with no root, no
+# run in-process on exactly Auris's own playback, with no root, no
 # AudioRecord capture and no effect on other apps' audio.
 #
 # The engine is built into a static library and linked into our JNI shim, so

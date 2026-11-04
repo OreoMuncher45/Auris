@@ -4,7 +4,7 @@ import com.music.bitchord.data.NerdStats
 import java.util.Locale
 
 /**
- * The optional audio line shown on BitChord's Discord activity card.
+ * The optional audio line shown on Auris's Discord activity card.
  *
  * Only premium formats earn a line. The values are the decoder's measured
  * figures from [NerdStats], never the quality a source merely advertised, so a

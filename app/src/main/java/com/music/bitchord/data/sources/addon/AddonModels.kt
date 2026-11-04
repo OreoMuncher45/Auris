@@ -49,7 +49,7 @@ data class AddonManifest(
      *
      * Read for its *defaults*, not to build a UI. The protocol has the host
      * render a form for these and send whatever the user picked back as query
-     * parameters on every request; BitChord has no such form, so it sends the
+     * parameters on every request; Auris has no such form, so it sends the
      * declared defaults instead. That is explicitly enough — the spec says an
      * addon "that never reads a setting still behaves correctly", and the
      * default is what the reference host sends until a user changes something.

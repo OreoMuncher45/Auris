@@ -54,32 +54,32 @@ jobs:
       - run: chmod +x gradlew
 
       - name: Tests
-        run: ./gradlew :shared:jvmTest :desktopApp:test -Pbitchord.version=${{ steps.version.outputs.value }}
+        run: ./gradlew :shared:jvmTest :desktopApp:test -Pauris.version=${{ steps.version.outputs.value }}
 
       - name: Build deb, rpm and the app image
         run: |
           ./gradlew :desktopApp:packageDeb :desktopApp:packageRpm :desktopApp:createDistributable \
-            -Pbitchord.version=${{ steps.version.outputs.value }} -Pbitchord.requireNative=true
+            -Pauris.version=${{ steps.version.outputs.value }} -Pauris.requireNative=true
 
       - name: The analyser and models are in the jar
         run: |
-          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/lib/app/desktopApp*.jar)
-          jar tf "$jar" | grep -q 'native/libbitchord_analysis.so'
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/lib/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/libauris_analysis.so'
           jar tf "$jar" | grep -q 'models/.*\.onnx'
 
       - name: Build the AppImage
         run: |
           desktopApp/packaging/appimage.sh \
-            desktopApp/build/compose/binaries/main/app/BitChord \
-            dist/BitChord-${{ steps.version.outputs.value }}-linux-x86_64.AppImage \
+            desktopApp/build/compose/binaries/main/app/Auris \
+            dist/Auris-${{ steps.version.outputs.value }}-linux-x86_64.AppImage \
             "$PWD/appimagetool.AppImage"
 
       - name: Collect
         run: |
           v=${{ steps.version.outputs.value }}
           mkdir -p dist
-          cp desktopApp/build/compose/binaries/main/deb/*.deb "dist/BitChord-$v-linux-amd64.deb"
-          cp desktopApp/build/compose/binaries/main/rpm/*.rpm "dist/BitChord-$v-linux-x86_64.rpm"
+          cp desktopApp/build/compose/binaries/main/deb/*.deb "dist/Auris-$v-linux-amd64.deb"
+          cp desktopApp/build/compose/binaries/main/rpm/*.rpm "dist/Auris-$v-linux-x86_64.rpm"
           ls -lh dist
 
       - uses: actions/upload-artifact@v4
@@ -145,31 +145,31 @@ jobs:
           echo "LASTFM_SECRET=${{ secrets.LASTFM_SECRET }}" >> local.properties
 
       - name: Tests
-        run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pbitchord.version=${{ steps.version.outputs.value }}"
+        run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pauris.version=${{ steps.version.outputs.value }}"
 
       - name: Build msi, exe and the app image
         run: |
           .\gradlew.bat :desktopApp:packageMsi :desktopApp:packageExe :desktopApp:createDistributable `
-            "-Pbitchord.version=${{ steps.version.outputs.value }}" `
-            "-Pbitchord.requireNative=true"
+            "-Pauris.version=${{ steps.version.outputs.value }}" `
+            "-Pauris.requireNative=true"
 
       - name: The analyser and models are in the jar
         shell: bash
         run: |
-          jar=$(ls desktopApp/build/compose/binaries/main/app/BitChord/app/desktopApp*.jar)
-          jar tf "$jar" | grep -q 'native/bitchord_analysis.dll'
+          jar=$(ls desktopApp/build/compose/binaries/main/app/Auris/app/desktopApp*.jar)
+          jar tf "$jar" | grep -q 'native/auris_analysis.dll'
           jar tf "$jar" | grep -q 'models/.*\.onnx'
           # The media keys, built against the raw WinRT ABI because MinGW has no C++/WinRT.
-          jar tf "$jar" | grep -q 'native/bitchord_smtc.dll'
-          jar tf "$jar" | grep -q 'native/bitchord_window.dll'
+          jar tf "$jar" | grep -q 'native/auris_smtc.dll'
+          jar tf "$jar" | grep -q 'native/auris_window.dll'
           # The runtime image jlink cut from the JDK. Without the charset tables it falls back
           # to the system code page and every UTF-8 string comes back mangled. The image has no
           # java executable — the app launcher loads it directly — so the module list is read
           # from the release file jlink writes.
           runtime=""
           for candidate in \
-            desktopApp/build/compose/binaries/main/app/BitChord/runtime/release \
-            desktopApp/build/compose/binaries/main/app/BitChord/lib/runtime/release; do
+            desktopApp/build/compose/binaries/main/app/Auris/runtime/release \
+            desktopApp/build/compose/binaries/main/app/Auris/lib/runtime/release; do
             if [ -f "$candidate" ]; then runtime="$candidate"; break; fi
           done
           test -n "$runtime"
@@ -180,10 +180,10 @@ jobs:
         run: |
           $v = "${{ steps.version.outputs.value }}"
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item desktopApp/build/compose/binaries/main/msi/*.msi "dist/BitChord-$v-windows-x64.msi"
-          Copy-Item desktopApp/build/compose/binaries/main/exe/*.exe "dist/BitChord-$v-windows-x64-setup.exe"
-          7z a -tzip -mx=5 "dist/BitChord-$v-windows-x64-portable.zip" `
-            "desktopApp/build/compose/binaries/main/app/BitChord/*" | Out-Null
+          Copy-Item desktopApp/build/compose/binaries/main/msi/*.msi "dist/Auris-$v-windows-x64.msi"
+          Copy-Item desktopApp/build/compose/binaries/main/exe/*.exe "dist/Auris-$v-windows-x64-setup.exe"
+          7z a -tzip -mx=5 "dist/Auris-$v-windows-x64-portable.zip" `
+            "desktopApp/build/compose/binaries/main/app/Auris/*" | Out-Null
           Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
@@ -209,7 +209,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: BitChord ${{ github.ref_name }}
+          name: Auris ${{ github.ref_name }}
           draft: true
           files: dist/*
         env:

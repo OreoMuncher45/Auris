@@ -31,6 +31,46 @@ interface AppUiHost {
     /** Video ids of the tracks already downloaded, for the mark on their rows. */
     @Composable
     fun downloadedIds(): Set<String>
+
+    /**
+     * Whether a release's header plays its animated cover.
+     *
+     * The phone reads it from `AppSettings`; the desktop from its own store. Off
+     * where the device cannot afford it, and off where the listener has said no.
+     */
+    val animatedCanvas: StateFlow<Boolean>
+
+    /** Whether a Spotify canvas is preferred to the release's own artwork. */
+    val prioritizeSpotifyCanvas: StateFlow<Boolean>
+
+    /**
+     * The acts the listener has marked as AI, as the page's chip reads them.
+     *
+     * The set is the phone's own: an id and a name, joined by a tab, because a
+     * name can change under an id and a page may know only one of them.
+     */
+    val aiArtists: StateFlow<Set<String>>
+
+    /** Whether this act is marked as AI — by its id when there is one, else by its name. */
+    fun isArtistAi(artistId: String?, name: String?): Boolean
+
+    /** Marks this act as AI, or takes the mark off. */
+    fun toggleArtistAi(artistId: String?, name: String?)
+
+    /** Whether the app's floating surfaces are drawn without the blur. */
+    val reduceDynamicBlur: StateFlow<Boolean>
+
+    /**
+     * Spotify's own bearer token, when this app has a Spotify session.
+     *
+     * The phone mints it from the listener's own cookie through a WebView; the
+     * desktop has no such session and answers null, which is the same answer
+     * the phone gives when it is signed out.
+     */
+    suspend fun spotifyAccessToken(): String?
+
+    /** Spotify's client token, which some of its endpoints want alongside the bearer. */
+    fun spotifyClientToken(): String?
 }
 
 object AppUi {

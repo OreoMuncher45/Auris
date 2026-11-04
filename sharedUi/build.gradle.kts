@@ -87,6 +87,10 @@ kotlin {
         // against 0.9 NoSuchMethodError'd the desktop's 0.15 at draw time.
         jvmMain.dependencies {
             api("org.jetbrains.compose.ui:ui-desktop:$CMP_DESKTOP")
+            // The JSON the phone reads with the platform's own org.json, which is not on a JVM.
+            implementation("org.json:json:20240303")
+            // Spotify's canvas requests are protobuf; the phone has the platform's own.
+            implementation("com.google.protobuf:protobuf-javalite:4.35.0")
         }
         jvmTest.dependencies {
             implementation(kotlin("test"))
@@ -114,4 +118,86 @@ compose.resources {
     publicResClass = true
     packageOfResClass = "com.music.bitchord.sharedui.resources"
     generateResClass = always
+}
+
+/**
+ * The phone's wording, folded into this module's catalogues.
+ *
+ * A screen that moves out of the phone's module and into this one reads its
+ * strings from here, so the translation written in `app/src/main/res` has to be
+ * here too — in every language the phone has it in, or the screen reads as
+ * English the moment it leaves the phone.
+ *
+ * Keys this catalogue already answers are left as they are: it is the one the
+ * shared screens read, and where it and the phone disagree, this side is the
+ * one that was written for the shared surface. The phone keeps its own copy,
+ * so nothing on the phone changes.
+ */
+val syncPhoneStrings by tasks.registering {
+    val phoneRes = rootProject.file("app/src/main/res")
+    val sharedRes = project.file("src/commonMain/composeResources")
+    inputs.dir(phoneRes)
+    // The catalogues it writes, not the whole resource tree: the rest of the tree is read by
+    // other tasks, and claiming it here would make them look like they depend on this one.
+    outputs.files(
+        sharedRes.listFiles { file: File -> file.isDirectory && file.name.startsWith("values") }
+            ?.map { File(it, "strings.xml") }
+            .orEmpty(),
+    )
+    doLast {
+        val stringEntry = Regex("""<string name="([^"]+)"[^>]*>(.*?)</string>""", RegexOption.DOT_MATCHES_ALL)
+        val pluralEntry = Regex("""<plurals name="([^"]+)"[^>]*>(.*?)</plurals>""", RegexOption.DOT_MATCHES_ALL)
+
+        fun catalogue(text: String): Map<String, String> =
+            stringEntry.findAll(text).associate { match ->
+                match.groupValues[1] to match.groupValues[2]
+            }
+
+        val phone = phoneRes.listFiles { file: File -> file.isDirectory && file.name.startsWith("values") }
+            ?.mapNotNull { folder ->
+                val strings = File(folder, "strings.xml")
+                if (strings.isFile) folder.name to strings.readText() else null
+            }?.toMap()
+            .orEmpty()
+
+        sharedRes.listFiles { file: File -> file.isDirectory && file.name.startsWith("values") }
+            ?.forEach { folder ->
+                val target = File(folder, "strings.xml")
+                if (!target.isFile) return@forEach
+                val phoneText = phone[folder.name] ?: phone["values"] ?: return@forEach
+                val existing = catalogue(target.readText())
+                val missing = catalogue(phoneText).filterKeys { it !in existing }
+                val additions = missing.entries.map { (name, value) ->
+                    // Android escapes an apostrophe for its own parser; Compose reads the text as
+                    // it stands, so the escape would reach the screen as a backslash.
+                    val clean = value.replace("\\'", "'").replace("\\\"", "\"")
+                    "    <string name=\"$name\">$clean</string>"
+                }
+                // Plurals too: a count reads differently from one, and Compose Resources carries
+                // them the same way it carries strings.
+                val existingPlurals = pluralEntry.findAll(target.readText()).map { it.groupValues[1] }.toSet()
+                val pluralAdditions = pluralEntry.findAll(phoneText)
+                    .filter { it.groupValues[1] !in existingPlurals }
+                    .map { plural ->
+                        "    <plurals name=\"${plural.groupValues[1]}\">${plural.groupValues[2].trim()}</plurals>"
+                    }
+                val all = additions + pluralAdditions
+                if (all.isEmpty()) return@forEach
+                val text = target.readText()
+                target.writeText(text.replace("</resources>", all.joinToString("\n") + "\n</resources>"))
+                logger.lifecycle("Auris: ${all.size} phone strings added to ${folder.name}")
+            }
+    }
+}
+
+// The catalogues are read when the resource class is generated, so the merge has to have happened
+// before anything that reads the resource tree — and the merged files are an input to those reads,
+// so a catalogue that changed is noticed even when the task graph was already warm.
+tasks.matching {
+    it.name.contains("ValueResourcesFor", ignoreCase = true) ||
+        it.name.contains("prepareComposeResourcesTask", ignoreCase = true) ||
+        it.name.contains("generateComposeResClass")
+}.configureEach {
+    dependsOn(syncPhoneStrings)
+    inputs.files(syncPhoneStrings)
 }

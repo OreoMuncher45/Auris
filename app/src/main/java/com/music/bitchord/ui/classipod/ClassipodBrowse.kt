@@ -492,7 +492,7 @@ internal fun LoadingRow(lcd: ClassipodTheme.Lcd) {
 
 /**
  * Generic settings list for the pod: rows with values, toggles inline.
- * Server addresses and keys are edited in the BitChord theme (keyboards +
+ * Server addresses and keys are edited in the Auris theme (keyboards +
  * Test buttons live there); here every row is a toggle or a cycle.
  */
 @Composable

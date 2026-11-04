@@ -1,4 +1,4 @@
-package com.music.bitchord.desktop.tray;
+package com.music.auris.desktop.tray;
 
 import org.freedesktop.dbus.Tuple;
 import org.freedesktop.dbus.annotations.Position;

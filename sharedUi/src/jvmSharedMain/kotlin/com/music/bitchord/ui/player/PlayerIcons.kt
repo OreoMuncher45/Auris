@@ -10,7 +10,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import com.music.bitchord.sharedui.resources.*
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 
@@ -18,7 +18,7 @@ import org.jetbrains.compose.resources.painterResource
  * One glyph, whichever kind it arrived as.
  *
  * The player's controls are drawn from two pools: drawable resources, which is
- * what the transport already used, and the hand-built [BitChordIcons] vectors,
+ * what the transport already used, and the hand-built [AurisIcons] vectors,
  * which is what everything else used. A control may be on either pool — and
  * when the icon set changes, it moves between them.
  *
@@ -69,7 +69,7 @@ sealed interface PlayerIcon {
  *
  * ## Where the glyphs come from
  *
- * The Now Playing controls are hand-built vectors in [BitChordIcons]: one
+ * The Now Playing controls are hand-built vectors in [AurisIcons]: one
  * family so the transport, bottom row, volume and mode controls share a weight
  * and optical size. A handful of roles still use the vendored drawables under
  * `sharedUi/src/commonMain/composeResources/drawable/` (originally from Convx,
@@ -81,10 +81,10 @@ object PlayerIcons {
     // ---- Transport -------------------------------------------------------
 
     /** The play button, while paused. */
-    val Play = PlayerIcon.Vector(BitChordIcons.PlayerPlay)
+    val Play = PlayerIcon.Vector(AurisIcons.PlayerPlay)
 
     /** The play button, while playing. See [Play]. */
-    val Pause = PlayerIcon.Vector(BitChordIcons.PlayerPause)
+    val Pause = PlayerIcon.Vector(AurisIcons.PlayerPause)
 
     /** Step forward. `apple_skip_next`. */
     val SkipNext = PlayerIcon.Drawable(Res.drawable.apple_skip_next)
@@ -95,26 +95,26 @@ object PlayerIcons {
     // ---- Volume ----------------------------------------------------------
 
     /** The speaker at the low end of the volume row. */
-    val VolumeLow = PlayerIcon.Vector(BitChordIcons.PlayerVolumeLow)
+    val VolumeLow = PlayerIcon.Vector(AurisIcons.PlayerVolumeLow)
 
     /** The speaker at the high end of the volume row. See [VolumeLow]. */
-    val VolumeHigh = PlayerIcon.Vector(BitChordIcons.PlayerVolumeHigh)
+    val VolumeHigh = PlayerIcon.Vector(AurisIcons.PlayerVolumeHigh)
 
     /** The volume row's speaker at zero, and the output sheet's. See [VolumeLow]. */
-    val VolumeMuted = PlayerIcon.Vector(BitChordIcons.PlayerVolumeMuted)
+    val VolumeMuted = PlayerIcon.Vector(AurisIcons.PlayerVolumeMuted)
 
     // ---- Queue, lyrics, ellipsis -----------------------------------------
 
     /** The queue, in the player's bottom row. */
-    val Queue = PlayerIcon.Vector(BitChordIcons.PlayerQueue)
+    val Queue = PlayerIcon.Vector(AurisIcons.PlayerQueue)
 
     /** Lyrics, in the player's bottom row. */
-    val Lyrics = PlayerIcon.Vector(BitChordIcons.PlayerLyrics)
+    val Lyrics = PlayerIcon.Vector(AurisIcons.PlayerLyrics)
 
     /**
      * The three-dot menu, in the credits row.
      *
-     * Material's horizontal ellipsis — the same mark BitChord draws. Three
+     * Material's horizontal ellipsis — the same mark Auris draws. Three
      * dots on one line at one weight, rather than a hand-built set that reads
      * a fraction heavier against the artwork than the mark it replaced.
      */
@@ -129,10 +129,10 @@ object PlayerIcons {
      * one tinted twice: the player draws every glyph white on album artwork,
      * and a colour change is the one signal the backdrop can swallow.
      */
-    val Liked = PlayerIcon.Vector(BitChordIcons.PlayerStarFilled)
+    val Liked = PlayerIcon.Vector(AurisIcons.PlayerStarFilled)
 
     /** The star, not liked — the same sharp outline. */
-    val LikedOff = PlayerIcon.Vector(BitChordIcons.PlayerStar)
+    val LikedOff = PlayerIcon.Vector(AurisIcons.PlayerStar)
 
     // ---- The credits row's second button ---------------------------------
 
@@ -154,18 +154,18 @@ object PlayerIcons {
      * carries the state in the row's own tint — so this is the plain AirPlay
      * mark rather than the connected variant.
      */
-    val AirPlay = PlayerIcon.Vector(BitChordIcons.PlayerAirPlay)
+    val AirPlay = PlayerIcon.Vector(AurisIcons.PlayerAirPlay)
 
     // ---- Playback modes --------------------------------------------------
 
     /** Shuffle, in the three-up capsule. */
-    val Shuffle = PlayerIcon.Vector(BitChordIcons.PlayerShuffle)
+    val Shuffle = PlayerIcon.Vector(AurisIcons.PlayerShuffle)
 
     /** Repeat all / off, in the three-up capsule. */
-    val Repeat = PlayerIcon.Vector(BitChordIcons.PlayerRepeat)
+    val Repeat = PlayerIcon.Vector(AurisIcons.PlayerRepeat)
 
     /** Autoplay's lemniscate, in the three-up capsule. */
-    val Autoplay = PlayerIcon.Vector(BitChordIcons.PlayerAutoplay)
+    val Autoplay = PlayerIcon.Vector(AurisIcons.PlayerAutoplay)
 
     /**
      * A neutral audio-output glyph, for the quality label's fallback.
@@ -186,7 +186,7 @@ object PlayerIcons {
      * the artwork's own box in both layouts, and leaving it out of the map is
      * how a second icon pool quietly grows back.
      */
-    val NoArtwork = PlayerIcon.Vector(BitChordIcons.MusicNote)
+    val NoArtwork = PlayerIcon.Vector(AurisIcons.MusicNote)
 
     // ---- Roles whose only call site is frozen ----------------------------
 

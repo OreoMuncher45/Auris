@@ -115,7 +115,7 @@ import com.music.bitchord.ui.components.TopBarContentGap
 import com.music.bitchord.ui.components.topBarHeight
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
-import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.AurisIcons
 import java.util.Locale
 
 private const val LOCAL_TAB_SONGS = 0
@@ -1316,7 +1316,7 @@ private fun DrillDownActionRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                BitChordIcons.Shuffle,
+                AurisIcons.Shuffle,
                 contentDescription = stringResource(R.string.shuffle),
                 tint = if (isSystemInDarkTheme()) Color.White else Color.Black,
                 modifier = Modifier.size(18.dp),
@@ -1334,7 +1334,7 @@ private fun DrillDownActionRow(
             horizontalArrangement = Arrangement.Center,
         ) {
             Icon(
-                BitChordIcons.Play,
+                AurisIcons.Play,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.size(18.dp),
@@ -1569,7 +1569,7 @@ private fun LocalSearchField(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = if (viewType == LibraryViewType.GRID) BitChordIcons.ListView else BitChordIcons.GridView,
+                imageVector = if (viewType == LibraryViewType.GRID) AurisIcons.ListView else AurisIcons.GridView,
                 contentDescription = stringResource(
                     if (viewType == LibraryViewType.GRID) R.string.switch_to_list_view else R.string.switch_to_grid_view,
                 ),
