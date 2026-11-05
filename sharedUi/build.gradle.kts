@@ -81,6 +81,12 @@ kotlin {
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
             implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
         }
+        jvmSharedMain.dependencies {
+            // Spotify's canvas requests are protobuf, and this source set is
+            // compiled for both targets - so the library has to be on both
+            // classpaths, not only the desktop's.
+            implementation("com.google.protobuf:protobuf-javalite:4.35.0")
+        }
         // Compiled against what the desktop actually resolves, not the phone's
         // pin — see the CMP_DESKTOP comment at the top of this file. Skia's
         // Matrix33 changed shape between skiko 0.9 and 0.15, and bytecode built
@@ -89,8 +95,6 @@ kotlin {
             api("org.jetbrains.compose.ui:ui-desktop:$CMP_DESKTOP")
             // The JSON the phone reads with the platform's own org.json, which is not on a JVM.
             implementation("org.json:json:20240303")
-            // Spotify's canvas requests are protobuf; the phone has the platform's own.
-            implementation("com.google.protobuf:protobuf-javalite:4.35.0")
         }
         jvmTest.dependencies {
             implementation(kotlin("test"))
