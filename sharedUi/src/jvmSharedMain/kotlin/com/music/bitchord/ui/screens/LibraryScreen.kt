@@ -607,20 +607,24 @@ private fun PlaylistShelf(
         return
     }
 
+    val newPlaylistCard: @Composable () -> Unit = {
+        NewShelfCard(
+            icon = BitChordIcons.Plus,
+            label = stringResource(Res.string.new_playlist),
+            subtitle = stringResource(Res.string.saved_to_youtube_music),
+            onClick = onNewPlaylist,
+        )
+    }
     LibraryGridShelf(
         shelf = shelf,
         onItemClick = onItemClick,
         onItemLongPress = onItemLongPress,
         onShowAll = onShowAll,
         pinnedPlaylists = pinnedPlaylists,
-        leadingCard = {
-            NewShelfCard(
-                icon = BitChordIcons.Plus,
-                label = stringResource(Res.string.new_playlist),
-                subtitle = stringResource(Res.string.saved_to_youtube_music),
-                onClick = onNewPlaylist,
-            )
-        },
+        // The account's own playlists first, the way to make another after
+        // them; it leads only when there is nothing else in the row.
+        leadingCard = newPlaylistCard.takeIf { shelf.items.isEmpty() },
+        trailingCard = newPlaylistCard.takeIf { shelf.items.isNotEmpty() },
     )
 }
 
@@ -769,8 +773,8 @@ private const val LIBRARY_ROW_MAX_ITEMS = 5
  * title whenever there's more than that, opening the rest as a
  * vertically-scrolling grid instead. See [LibraryGridPage].
  *
- * [leadingCard], if given, occupies the first slot and counts against that
- * cap — see [PlaylistShelf].
+ * [leadingCard] and [trailingCard], if given, occupy the first and last
+ * slots and count against that cap — see [PlaylistShelf].
  */
 @Composable
 internal fun LibraryGridShelf(
@@ -779,11 +783,12 @@ internal fun LibraryGridShelf(
     onItemLongPress: (ShelfItem) -> Unit,
     onShowAll: () -> Unit,
     leadingCard: (@Composable () -> Unit)? = null,
+    trailingCard: (@Composable () -> Unit)? = null,
     pinnedPlaylists: List<String> = emptyList(),
 ) {
-    val leadingCount = if (leadingCard != null) 1 else 0
-    val visibleItems = remember(shelf.items, leadingCount) {
-        shelf.items.take((LIBRARY_ROW_MAX_ITEMS - leadingCount).coerceAtLeast(0))
+    val extraCount = (if (leadingCard != null) 1 else 0) + (if (trailingCard != null) 1 else 0)
+    val visibleItems = remember(shelf.items, extraCount) {
+        shelf.items.take((LIBRARY_ROW_MAX_ITEMS - extraCount).coerceAtLeast(0))
     }
     val keys = rememberShelfKeys(visibleItems)
     // A set, so each card's pin check is a lookup rather than a walk of the list.
@@ -792,7 +797,7 @@ internal fun LibraryGridShelf(
         SectionHeader(
             title = shelf.title,
             subtitle = shelf.subtitle,
-            onShowAll = onShowAll.takeIf { shelf.items.size + leadingCount > LIBRARY_ROW_MAX_ITEMS },
+            onShowAll = onShowAll.takeIf { shelf.items.size + extraCount > LIBRARY_ROW_MAX_ITEMS },
         )
         ShelfRow(
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
@@ -812,6 +817,9 @@ internal fun LibraryGridShelf(
                     onLongPress = { onItemLongPress(item) },
                     isPinned = item.browseId != null && item.browseId in pinned,
                 )
+            }
+            trailingCard?.let { card ->
+                item(key = "trailing", contentType = LazyContent.LEADING_CARD) { card() }
             }
         }
     }
