@@ -86,7 +86,8 @@ jobs:
           "$env:RUNNER_TEMP\wix" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Tests
-        if: inputs.run_tests
+        # Run unless the run says otherwise; a push has no inputs, and the tests are the point.
+        if: inputs.run_tests != false
         run: .\gradlew.bat :shared:jvmTest :desktopApp:test "-Pbitchord.version=${{ steps.version.outputs.value }}"
 
       - name: Build the installer, the msi and the portable folders
