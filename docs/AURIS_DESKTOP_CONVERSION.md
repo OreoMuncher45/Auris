@@ -104,6 +104,34 @@ FFmpeg engine is the desktop's answer to the same question, and the queue,
 the crossfade and the Automix handoff are already shared through `:shared`'s
 `QueueTimeline` and `AutomixEngineV2`.
 
+## Platform notes
+
+**The WebView, and ARM64 Linux.** The PoToken minter needs a real browser
+engine, so the desktop runs BotGuard in JavaFX's WebKit. JavaFX ships its
+natives per platform *and* per processor, so `desktopApp/build.gradle.kts`
+picks the classifier from the target: `win` on Windows, `linux` on x86_64 and
+`linux-aarch64` on ARM64. OpenJFX only started publishing the Linux ARM64
+builds with 21.0.11; before that the `linux` jar carried x86_64 libraries
+only, so an ARM64 build asked JavaFX to load them and died with "can't load
+AMD 64 .so on a AARCH64 platform" — the app ran, but with no PoTokens at all.
+
+Those ARM64 natives are built against glibc 2.34, so an ARM64 Linux host
+needs Ubuntu 22.04 or newer for the WebView. The rest of the app — Compose,
+Skiko, the player, the downloads — does not: on an older glibc the app runs
+normally and only the PoToken minter is out of reach.
+
+**Downloads start quietly.** Starting a download on the desktop says nothing:
+no toast, no notice, no sound. The download manager is where a download
+appears, as a row reading "Downloading · 42%", and that is the only place it
+shows up. The phone's "download started" notice is not carried over.
+
+**The desktop releases as a draft.** `.github/workflows/desktop-draft-release.yml`
+builds the desktop's own packages — Linux AppImage, deb and rpm, Windows
+installer, MSI and portable zip — and writes them to a *draft* release. It
+never publishes: `draft: true`, `prerelease: true`, `make_latest: false`. The
+phone's `release.yml` is a different workflow for a different lineage and is
+left alone.
+
 ## Rules for the conversion
 
 - **One copy of a thing.** If the phone and the desktop both have it, it lives

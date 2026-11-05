@@ -90,9 +90,19 @@ dependencies {
     implementation(project(":sharedUi"))
     // BotGuard, for the PoTokens YouTube's web clients need: the phone runs it in an Android
     // WebView, the desktop in JavaFX's (WebKit). Per-platform jars carry the natives.
-    val javafxClassifier = if (targetOs == "windows") "win" else "linux"
+    //
+    // The classifier follows the processor, not just the operating system. OpenJFX only started
+    // publishing the Linux ARM64 natives with 21.0.11; before that the "linux" jar carried
+    // x86_64 libraries only, so an ARM64 build asked JavaFX to load them and the WebKit WebView
+    // died with "can't load AMD 64 .so on a AARCH64 platform" — taking the PoToken minter with it.
+    val javafxVersion = "21.0.13"
+    val javafxClassifier = when {
+        targetOs == "windows" -> "win"
+        targetArch == "arm64" -> "linux-aarch64"
+        else -> "linux"
+    }
     listOf("base", "graphics", "controls", "media", "web").forEach { module ->
-        implementation("org.openjfx:javafx-$module:21.0.10:$javafxClassifier")
+        implementation("org.openjfx:javafx-$module:$javafxVersion:$javafxClassifier")
     }
 
     // The shared player loads artwork through Coil, as the phone does.
