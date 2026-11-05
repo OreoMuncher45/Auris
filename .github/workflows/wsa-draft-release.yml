@@ -1,0 +1,143 @@
+name: Auris on Windows (WSA)
+
+# The phone's app, on Windows.
+#
+# The app is an Android app, so it runs on Windows through the Windows Subsystem for Android.
+# This workflow builds the APK, folds it and an adb client into one Auris.exe, and puts the
+# result in a *draft* release. It never publishes: `draft: true`, `prerelease: true`,
+# `make_latest: false`. Nobody but the people with access to the repository can see it.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to stamp into the executable (no leading v)"
+        required: true
+        default: "3.0.3-draft"
+      title:
+        description: "Title of the draft release"
+        required: false
+        default: "Auris on Windows — private demo"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wsa-draft-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: The phone's app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - run: chmod +x gradlew
+
+      # The dev flavor is signed with the fork's key, so the same build installs over the last
+      # one. It is still the phone's app, with its own id and its own launcher activity.
+      - name: Fork signing
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > bitchord-fork.jks
+          {
+            echo "storeFile=bitchord-fork.jks"
+            echo "storePassword=android"
+            echo "keyAlias=forkdebug"
+            echo "keyPassword=android"
+          } > keystore.properties
+
+      - name: Build the APK
+        run: ./gradlew :app:assembleDevRelease
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: auris-apk
+          path: app/build/outputs/apk/dev/release/*.apk
+
+  launcher:
+    name: The Windows launcher
+    runs-on: windows-latest
+    needs: [apk]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: auris-apk
+          path: apk
+
+      # adb is what talks to WSA's bridge. Google's own client is the one that knows the
+      # protocol, so it rides inside the executable.
+      - name: adb
+        shell: pwsh
+        run: |
+          curl.exe -sSL -o platform-tools.zip https://dl.google.com/android/repository/platform-tools-latest-windows.zip
+          Expand-Archive platform-tools.zip -DestinationPath tools
+
+      - name: Put the pieces in the launcher
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force wsaLauncher/Resources | Out-Null
+          $apk = (Get-ChildItem apk/*.apk | Select-Object -First 1).FullName
+          Copy-Item $apk wsaLauncher/Resources/auris.apk
+          Copy-Item tools/platform-tools/adb.exe wsaLauncher/Resources/adb.exe
+          Get-ChildItem wsaLauncher/Resources
+
+      - name: Build the executable
+        run: dotnet publish wsaLauncher/AurisWsaLauncher.csproj -c Release -o out
+
+      - name: Collect
+        shell: pwsh
+        run: |
+          $v = "${{ inputs.version }}"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item out/Auris.exe "dist/Auris-$v-wsa-setup.exe"
+          $apk = (Get-ChildItem apk/*.apk | Select-Object -First 1).FullName
+          Copy-Item $apk "dist/Auris-$v.apk"
+          Get-ChildItem dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wsa-artifacts
+          path: dist/*
+
+  draft:
+    name: Draft the release
+    needs: [launcher]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wsa-artifacts
+          path: dist
+
+      - run: ls -lh dist
+
+      # A draft, and only a draft. `draft: true` is the whole point: the release is written to
+      # the repository's drafts, where it is invisible to the public and to the update check,
+      # and it stays there until somebody publishes it by hand.
+      - name: Draft the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wsa-draft-${{ inputs.version }}
+          name: ${{ inputs.title }}
+          draft: true
+          prerelease: true
+          make_latest: false
+          commit: ${{ github.sha }}
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

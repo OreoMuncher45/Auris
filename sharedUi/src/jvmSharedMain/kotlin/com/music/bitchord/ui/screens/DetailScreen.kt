@@ -1062,7 +1062,7 @@ private fun List<Song>.sortedForDetail(sort: SongSort): List<Song> = when (sort)
  * full list — see the track numbers on an album, which are the release's own
  * and not positions in whatever the filter left.
  */
-internal fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
+fun List<Song>.matching(query: String): List<IndexedValue<Song>> {
     val all = withIndex().toList()
     if (query.isBlank()) return all
     return all.filter { (_, song) ->
