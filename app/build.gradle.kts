@@ -278,6 +278,35 @@ kotlin {
 }
 
 /*
+ * A guard against the same crash coming back.
+ *
+ * dex keeps the size of a call's register window in one byte, so a call
+ * cannot pass more than 255 words. A constructor with 254 arguments needs
+ * 255 of them — the object itself and the arguments — and is the most a
+ * dex can carry. One argument more and the count wraps to zero, the class
+ * is refused at launch, and nothing in the build says so.
+ *
+ * Kotlin does not object: the limit is dex's, and dex is not the compiler.
+ * The lambdas that capture the most are the ones to watch, and a capture
+ * set grows by one every time a local is added to a big composable.
+ *
+ * So the compiled classes are counted after every release compile, and a
+ * constructor too wide to call fails the build instead of the phone.
+ */
+val checkConstructorWidths by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Fails if a constructor is wider than dex can call."
+    commandLine(
+        "python3",
+        rootProject.file("tools/check_constructor_widths.py").absolutePath,
+        layout.buildDirectory.dir("tmp/kotlin-classes/devRelease").get().asFile.absolutePath,
+    )
+}
+tasks.matching { it.name == "compileDevReleaseKotlin" }.configureEach {
+    finalizedBy(checkConstructorWidths)
+}
+
+/*
  * NewPipeExtractor ships its own org.schabi.newpipe.extractor.utils.Utils, and
  * app/src/main/java carries a patched copy at the same package path (see that
  * file for why it exists). A debug build keeps project and library dex separate,
